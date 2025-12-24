@@ -1,0 +1,7 @@
+//
+//  Info.swift
+//  Stock Tracker
+//
+//  Created by Ihtisham Mazid on 16/12/2025.
+//
+
