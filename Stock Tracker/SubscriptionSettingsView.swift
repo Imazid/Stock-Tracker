@@ -2,6 +2,14 @@
 //  SubscriptionSettingsView.swift
 //  Stock Tracker
 //
+//  Created by Ihtisham Mazid on 14/12/2025.
+//
+
+
+//
+//  SubscriptionSettingsView.swift
+//  Stock Tracker
+//
 
 import SwiftUI
 

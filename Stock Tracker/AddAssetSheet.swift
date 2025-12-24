@@ -46,7 +46,8 @@ struct AddAssetSheet: View {
                         marketData.addCustomAsset(symbol: symbol.uppercased(),
                                                   name: name,
                                                   price: price,
-                                                  kind: kind)
+                                                  kind: kind,
+                                                  exchange: "NYSE")
                         dismiss()
                     }
                     .disabled(symbol.isEmpty || name.isEmpty || priceText.isEmpty)

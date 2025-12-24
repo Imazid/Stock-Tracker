@@ -2,25 +2,26 @@
 //  SnapTradeService.swift
 //  Stock Tracker
 //
-//  Complete SnapTrade Integration
+//  Fixed SnapTrade Integration
 //
 
 import Foundation
 import CryptoKit
 import SwiftUI
+import Combine
 
 // MARK: - SnapTrade Service
 @MainActor
 class SnapTradeService: ObservableObject {
     static let shared = SnapTradeService()
     
-    // IMPORTANT: Replace these with your actual credentials from https://dashboard.snaptrade.com
-    private let clientId = "YOUR_CLIENT_ID_HERE"  // Get from SnapTrade dashboard
-    private let consumerKey = "YOUR_CONSUMER_KEY_HERE"  // Keep this SECRET!
+    // Your credentials
+    private let clientId = "STOCK-TRADER-TEST-LUVFK"
+    private let consumerKey = "IN3qbLlN479XDDwNgPUNBjg8AxOJ2bbXOQW6iToHt7QO3klwms"
     
-    @Published var userId: String = ""
-    @Published var userSecret: String = ""
-    @Published var isConnected: Bool = false
+    @Published var userId: String = "StockTracker20047"
+    @Published var userSecret: String = "ae818a6f-c0e6-44ed-894a-c65131b3f3eb"
+    @Published var isConnected: Bool = true
     @Published var connectedAccounts: [BrokerAccount] = []
     @Published var holdings: [BrokerHolding] = []
     @Published var isLoading: Bool = false
@@ -28,41 +29,191 @@ class SnapTradeService: ObservableObject {
     private let baseURL = "https://api.snaptrade.com/api/v1"
     
     private init() {
-        loadStoredCredentials()
+        print("✅ SnapTrade initialized")
+        print("   ClientId: \(clientId)")
+        print("   UserId: \(userId)")
     }
     
-    // MARK: - Storage
     
-    private func loadStoredCredentials() {
-        userId = UserDefaults.standard.string(forKey: "snaptrade_userId") ?? ""
-        userSecret = UserDefaults.standard.string(forKey: "snaptrade_userSecret") ?? ""
-        isConnected = !userId.isEmpty && !userSecret.isEmpty
-    }
     
-    private func saveCredentials() {
-        UserDefaults.standard.set(userId, forKey: "snaptrade_userId")
-        UserDefaults.standard.set(userSecret, forKey: "snaptrade_userSecret")
-    }
     
-    // MARK: - User Registration
+    // MARK: - Core Request Builder
     
-    func registerUser() async throws {
-        // Generate unique user ID (you can use device ID or your own user ID)
-        let newUserId = UUID().uuidString
-        
-        let url = URL(string: "\(baseURL)/snapTrade/registerUser")!
+    func createRequest(
+        path: String,
+        method: String = "GET",
+        queryParams: [String: String] = [:],
+        unsignedQueryParams: Set<String> = [],
+        body: [String: Any]? = nil
+    ) throws -> URLRequest {
+
+        let timestamp = String(Int(Date().timeIntervalSince1970))
+
+        // All params that go into the URL
+        var allParams = queryParams
+        allParams["timestamp"] = timestamp
+
+        // Params that go into the SIGNATURE
+        let signedParams = allParams
+            .filter { !unsignedQueryParams.contains($0.key) }
+            .sorted { $0.key < $1.key }
+
+        let signedQueryString = signedParams
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: "&")
+
+        // Build URL with ALL params
+        let urlParams = allParams.sorted { $0.key < $1.key }
+
+        var components = URLComponents(string: "\(baseURL)\(path)")!
+        components.queryItems = urlParams.map {
+            URLQueryItem(name: $0.key, value: $0.value)
+        }
+
+        guard let url = components.url else {
+            throw SnapTradeError.invalidResponse
+        }
+
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(consumerKey, forHTTPHeaderField: "ConsumerKey")
+
+        if let body = body {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+
+        let signature = try generateSignature(
+            path: path,
+            queryString: signedQueryString, // ✅ ONLY signed params
+            body: body
+        )
+
+        request.setValue(signature, forHTTPHeaderField: "Signature")
+
+        print("📤 URL: \(url.absoluteString)")
+        print("🔐 Signed query: \(signedQueryString)")
+
+        return request
+    }
+
+
+      
+      // MARK: - Signature Generation (FIXED)
+      
+    private func generateSignature(
+        path: String,
+        queryString: String,
+        body: [String: Any]?
+    ) throws -> String {
         
-        let body: [String: String] = ["userId": newUserId]
-        request.httpBody = try JSONEncoder().encode(body)
+        // Build in alphabetical order: content first, then path, then query
+        var sigObject: [String: Any] = [:]
+        
+        // Add content first (null if empty)
+        if let body = body, !body.isEmpty {
+            sigObject["content"] = body
+        } else {
+            sigObject["content"] = NSNull()
+        }
+        
+        sigObject["path"] = path
+        sigObject["query"] = queryString
+        
+        // Serialize with sorted keys (extra safety)
+        let jsonData = try JSONSerialization.data(
+            withJSONObject: sigObject,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        
+        guard var jsonString = String(data: jsonData, encoding: .utf8) else {
+            throw SnapTradeError.invalidResponse
+        }
+        
+        // Remove ALL spaces
+        //jsonString = jsonString.replacingOccurrences(of: " ", with: "")
+        
+        print("🔐 Final Signed JSON:\n\(jsonString)")
+        
+        let keyData = Data(consumerKey.utf8)
+        let messageData = Data(jsonString.utf8)
+        let symmetricKey = SymmetricKey(data: keyData)
+        let signature = HMAC<SHA256>.authenticationCode(for: messageData, using: symmetricKey)
+        
+        return Data(signature).base64EncodedString()
+    }
+  
+
+    // MARK: - API Status Check
+    
+    func checkAPIStatus() async throws -> String {
+        var log = "🔍 Checking API Status...\n\n"
+        
+        let request = try createRequest(
+            path: "/",
+            queryParams: ["clientId": clientId]
+        )
+        
+        log += "📡 Request:\n"
+        log += "URL: \(request.url?.absoluteString ?? "nil")\n"
+        log += "Method: \(request.httpMethod ?? "nil")\n"
+        log += "Signature Header: \(request.value(forHTTPHeaderField: "Signature")?.prefix(20) ?? "nil")...\n\n"
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            log += "❌ Invalid response type\n"
+            throw SnapTradeError.requestFailed
+        }
+        
+        log += "📊 Response Status: \(httpResponse.statusCode)\n"
+        
+        if let responseString = String(data: data, encoding: .utf8) {
+            log += "📦 Response Body:\n\(responseString)\n\n"
+        }
+        
+        if (200...299).contains(httpResponse.statusCode) {
+            log += "✅ API is reachable!\n"
+        } else {
+            log += "❌ API returned error\n"
+            throw SnapTradeError.requestFailed
+        }
+        
+        return log
+    }
+    
+    // MARK: - Register User
+    
+    func registerUser() async throws {
+        print("🔄 Registering new SnapTrade user...")
+        
+        let newUserId = "StockTracker\(Int.random(in: 10000...99999))"
+        
+        let request = try createRequest(
+            path: "/snapTrade/registerUser",
+            method: "POST",
+            queryParams: ["clientId": clientId],
+            body: ["userId": newUserId]
+        )
+        
+        print("📤 Request URL: \(request.url?.absoluteString ?? "nil")")
+        print("📤 User ID: \(newUserId)")
+        print("🔐 Signature: \(request.value(forHTTPHeaderField: "Signature")?.prefix(20) ?? "nil")...")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ Invalid response")
+            throw SnapTradeError.invalidResponse
+        }
+        
+        print("📊 Status: \(httpResponse.statusCode)")
+        
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("📦 Response: \(responseString)")
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            print("❌ Registration failed")
             throw SnapTradeError.registrationFailed
         }
         
@@ -71,103 +222,259 @@ class SnapTradeService: ObservableObject {
         userId = newUserId
         userSecret = result.userSecret
         isConnected = true
-        saveCredentials()
         
-        print("✅ SnapTrade user registered: \(userId)")
+        // Save to UserDefaults
+        UserDefaults.standard.set(userId, forKey: "snaptrade_userId")
+        UserDefaults.standard.set(userSecret, forKey: "snaptrade_userSecret")
+        
+        print("✅ Registration successful!")
+        print("   UserId: \(userId)")
+        print("   UserSecret: \(userSecret.prefix(10))...")
     }
     
-    // MARK: - Connection Portal
+    // MARK: - Get Login URL (for connecting broker)
     
-    func getConnectionPortalURL() -> URL? {
-        guard !userId.isEmpty else { return nil }
+    func getLoginURL(broker: String = "COMMSEC") async throws -> URL {
+        print("🔗 Getting login URL for broker: \(broker)")
         
-        let redirectURI = "stocktracker://snaptrade-callback"
-        
-        var components = URLComponents(string: "https://app.snaptrade.com/api/connect/v1")
-        components?.queryItems = [
-            URLQueryItem(name: "clientId", value: clientId),
-            URLQueryItem(name: "userId", value: userId),
-            URLQueryItem(name: "userSecret", value: userSecret),
-            URLQueryItem(name: "redirectURI", value: redirectURI),
-            URLQueryItem(name: "immediateRedirect", value: "true")
+        // Sort body keys alphabetically
+        let body: [String: Any] = [
+            "broker": broker,
+            "darkMode": true,
+            "immediateRedirect": true,
+            "showCloseButton": true
         ]
         
-        return components?.url
+        let request = try createRequest(
+            path: "/snapTrade/login",
+            method: "POST",
+            queryParams: [
+                "clientId": clientId,
+                "userId": userId,
+                "userSecret": userSecret
+            ],
+            body: body
+        )
+        
+        print("📤 Request URL: \(request.url?.absoluteString ?? "nil")")
+        print("🔐 Signature: \(request.value(forHTTPHeaderField: "Signature")?.prefix(20) ?? "nil")...")
+        
+        if let bodyData = request.httpBody,
+           let bodyString = String(data: bodyData, encoding: .utf8) {
+            print("📦 Request Body: \(bodyString)")
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("❌ Invalid response type")
+                throw SnapTradeError.requestFailed
+            }
+            
+            print("📊 Status: \(httpResponse.statusCode)")
+            
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📦 Response: \(responseString)")
+            }
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                print("❌ Failed to get login URL - Status \(httpResponse.statusCode)")
+                
+                // Try to parse error details
+                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    print("❌ Error details: \(errorJson)")
+                }
+                
+                throw SnapTradeError.requestFailed
+            }
+            
+            let result = try JSONDecoder().decode(LoginResponse.self, from: data)
+            
+            guard let url = URL(string: result.redirectURI) else {
+                print("❌ Invalid redirect URI: \(result.redirectURI)")
+                throw SnapTradeError.invalidResponse
+            }
+            
+            print("✅ Got login URL: \(url.absoluteString)")
+            return url
+            
+        } catch let error as DecodingError {
+            print("❌ JSON Decode Error: \(error)")
+            throw SnapTradeError.invalidResponse
+        } catch let error as URLError {
+            print("❌ Network Error: \(error.localizedDescription)")
+            print("   Code: \(error.code.rawValue)")
+            throw SnapTradeError.requestFailed
+        } catch {
+            print("❌ Unknown Error: \(error)")
+            throw error
+        }
     }
     
     // MARK: - Fetch Connected Accounts
     
     func fetchConnectedAccounts() async throws {
+        print("🔍 Fetching connected accounts...")
+        
         guard !userId.isEmpty, !userSecret.isEmpty else {
+            print("❌ Not authenticated")
             throw SnapTradeError.notAuthenticated
         }
         
         isLoading = true
         defer { isLoading = false }
         
-        let url = URL(string: "\(baseURL)/accounts")!
-        let request = createAuthenticatedRequest(url: url, userId: userId, userSecret: userSecret)
+        let request = try createRequest(
+            path: "/accounts",
+            queryParams: [
+                "userId": userId,
+                "userSecret": userSecret,
+                "clientId": clientId
+            ]
+        )
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        print("📤 Request URL: \(request.url?.absoluteString ?? "nil")")
+        print("📋 Headers:")
+        request.allHTTPHeaderFields?.forEach { print("   \($0.key): \($0.value)") }
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("❌ Invalid response")
+                throw SnapTradeError.requestFailed
+            }
+            
+            print("📊 Status: \(httpResponse.statusCode)")
+            
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📦 Response: \(responseString)")
+            }
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                print("❌ Failed to fetch accounts - Status \(httpResponse.statusCode)")
+                
+                // Try to parse error details
+                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    print("❌ Error details: \(errorJson)")
+                }
+                
+                throw SnapTradeError.requestFailed
+            }
+            
+            let accounts = try JSONDecoder().decode([BrokerAccount].self, from: data)
+            connectedAccounts = accounts
+            
+            print("✅ Found \(accounts.count) accounts")
+            
+        } catch let error as DecodingError {
+            print("❌ JSON Decode Error: \(error)")
+            throw SnapTradeError.invalidResponse
+        } catch let error as URLError {
+            print("❌ Network Error: \(error.localizedDescription)")
+            print("   Code: \(error.code.rawValue)")
             throw SnapTradeError.requestFailed
+        } catch {
+            print("❌ Unknown Error: \(error)")
+            throw error
         }
-        
-        let accounts = try JSONDecoder().decode([BrokerAccount].self, from: data)
-        connectedAccounts = accounts
-        
-        print("✅ Fetched \(accounts.count) connected accounts")
     }
     
     // MARK: - Fetch Holdings
     
     func fetchHoldings() async throws {
+        print("🔍 Fetching holdings...")
+        
         guard !userId.isEmpty, !userSecret.isEmpty else {
+            print("❌ Not authenticated")
             throw SnapTradeError.notAuthenticated
         }
         
         isLoading = true
         defer { isLoading = false }
         
-        let url = URL(string: "\(baseURL)/holdings")!
-        let request = createAuthenticatedRequest(url: url, userId: userId, userSecret: userSecret)
+        let request = try createRequest(
+            path: "/holdings",
+            queryParams: [
+                "userId": userId,
+                "userSecret": userSecret,
+                "clientId": clientId
+            ]
+        )
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        print("📤 Request URL: \(request.url?.absoluteString ?? "nil")")
+        print("📋 Headers:")
+        request.allHTTPHeaderFields?.forEach { print("   \($0.key): \($0.value)") }
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("❌ Invalid response")
+                throw SnapTradeError.requestFailed
+            }
+            
+            print("📊 Status: \(httpResponse.statusCode)")
+            
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📦 Response: \(responseString)")
+            }
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                print("❌ Failed to fetch holdings - Status \(httpResponse.statusCode)")
+                
+                // Try to parse error details
+                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    print("❌ Error details: \(errorJson)")
+                }
+                
+                throw SnapTradeError.requestFailed
+            }
+            
+            let fetchedHoldings = try JSONDecoder().decode([BrokerHolding].self, from: data)
+            holdings = fetchedHoldings
+            
+            print("✅ Found \(fetchedHoldings.count) holdings")
+            
+        } catch let error as DecodingError {
+            print("❌ JSON Decode Error: \(error)")
+            throw SnapTradeError.invalidResponse
+        } catch let error as URLError {
+            print("❌ Network Error: \(error.localizedDescription)")
+            print("   Code: \(error.code.rawValue)")
             throw SnapTradeError.requestFailed
+        } catch {
+            print("❌ Unknown Error: \(error)")
+            throw error
         }
-        
-        let fetchedHoldings = try JSONDecoder().decode([BrokerHolding].self, from: data)
-        holdings = fetchedHoldings
-        
-        print("✅ Fetched \(fetchedHoldings.count) holdings")
     }
     
-    // MARK: - Sync Holdings to Portfolio
+    // MARK: - Sync to Portfolio
     
     func syncToPortfolio(marketData: MarketData) async {
-        guard !holdings.isEmpty else { return }
+        guard !holdings.isEmpty else {
+            print("⚠️ No holdings to sync")
+            return
+        }
+        
+        print("🔄 Syncing \(holdings.count) holdings to portfolio...")
         
         // Clear existing portfolio
         marketData.portfolio.removeAll()
         
         for holding in holdings {
-            // Convert BrokerHolding to Asset
             let asset = Asset(
                 symbol: holding.symbol,
-                name: holding.symbol, // You might want to fetch full name
+                name: holding.symbol,
                 price: holding.price,
                 change: 0,
                 changePercent: 0,
                 volume: 0,
-                kind: .stock
+                kind: .stock,
+                exchange: holding.symbol
             )
             
-            // Add to portfolio
             marketData.addToPortfolio(
                 asset: asset,
                 shares: holding.quantity,
@@ -176,25 +483,6 @@ class SnapTradeService: ObservableObject {
         }
         
         print("✅ Synced \(holdings.count) holdings to portfolio")
-    }
-    
-    // MARK: - Helper Methods
-    
-    private func createAuthenticatedRequest(url: URL, userId: String, userSecret: String) -> URLRequest {
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(consumerKey, forHTTPHeaderField: "ConsumerKey")
-        
-        // Create signature
-        let timestamp = String(Int(Date().timeIntervalSince1970))
-        let signatureContent = timestamp + userId + userSecret
-        let signature = signatureContent.sha256()
-        
-        request.setValue(signature, forHTTPHeaderField: "Signature")
-        request.setValue(timestamp, forHTTPHeaderField: "timestamp")
-        
-        return request
     }
     
     // MARK: - Disconnect
@@ -209,7 +497,7 @@ class SnapTradeService: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "snaptrade_userId")
         UserDefaults.standard.removeObject(forKey: "snaptrade_userSecret")
         
-        print("✅ SnapTrade disconnected")
+        print("✅ Disconnected from SnapTrade")
     }
 }
 
@@ -217,6 +505,10 @@ class SnapTradeService: ObservableObject {
 
 struct RegisterUserResponse: Codable {
     let userSecret: String
+}
+
+struct LoginResponse: Codable {
+    let redirectURI: String
 }
 
 struct BrokerAccount: Codable, Identifiable {
@@ -273,16 +565,6 @@ enum SnapTradeError: LocalizedError {
     }
 }
 
-// MARK: - SHA256 Extension
-
-extension String {
-    func sha256() -> String {
-        let data = Data(self.utf8)
-        let hashed = SHA256.hash(data: data)
-        return hashed.compactMap { String(format: "%02x", $0) }.joined()
-    }
-}
-
 // MARK: - SnapTrade Connection View
 
 struct SnapTradeConnectionView: View {
@@ -291,8 +573,10 @@ struct SnapTradeConnectionView: View {
     @Environment(\.dismiss) var dismiss
     
     @State private var showWebView = false
+    @State private var loginURL: URL?
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var selectedBroker = "COMMSEC"
     
     var body: some View {
         NavigationStack {
@@ -311,10 +595,9 @@ struct SnapTradeConnectionView: View {
                                 .font(.title.bold())
                                 .foregroundColor(.white)
                             
-                            Text("Automatically sync your portfolio from 20+ brokers")
+                            Text("Automatically sync your portfolio")
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
-                                .multilineTextAlignment(.center)
                         }
                         .padding(.top, 40)
                         
@@ -325,20 +608,27 @@ struct SnapTradeConnectionView: View {
                             disconnectedCard
                         }
                         
-                        // Supported Brokers
-                        supportedBrokersSection
+                        // Broker Selection
+                        if snapTrade.isConnected {
+                            brokerSelectionSection
+                        }
                         
                         // Action Buttons
                         if snapTrade.isConnected {
                             connectedActions
                         } else {
                             Button {
-                                Task { await connectBroker() }
+                                Task { await registerAndConnect() }
                             } label: {
                                 HStack {
-                                    Image(systemName: "link")
-                                    Text("Connect Broker Account")
-                                        .font(.headline)
+                                    if snapTrade.isLoading {
+                                        ProgressView()
+                                            .tint(.white)
+                                    } else {
+                                        Image(systemName: "link")
+                                        Text("Connect Broker Account")
+                                            .font(.headline)
+                                    }
                                 }
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
@@ -346,6 +636,7 @@ struct SnapTradeConnectionView: View {
                                 .background(Color.blue)
                                 .cornerRadius(16)
                             }
+                            .disabled(snapTrade.isLoading)
                             .padding(.horizontal)
                         }
                     }
@@ -360,8 +651,20 @@ struct SnapTradeConnectionView: View {
                 }
             }
             .sheet(isPresented: $showWebView) {
-                if let url = snapTrade.getConnectionPortalURL() {
-                    SafariView(url: url)
+                Group {
+                    if let url = loginURL {
+                        SafariView(url: url)
+                            .ignoresSafeArea()
+                    } else {
+                        VStack(spacing: 20) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                            Text("Loading connection portal...")
+                                .foregroundColor(.gray)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black)
+                    }
                 }
             }
             .alert("Error", isPresented: $showError) {
@@ -428,6 +731,38 @@ struct SnapTradeConnectionView: View {
                 }
                 .padding()
             }
+            
+            if !snapTrade.holdings.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Holdings (\(snapTrade.holdings.count))")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    
+                    ForEach(snapTrade.holdings.prefix(5)) { holding in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(holding.symbol)
+                                    .font(.subheadline.bold())
+                                    .foregroundColor(.white)
+                                
+                                Text("\(holding.quantity, specifier: "%.2f") shares")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            Spacer()
+                            
+                            Text(holding.totalValue, format: .currency(code: "USD"))
+                                .font(.subheadline.bold())
+                                .foregroundColor(.green)
+                        }
+                        .padding()
+                        .background(Color.white.opacity(0.05))
+                        .cornerRadius(12)
+                    }
+                }
+                .padding()
+            }
         }
         .padding()
         .background(Color.green.opacity(0.1))
@@ -456,14 +791,39 @@ struct SnapTradeConnectionView: View {
         .padding(.horizontal)
     }
     
+    private var brokerSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Select Broker to Connect")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            Picker("Broker", selection: $selectedBroker) {
+                Text("CommSec").tag("COMMSEC")
+                Text("Alpaca").tag("ALPACA")
+                Text("TD Ameritrade").tag("TDAMERITRADE")
+                Text("E*TRADE").tag("ETRADE")
+                Text("Fidelity").tag("FIDELITY")
+                Text("Charles Schwab").tag("SCHWAB")
+                Text("Interactive Brokers").tag("IBKR")
+                Text("Robinhood").tag("ROBINHOOD")
+                Text("Webull").tag("WEBULL")
+            }
+            .pickerStyle(.menu)
+            .padding()
+            .background(Color.white.opacity(0.05))
+            .cornerRadius(12)
+        }
+        .padding(.horizontal)
+    }
+    
     private var connectedActions: some View {
         VStack(spacing: 12) {
             Button {
-                Task { await syncHoldings() }
+                Task { await connectBroker() }
             } label: {
                 HStack {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                    Text("Sync Holdings")
+                    Image(systemName: "plus.circle")
+                    Text("Connect Another Broker")
                         .font(.headline)
                 }
                 .foregroundColor(.white)
@@ -472,6 +832,27 @@ struct SnapTradeConnectionView: View {
                 .background(Color.blue)
                 .cornerRadius(16)
             }
+            
+            Button {
+                Task { await syncHoldings() }
+            } label: {
+                HStack {
+                    if snapTrade.isLoading {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Sync Holdings")
+                            .font(.headline)
+                    }
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+                .background(Color.green)
+                .cornerRadius(16)
+            }
+            .disabled(snapTrade.isLoading)
             
             Button {
                 snapTrade.disconnect()
@@ -488,58 +869,136 @@ struct SnapTradeConnectionView: View {
         .padding(.horizontal)
     }
     
-    private var supportedBrokersSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Supported Brokers")
-                .font(.headline)
-                .foregroundColor(.white)
+    private func registerAndConnect() async {
+        do {
+            print("\n🚀 === REGISTER AND CONNECT START ===")
             
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(supportedBrokers, id: \.self) { broker in
-                    Text(broker)
-                        .font(.caption)
-                        .foregroundColor(.white)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 12)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.white.opacity(0.05))
-                        .cornerRadius(8)
-                }
+            // If already have credentials, skip registration
+            if snapTrade.userId.isEmpty || snapTrade.userSecret.isEmpty {
+                print("📝 No credentials found, registering new user...")
+                try await snapTrade.registerUser()
+                print("✅ User registered!")
+            } else {
+                print("✅ Using existing credentials:")
+                print("   UserId: \(snapTrade.userId)")
+                print("   UserSecret: \(snapTrade.userSecret.prefix(10))...")
             }
+            
+            // Get login URL
+            print("\n🔗 Getting broker connection URL...")
+            let url = try await snapTrade.getLoginURL(broker: selectedBroker)
+            print("✅ Got URL: \(url.absoluteString)")
+            
+            // Store the URL and show Safari
+            loginURL = url
+            showWebView = true
+            
+            print("🌐 Opening SnapTrade connection portal in Safari...")
+            print("✅ === REGISTER AND CONNECT COMPLETE ===\n")
+            
+        } catch {
+            print("\n❌ === REGISTER AND CONNECT FAILED ===")
+            print("Error type: \(type(of: error))")
+            print("Error: \(error)")
+            print("Description: \(error.localizedDescription)")
+            
+            if let snapError = error as? SnapTradeError {
+                errorMessage = snapError.errorDescription ?? "Unknown error"
+            } else {
+                errorMessage = error.localizedDescription
+            }
+            
+            showError = true
         }
-        .padding(.horizontal)
     }
-    
-    private let supportedBrokers = [
-        "TD Ameritrade", "E*TRADE", "Fidelity", "Charles Schwab",
-        "Robinhood", "Interactive Brokers", "Webull", "Alpaca"
-    ]
     
     private func connectBroker() async {
         do {
-            if snapTrade.userId.isEmpty {
-                try await snapTrade.registerUser()
-            }
+            print("\n🔗 === CONNECT BROKER START ===")
+            print("Selected broker: \(selectedBroker)")
+            print("UserId: \(snapTrade.userId)")
+            
+            let url = try await snapTrade.getLoginURL(broker: selectedBroker)
+            print("✅ Got URL: \(url.absoluteString)")
+            
+            // Store the URL and show Safari
+            loginURL = url
             showWebView = true
+            
+            print("🌐 Opening Safari sheet...")
+            print("✅ === CONNECT BROKER COMPLETE ===\n")
+            
         } catch {
-            errorMessage = error.localizedDescription
+            print("\n❌ === CONNECT BROKER FAILED ===")
+            print("Error: \(error)")
+            
+            if let snapError = error as? SnapTradeError {
+                errorMessage = snapError.errorDescription ?? "Unknown error"
+            } else {
+                errorMessage = error.localizedDescription
+            }
+            
             showError = true
         }
     }
     
     private func syncHoldings() async {
         do {
+            print("\n🔄 === SYNC HOLDINGS START ===")
+            print("UserId: \(snapTrade.userId)")
+            print("UserSecret: \(snapTrade.userSecret.prefix(10))...")
+            
+            // Step 1: Fetch accounts first
+            print("\n📊 Step 1: Fetching connected accounts...")
             try await snapTrade.fetchConnectedAccounts()
+            print("✅ Accounts fetched: \(snapTrade.connectedAccounts.count)")
+            
+            // Check if we have any accounts
+            if snapTrade.connectedAccounts.isEmpty {
+                print("⚠️ No connected accounts found!")
+                errorMessage = "No broker accounts connected. Please connect a broker first."
+                showError = true
+                return
+            }
+            
+            // Step 2: Fetch holdings
+            print("\n📈 Step 2: Fetching holdings...")
             try await snapTrade.fetchHoldings()
+            print("✅ Holdings fetched: \(snapTrade.holdings.count)")
+            
+            // Check if we have any holdings
+            if snapTrade.holdings.isEmpty {
+                print("⚠️ No holdings found!")
+                errorMessage = "No holdings found in your connected accounts."
+                showError = true
+                return
+            }
+            
+            // Step 3: Sync to portfolio
+            print("\n💾 Step 3: Syncing to portfolio...")
             await snapTrade.syncToPortfolio(marketData: marketData)
+            
+            print("\n✅ === SYNC COMPLETE ===")
+            print("Synced \(snapTrade.holdings.count) holdings to portfolio\n")
+            
         } catch {
-            errorMessage = error.localizedDescription
+            print("\n❌ === SYNC FAILED ===")
+            print("Error type: \(type(of: error))")
+            print("Error: \(error)")
+            print("Description: \(error.localizedDescription)")
+            
+            if let snapError = error as? SnapTradeError {
+                errorMessage = snapError.errorDescription ?? "Unknown error"
+            } else {
+                errorMessage = "Failed to sync holdings: \(error.localizedDescription)"
+            }
+            
             showError = true
         }
     }
 }
 
-// MARK: - Safari View (for connection portal)
+// MARK: - Safari View
 
 import SafariServices
 
@@ -547,12 +1006,23 @@ struct SafariView: UIViewControllerRepresentable {
     let url: URL
     
     func makeUIViewController(context: Context) -> SFSafariViewController {
+        print("🌐 Creating SFSafariViewController with URL: \(url.absoluteString)")
+        
         let config = SFSafariViewController.Configuration()
         config.entersReaderIfAvailable = false
-        return SFSafariViewController(url: url, configuration: config)
+        config.barCollapsingEnabled = true
+        
+        let safari = SFSafariViewController(url: url, configuration: config)
+        safari.preferredControlTintColor = .systemBlue
+        safari.preferredBarTintColor = .systemBackground
+        safari.dismissButtonStyle = .close
+        
+        return safari
     }
     
-    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {
+        print("🔄 Updating SFSafariViewController")
+    }
 }
 
 #Preview {

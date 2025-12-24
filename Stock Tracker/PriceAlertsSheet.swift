@@ -2,6 +2,14 @@
 //  PriceAlertsSheet.swift
 //  Stock Tracker
 //
+//  Created by Ihtisham Mazid on 18/12/2025.
+//
+
+
+//
+//  PriceAlertsSheet.swift
+//  Stock Tracker
+//
 
 import SwiftUI
 
@@ -61,41 +69,41 @@ struct PriceAlertsSheet: View {
 }
 
 // Reuse your existing AlertRow from PriceAlert.swift
-struct AlertRow: View {
-    @EnvironmentObject var alertManager: PriceAlertManager
-    let alert: PriceAlert
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(alert.isActive ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
-                    .frame(width: 40, height: 40)
-                Text(String(alert.symbol.prefix(1)))
-                    .font(.headline)
-                    .foregroundColor(alert.isActive ? .blue : .gray)
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(alert.symbol)
-                    .font(.headline)
-                    .foregroundColor(.white)
-                Text("\(alert.condition.symbol) $\(alert.targetPrice, specifier: "%.2f")")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-            
-            Spacer()
-            
-            Toggle("", isOn: Binding(
-                get: { alert.isActive },
-                set: { _ in alertManager.toggleAlert(alert) }
-            ))
-            .labelsHidden()
-        }
-        .padding(.vertical, 8)
-    }
-}
+//struct AlertRow: View {
+//    @EnvironmentObject var alertManager: PriceAlertManager
+//    let alert: PriceAlert
+//    
+//    var body: some View {
+//        HStack(spacing: 12) {
+//            ZStack {
+//                Circle()
+//                    .fill(alert.isActive ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
+//                    .frame(width: 40, height: 40)
+//                Text(String(alert.symbol.prefix(1)))
+//                    .font(.headline)
+//                    .foregroundColor(alert.isActive ? .blue : .gray)
+//            }
+//            
+//            VStack(alignment: .leading, spacing: 4) {
+//                Text(alert.symbol)
+//                    .font(.headline)
+//                    .foregroundColor(.white)
+//                Text("\(alert.condition.symbol) $\(alert.targetPrice, specifier: "%.2f")")
+//                    .font(.caption)
+//                    .foregroundColor(.gray)
+//            }
+//            
+//            Spacer()
+//            
+//            Toggle("", isOn: Binding(
+//                get: { alert.isActive },
+//                set: { _ in alertManager.toggleAlert(alert) }
+//            ))
+//            .labelsHidden()
+//        }
+//        .padding(.vertical, 8)
+//    }
+//}
 
 #Preview {
     PriceAlertsSheet()

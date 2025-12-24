@@ -1,455 +1,497 @@
+//
+//  PortfolioView.swift
+//  Stock Tracker
+//
+
 import SwiftUI
 import Charts
 
 struct PortfolioView: View {
     @EnvironmentObject var marketData: MarketData
-    @State private var selectedRange: TimeRange = .oneMonth
-    @State private var selectedAsset: Asset?
-    @State private var filter: AssetKind = .stock
-    @State private var searchText: String = ""
+    
+    @State private var selectedFilter: AssetKind = .stock
+    @State private var sortBy: SortOption = .valueDescending
+    @State private var selectedSector: PortfolioHolding?
+    @State private var showSnapTrade = false
+    @State private var scrollOffset: CGFloat = 0
+    @State private var selectedHolding: PortfolioHolding?  // For detail view
+    
+    enum SortOption: String, CaseIterable {
+        case valueDescending = "Highest Value"
+        case valueAscending = "Lowest Value"
+        case gainDescending = "Best Performers"
+        case nameAZ = "Name A-Z"
+    }
     
     private var filteredHoldings: [PortfolioHolding] {
-        var holdings = marketData.portfolio.filter { $0.asset.kind == filter }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !q.isEmpty {
-            let lower = q.lowercased()
-            holdings = holdings.filter {
-                $0.asset.symbol.lowercased().contains(lower) ||
-                $0.asset.name.lowercased().contains(lower)
+        marketData.portfolio
+            .filter { $0.asset.kind == selectedFilter }
+            .sorted { first, second in
+                switch sortBy {
+                case .valueDescending: return first.currentValue > second.currentValue
+                case .valueAscending:  return first.currentValue < second.currentValue
+                case .gainDescending:  return first.profitLossPercent > second.profitLossPercent
+                case .nameAZ:          return first.asset.name < second.asset.name
+                }
             }
-        }
-        return holdings
     }
-
+    
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                filterHeader
-                headerCard
-                performanceSection
-                allocationSection
-
-                HStack {
-                    Text("Holdings")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    Spacer()
-                    Text("\(filteredHoldings.count) positions")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+        NavigationStack {
+            List {
+                // MARK: - Header
+                Section {
+                    headerSection
                 }
-
-                if filteredHoldings.isEmpty {
-                    emptyState
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+                
+                // MARK: - Performance Chart
+                Section {
+                    InteractivePerformanceChart()
+                        .frame(height: 300)
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+                
+                // MARK: - Allocation Pie Chart
+                if !marketData.portfolio.isEmpty {
+                    Section {
+                        PremiumAllocationPieChart(selectedSector: $selectedSector)
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                }
+                
+                // MARK: - Controls
+                Section {
+                    controlsSection
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+                
+                // MARK: - Holdings
+                if marketData.portfolio.isEmpty {
+                    Section {
+                        emptyPortfolioState
+                    }
+                    .listRowBackground(Color.clear)
                 } else {
-                    holdingsList
-                }
-            }
-            .padding()
-        }
-        .sheet(item: $selectedAsset) { asset in
-            AssetDetailView(asset: asset)
-        }
-    }
-    
-    // MARK: - Filter Header
-    
-    private var filterHeader: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Picker("Type", selection: $filter) {
-                    Text("Stocks").tag(AssetKind.stock)
-                    Text("Crypto").tag(AssetKind.crypto)
-                }
-                .pickerStyle(.segmented)
-            }
-            
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.gray)
-                TextField("Search holdings…", text: $searchText)
-                    .foregroundColor(.white)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.gray)
+                    Section(header: Text("Holdings")) {
+                        ForEach(filteredHoldings) { holding in
+                            PortfolioHoldingCard(holding: holding)
+                                .onTapGesture {
+                                    selectedHolding = holding
+                                }
+                        }
+                        .onDelete { indexSet in
+                            let holdingsToRemove = indexSet.map { filteredHoldings[$0] }
+                            holdingsToRemove.forEach { marketData.removeFromPortfolio($0) }
+                        }
                     }
                 }
             }
-            .padding(10)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.ultraThinMaterial)
-                    
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.1),
-                                    Color.white.opacity(0.05)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Portfolio")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Connect Broker") {
+                        showSnapTrade = true
+                    }
+                    .font(.subheadline.bold())
+                    .foregroundColor(.blue)
                 }
-            )
+            }
+            .sheet(isPresented: $showSnapTrade) {
+                SnapTradeConnectionView()
+            }
+            .sheet(item: $selectedHolding) { holding in
+                HoldingDetailView(holding: holding)
+            }
         }
     }
-
-    // MARK: - Header
-
-    private var headerCard: some View {
+    
+    // MARK: - Enhanced Header
+    private var headerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Portfolio Value")
-                .font(.caption)
-                .foregroundColor(.gray)
-
-            Text("$\(marketData.totalPortfolioValue, specifier: "%.2f")")
-                .font(.system(size: 32, weight: .bold))
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.white.opacity(0.8))
+            
+            Text(marketData.totalPortfolioValue.formattedPrice(in: marketData.preferredCurrency))
+                .font(.system(size: 42, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
-
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Today")
-                        .font(.caption2)
-                        .foregroundColor(.gray)
-
-                    HStack(spacing: 4) {
-                        Image(systemName: marketData.dailyProfitLoss >= 0 ? "arrow.up.right" : "arrow.down.right")
-                            .font(.caption2)
-                        Text("\(marketData.dailyProfitLoss >= 0 ? "+" : "")$\(abs(marketData.dailyProfitLoss), specifier: "%.2f")")
-                            .font(.caption.bold())
-                        Text("(\(marketData.dailyProfitLoss >= 0 ? "+" : "")\(marketData.dailyProfitLossPercent, specifier: "%.2f")%)")
-                            .font(.caption2)
-                    }
-                    .foregroundColor(marketData.dailyProfitLoss >= 0 ? .green : .red)
-                }
-
-                Divider()
-                    .frame(height: 30)
-                    .background(Color.white.opacity(0.2))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Total P/L")
-                        .font(.caption2)
-                        .foregroundColor(.gray)
-
-                    HStack(spacing: 4) {
-                        Image(systemName: marketData.totalProfitLoss >= 0 ? "arrow.up.right" : "arrow.down.right")
-                            .font(.caption2)
-                        Text("\(marketData.totalProfitLoss >= 0 ? "+" : "")$\(abs(marketData.totalProfitLoss), specifier: "%.2f")")
-                            .font(.caption.bold())
-                        Text("(\(marketData.totalProfitLoss >= 0 ? "+" : "")\(marketData.totalProfitLossPercent, specifier: "%.2f")%)")
-                            .font(.caption2)
-                    }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            
+            HStack {
+                Image(systemName: marketData.totalProfitLoss >= 0 ? "triangle.fill" : "triangle.fill")
                     .foregroundColor(marketData.totalProfitLoss >= 0 ? .green : .red)
+                    .rotationEffect(.degrees(marketData.totalProfitLoss >= 0 ? 0 : 180))
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(marketData.totalProfitLoss.formattedPrice(in: marketData.preferredCurrency))
+                        .font(.title2.bold())
+                        .foregroundColor(marketData.totalProfitLoss >= 0 ? .green : .red)
+                    
+                    Text("\(marketData.totalProfitLossPercent >= 0 ? "+" : "")\(String(format: "%.2f", marketData.totalProfitLossPercent))% today")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
                 }
+                
+                Spacer()
             }
+            .padding(.top, 8)
         }
-        .padding()
+        .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color.white.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
                 )
         )
     }
+    
 
-    // MARK: - Performance
-
-    private var performanceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Performance")
-                    .font(.headline)
-                    .foregroundColor(.white)
-
-                Spacer()
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(TimeRange.allCases, id: \.self) { range in
-                            Button {
-                                withAnimation {
-                                    selectedRange = range
+    // MARK: - Controls
+        private var controlsSection: some View {
+            VStack(spacing: 16) {
+                Picker("Asset Type", selection: $selectedFilter) {
+                    ForEach(AssetKind.allCases, id: \.self) { kind in
+                        Text(kind.rawValue).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+                
+                HStack {
+                    Image(systemName: "arrow.up.arrow.down")
+                    Text("Sort by")
+                        .font(.subheadline)
+                    
+                    Spacer()
+                    
+                    Menu {
+                        ForEach(SortOption.allCases, id: \.self) { option in
+                            Button(option.rawValue) {
+                                withAnimation(.easeInOut) {
+                                    sortBy = option
                                 }
-                            } label: {
-                                Text(range.rawValue)
-                                    .font(.caption.bold())
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(selectedRange == range
-                                                  ? Color.white.opacity(0.2)
-                                                  : Color.white.opacity(0.06))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 10)
-                                                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                                            )
-                                    )
-                                    .foregroundColor(.white)
                             }
                         }
-                    }
-                }
-            }
-
-            if marketData.portfolioHistory.isEmpty {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white.opacity(0.05))
-                    .frame(height: 180)
-            } else {
-                let history = filteredHistory(for: selectedRange)
-
-                Chart(history) { snapshot in
-                    LineMark(
-                        x: .value("Date", snapshot.date),
-                        y: .value("Value", snapshot.totalValue)
-                    )
-                    .lineStyle(.init(lineWidth: 2.5))
-                    .foregroundStyle(Color.green)
-
-                    AreaMark(
-                        x: .value("Date", snapshot.date),
-                        y: .value("Value", snapshot.totalValue)
-                    )
-                    .foregroundStyle(Color.green.opacity(0.3))
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis {
-                    AxisMarks(position: .trailing) { _ in
-                        AxisValueLabel()
-                            .foregroundStyle(.gray)
-                            .font(.caption2)
-                    }
-                }
-                .frame(height: 180)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.white.opacity(0.05))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                        )
-                )
-            }
-        }
-    }
-
-    private func filteredHistory(for range: TimeRange) -> [PortfolioSnapshot] {
-        let history = marketData.portfolioHistory
-        guard let lastDate = history.last?.date else { return history }
-        let calendar = Calendar.current
-
-        let fromDate: Date
-        switch range {
-        case .oneDay:
-            fromDate = calendar.date(byAdding: .day, value: -1, to: lastDate) ?? lastDate
-        case .oneWeek:
-            fromDate = calendar.date(byAdding: .day, value: -7, to: lastDate) ?? lastDate
-        case .oneMonth:
-            fromDate = calendar.date(byAdding: .month, value: -1, to: lastDate) ?? lastDate
-        case .threeMonths:
-            fromDate = calendar.date(byAdding: .month, value: -3, to: lastDate) ?? lastDate
-        case .sixMonths:
-            fromDate = calendar.date(byAdding: .month, value: -6, to: lastDate) ?? lastDate
-        case .ytd:
-            let comps = calendar.dateComponents([.year], from: lastDate)
-            fromDate = calendar.date(from: comps) ?? lastDate
-        case .oneYear:
-            fromDate = calendar.date(byAdding: .year, value: -1, to: lastDate) ?? lastDate
-        case .twoYears:
-            fromDate = calendar.date(byAdding: .year, value: -2, to: lastDate) ?? lastDate
-        case .fiveYears:
-            fromDate = calendar.date(byAdding: .year, value: -5, to: lastDate) ?? lastDate
-        case .tenYears:
-            fromDate = calendar.date(byAdding: .year, value: -10, to: lastDate) ?? lastDate
-        case .all:
-            return history
-        }
-
-        return history.filter { $0.date >= fromDate }
-    }
-
-    // MARK: - Allocation
-
-    private var allocationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Allocation")
-                .font(.headline)
-                .foregroundColor(.white)
-
-            if marketData.portfolio.isEmpty {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white.opacity(0.05))
-                    .frame(height: 180)
-            } else {
-                HStack(spacing: 18) {
-                    Chart(marketData.portfolio) { holding in
-                        SectorMark(
-                            angle: .value("Value", holding.currentValue),
-                            innerRadius: .ratio(0.6),
-                            angularInset: 2
-                        )
-                        .cornerRadius(6)
-                        .foregroundStyle(by: .value("Symbol", holding.asset.symbol))
-                    }
-                    .frame(width: 140, height: 140)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(marketData.portfolio.prefix(5)) { holding in
-                            HStack {
-                                Circle()
-                                    .fill(colorForSymbol(holding.asset.symbol))
-                                    .frame(width: 8, height: 8)
-                                Text(holding.asset.symbol)
-                                    .font(.caption.bold())
-                                    .foregroundColor(.white)
-                                Spacer()
-                                let total = marketData.totalPortfolioValue
-                                let pct = total > 0 ? (holding.currentValue / total) * 100 : 0
-                                Text("\(pct, specifier: "%.1f")%")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                    }
-                }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.white.opacity(0.05))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                        )
-                )
-            }
-        }
-    }
-
-    private func colorForSymbol(_ symbol: String) -> Color {
-        let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .mint, .cyan, .indigo]
-        let index = abs(symbol.hashValue) % palette.count
-        return palette[index]
-    }
-
-    // MARK: - Holdings with swipe actions (using List)
-
-    private var holdingsList: some View {
-        // Wrap in a container to maintain layout
-        VStack(spacing: 0) {
-            ForEach(filteredHoldings) { holding in
-                Button {
-                    selectedAsset = holding.asset
-                } label: {
-                    HoldingRow(holding: holding)
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button(role: .destructive) {
-                        withAnimation {
-                            marketData.removeFromPortfolio(holding)
-                        }
                     } label: {
-                        Label("Remove from Portfolio", systemImage: "trash")
+                        Text(sortBy.rawValue)
+                            .font(.subheadline.bold())
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.white.opacity(0.12))
+                            .cornerRadius(12)
                     }
                 }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .destructive) {
-                        withAnimation {
-                            marketData.removeFromPortfolio(holding)
-                        }
-                    } label: {
-                        Label("Remove", systemImage: "trash")
-                    }
-                }
-                .padding(.bottom, 12)
             }
         }
+    
+    private func greeting() -> String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 0..<12:  return "Good Morning"
+        case 12..<17: return "Good Afternoon"
+        default:      return "Good Evening"
+        }
     }
-
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: filter == .stock ? "chart.bar.fill" : "bitcoinsign.circle.fill")
-                .font(.system(size: 60))
-                .foregroundColor(.gray.opacity(0.5))
-            Text("No \(filter == .stock ? "stock" : "crypto") holdings")
-                .font(.headline)
-                .foregroundColor(.white)
-            Text("Add \(filter == .stock ? "stock" : "crypto") positions from the asset detail screen.")
+    
+    // MARK: - Empty State (much better UX)
+        private var emptyPortfolioState: some View {
+            VStack(spacing: 28) {
+                Image(systemName: "briefcase")
+                    .font(.system(size: 80))
+                    .foregroundColor(.white.opacity(0.3))
+                
+                VStack(spacing: 12) {
+                    Text("Your portfolio is empty")
+                        .font(.title2.bold())
+                        .foregroundColor(.white)
+                    
+                    Text("Start tracking your investments by adding positions from your watchlist or connecting a brokerage.")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
+                
+                NavigationLink(destination: AppleStocksWatchlistView()) {
+                    Label("Browse Assets", systemImage: "magnifyingglass")
+                        .font(.headline)
+                        .foregroundColor(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.white)
+                        .cornerRadius(16)
+                        .padding(.horizontal, 50)
+                }
+                
+                Button("Connect Brokerage") {
+                    showSnapTrade = true
+                }
                 .font(.subheadline)
-                .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
+                .foregroundColor(.blue)
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
+    }
+
+// MARK: Interactive Chart — NOW COMPILER-FRIENDLY
+struct InteractivePerformanceChart: View {
+    @EnvironmentObject var marketData: MarketData
+    @State private var selectedSnapshot: PortfolioSnapshot?
+    
+    private var lineColor: Color { marketData.totalProfitLoss >= 0 ? .green : .red }
+    
+    var body: some View {
+        ZStack {
+            // Background card
+            RoundedRectangle(cornerRadius: 20)
+                .fill(LinearGradient(colors: [.white.opacity(0.08), .white.opacity(0.02)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.15), lineWidth: 1))
+            
+            // Chart content — broken into smaller parts to help compiler
+            chartContent
+                .padding(20)
+        }
+        .frame(height: 280)
+    }
+    
+    private var chartContent: some View {
+        Chart {
+            // Main line and area
+            ForEach(marketData.portfolioHistory) { snapshot in
+                LineMark(
+                    x: .value("Date", snapshot.date),
+                    y: .value("Value", snapshot.totalValue)
+                )
+                .foregroundStyle(lineColor)
+                .lineStyle(StrokeStyle(lineWidth: 3.5, lineCap: .round))
+                
+                AreaMark(
+                    x: .value("Date", snapshot.date),
+                    y: .value("Value", snapshot.totalValue)
+                )
+                .foregroundStyle(
+                    LinearGradient(colors: [lineColor.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom)
+                )
+            }
+            
+            // Selected point marker
+            if let selected = selectedSnapshot {
+                RuleMark(x: .value("Selected Date", selected.date))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [8]))
+                
+                PointMark(
+                    x: .value("Selected Date", selected.date),
+                    y: .value("Value", selected.totalValue)
+                )
+                .symbol(Circle())
+                .symbolSize(100)
+                .foregroundStyle(.white)
+               // .overlay(Circle().stroke(lineColor, lineWidth: 3))
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { value in
+                AxisGridLine().foregroundStyle(.white.opacity(0.1))
+                AxisValueLabel {
+                    if let val = value.as(Double.self) {
+                        Text("$\(Int(val/1000))k")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                }
+            }
+        }
+        .chartXAxis {
+            AxisMarks { _ in AxisGridLine().foregroundStyle(.white.opacity(0.1)) }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { _ in
+                Rectangle().fill(.clear)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let x = value.location.x
+                                guard let date: Date = proxy.value(atX: x) else { return }
+                                guard let closest = marketData.portfolioHistory.min(by: {
+                                    abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+                                }) else { return }
+                                
+                                if selectedSnapshot?.id != closest.id {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                }
+                                selectedSnapshot = closest
+                            }
+                            .onEnded { _ in selectedSnapshot = nil }
+                    )
+            }
+        }
+        
+        // Tooltip
+        .overlay(alignment: .top) {
+            if let snapshot = selectedSnapshot {
+                VStack(spacing: 4) {
+                    Text(snapshot.date, format: .dateTime.month(.abbreviated).day())
+                        .font(.caption.bold())
+                    Text(snapshot.totalValue, format: .currency(code: "USD"))
+                        .font(.title3.bold())
+                        .foregroundColor(.white)
+                }
+                .padding(14)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                .offset(y: -110)
+            }
+        }
     }
 }
 
-// MARK: - Holding row with improved glass effect
-
-struct HoldingRow: View {
-    let holding: PortfolioHolding
-
+// MARK: Pie Chart — unchanged & perfect
+struct PremiumAllocationPieChart: View {
+    @EnvironmentObject var marketData: MarketData
+    @Binding var selectedSector: PortfolioHolding?
+    
+    private let colors: [Color] = [.blue, .purple, .pink, .orange, .green, .cyan, .mint, .yellow]
+    
+    private func color(for holding: PortfolioHolding) -> Color {
+        let index = marketData.portfolio.firstIndex(where: { $0.id == holding.id }) ?? 0
+        return colors[index % colors.count]
+    }
+    
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: 16) {
+            Text("Allocation")
+                .font(.title3.bold())
+                .foregroundColor(.white)
+            
+            HStack(spacing: 24) {
+                Chart(marketData.portfolio) { holding in
+                    SectorMark(
+                        angle: .value("Value", holding.currentValue),
+                        innerRadius: .ratio(0.6),
+                        outerRadius: selectedSector?.id == holding.id ? .ratio(1.04) : .ratio(0.96),
+                        angularInset: 2
+                    )
+                    .foregroundStyle(color(for: holding))
+                }
+                .frame(width: 170, height: 170)
+                .chartLegend(.hidden)
+                
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(marketData.portfolio.sorted(by: { $0.currentValue > $1.currentValue })) { holding in
+                        HStack {
+                            Circle().fill(color(for: holding)).frame(width: 10)
+                            Text(holding.asset.symbol)
+                                .font(.caption)
+                            Spacer()
+                            Text("\((holding.currentValue / marketData.totalPortfolioValue * 100), specifier: "%.1f")%")
+                                .font(.caption.bold())
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 10)
+                        .background(selectedSector?.id == holding.id ? color(for: holding).opacity(0.25) : Color.white.opacity(0.05))
+                        .cornerRadius(10)
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                selectedSector = selectedSector?.id == holding.id ? nil : holding
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .background(Color.white.opacity(0.04))
+            .cornerRadius(18)
+        }
+        .padding(.horizontal, 12)
+    }
+}
+
+// MARK: Holding Card — unchanged
+// MARK: - Portfolio Holding Card (Fixed)
+struct PortfolioHoldingCard: View {
+    let holding: PortfolioHolding
+    
+    @EnvironmentObject var marketData: MarketData  // Needed for currency conversion
+    
+    var body: some View {
+        HStack(spacing: 14) {
+            Circle()
+                .fill(Color.blue.opacity(0.2))
+                .frame(width: 44, height: 44)
+                .overlay(
+                    Text(String(holding.asset.symbol.prefix(1)))
+                        .font(.title3.bold())
+                        .foregroundColor(.blue)
+                )
+            
+            VStack(alignment: .leading, spacing: 3) {
                 Text(holding.asset.symbol)
                     .font(.headline)
                     .foregroundColor(.white)
                 Text(holding.asset.name)
                     .font(.caption)
                     .foregroundColor(.gray)
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("$\(holding.currentValue, specifier: "%.2f")")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                Text("$\(holding.asset.price, specifier: "%.2f")")
+                Text("\(holding.shares, specifier: "%.2f") shares")
                     .font(.caption2)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
+                HStack(spacing: 2) {
+                    Text("Avg: \(holding.avgCost.formattedPrice(in: marketData.preferredCurrency, usdToAudRate: marketData.usdToAudRate))")
+                }
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.7))
             }
-
-            VStack(alignment: .trailing, spacing: 4) {
-                let pl = holding.profitLoss
-                let pct = holding.profitLossPercent
-
-                HStack(spacing: 4) {
-                    Image(systemName: pl >= 0 ? "arrow.up.right" : "arrow.down.right")
-                        .font(.caption2)
-                    Text("\(pl >= 0 ? "+" : "")$\(abs(pl), specifier: "%.2f")")
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 3) {
+                // ← FIXED: Use holding.currentValue, not asset.price
+                Text(holding.currentValue.formattedPrice(
+                    in: marketData.preferredCurrency,
+                    usdToAudRate: marketData.usdToAudRate
+                ))
+                .font(.title3.bold())
+                .foregroundColor(.white)
+                
+                HStack(spacing: 5) {
+                    Image(systemName: holding.profitLoss >= 0 ? "arrow.up.right" : "arrow.down.right")
+                        .font(.caption.bold())
+                    
+                    Text(holding.profitLoss.formattedPrice(
+                        in: marketData.preferredCurrency,
+                        usdToAudRate: marketData.usdToAudRate
+                    ))
+                    .font(.caption.bold())
+                    
+                    Text("(\(holding.profitLossPercent >= 0 ? "+" : "")\(String(format: "%.1f", holding.profitLossPercent))%)")
                         .font(.caption.bold())
                 }
-                Text("(\(pct >= 0 ? "+" : "")\(pct, specifier: "%.2f")%)")
-                    .font(.caption2)
-                .foregroundColor(pl >= 0 ? .green : .red)
+                .foregroundColor(holding.profitLoss >= 0 ? .green : .red)
             }
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                )
-        )
+        .padding(18)
+        .background(Color.white.opacity(0.08))
+        .cornerRadius(18)
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.12), lineWidth: 1))
     }
+}
+
+
+
+#Preview {
+    PortfolioView()
+        .environmentObject(MarketData())
+        .preferredColorScheme(.dark)
 }

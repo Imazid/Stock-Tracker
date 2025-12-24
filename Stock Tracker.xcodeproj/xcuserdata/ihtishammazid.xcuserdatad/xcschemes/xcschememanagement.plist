@@ -4,10 +4,43 @@
 <dict>
 	<key>SchemeUserState</key>
 	<dict>
-		<key>Stock Tracker.xcscheme_^#shared#^_</key>
+		<key>Stock Tracker Notification.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
 			<integer>0</integer>
+		</dict>
+		<key>Stock Tracker Widget.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>2</integer>
+		</dict>
+		<key>Stock Tracker WidgetExtension.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>1</integer>
+		</dict>
+		<key>Stock Tracker.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>2</integer>
+		</dict>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>B3B9AE242ED9CE2D005F35F7</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>B3BEC37E2EEA664D0063B198</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>B3BEC3D52EEAE6F30063B198</key>
+		<dict>
+			<key>primary</key>
+			<true/>
 		</dict>
 	</dict>
 </dict>

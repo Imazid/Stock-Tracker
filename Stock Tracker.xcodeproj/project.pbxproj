@@ -6,14 +6,120 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B3BEC3862EEA664D0063B198 /* Stock Tracker Notification.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B3BEC37F2EEA664D0063B198 /* Stock Tracker Notification.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B3BEC3D72EEAE6F30063B198 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3BEC31A2EEA63500063B198 /* WidgetKit.framework */; };
+		B3BEC3D82EEAE6F30063B198 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3BEC31C2EEA63510063B198 /* SwiftUI.framework */; };
+		B3BEC3E92EEAE6F50063B198 /* Stock Tracker WidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B3BEC3D62EEAE6F30063B198 /* Stock Tracker WidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B3BEC3842EEA664D0063B198 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B3B9AE1D2ED9CE2D005F35F7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B3BEC37E2EEA664D0063B198;
+			remoteInfo = "Stock Tracker Notification";
+		};
+		B3BEC3E72EEAE6F50063B198 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B3B9AE1D2ED9CE2D005F35F7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B3BEC3D52EEAE6F30063B198;
+			remoteInfo = "Stock Tracker WidgetExtension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B3BEC3332EEA63540063B198 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B3BEC3E92EEAE6F50063B198 /* Stock Tracker WidgetExtension.appex in Embed Foundation Extensions */,
+				B3BEC3862EEA664D0063B198 /* Stock Tracker Notification.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		B3B9AE252ED9CE2D005F35F7 /* Stock Tracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Stock Tracker.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3BEC31A2EEA63500063B198 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		B3BEC31C2EEA63510063B198 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		B3BEC37F2EEA664D0063B198 /* Stock Tracker Notification.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Stock Tracker Notification.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3BEC3D62EEAE6F30063B198 /* Stock Tracker WidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Stock Tracker WidgetExtension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B3BEC3872EEA664D0063B198 /* Exceptions for "Stock Tracker Notification" folder in "Stock Tracker Notification" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B3BEC37E2EEA664D0063B198 /* Stock Tracker Notification */;
+		};
+		B3BEC3EA2EEAE6F50063B198 /* Exceptions for "Stock Tracker Widget" folder in "Stock Tracker WidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				PortfolioSummaryEntry.swift,
+			);
+			target = B3BEC3D52EEAE6F30063B198 /* Stock Tracker WidgetExtension */;
+		};
+		B3BEC3EE2EEAE7720063B198 /* Exceptions for "Stock Tracker Widget" folder in "Stock Tracker" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				PortfolioSummaryEntry.swift,
+			);
+			target = B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */;
+		};
+		B3BEC4002EF146BD0063B198 /* Exceptions for "Stock Tracker" folder in "Stock Tracker" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.txt,
+			);
+			target = B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		B3BEC4012EF146BD0063B198 /* Exceptions for "Stock Tracker" folder in "Compile Sources" phase from "Stock Tracker" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = B3B9AE212ED9CE2D005F35F7 /* Sources */;
+			membershipExceptions = (
+				Info.txt,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B3B9AE272ED9CE2D005F35F7 /* Stock Tracker */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B3BEC4002EF146BD0063B198 /* Exceptions for "Stock Tracker" folder in "Stock Tracker" target */,
+				B3BEC4012EF146BD0063B198 /* Exceptions for "Stock Tracker" folder in "Compile Sources" phase from "Stock Tracker" target */,
+			);
 			path = "Stock Tracker";
+			sourceTree = "<group>";
+		};
+		B3BEC3802EEA664D0063B198 /* Stock Tracker Notification */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B3BEC3872EEA664D0063B198 /* Exceptions for "Stock Tracker Notification" folder in "Stock Tracker Notification" target */,
+			);
+			path = "Stock Tracker Notification";
+			sourceTree = "<group>";
+		};
+		B3BEC3D92EEAE6F30063B198 /* Stock Tracker Widget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B3BEC3EE2EEAE7720063B198 /* Exceptions for "Stock Tracker Widget" folder in "Stock Tracker" target */,
+				B3BEC3EA2EEAE6F50063B198 /* Exceptions for "Stock Tracker Widget" folder in "Stock Tracker WidgetExtension" target */,
+			);
+			path = "Stock Tracker Widget";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -26,6 +132,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B3BEC37C2EEA664D0063B198 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3BEC3D32EEAE6F30063B198 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B3BEC3D82EEAE6F30063B198 /* SwiftUI.framework in Frameworks */,
+				B3BEC3D72EEAE6F30063B198 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -33,6 +155,9 @@
 			isa = PBXGroup;
 			children = (
 				B3B9AE272ED9CE2D005F35F7 /* Stock Tracker */,
+				B3BEC3802EEA664D0063B198 /* Stock Tracker Notification */,
+				B3BEC3D92EEAE6F30063B198 /* Stock Tracker Widget */,
+				B3BEC3192EEA63500063B198 /* Frameworks */,
 				B3B9AE262ED9CE2D005F35F7 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +166,19 @@
 			isa = PBXGroup;
 			children = (
 				B3B9AE252ED9CE2D005F35F7 /* Stock Tracker.app */,
+				B3BEC37F2EEA664D0063B198 /* Stock Tracker Notification.appex */,
+				B3BEC3D62EEAE6F30063B198 /* Stock Tracker WidgetExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B3BEC3192EEA63500063B198 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B3BEC31A2EEA63500063B198 /* WidgetKit.framework */,
+				B3BEC31C2EEA63510063B198 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -55,10 +191,13 @@
 				B3B9AE212ED9CE2D005F35F7 /* Sources */,
 				B3B9AE222ED9CE2D005F35F7 /* Frameworks */,
 				B3B9AE232ED9CE2D005F35F7 /* Resources */,
+				B3BEC3332EEA63540063B198 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B3BEC3852EEA664D0063B198 /* PBXTargetDependency */,
+				B3BEC3E82EEAE6F50063B198 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				B3B9AE272ED9CE2D005F35F7 /* Stock Tracker */,
@@ -69,6 +208,50 @@
 			productName = "Stock Tracker";
 			productReference = B3B9AE252ED9CE2D005F35F7 /* Stock Tracker.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B3BEC37E2EEA664D0063B198 /* Stock Tracker Notification */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B3BEC3882EEA664D0063B198 /* Build configuration list for PBXNativeTarget "Stock Tracker Notification" */;
+			buildPhases = (
+				B3BEC37B2EEA664D0063B198 /* Sources */,
+				B3BEC37C2EEA664D0063B198 /* Frameworks */,
+				B3BEC37D2EEA664D0063B198 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B3BEC3802EEA664D0063B198 /* Stock Tracker Notification */,
+			);
+			name = "Stock Tracker Notification";
+			packageProductDependencies = (
+			);
+			productName = "Stock Tracker Notification";
+			productReference = B3BEC37F2EEA664D0063B198 /* Stock Tracker Notification.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B3BEC3D52EEAE6F30063B198 /* Stock Tracker WidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B3BEC3EB2EEAE6F50063B198 /* Build configuration list for PBXNativeTarget "Stock Tracker WidgetExtension" */;
+			buildPhases = (
+				B3BEC3D22EEAE6F30063B198 /* Sources */,
+				B3BEC3D32EEAE6F30063B198 /* Frameworks */,
+				B3BEC3D42EEAE6F30063B198 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B3BEC3D92EEAE6F30063B198 /* Stock Tracker Widget */,
+			);
+			name = "Stock Tracker WidgetExtension";
+			packageProductDependencies = (
+			);
+			productName = "Stock Tracker WidgetExtension";
+			productReference = B3BEC3D62EEAE6F30063B198 /* Stock Tracker WidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -81,6 +264,12 @@
 				LastUpgradeCheck = 2610;
 				TargetAttributes = {
 					B3B9AE242ED9CE2D005F35F7 = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+					B3BEC37E2EEA664D0063B198 = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+					B3BEC3D52EEAE6F30063B198 = {
 						CreatedOnToolsVersion = 26.1.1;
 					};
 				};
@@ -100,12 +289,28 @@
 			projectRoot = "";
 			targets = (
 				B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */,
+				B3BEC37E2EEA664D0063B198 /* Stock Tracker Notification */,
+				B3BEC3D52EEAE6F30063B198 /* Stock Tracker WidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		B3B9AE232ED9CE2D005F35F7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3BEC37D2EEA664D0063B198 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3BEC3D42EEAE6F30063B198 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +327,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B3BEC37B2EEA664D0063B198 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3BEC3D22EEAE6F30063B198 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B3BEC3852EEA664D0063B198 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B3BEC37E2EEA664D0063B198 /* Stock Tracker Notification */;
+			targetProxy = B3BEC3842EEA664D0063B198 /* PBXContainerItemProxy */;
+		};
+		B3BEC3E82EEAE6F50063B198 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B3BEC3D52EEAE6F30063B198 /* Stock Tracker WidgetExtension */;
+			targetProxy = B3BEC3E72EEAE6F50063B198 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		B3B9AE2E2ED9CE31005F35F7 /* Debug */ = {
@@ -249,12 +481,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -283,12 +517,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -305,6 +541,126 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B3BEC3892EEA664D0063B198 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Stock Tracker Notification/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Stock Tracker Notification";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Cubeplay.Stock-Tracker.Stock-Tracker-Notification";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B3BEC38A2EEA664D0063B198 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Stock Tracker Notification/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Stock Tracker Notification";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Cubeplay.Stock-Tracker.Stock-Tracker-Notification";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B3BEC3EC2EEAE6F50063B198 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Stock Tracker Widget/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Stock Tracker Widget";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Cubeplay.Stock-Tracker.Stock-Tracker-Widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B3BEC3ED2EEAE6F50063B198 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Stock Tracker Widget/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Stock Tracker Widget";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Cubeplay.Stock-Tracker.Stock-Tracker-Widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -329,6 +685,24 @@
 			buildConfigurations = (
 				B3B9AE312ED9CE31005F35F7 /* Debug */,
 				B3B9AE322ED9CE31005F35F7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B3BEC3882EEA664D0063B198 /* Build configuration list for PBXNativeTarget "Stock Tracker Notification" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B3BEC3892EEA664D0063B198 /* Debug */,
+				B3BEC38A2EEA664D0063B198 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B3BEC3EB2EEAE6F50063B198 /* Build configuration list for PBXNativeTarget "Stock Tracker WidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B3BEC3EC2EEAE6F50063B198 /* Debug */,
+				B3BEC3ED2EEAE6F50063B198 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

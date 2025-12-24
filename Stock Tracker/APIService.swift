@@ -2,8 +2,6 @@
 //  APIService.swift
 //  Stock Tracker
 //
-//  Created by Ihtisham Mazid on 30/11/2025.
-//
 
 import Foundation
 
@@ -11,413 +9,263 @@ import Foundation
 class APIService {
     static let shared = APIService()
     
-    // MARK: - API Keys
-    
-    // Alpaca Market Data (STOCKS)
-    // ⚠️ For production: move these out of source control (Info.plist / Keychain / .xcconfig).
-    private let alpacaAPIKey: String = "PKZ4QQWBIYMMVFMAFWUQISEAN3"
-    private let alpacaSecretKey: String = "HeDiacpbzaXc5jnyEV5winTTCZFXZnY1T7u8egj6toNL"
-    
-    // Alpha Vantage (only used for symbol SEARCH)
+    // MARK: - API Keys & Base URL
+    private let alpacaAPIKey = "PKZ4QQWBIYMMVFMAFWUQISEAN3"
+    private let alpacaSecretKey = "HeDiacpbzaXc5jnyEV5winTTCZFXZnY1T7u8egj6toNL"
     private let alphaVantageKey = "SYFS9C88ZJNCR99S"
-    
-    // News API
     private let newsAPIKey = "dd13a52efc424ea0951ec31374c3fddc"
     
-    // Base URLs
     private let alpacaDataBaseURL = URL(string: "https://data.alpaca.markets")!
     
     private init() {}
-}
-
-// MARK: - Public API
-
-extension APIService {
     
-    // MARK: - Fetch Stock Quote (Alpaca)
-    
-    /// Fetches the latest quote for a stock symbol using Alpaca Market Data.
-    func fetchStockQuote(symbol: String) async throws -> Asset {
-        let upper = symbol.uppercased()
-        
+    // MARK: - Historical Bars (now a proper instance method)
+    func fetchBars(symbol: String, timeframe: String, multiplier: Int, range: TimeRange) async throws -> [AlpacaBar] {
         var components = URLComponents(
-            url: alpacaDataBaseURL.appendingPathComponent("/v2/stocks/quotes/latest"),
-            resolvingAgainstBaseURL: false
-        )
-        components?.queryItems = [
-            URLQueryItem(name: "symbols", value: upper),
-            URLQueryItem(name: "feed", value: "iex") // free feed for dev
+            url: alpacaDataBaseURL.appendingPathComponent("/v2/stocks/\(symbol)/bars"),
+            resolvingAgainstBaseURL: true
+        )!
+        
+        let calendar = Calendar.current
+        let end = Date()
+        let start: Date = {
+            switch range {
+            case .oneDay:
+                return calendar.date(byAdding: .day, value: -2, to: end)!
+            case .oneWeek:
+                return calendar.date(byAdding: .weekOfYear, value: -1, to: end)!
+            case .oneMonth:
+                return calendar.date(byAdding: .month, value: -1, to: end)!
+            case .threeMonths:
+                return calendar.date(byAdding: .month, value: -3, to: end)!
+            case .sixMonths:
+                return calendar.date(byAdding: .month, value: -6, to: end)!
+            case .ytd:
+                let yearStart = calendar.date(from: calendar.dateComponents([.year], from: end))!
+                return calendar.startOfDay(for: yearStart)
+            case .oneYear:
+                return calendar.date(byAdding: .year, value: -1, to: end)!
+            default:
+                return calendar.date(byAdding: .year, value: -1, to: end)!
+            }
+        }()
+        
+        components.queryItems = [
+            URLQueryItem(name: "timeframe", value: "\(multiplier)\(timeframe)"),
+            URLQueryItem(name: "start", value: ISO8601DateFormatter().string(from: start)),
+            URLQueryItem(name: "end", value: ISO8601DateFormatter().string(from: end)),
+            URLQueryItem(name: "limit", value: "1000")
         ]
         
-        guard let url = components?.url else {
+        guard let url = components.url else {
             throw APIError.invalidURL
         }
         
         var request = URLRequest(url: url)
-        request.setValue(alpacaAPIKey, forHTTPHeaderField: "APCA-API-KEY-ID")
-        request.setValue(alpacaSecretKey, forHTTPHeaderField: "APCA-API-SECRET-KEY")
+        request.httpMethod = "GET"
+        request.setValue(
+            "Basic \(Data("\(alpacaAPIKey):\(alpacaSecretKey)".utf8).base64EncodedString())",
+            forHTTPHeaderField: "Authorization"
+        )
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        try Self.validate(response: response, data: data)
         
-        let decoded = try JSONDecoder().decode(AlpacaLatestQuotesResponse.self, from: data)
-        guard let quote = decoded.quotes[upper] else {
-            throw APIError.noData
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw APIError.invalidResponse
         }
         
-        // Simple mid-price between bid and ask
-        let mid = (quote.askPrice + quote.bidPrice) / 2.0
+        let decoded = try JSONDecoder().decode(AlpacaBarsResponse.self, from: data)
+        return decoded.bars[symbol] ?? []
+    }
+}
+
+// MARK: - Public API Extension
+extension APIService {
+    
+    // MARK: - Historical Data (for charts)
+    func fetchHistoricalData(symbol: String, range: TimeRange) async throws -> [PricePoint] {
+        let upper = symbol.uppercased()
         
-        // volume is not perfect here; we just approximate using bid/ask sizes
-        let volDouble = Double(quote.bidSize + quote.askSize)
+        let (timeframe, multiplier): (String, Int) = {
+            switch range {
+            case .oneDay:      return ("Minute", 15)
+            case .oneWeek:     return ("Hour", 1)
+            default:           return ("Day", 1)
+            }
+        }()
         
-        return Asset(
-            id: UUID(),
+        let bars = try await fetchBars(
             symbol: upper,
-            name: upper,           // you could later fetch /v2/assets for full company name
-            price: mid,
-            change: 0,             // no day-change directly in this endpoint
-            changePercent: 0,
-            volume: volDouble,
-            kind: .stock
+            timeframe: timeframe,
+            multiplier: multiplier,
+            range: range
         )
+        
+        return bars.compactMap { bar in
+            guard let date = ISO8601DateFormatter().date(from: bar.timestamp) else { return nil }
+            return PricePoint(date: date, price: bar.close)
+        }
+        .sorted { $0.date < $1.date }
     }
     
-    // MARK: - Fetch Crypto Price (CoinGecko - Free, no key needed!)
-    
-    func fetchCryptoPrice(id: String) async throws -> Asset {
-        // CoinGecko uses IDs like: bitcoin, ethereum, solana, cardano, etc.
-        let urlString =
-        "https://api.coingecko.com/api/v3/simple/price" +
-        "?ids=\(id)" +
-        "&vs_currencies=usd" +
-        "&include_24hr_change=true" +
-        "&include_24hr_vol=true"
+    // MARK: - News
+    func fetchNews() async throws -> [NewsArticle] {
+        var components = URLComponents(string: "https://newsapi.org/v2/everything")!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: "apple OR tesla OR bitcoin OR stock market"),
+            URLQueryItem(name: "language", value: "en"),
+            URLQueryItem(name: "sortBy", value: "publishedAt"),
+            URLQueryItem(name: "pageSize", value: "50"),
+            URLQueryItem(name: "apiKey", value: newsAPIKey)
+        ]
         
-        guard let url = URL(string: urlString) else {
-            throw APIError.invalidURL
-        }
+        guard let url = components.url else { throw APIError.invalidURL }
         
         let (data, response) = try await URLSession.shared.data(from: url)
-        try Self.validate(response: response, data: data)
-        
-        let decoded = try JSONDecoder().decode([String: CoinGeckoPrice].self, from: data)
-        
-        guard let crypto = decoded[id] else {
-            throw APIError.noData
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.invalidResponse
         }
-        
-        // 24h change %
-        let pct = crypto.usd24hChange ?? 0
-        // absolute change in USD
-        let change = crypto.usd * pct / 100.0
-        
-        return Asset(
-            id: UUID(),
-            symbol: id.uppercased(),
-            name: id.capitalized,
-            price: crypto.usd,
-            change: change,
-            changePercent: pct,
-            volume: crypto.usd24hVol ?? 0,
-            kind: .crypto
-        )
-    }
-    
-    // MARK: - Search Stocks (Alpha Vantage)
-    
-    func searchStocks(query: String) async throws -> [StockSearchResult] {
-        let urlString =
-        "https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=\(query)&apikey=\(alphaVantageKey)"
-        
-        guard let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: encoded) else {
-            throw APIError.invalidURL
-        }
-        
-        let (data, response) = try await URLSession.shared.data(from: url)
-        try Self.validate(response: response, data: data)
-        
-        let decoded = try JSONDecoder().decode(AlphaVantageSearchResponse.self, from: data)
-        return decoded.bestMatches ?? []
-    }
-    
-    // MARK: - Fetch News (NewsAPI.org)
-    
-    func fetchNews(for symbols: [String]) async throws -> [NewsArticle] {
-        let joined = symbols.joined(separator: " OR ")
-        let urlString =
-        "https://newsapi.org/v2/everything?q=\(joined)&language=en&sortBy=publishedAt&pageSize=20&apiKey=\(newsAPIKey)"
-        
-        guard let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: encoded) else {
-            throw APIError.invalidURL
-        }
-        
-        let (data, response) = try await URLSession.shared.data(from: url)
-        try Self.validate(response: response, data: data)
         
         let decoded = try JSONDecoder().decode(NewsAPIResponse.self, from: data)
         
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallbackFormatter = ISO8601DateFormatter()
-        fallbackFormatter.formatOptions = [.withInternetDateTime]
-        
-        return decoded.articles.map { article in
-            let publishedDate =
-            isoFormatter.date(from: article.publishedAt) ??
-            fallbackFormatter.date(from: article.publishedAt) ??
-            Date()
+        return decoded.articles.compactMap { article in
+            guard let publishedAt = ISO8601DateFormatter().date(from: article.publishedAt) else { return nil }
+            
+            let text = (article.title + " " + (article.description ?? "")).uppercased()
+            let symbolRegex = try? NSRegularExpression(pattern: "\\b[A-Z]{1,5}\\b")
+            let matches = symbolRegex?.matches(in: text, range: NSRange(text.startIndex..., in: text)) ?? []
+            let symbols = matches.compactMap { match in
+                String(text[Range(match.range, in: text)!])
+            }
             
             return NewsArticle(
                 title: article.title,
                 source: article.source.name,
                 url: article.url,
                 imageURL: article.urlToImage,
-                publishedAt: publishedDate,
+                publishedAt: publishedAt,
                 summary: article.description ?? "",
-                relatedSymbols: symbols
+                relatedSymbols: Array(Set(symbols)).filter { $0.count >= 1 && $0.count <= 5 }
             )
         }
     }
     
-    // MARK: - Fetch Historical Data (Alpaca)
+    // MARK: - Symbol Search
+    func fetchSymbolSearch(query: String, kind: AssetKind) async throws -> [SearchResult] {
+        switch kind {
+        case .stock:
+            return try await searchAlphaVantage(query: query)
+        case .crypto:
+            return try await searchCoinGecko(query: query)
+        }
+    }
     
-    func fetchHistoricalData(symbol: String, range: TimeRange) async throws -> [PricePoint] {
-        let upper = symbol.uppercased()
-        
-        let (start, end, timeframe) = dateWindow(for: range)
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
-        
-        var components = URLComponents(
-            url: alpacaDataBaseURL.appendingPathComponent("/v2/stocks/bars"),
-            resolvingAgainstBaseURL: false
-        )
-        components?.queryItems = [
-            URLQueryItem(name: "symbols", value: upper),
-            URLQueryItem(name: "timeframe", value: timeframe),
-            URLQueryItem(name: "start", value: iso.string(from: start)),
-            URLQueryItem(name: "end", value: iso.string(from: end)),
-            URLQueryItem(name: "limit", value: "1000"),
-            URLQueryItem(name: "feed", value: "iex")
+    private func searchAlphaVantage(query: String) async throws -> [SearchResult] {
+        var components = URLComponents(string: "https://www.alphavantage.co/query")!
+        components.queryItems = [
+            URLQueryItem(name: "function", value: "SYMBOL_SEARCH"),
+            URLQueryItem(name: "keywords", value: query),
+            URLQueryItem(name: "apikey", value: alphaVantageKey)
         ]
         
-        guard let url = components?.url else {
+        guard let url = components.url else { throw APIError.invalidURL }
+        let (data, _) = try await URLSession.shared.data(from: url)
+        
+        let decoded = try JSONDecoder().decode(AlphaVantageSearchResponse.self, from: data)
+        return decoded.bestMatches.map {
+            SearchResult(symbol: $0.symbol, name: $0.name, id: $0.symbol)
+        }
+    }
+    
+    private func searchCoinGecko(query: String) async throws -> [SearchResult] {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        guard let url = URL(string: "https://api.coingecko.com/api/v3/search?query=\(encoded)") else {
             throw APIError.invalidURL
         }
         
-        var request = URLRequest(url: url)
-        request.setValue(alpacaAPIKey, forHTTPHeaderField: "APCA-API-KEY-ID")
-        request.setValue(alpacaSecretKey, forHTTPHeaderField: "APCA-API-SECRET-KEY")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try Self.validate(response: response, data: data)
-        
-        let decoded = try JSONDecoder().decode(AlpacaBarsResponse.self, from: data)
-        guard let bars = decoded.bars[upper], !bars.isEmpty else {
-            throw APIError.noData
-        }
-        
-        let points: [PricePoint] = bars.compactMap { bar in
-            guard let date = iso.date(from: bar.timestamp) else { return nil }
-            return PricePoint(date: date, price: bar.close)
-        }
-        .sorted { $0.date < $1.date }
-        
-        // Your existing UI further trims based on TimeRange, so here we just return all.
-        return points
-    }
-}
-
-// MARK: - Helpers
-
-private extension APIService {
-    
-    static func validate(response: URLResponse, data: Data) throws {
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.decodingError
-        }
-        guard (200 ..< 300).contains(http.statusCode) else {
-            if http.statusCode == 401 {
-                throw APIError.apiKeyInvalid
-            } else if http.statusCode == 429 {
-                throw APIError.rateLimitExceeded
-            } else {
-                throw APIError.decodingError
-            }
-        }
-        guard !data.isEmpty else {
-            throw APIError.noData
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let decoded = try JSONDecoder().decode(CoinGeckoSearchResponse.self, from: data)
+        return decoded.coins.prefix(20).map {
+            SearchResult(symbol: $0.symbol.uppercased(), name: $0.name, id: $0.id)
         }
     }
     
-    /// Maps your `TimeRange` to (start, end, timeframe string) for Alpaca bars.
-    func dateWindow(for range: TimeRange) -> (Date, Date, String) {
-        let now = Date()
-        let cal = Calendar.current
-        
-        func daysAgo(_ days: Int) -> Date {
-            cal.date(byAdding: .day, value: -days, to: now) ?? now
+    // MARK: - Asset Details
+    func fetchAssetDetails(identifier: String, kind: AssetKind, name: String) async throws -> Asset {
+        switch kind {
+        case .stock:
+            return try await fetchStockQuote(symbol: identifier.uppercased())
+        case .crypto:
+            return try await fetchCryptoPrice(id: identifier)
         }
-        
-        switch range {
-        case .oneDay:
-            return (daysAgo(1), now, "5Min")
-        case .oneWeek:
-            return (daysAgo(7), now, "15Min")
-        case .oneMonth:
-            return (daysAgo(30), now, "1Hour")
-        case .threeMonths:
-            return (daysAgo(90), now, "1Day")
-        case .sixMonths:
-            return (daysAgo(180), now, "1Day")
-        case .ytd:
-            let startOfYear = cal.date(from: cal.dateComponents([.year], from: now)) ?? daysAgo(365)
-            return (startOfYear, now, "1Day")
-        case .oneYear:
-            return (daysAgo(365), now, "1Day")
-        case .twoYears:
-            return (daysAgo(365 * 2), now, "1Day")
-        case .fiveYears:
-            return (daysAgo(365 * 5), now, "1Week")
-        case .tenYears:
-            return (daysAgo(365 * 10), now, "1Month")
-        case .all:
-            return (daysAgo(365 * 15), now, "1Month")
-        }
+    }
+    
+    // MARK: - Mock Quotes (replace with real API later)
+    func fetchStockQuote(symbol: String) async throws -> Asset {
+        Asset(
+            id: UUID(),
+            symbol: symbol,
+            name: symbol,
+            price: 150.0 + Double.random(in: -20...20),
+            change: Double.random(in: -5...5),
+            changePercent: Double.random(in: -5...5),
+            volume: 1_000_000,
+            kind: .stock,
+            exchange: "NYSE"
+        )
+    }
+    
+    func fetchCryptoPrice(id: String) async throws -> Asset {
+        Asset(
+            id: UUID(),
+            symbol: id.uppercased(),
+            name: id.capitalized,
+            price: 60000.0 + Double.random(in: -5000...5000),
+            change: Double.random(in: -5...5),
+            changePercent: Double.random(in: -5...5),
+            volume: 1000.0,
+            kind: .crypto,
+            exchange: "Binance"
+        )
     }
 }
 
-// MARK: - API Errors (unchanged from your original file)
-
-enum APIError: Error, LocalizedError {
+// MARK: - Supporting Types (keep these if not defined elsewhere)
+enum APIError: Error {
     case invalidURL
+    case invalidResponse
     case noData
-    case decodingError
-    case rateLimitExceeded
-    case apiKeyInvalid
-    
-    var errorDescription: String? {
-        switch self {
-        case .invalidURL: return "Invalid URL"
-        case .noData: return "No data received"
-        case .decodingError: return "Failed to decode response"
-        case .rateLimitExceeded: return "API rate limit exceeded"
-        case .apiKeyInvalid: return "Invalid API key"
-        }
-    }
 }
 
-// MARK: - Alpha Vantage Search DTOs
-
-struct AlphaVantageQuoteResponse: Codable {
-    let globalQuote: GlobalQuote?
-    
-    enum CodingKeys: String, CodingKey {
-        case globalQuote = "Global Quote"
-    }
-}
-
-struct GlobalQuote: Codable {
+struct SearchResult {
     let symbol: String
-    let price: String
-    let change: String
-    let changePercent: String
-    let volume: String
-    
-    enum CodingKeys: String, CodingKey {
-        case symbol = "01. symbol"
-        case price = "05. price"
-        case change = "09. change"
-        case changePercent = "10. change percent"
-        case volume = "06. volume"
-    }
+    let name: String
+    let id: String
 }
 
 struct AlphaVantageSearchResponse: Codable {
-    let bestMatches: [StockSearchResult]?
+    let bestMatches: [AlphaMatch]
     
-    enum CodingKeys: String, CodingKey {
-        case bestMatches = "bestMatches"
+    struct AlphaMatch: Codable {
+        let symbol: String
+        let name: String
+        
+        enum CodingKeys: String, CodingKey {
+            case symbol = "1. symbol"
+            case name = "2. name"
+        }
     }
 }
 
-struct StockSearchResult: Identifiable, Codable {
-    let id = UUID()
-    let symbol: String
-    let name: String
-    let type: String
-    let region: String
+struct CoinGeckoSearchResponse: Codable {
+    let coins: [Coin]
     
-    enum CodingKeys: String, CodingKey {
-        case symbol = "1. symbol"
-        case name = "2. name"
-        case type = "3. type"
-        case region = "4. region"
+    struct Coin: Codable {
+        let id: String
+        let symbol: String
+        let name: String
     }
 }
-
-// MARK: - Alpaca DTOs
-
-struct AlpacaLatestQuotesResponse: Codable {
-    let quotes: [String: AlpacaQuote]
-}
-
-struct AlpacaQuote: Codable {
-    let askPrice: Double      // ap
-    let askSize: Int          // as
-    let bidPrice: Double      // bp
-    let bidSize: Int          // bs
-    let timestamp: String     // t
-    
-    enum CodingKeys: String, CodingKey {
-        case askPrice = "ap"
-        case askSize = "as"
-        case bidPrice = "bp"
-        case bidSize = "bs"
-        case timestamp = "t"
-    }
-}
-
-struct AlpacaBarsResponse: Codable {
-    let bars: [String: [AlpacaBar]]
-}
-
-struct AlpacaBar: Codable {
-    let timestamp: String // t
-    let open: Double      // o
-    let high: Double      // h
-    let low: Double       // l
-    let close: Double     // c
-    let volume: Int       // v
-    
-    enum CodingKeys: String, CodingKey {
-        case timestamp = "t"
-        case open = "o"
-        case high = "h"
-        case low = "l"
-        case close = "c"
-        case volume = "v"
-    }
-}
-
-// MARK: - CoinGecko DTO
-
-struct CoinGeckoPrice: Codable {
-    let usd: Double
-    let usd24hChange: Double?
-    let usd24hVol: Double?
-    
-    enum CodingKeys: String, CodingKey {
-        case usd
-        case usd24hChange = "usd_24h_change"
-        case usd24hVol = "usd_24h_vol"
-    }
-}
-
-// MARK: - NewsAPI DTOs
 
 struct NewsAPIResponse: Codable {
     let articles: [NewsAPIArticle]
@@ -430,8 +278,50 @@ struct NewsAPIArticle: Codable {
     let url: String
     let urlToImage: String?
     let publishedAt: String
+    
+    struct NewsSource: Codable {
+        let name: String
+    }
 }
 
-struct NewsSource: Codable {
-    let name: String
+struct AlpacaBarsResponse: Codable {
+    let bars: [String: [AlpacaBar]]
 }
+
+struct AlpacaBar: Codable {
+    let timestamp: String
+        let date: Date        // Parsed timestamp
+        let open: Double
+        let high: Double
+        let low: Double
+        let close: Double
+        let volume: Double    // Changed from Int to Double (API returns Double)
+        
+        enum CodingKeys: String, CodingKey {
+            case timestamp = "t"
+            case date = "d"
+            case open = "o"
+            case high = "h"
+            case low = "l"
+            case close = "c"
+            case volume = "v"
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            
+            // Parse timestamp string to Date
+            let timestampString = try container.decode(String.self, forKey: .timestamp)
+            self.timestamp = timestampString
+            guard let parsedDate = ISO8601DateFormatter().date(from: timestampString) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.date], debugDescription: "Invalid date format"))
+            }
+            self.date = parsedDate
+            
+            self.open = try container.decode(Double.self, forKey: .open)
+            self.high = try container.decode(Double.self, forKey: .high)
+            self.low = try container.decode(Double.self, forKey: .low)
+            self.close = try container.decode(Double.self, forKey: .close)
+            self.volume = try container.decode(Double.self, forKey: .volume)  // API returns Double
+        }
+    }

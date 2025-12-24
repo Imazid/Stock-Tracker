@@ -1,4 +1,12 @@
 //
+//  MockMarketData.swift
+//  Stock Tracker
+//
+//  Created by Ihtisham Mazid on 16/12/2025.
+//
+
+
+//
 //  MockData.swift
 //  Stock Tracker
 //
@@ -15,18 +23,18 @@ final class MockMarketData {
     
     // MARK: - Mock Stocks
     let mockStocks: [Asset] = [
-        Asset(symbol: "AAPL", name: "Apple Inc.", price: 178.42, change: 3.21, changePercent: 1.83, volume: 89_200_000, kind: .stock),
-        Asset(symbol: "TSLA", name: "Tesla Inc.", price: 241.15, change: -4.12, changePercent: -1.68, volume: 112_300_000, kind: .stock),
-        Asset(symbol: "MSFT", name: "Microsoft", price: 378.91, change: 5.67, changePercent: 1.52, volume: 27_800_000, kind: .stock),
-        Asset(symbol: "NVDA", name: "NVIDIA", price: 495.22, change: 12.45, changePercent: 2.58, volume: 45_100_000, kind: .stock),
-        Asset(symbol: "GOOGL", name: "Alphabet", price: 135.78, change: 2.11, changePercent: 1.58, volume: 31_200_000, kind: .stock)
+        Asset(symbol: "AAPL", name: "Apple Inc.", price: 272.54, change: -1.13, changePercent: -0.41, volume: 34751452, kind: .stock, exchange: "NASDAQ"),
+        Asset(symbol: "TSLA", name: "Tesla Inc.", price: 482.65, change: 1.45, changePercent: 0.30, volume: 84147310, kind: .stock, exchange: "NASDAQ"),
+        Asset(symbol: "MSFT", name: "Microsoft", price: 485.26, change: 1.27, changePercent: 0.26, volume: 15627434, kind: .stock, exchange: "NASDAQ"),
+        Asset(symbol: "NVDA", name: "NVIDIA", price: 495.22, change: 12.45, changePercent: 2.58, volume: 45_100_000, kind: .stock, exchange: "NYSE"),
+        Asset(symbol: "GOOGL", name: "Alphabet", price: 135.78, change: 2.11, changePercent: 1.58, volume: 31_200_000, kind: .stock, exchange: "NYSE")
     ]
     
     // MARK: - Mock Crypto
     let mockCrypto: [Asset] = [
-        Asset(symbol: "BTC", name: "Bitcoin", price: 62850.0, change: -850.0, changePercent: -1.33, volume: 28_500, kind: .crypto),
-        Asset(symbol: "ETH", name: "Ethereum", price: 3180.0, change: 95.0, changePercent: 3.08, volume: 185_000, kind: .crypto),
-        Asset(symbol: "SOL", name: "Solana", price: 138.5, change: -5.8, changePercent: -4.02, volume: 2_100_000, kind: .crypto)
+        Asset(symbol: "BTC", name: "Bitcoin", price: 62850.0, change: -850.0, changePercent: -1.33, volume: 28_500, kind: .crypto, exchange: "Binance"),
+        Asset(symbol: "ETH", name: "Ethereum", price: 3180.0, change: 95.0, changePercent: 3.08, volume: 185_000, kind: .crypto, exchange: "Binance"),
+        Asset(symbol: "SOL", name: "Solana", price: 138.5, change: -5.8, changePercent: -4.02, volume: 2_100_000, kind: .crypto, exchange: "Binance")
     ]
     
     // MARK: - Mock News

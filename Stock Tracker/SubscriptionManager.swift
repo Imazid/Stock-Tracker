@@ -5,6 +5,7 @@
 
 import Foundation
 import SwiftUI
+import Combine
 
 // MARK: - Subscription Tier
 enum SubscriptionTier: String, Codable, CaseIterable {

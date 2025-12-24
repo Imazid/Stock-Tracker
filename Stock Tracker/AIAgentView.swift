@@ -2,6 +2,14 @@
 //  AIAgentView.swift
 //  Stock Tracker
 //
+//  Created by Ihtisham Mazid on 21/12/2025.
+//
+
+
+//
+//  AIAgentView.swift
+//  Stock Tracker
+//
 
 import SwiftUI
 
@@ -54,6 +62,8 @@ struct AIAgentView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
     
+    private let aiService = AIAgentService()
+
     private func sendMessage() {
         let trimmed = userInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -61,15 +71,22 @@ struct AIAgentView: View {
         // Add user message
         messages.append(ChatMessage(text: trimmed, isUser: true))
         userInput = ""
-        
-        // Simulate AI typing
         isTyping = true
         
-        // Simulate response delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            isTyping = false
-            let response = generateAIResponse(to: trimmed)
-            messages.append(ChatMessage(text: response, isUser: false))
+        Task {
+            do {
+                let response = try await aiService.sendMessage(messages: messages)
+                await MainActor.run {
+                    isTyping = false
+                    messages.append(ChatMessage(text: response, isUser: false))
+                }
+            } catch {
+                await MainActor.run {
+                    isTyping = false
+                    let errorText = "Sorry, something went wrong: \(error.localizedDescription)"
+                    messages.append(ChatMessage(text: errorText, isUser: false))
+                }
+            }
         }
     }
     

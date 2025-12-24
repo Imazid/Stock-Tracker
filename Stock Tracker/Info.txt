@@ -1,7 +1,14 @@
 //
-//  Info.swift
+//  Info.txt
 //  Stock Tracker
 //
 //  Created by Ihtisham Mazid on 16/12/2025.
 //
 
+
+
+private let clientId = "STOCK-TRADER-TEST-LUVFK"  // Get from SnapTrade dashboard
+private let consumerKey = "QowzMBqh8y4izeQOBaYpAn7tZ45b375G7FYJDKUAZnCZ9Df5ql"  // Keep this SECRET!
+
+@Published var userId: String = "StockTrader2004"
+@Published var userSecret: String = "55756f99-ba0b-4204-bef2-4ca36e3e1f7f"

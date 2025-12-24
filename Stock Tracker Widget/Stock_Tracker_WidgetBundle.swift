@@ -9,8 +9,8 @@ import SwiftUI
 @main
 struct StockTrackerWidgets: WidgetBundle {
     var body: some Widget {
-        PortfolioSummaryWidget()          // ← Your real portfolio widget
-        // TopMoversWidget()              // ← Add more later if you want
+        //PortfolioSummaryWidget()          // ← Your real portfolio widget
+        //TopMoversWidget()              // ← Add more later if you want
         // Stock_Tracker_Widget()         // ← Remove or comment out the example
     }
 }

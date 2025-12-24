@@ -1,6 +1,61 @@
 import SwiftUI
 import Charts
 
+struct AddToPortfolioSheet: View {
+    @EnvironmentObject var marketData: MarketData
+    @Environment(\.dismiss) var dismiss
+    
+    let asset: Asset
+    @State private var sharesText = ""
+    @State private var avgCostText = ""
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                
+                Form {
+                    Section {
+                        HStack {
+                            Text(asset.symbol)
+                                .font(.headline)
+                            Spacer()
+                            Text(asset.name)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    
+                    Section(header: Text("Position Details")) {
+                        TextField("Number of shares", text: $sharesText)
+                            .keyboardType(.decimalPad)
+                        TextField("Average cost per share", text: $avgCostText)
+                            .keyboardType(.decimalPad)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+            .navigationTitle("Add to Portfolio")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        guard let shares = Double(sharesText),
+                              let avgCost = Double(avgCostText), shares > 0, avgCost > 0 else { return }
+                        marketData.addToPortfolio(asset: asset, shares: shares, avgCost: avgCost)
+                        dismiss()
+                    }
+                    .disabled(sharesText.isEmpty || avgCostText.isEmpty)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
 struct AssetDetailView: View {
     @EnvironmentObject var marketData: MarketData
     @Environment(\.dismiss) var dismiss
@@ -10,16 +65,15 @@ struct AssetDetailView: View {
     @State private var priceHistory: [PricePoint] = []
     @State private var showAddToPortfolio = false
     @State private var showAddAlert = false
+    @State private var selectedPrice: PricePoint?
+    @State private var isLoading = false
     
     var body: some View {
         ZStack {
             LinearGradient(
-                gradient: Gradient(colors: [
-                    Color.black,
-                    Color(red: 15/255, green: 23/255, blue: 42/255)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                colors: [Color.black, Color(red: 0.05, green: 0.05, blue: 0.10)],
+                startPoint: .top,
+                endPoint: .bottom
             )
             .ignoresSafeArea()
             
@@ -27,32 +81,26 @@ struct AssetDetailView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     headerSection
                     chartSection
-                    statisticsSection
-                    portfolioPositionSection
+                    statsSection
+                    portfolioSection
+                    newsSection
                 }
                 .padding()
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showAddToPortfolio = true
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundColor(.white)
-                }
-            }
+        .task {
+            await loadPriceHistory()
+        }
+        .onChange(of: selectedRange) { oldValue, newValue in
+            Task { await loadPriceHistory() }
         }
         .sheet(isPresented: $showAddToPortfolio) {
             AddToPortfolioSheet(asset: asset)
         }
-        .task {
-            loadPriceHistory()
+        .sheet(isPresented: $showAddAlert) {
+            AddPriceAlertSheet(asset: asset)
         }
-        .onChange(of: selectedRange) { _, _ in
-            loadPriceHistory()
-        }
+        .preferredColorScheme(.dark)
     }
     
     private var headerSection: some View {
@@ -79,15 +127,22 @@ struct AssetDetailView: View {
                 Spacer()
                 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(formatPrice(asset.price))
+                    Text(formatPrice(selectedPrice?.price ?? asset.price))
                         .font(.title2.bold())
                         .foregroundColor(.white)
-                    HStack(spacing: 4) {
-                        Image(systemName: asset.isPositive ? "arrow.up.right" : "arrow.down.right")
-                        Text(formatChange(asset.change, asset.changePercent))
+                    
+                    if selectedPrice == nil {
+                        HStack(spacing: 4) {
+                            Image(systemName: asset.isPositive ? "arrow.up.right" : "arrow.down.right")
+                            Text(formatChange(asset.change, asset.changePercent))
+                        }
+                        .font(.caption)
+                        .foregroundColor(asset.isPositive ? .green : .red)
+                    } else {
+                        Text(selectedPrice!.date, style: .date)
+                            .font(.caption)
+                            .foregroundColor(.gray)
                     }
-                    .font(.caption)
-                    .foregroundColor(asset.isPositive ? .green : .red)
                 }
             }
         }
@@ -99,63 +154,65 @@ struct AssetDetailView: View {
                 .font(.headline)
                 .foregroundColor(.white)
             
-            if priceHistory.isEmpty {
+            if isLoading {
                 RoundedRectangle(cornerRadius: 16)
                     .fill(Color.white.opacity(0.05))
-                    .frame(height: 250)
+                    .frame(height: 300)
                     .overlay(
                         ProgressView()
                             .tint(.white)
                     )
+            } else if priceHistory.isEmpty {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white.opacity(0.05))
+                    .frame(height: 300)
+                    .overlay(
+                        VStack {
+                            Image(systemName: "chart.xyaxis.line")
+                                .font(.largeTitle)
+                                .foregroundColor(.gray)
+                            Text("No data available")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    )
             } else {
-                Chart(priceHistory) { point in
-                    LineMark(
-                        x: .value("Date", point.date),
-                        y: .value("Price", point.price)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.blue, .cyan],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-                    
-                    AreaMark(
-                        x: .value("Date", point.date),
-                        y: .value("Price", point.price)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.blue.opacity(0.3), .cyan.opacity(0.1)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                }
-                .chartXAxis {
-                    AxisMarks(values: .automatic) { _ in
-                        AxisValueLabel()
-                            .foregroundStyle(.gray)
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(position: .trailing) { _ in
-                        AxisValueLabel()
-                            .foregroundStyle(.gray)
-                    }
-                }
-                .frame(height: 250)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.white.opacity(0.05))
-                )
+                interactiveChart
+                    .frame(height: 300)
             }
             
             timeRangeSelector
         }
+    }
+    
+    private var interactiveChart: some View {
+        let minPrice = priceHistory.map { $0.price }.min() ?? 0
+        let maxPrice = priceHistory.map { $0.price }.max() ?? 1
+        let padding = (maxPrice - minPrice) * 0.1
+        
+        return Chart(priceHistory) { point in
+            LineMark(
+                x: .value("Date", point.date),
+                y: .value("Price", point.price)
+            )
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [.blue, .cyan],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        }
+        .chartYScale(domain: minPrice - padding ... maxPrice + padding)
+        .chartXAxis {
+            AxisMarks(position: .bottom)
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .foregroundColor(.white)
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(16)
     }
     
     private var timeRangeSelector: some View {
@@ -169,154 +226,90 @@ struct AssetDetailView: View {
                             .font(.caption.bold())
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(selectedRange == range ? Color.white.opacity(0.2) : Color.white.opacity(0.05))
-                            )
-                            .foregroundColor(.white)
+                            .background(selectedRange == range ? Color.blue : Color.gray.opacity(0.2))
+                            .cornerRadius(20)
                     }
+                    .foregroundColor(.white)
                 }
             }
         }
     }
     
-    private var statisticsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Key Statistics")
+    private var statsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Statistics")
                 .font(.headline)
                 .foregroundColor(.white)
             
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                if let marketCap = asset.marketCap {
-                    StatCard(title: "Market Cap", value: formatLargeNumber(marketCap))
-                }
-                if let peRatio = asset.peRatio {
-                    StatCard(title: "P/E Ratio", value: String(format: "%.2f", peRatio))
-                }
-                if let eps = asset.eps {
-                    StatCard(title: "EPS (TTM)", value: String(format: "$%.2f", eps))
-                }
-                if let high = asset.week52High {
-                    StatCard(title: "52W High", value: String(format: "$%.2f", high))
-                }
-                if let low = asset.week52Low {
-                    StatCard(title: "52W Low", value: String(format: "$%.2f", low))
-                }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
+                StatCard(title: "Market Cap", value: formatLargeNumber(asset.marketCap ?? 0))
+                StatCard(title: "P/E Ratio", value: String(format: "%.2f", asset.peRatio ?? 0))
+                StatCard(title: "EPS", value: String(format: "%.2f", asset.eps ?? 0))
+                StatCard(title: "52W High", value: String(format: "%.2f", asset.week52High ?? 0))
+                StatCard(title: "52W Low", value: String(format: "%.2f", asset.week52Low ?? 0))
                 StatCard(title: "Volume", value: formatVolume(asset.volume))
-                if let avgVol = asset.avgVolume {
-                    StatCard(title: "Avg Volume", value: formatVolume(avgVol))
-                }
-                if let beta = asset.beta {
-                    StatCard(title: "Beta", value: String(format: "%.2f", beta))
-                }
-                if let dividend = asset.dividend {
-                    StatCard(title: "Dividend", value: String(format: "$%.2f", dividend))
-                }
+                StatCard(title: "Avg Volume", value: formatVolume(asset.avgVolume ?? 0))
+                StatCard(title: "Dividend", value: String(format: "%.2f", asset.dividend ?? 0))
+                StatCard(title: "Beta", value: String(format: "%.2f", asset.beta ?? 0))
             }
         }
     }
     
-    @ViewBuilder
-    private var portfolioPositionSection: some View {
-        let holdings = marketData.portfolio.filter { $0.asset.symbol == asset.symbol }
-        if let holding = holdings.first {
-            positionSection(holding: holding)
-        }
-    }
-    
-    private func positionSection(holding: PortfolioHolding) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Your Position")
+    private var portfolioSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Portfolio Actions")
                 .font(.headline)
                 .foregroundColor(.white)
             
-            VStack(spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Shares")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Text(String(format: "%.2f", holding.shares))
-                            .font(.title3.bold())
-                            .foregroundColor(.white)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Avg Cost")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Text(String(format: "$%.2f", holding.avgCost))
-                            .font(.title3.bold())
-                            .foregroundColor(.white)
-                    }
-                }
-                
-                Divider()
-                    .background(Color.white.opacity(0.2))
-                
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Market Value")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Text(String(format: "$%.2f", holding.currentValue))
-                            .font(.title3.bold())
-                            .foregroundColor(.white)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Total P/L")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(formatProfitLoss(holding.profitLoss))
-                                .font(.title3.bold())
-                                .foregroundColor(holding.profitLoss >= 0 ? .green : .red)
-                            Text(formatPercent(holding.profitLossPercent))
-                                .font(.caption)
-                                .foregroundColor(holding.profitLoss >= 0 ? .green : .red)
-                        }
-                    }
-                }
-                
-                Text("Added on \(holding.dateAdded.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Add to Portfolio") {
+                showAddToPortfolio = true
             }
+            .font(.headline)
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
             .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.black.opacity(0.5))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-            )
+            .background(Color.blue)
+            .cornerRadius(12)
+            
+            Button("Set Price Alert") {
+                showAddAlert = true
+            }
+            .font(.headline)
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(Color.green)
+            .cornerRadius(12)
         }
     }
     
-    private func loadPriceHistory() {
-        Task {
-            // call the async API-backed method on the actual environment object
-            let history = await marketData.fetchPriceHistory(for: asset, range: selectedRange)
+    private var newsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Related News")
+                .font(.headline)
+                .foregroundColor(.white)
             
-            // update the local @State on the main actor
-            await MainActor.run {
-                self.priceHistory = history
+            ForEach(marketData.newsArticles.filter { $0.relatedSymbols.contains(asset.symbol) }) { article in
+                NewsCard(article: article)
             }
         }
     }
-
     
-    private func formatPrice(_ value: Double) -> String {
-        String(format: "$%.2f", value)
+    private func loadPriceHistory() async {
+        isLoading = true
+        priceHistory = await marketData.fetchPriceHistory(for: asset, range: selectedRange)
+        isLoading = false
+    }
+    
+    // Formatting functions (from your original code)
+    private func formatPrice(_ price: Double) -> String {
+        return String(format: "$%.2f", price)
     }
     
     private func formatChange(_ change: Double, _ percent: Double) -> String {
         let sign = change >= 0 ? "+" : ""
-        let changeStr = String(format: "%.2f", change)
-        let percentStr = String(format: "%.2f", percent)
+        let changeStr = String(format: "%.2f", abs(change))
+        let percentStr = String(format: "%.2f", abs(percent))
         return "\(sign)\(changeStr) (\(sign)\(percentStr)%)"
     }
     
@@ -329,7 +322,7 @@ struct AssetDetailView: View {
     
     private func formatPercent(_ value: Double) -> String {
         let sign = value >= 0 ? "+" : ""
-        let valueStr = String(format: "%.2f", value)
+        let valueStr = String(format: "%.2f", abs(value))
         return "\(sign)\(valueStr)%"
     }
     
@@ -380,59 +373,10 @@ struct StatCard: View {
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                )
         )
-    }
-}
-
-struct AddToPortfolioSheet: View {
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.dismiss) var dismiss
-    
-    let asset: Asset
-    @State private var sharesText = ""
-    @State private var avgCostText = ""
-    
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                
-                Form {
-                    Section {
-                        HStack {
-                            Text(asset.symbol)
-                                .font(.headline)
-                            Spacer()
-                            Text(asset.name)
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    
-                    Section(header: Text("Position Details")) {
-                        TextField("Number of shares", text: $sharesText)
-                            .keyboardType(.decimalPad)
-                        TextField("Average cost per share", text: $avgCostText)
-                            .keyboardType(.decimalPad)
-                    }
-                }
-                .scrollContentBackground(.hidden)
-            }
-            .navigationTitle("Add to Portfolio")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        guard let shares = Double(sharesText),
-                              let avgCost = Double(avgCostText) else { return }
-                        marketData.addToPortfolio(asset: asset, shares: shares, avgCost: avgCost)
-                        dismiss()
-                    }
-                }
-            }
-        }
     }
 }

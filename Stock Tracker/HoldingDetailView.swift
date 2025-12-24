@@ -10,92 +10,338 @@ struct HoldingDetailView: View {
     @EnvironmentObject var marketData: MarketData
     @Environment(\.dismiss) var dismiss
     
+    @State private var selectedTab: Tab = .general
+    @State private var showAddShares = false
+    @State private var additionalShares: Double = 1.0
+    @State private var showBreakdown = false
+    @State private var showNewTransaction = false
+    
+    enum Tab: String, CaseIterable {
+        case general = "General"
+        case transactions = "Transactions"
+    }
+    
     private var isPositive: Bool { holding.profitLoss >= 0 }
-    private var accentColor: Color { isPositive ? .green : .red }
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
+            VStack(spacing: 0) {
+                // MARK: - Header Section
+                VStack(spacing: 16) {
+                    Text(holding.asset.symbol)
+                        .font(.largeTitle.bold())
+                        .foregroundColor(.white)
+                    
+                    Text(holding.asset.name)
+                        .font(.title3)
+                        .foregroundColor(.white.opacity(0.8))
+                    
+                    HStack(spacing: 12) {
+                        Text("Owned")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.7))
+                        
+                        Text("\(holding.shares, specifier: "%.0f")")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                    }
+                    
+                    HStack(spacing: 32) {
+                        VStack {
+                            Text("Market Value")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.7))
+                            Text(holding.currentValue.formattedPrice(in: marketData.preferredCurrency))
+                                .font(.title.bold())
+                                .foregroundColor(.white)
+                        }
+                        
+                        VStack {
+                            Text(isPositive ? "Total Gain" : "Total Loss")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.7))
+                            Text(holding.profitLoss.formattedPrice(in: marketData.preferredCurrency))
+                                .font(.title.bold())
+                                .foregroundColor(isPositive ? .green : .red)
+                        }
+                    }
+                    
+                    // Cost & Gains Breakdown Toggle
+                    Button {
+                        withAnimation(.easeInOut) {
+                            showBreakdown.toggle()
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "chevron.right")
+                                .rotationEffect(.degrees(showBreakdown ? 90 : 0))
+                            Text("Show Cost & Gains Breakdown")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.yellow)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.yellow.opacity(0.2))
+                        .cornerRadius(12)
+                    }
+                    .padding(.top, 8)
+                    
+                    if showBreakdown {
+                        VStack(alignment: .leading, spacing: 12) {
+                            DetailRow(title: "Sum of Cost", value: (holding.shares * holding.avgCost).formattedPrice(in: marketData.preferredCurrency))
+                            DetailRow(title: "Total Fees", value: "-")
+                            DetailRow(title: "Dividends", value: "-")
+                        }
+                        .padding()
+                        .background(Color.white.opacity(0.05))
+                        .cornerRadius(12)
+                    }
+                }
+                .padding()
+                .background(Color.black)
                 
-                ScrollView {
-                    VStack(spacing: 24) {
-                        // Header with symbol and arrow
-                        VStack(spacing: 12) {
-                            HStack {
-                                Text(holding.asset.symbol)
-                                    .font(.largeTitle.bold())
-                                    .foregroundColor(.white)
-                                
-                                Image(systemName: holding.asset.change >= 0 ? "arrow.up.right" : "arrow.down.right")
-                                    .font(.title2.bold())
-                                    .foregroundColor(holding.asset.change >= 0 ? .green : .red)
-                            }
-                            
-                            Text(holding.asset.name)
+                // MARK: - Tab Selector
+                Picker("View", selection: $selectedTab) {
+                    ForEach(Tab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                
+                // MARK: - Tab Content
+                if selectedTab == .general {
+                    VStack(spacing: 20) {
+                        Text("General Overview")
+                            .font(.title2)
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.top, 20)
+                        
+                        // You can add more general stats here later
+                        Spacer()
+                    }
+                } else {
+                    if holding.transactions.isEmpty {
+                        VStack(spacing: 20) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray.opacity(0.5))
+                            Text("No transactions yet")
+                                .font(.title3)
+                                .foregroundColor(.white.opacity(0.8))
+                            Text("Add your first transaction to see history")
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
                         }
-                        .padding(.top, 20)
-                        
-                        // Key Metrics Grid
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                            MetricCard(title: "Exchange", value: holding.asset.exchange ?? "N/A")  // Assume exchange added to Asset model
-                            MetricCard(title: "Currency", value: marketData.preferredCurrency)
-                            MetricCard(title: "Units Purchased", value: "\(holding.shares, specifier: "%.2f")")
-                            MetricCard(title: "Purchase Price", value: holding.avgCost.formattedPrice(in: marketData.preferredCurrency))
-                            MetricCard(title: "Last Price", value: holding.asset.price.formattedPrice(in: marketData.preferredCurrency))
-                            MetricCard(title: "Market Value", value: holding.currentValue.formattedPrice(in: marketData.preferredCurrency))
-                            MetricCard(title: "Profit/Loss", value: holding.profitLoss.formattedPrice(in: marketData.preferredCurrency), color: accentColor)
-                            MetricCard(title: "P/L %", value: "\(holding.profitLossPercent >= 0 ? "+" : "")\(String(format: "%.2f", holding.profitLossPercent))%", color: accentColor)
-                            MetricCard(title: "Today's Change", value: holding.asset.change.formattedPrice(in: marketData.preferredCurrency), color: holding.asset.change >= 0 ? .green : .red)
-                            MetricCard(title: "Today's %", value: "\(holding.asset.changePercent >= 0 ? "+" : "")\(String(format: "%.2f", holding.asset.changePercent))%", color: holding.asset.change >= 0 ? .green : .red)
+                        .padding(.top, 60)
+                    } else {
+                        List {
+                            ForEach(holding.transactions) { transaction in
+                                TransactionRow(transaction: transaction)
+                            }
                         }
-                        .padding(.horizontal)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
-                    .padding(.bottom, 40)
                 }
+                
+                Spacer()
             }
+            .background(Color.black.ignoresSafeArea())
             .navigationTitle("Holding Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                        .font(.headline)
+                        .foregroundColor(.white)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Button {
+                    showNewTransaction = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 70, height: 70)
+                        .background(Color.green)
+                        .clipShape(Circle())
+                        .shadow(color: .green.opacity(0.6), radius: 15)
+                }
+                .padding()
+            }
+            .sheet(isPresented: $showNewTransaction) {
+                NewTransactionSheet(holding: holding)
+            }
+            .sheet(isPresented: $showAddShares) {
+                AddSharesSheet(holding: holding, additionalShares: $additionalShares)
+            }
+        }
+    }
+}
+
+// MARK: - Detail Row (for breakdown and details)
+struct DetailRow: View {
+    let title: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.body)
+                .foregroundColor(.white.opacity(0.8))
+            
+            Spacer()
+            
+            Text(value)
+                .font(.body.bold())
+                .foregroundColor(.white)
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Transaction Row
+struct TransactionRow: View {
+    let transaction: Transaction
+    @EnvironmentObject var marketData: MarketData
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(transaction.type == .buy ? "Buy" : "Sell")
+                    .font(.headline)
+                    .foregroundColor(transaction.type == .buy ? .green : .red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(transaction.type == .buy ? Color.green.opacity(0.2) : Color.red.opacity(0.2))
+                    .cornerRadius(8)
+                
+                Text(transaction.date, format: .dateTime.day().month(.abbreviated).year())
+                    .foregroundColor(.white.opacity(0.8))
+                
+                Spacer()
+            }
+            
+            HStack {
+                Text("Price: \(transaction.pricePerShare.formattedPrice(in: marketData.preferredCurrency))")
+                Spacer()
+                Text("Shares: \(transaction.shares, specifier: "%.2f")")
+            }
+            .foregroundColor(.white.opacity(0.7))
+            
+            HStack {
+                Text("Cost: \((transaction.pricePerShare * transaction.shares).formattedPrice(in: marketData.preferredCurrency))")
+                Spacer()
+                Text("Delta: -1.88%") // Placeholder — calculate real delta later
+                    .foregroundColor(.red)
+            }
+            .foregroundColor(.white.opacity(0.7))
+        }
+        .padding()
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Add Shares Sheet
+struct AddSharesSheet: View {
+    let holding: PortfolioHolding
+    @Binding var additionalShares: Double
+    @EnvironmentObject var marketData: MarketData
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 32) {
+                Text("Add Shares to \(holding.asset.symbol)")
+                    .font(.title2.bold())
+                    .foregroundColor(.white)
+                
+                VStack(spacing: 20) {
+                    Text("Current Price: \(holding.asset.price.formattedPrice(in: marketData.preferredCurrency))")
+                        .font(.headline)
+                        .foregroundColor(.white.opacity(0.8))
+                    
+                    Slider(value: $additionalShares, in: 0.1...100, step: 0.1)
+                        .tint(.green)
+                    
+                    Text("\(additionalShares, specifier: "%.2f") shares")
+                        .font(.largeTitle.bold())
+                        .foregroundColor(.white)
+                    
+                    Text("Cost: \((holding.asset.price * additionalShares).formattedPrice(in: marketData.preferredCurrency))")
+                        .font(.title3)
+                        .foregroundColor(.green)
+                }
+                .padding()
+                .background(Color.white.opacity(0.08))
+                .cornerRadius(20)
+                
+                Button("Confirm Add") {
+                    //$marketData.addShares(to: holding, shares: additionalShares, atPrice: holding.asset.price)
+                    dismiss()
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(.blue)
+                .cornerRadius(20)
+                .padding(.horizontal)
+            }
+            .padding()
+            .background(Color.black)
+            .navigationTitle("Add Shares")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
                 }
             }
         }
     }
 }
 
-// Simple Metric Card
-struct MetricCard: View {
-    let title: String
-    let value: String
-    var color: Color = .white
+// MARK: - New Transaction Sheet (placeholder for full form)
+struct NewTransactionSheet: View {
+    let holding: PortfolioHolding
+    @Environment(\.dismiss) var dismiss
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.bold())
-                .foregroundColor(.gray)
-            
-            Text(value)
-                .font(.headline.bold())
-                .foregroundColor(color)
+        NavigationStack {
+            VStack(spacing: 30) {
+                Text("New Transaction")
+                    .font(.largeTitle.bold())
+                    .foregroundColor(.white)
+                
+                Text("Full transaction form coming soon...")
+                    .font(.title3)
+                    .foregroundColor(.white.opacity(0.7))
+                
+                Spacer()
+            }
+            .padding()
+            .background(Color.black.ignoresSafeArea())
+            .navigationTitle("New Transaction")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.08))
-        .cornerRadius(16)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
-        )
     }
 }
 
 #Preview {
-    HoldingDetailView(holding: PortfolioHolding(asset: Asset(symbol: "AAPL", name: "Apple Inc.", price: 178.42, change: 3.21, changePercent: 1.83, volume: 89200000, kind: .stock), shares: 10.0, avgCost: 150.0))
-        .environmentObject(MarketData())
-        .preferredColorScheme(.dark)
+    HoldingDetailView(holding: PortfolioHolding(
+        asset: Asset(symbol: "AMD", name: "Advanced Micro Devices", price: 213.45, change: -4.28, changePercent: -1.97, volume: 45000000, kind: .stock, exchange: "NASDAQ"),
+        shares: 50.0,
+        avgCost: 217.53,
+        transactions: [] // Empty for preview
+    ))
+    .environmentObject(MarketData())
+    .preferredColorScheme(.dark)
 }

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import WidgetKit
 
 @MainActor
 final class MarketData: ObservableObject {
@@ -12,6 +13,8 @@ final class MarketData: ObservableObject {
     @Published var watchlist: [Asset] = []
     @Published var newsArticles: [NewsArticle] = []
     @Published var portfolioHistory: [PortfolioSnapshot] = []
+    @Published var searchResults: [Asset] = []
+    @Published var showAddSheet = false
     
     // MARK: - Aggregated portfolio metrics
     
@@ -19,8 +22,72 @@ final class MarketData: ObservableObject {
     var totalPortfolioValue: Double {
         portfolio.reduce(0) { $0 + $1.currentValue }
     }
+    func refreshNews() async {
+        // Replace with real API later
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        // newsArticles = await NewsAPI.fetch()
+    }
+    // MARK: - Real-Time Search
     
-    /// Total cost basis for all holdings
+    @Published var preferredCurrency: String = "USD"  // Default to USD
+    @Published var usdToAudRate: Double = 1.505  // Fallback rate (1 USD ≈ 1.505 AUD as of Dec 2025)
+    
+    func updateExchangeRate() async {
+        guard let url = URL(string: "https://api.exchangerate.host/latest?base=USD&symbols=AUD") else { return }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let rates = json["rates"] as? [String: Double],
+               let rate = rates["AUD"] {
+                usdToAudRate = rate
+            }
+        } catch {
+            print("Exchange rate fetch failed: \(error)")
+        }
+    }
+    
+    // Call this on app launch or daily
+    func refreshExchangeRateIfNeeded() async {
+        // Simple daily check using last update date (store in UserDefaults if needed)
+        await updateExchangeRate()
+    }
+    // In MarketData.swift — replace your current searchAssets function with this:
+    func searchAssets(query: String, kind: AssetKind) async {
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+            searchResults = []
+            return
+        }
+        
+        do {
+            let results = try await APIService.shared.fetchSymbolSearch(query: query, kind: kind)
+            
+            let assets = try await withThrowingTaskGroup(of: Asset.self) { group in
+                for result in results.prefix(10) {
+                    group.addTask {
+                        try await APIService.shared.fetchAssetDetails(
+                            identifier: result.id,
+                            kind: kind,
+                            name: result.name
+                        )
+                    }
+                }
+                
+                var collected: [Asset] = []
+                for try await asset in group {
+                    collected.append(asset)
+                }
+                return collected
+            }
+            
+            self.searchResults = assets
+        } catch {
+            print("Search error: \(error)")
+            self.searchResults = []
+        }
+    }
+    
+    /// Total cost basis (sum of shares * avgCost)
     var totalCostBasis: Double {
         portfolio.reduce(0) { $0 + $1.costBasis }
     }
@@ -36,7 +103,7 @@ final class MarketData: ObservableObject {
         return (totalProfitLoss / totalCostBasis) * 100.0
     }
     
-    /// "Today's" absolute P/L based on last vs previous portfolioHistory point
+    /// “Today’s” absolute P/L based on last vs previous portfolioHistory point
     var dailyProfitLoss: Double {
         guard portfolioHistory.count >= 2 else { return 0 }
         let last = portfolioHistory[portfolioHistory.count - 1].totalValue
@@ -44,7 +111,7 @@ final class MarketData: ObservableObject {
         return last - prev
     }
     
-    /// "Today's" P/L percentage relative to previous value
+    /// “Today’s” P/L percentage relative to previous value
     var dailyProfitLossPercent: Double {
         guard portfolioHistory.count >= 2 else { return 0 }
         let last = portfolioHistory[portfolioHistory.count - 1].totalValue
@@ -53,95 +120,159 @@ final class MarketData: ObservableObject {
         return (last - prev) / prev * 100.0
     }
     
+    // MARK: - Init
+    
     init() {
-        loadMockData()
+        loadMockAssets()
+        loadMockPortfolio()
         generatePortfolioHistory()
         loadMockNews()
-    }
-    
-    // MARK: - Mock bootstrap data
-    
-    private func loadMockData() {
-        // Simple seed data so the UI has something to show
-        stocks = [
-            Asset(symbol: "AAPL", name: "Apple Inc.",  price: 189.95, change: 2.34,  changePercent: 1.25, volume: 52_340_000, kind: .stock),
-            Asset(symbol: "GOOGL", name: "Alphabet Inc.", price: 141.80, change: -0.45, changePercent: -0.32, volume: 24_560_000, kind: .stock),
-            Asset(symbol: "TSLA", name: "Tesla Inc.", price: 202.10, change: 5.10, changePercent: 2.59, volume: 89_000_000, kind: .stock),
-            Asset(symbol: "MSFT", name: "Microsoft Corp.", price: 410.25, change: 1.12, changePercent: 0.27, volume: 29_000_000, kind: .stock)
-        ]
         
-        crypto = [
-            Asset(symbol: "BTC", name: "Bitcoin",  price: 62_350.0, change: 450.0,  changePercent: 0.73, volume: 18_000.0,     kind: .crypto),
-            Asset(symbol: "ETH", name: "Ethereum", price: 3_250.0,  change: -25.0,   changePercent: -0.76, volume: 240_000.0,   kind: .crypto),
-            Asset(symbol: "SOL", name: "Solana",   price: 155.0,    change: 3.2,    changePercent: 2.11, volume: 5_600_000.0, kind: .crypto),
-            Asset(symbol: "ADA", name: "Cardano",  price: 0.58,     change: 0.02,   changePercent: 3.56, volume: 90_000_000.0, kind: .crypto)
-        ]
-        
-        portfolio = [
-            PortfolioHolding(asset: stocks[0], shares: 10,  avgCost: 170),
-            PortfolioHolding(asset: stocks[1], shares: 8,   avgCost: 130),
-            PortfolioHolding(asset: crypto[0], shares: 0.3, avgCost: 50_000),
-            PortfolioHolding(asset: crypto[1], shares: 1.5, avgCost: 2_900)
-        ]
-        
-        // Default watchlist: first few assets
-        watchlist = Array(stocks.prefix(4)) + Array(crypto.prefix(2))
+        if portfolio.isEmpty {
+                let mockAssets = MockMarketData.shared.mockStocks  // Use your updated mocks with current prices/exchanges
+                
+                let mockHoldings = mockAssets.map { asset in
+                    PortfolioHolding(
+                        asset: asset,
+                        shares: 10.0,               // Example: 10 shares
+                        avgCost: asset.price * 0.85 // Example: bought 15% cheaper for profit
+                    )
+                }
+                
+                portfolio = mockHoldings
+            }
     }
     
-    private func loadMockNews() {
-        newsArticles = [
-            NewsArticle(
-                title: "Apple Announces New AI Features for iPhone",
-                source: "TechCrunch",
-                url: "https://techcrunch.com",
-                imageURL: nil,
-                publishedAt: Date(),
-                summary: "Apple reveals new on-device AI features across the iPhone lineup.",
-                relatedSymbols: ["AAPL"]
-            ),
-            NewsArticle(
-                title: "Bitcoin Surges Past $60K as Institutional Interest Grows",
-                source: "CoinDesk",
-                url: "https://coindesk.com",
-                imageURL: nil,
-                publishedAt: Calendar.current.date(byAdding: .hour, value: -3, to: Date()) ?? Date(),
-                summary: "Major institutions are increasing their exposure to BTC.",
-                relatedSymbols: ["BTC"]
-            ),
-            NewsArticle(
-                title: "Tesla Reports Record Deliveries This Quarter",
-                source: "Bloomberg",
-                url: "https://bloomberg.com",
-                imageURL: nil,
-                publishedAt: Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date(),
-                summary: "Tesla beats analyst expectations with record EV deliveries.",
-                relatedSymbols: ["TSLA"]
-            )
-        ]
-    }
+    // MARK: - Price history
     
-    // MARK: - Public API integration entry point
-    
-    /// Refreshes quotes (stocks + crypto) and news using the live APIs.
-    func refreshFromAPI() async {
-        await refreshAssetsFromAPI()
-        await refreshNewsFromAPI()
-    }
-    
-    /// Fetch price history for charts, falling back to a local mock if API fails.
+    /// Fetch price history from the API; if it fails, generate a local random-walk series.
     func fetchPriceHistory(for asset: Asset, range: TimeRange) async -> [PricePoint] {
         do {
             return try await APIService.shared.fetchHistoricalData(symbol: asset.symbol, range: range)
         } catch {
-            print("Failed to fetch historical data for \(asset.symbol): \(error)")
+            print("Failed to fetch price history for \(asset.symbol): \(error)")
             return generatePriceHistoryFallback(for: asset, range: range)
+        }
+    }
+    
+    
+    
+    /// Local synthetic history used as a fallback or for mock assets.
+    func generatePriceHistoryFallback(for asset: Asset, range: TimeRange) -> [PricePoint] {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        let numPoints: Int
+        let component: Calendar.Component
+        
+        switch range {
+        case .oneDay:
+            numPoints = 24
+            component = .hour
+        case .oneWeek:
+            numPoints = 7
+            component = .day
+        case .oneMonth:
+            numPoints = 30
+            component = .day
+        case .threeMonths:
+            numPoints = 13
+            component = .weekOfYear
+        case .sixMonths:
+            numPoints = 26
+            component = .weekOfYear
+        case .ytd:
+            numPoints = 12
+            component = .month
+        case .oneYear:
+            numPoints = 12
+            component = .month
+        case .twoYears:
+            numPoints = 24
+            component = .month
+        case .fiveYears:
+            numPoints = 30
+            component = .month
+        case .tenYears:
+            numPoints = 40
+            component = .month
+        case .all:
+            numPoints = 60
+            component = .month
+        }
+        
+        let volatility = range.volatility
+        
+        var points: [PricePoint] = []
+        var currentPrice = asset.price
+        
+        for i in 0..<numPoints {
+            guard let date = calendar.date(byAdding: component, value: -i, to: now) else { continue }
+            
+            let randomChange = Double.random(in: (-volatility)...(volatility))
+            let price = max(0.01, currentPrice * (1 + randomChange))
+            
+            points.append(PricePoint(date: date, price: price))
+            currentPrice = price
+        }
+        
+        return points.sorted { $0.date < $1.date }
+    }
+    
+    /// Generates a synthetic time-series for the whole portfolio.
+    private func generatePortfolioHistory() {
+        portfolioHistory.removeAll()
+        let calendar = Calendar.current
+        let now = Date()
+        
+        let numPoints = 30
+        var currentValue = max(totalPortfolioValue, 5000) // some baseline
+        
+        for i in 0..<numPoints {
+            guard let date = calendar.date(byAdding: .day, value: -i, to: now) else { continue }
+            
+            let changePercent = Double.random(in: -0.03...0.03)
+            currentValue = max(100, currentValue * (1 + changePercent))
+            
+            portfolioHistory.append(
+                PortfolioSnapshot(date: date, totalValue: currentValue)
+            )
+        }
+        
+        portfolioHistory.sort { $0.date < $1.date }
+    }
+    
+    // MARK: - Public API entry point
+    
+    func refreshFromAPI() async {
+        await refreshAssetsFromAPI()
+        await refreshNewsFromAPI()
+        generatePortfolioHistory()
+    }
+    
+    func fetchHistoricalData(symbol: String, range: TimeRange) async throws -> [Candle] {  // Changed return type
+        let upper = symbol.uppercased()
+        
+        let (timeframe, multiplier): (String, Int) = {
+            switch range {
+            case .oneDay: return ("Minute", 1)  // Or 5 for 5-min bars in day trading
+            case .oneWeek: return ("Hour", 1)
+            default: return ("Day", 1)
+            }
+        }()
+        
+        // Existing URL setup...
+        // Parse response bars into Candle
+        let bars = try await APIService.shared.fetchBars(symbol: upper, timeframe: timeframe, multiplier: multiplier, range: range)
+        return bars.map { bar in
+            Candle(date: bar.date, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume)
         }
     }
     
     // MARK: - Quotes
     
     private func refreshAssetsFromAPI() async {
-        // Update stocks using AlphaVantage
+        // Update stocks using Alpaca
         for index in stocks.indices {
             let current = stocks[index]
             do {
@@ -170,9 +301,32 @@ final class MarketData: ObservableObject {
                 print("Failed to fetch crypto price for \(current.symbol): \(error)")
             }
         }
+        
+        // Propagate latest prices into portfolio and watchlist
+        syncDerivedCollections()
     }
     
-    /// Keeps your local metadata (marketCap, beta, etc.) but updates live fields.
+    /// Update portfolio holdings + watchlist to use latest `Asset` objects.
+    private func syncDerivedCollections() {
+        let allAssets = stocks + crypto
+        let lookup = Dictionary(uniqueKeysWithValues: allAssets.map { ($0.symbol, $0) })
+        
+        for index in portfolio.indices {
+            let symbol = portfolio[index].asset.symbol
+            if let updated = lookup[symbol] {
+                portfolio[index].asset = updated
+            }
+        }
+        
+        for index in watchlist.indices {
+            let symbol = watchlist[index].symbol
+            if let updated = lookup[symbol] {
+                watchlist[index] = updated
+            }
+        }
+    }
+    
+    /// Keep old metadata but update live fields from API.
     private func mergedAsset(old: Asset, api: Asset) -> Asset {
         Asset(
             id: old.id,
@@ -190,106 +344,94 @@ final class MarketData: ObservableObject {
             week52Low: old.week52Low,
             avgVolume: old.avgVolume,
             dividend: old.dividend,
-            beta: old.beta
+            beta: old.beta,
+            exchange: "Binance"
         )
     }
     
     // MARK: - News
     
     private func refreshNewsFromAPI() async {
-        let symbols: [String]
-        if !watchlist.isEmpty {
-            symbols = Array(Set(watchlist.map { $0.symbol }))
-        } else {
-            symbols = Array(Set(stocks.map { $0.symbol }))
-        }
-        
-        guard !symbols.isEmpty else { return }
-        
         do {
-            newsArticles = try await APIService.shared.fetchNews(for: symbols)
+            let articles = try await APIService.shared.fetchNews()   // ← removed (for: symbols)
+            self.newsArticles = articles
         } catch {
             print("Failed to fetch news: \(error)")
-            // Keep whatever mock / previous news we had
         }
     }
     
-    // MARK: - Price history fallback (local random walk)
+    // MARK: - Mock data
     
-    private func generatePriceHistoryFallback(for asset: Asset, range: TimeRange) -> [PricePoint] {
-        let calendar = Calendar.current
-        let now = Date()
+    private func loadMockAssets() {
+        // Initial demo assets for UI
+        stocks = [
+            Asset(symbol: "AAPL", name: "Apple Inc.", price: 180.12, change: 1.24, changePercent: 0.69, volume: 55_000_000, kind: .stock, exchange: "NYSE"),
+            Asset(symbol: "TSLA", name: "Tesla Inc.", price: 240.87, change: -2.45, changePercent: -1.01, volume: 38_000_000, kind: .stock, exchange: "NYSE"),
+            Asset(symbol: "MSFT", name: "Microsoft Corporation", price: 350.54, change: 3.21, changePercent: 0.92, volume: 29_000_000, kind: .stock, exchange: "NYSE"),
+            Asset(symbol: "NVDA", name: "NVIDIA Corporation", price: 480.90, change: 5.12, changePercent: 1.08, volume: 32_000_000, kind: .stock, exchange: "NYSE")
+        ]
         
-        let (days, interval) = getTimeParameters(for: range)
-        let basePrice = asset.price
-        let volatility = asset.kind == .crypto ? 0.05 : 0.02
-        
-        var allPoints: [PricePoint] = []
-        
-        for i in 0..<days {
-            guard let date = calendar.date(byAdding: .day, value: -days + i, to: now) else { continue }
-            let randomChange = Double.random(in: -volatility...volatility)
-            let price = basePrice * (1 + randomChange * Double(days - i) / Double(days))
-            allPoints.append(PricePoint(date: date, price: price))
-        }
-        
-        if interval <= 1 {
-            return allPoints
-        }
-        
-        return allPoints.enumerated()
-            .filter { index, _ in index % interval == 0 }
-            .map { $0.element }
+        crypto = [
+            Asset(symbol: "BTC", name: "Bitcoin", price: 62_500, change: -1_200, changePercent: -1.88, volume: 18_000, kind: .crypto, exchange: "Binance"),
+            Asset(symbol: "ETH", name: "Ethereum", price: 3_200, change: 45, changePercent: 1.43, volume: 220_000, kind: .crypto, exchange: "Binance"),
+            Asset(symbol: "SOL", name: "Solana", price: 135, change: -3.4, changePercent: -2.45, volume: 1_800_000, kind: .crypto, exchange: "Binance"),
+            Asset(symbol: "ADA", name: "Cardano", price: 0.45, change: 0.01, changePercent: 2.3, volume: 75_000_000, kind: .crypto, exchange: "Binance")
+        ]
     }
     
-    private func getTimeParameters(for range: TimeRange) -> (days: Int, interval: Int) {
-        switch range {
-        case .oneDay: return (1, 1)
-        case .oneWeek: return (7, 1)
-        case .oneMonth: return (30, 1)
-        case .threeMonths: return (90, 2)
-        case .sixMonths: return (180, 3)
-        case .ytd:
-            let startOfYear = Calendar.current.date(from: Calendar.current.dateComponents([.year], from: Date()))!
-            let days = Calendar.current.dateComponents([.day], from: startOfYear, to: Date()).day ?? 0
-            return (max(days, 1), max(1, days / 60))
-        case .oneYear: return (365, 7)
-        case .twoYears: return (730, 14)
-        case .fiveYears: return (1825, 30)
-        case .tenYears: return (3650, 60)
-        case .all: return (5475, 90)
-        }
-    }
-    
-    // MARK: - Portfolio history (for portfolio chart)
-    
-    private func generatePortfolioHistory() {
-        let calendar = Calendar.current
-        let now = Date()
-        let baseValue = portfolio.reduce(0.0) { $0 + $1.costBasis }
+    private func loadMockPortfolio() {
+        guard stocks.count >= 2, crypto.count >= 2 else { return }
         
-        guard baseValue > 0 else { return }
+        portfolio = [
+            PortfolioHolding(asset: stocks[0], shares: 10,  avgCost: 170),
+            PortfolioHolding(asset: stocks[1], shares: 8,   avgCost: 130),
+            PortfolioHolding(asset: crypto[0], shares: 0.3, avgCost: 50_000),
+            PortfolioHolding(asset: crypto[1], shares: 1.5, avgCost: 2_900)
+        ]
         
-        for i in 0..<90 {
-            let date = calendar.date(byAdding: .day, value: -90 + i, to: now)!
-            let randomChange = Double.random(in: -0.02...0.03)
-            let value = baseValue * (1 + randomChange * Double(i) / 90.0)
-            portfolioHistory.append(PortfolioSnapshot(date: date, totalValue: value))
-        }
+        watchlist = Array(stocks.prefix(4)) + Array(crypto.prefix(2))
     }
     
-    // MARK: - Watchlist / portfolio management helpers
-    
-    func addToWatchlist(_ asset: Asset) {
-        if !watchlist.contains(where: { $0.symbol == asset.symbol }) {
-            watchlist.append(asset)
-        }
+    private func loadMockNews() {
+        newsArticles = [
+            NewsArticle(
+                title: "Apple Announces New AI Features for iPhone",
+                source: "Bloomberg",
+                url: "https://example.com/aapl-news-1",
+                imageURL: nil,
+                publishedAt: Date().addingTimeInterval(-3600),
+                summary: "Apple unveils a suite of new AI-powered features for the upcoming iOS release.",
+                relatedSymbols: ["AAPL"]
+            ),
+            NewsArticle(
+                title: "Bitcoin Breaks Above $60K",
+                source: "CoinDesk",
+                url: "https://example.com/btc-news-1",
+                imageURL: nil,
+                publishedAt: Date().addingTimeInterval(-7200),
+                summary: "Bitcoin rallies past the $60,000 mark amid renewed institutional interest.",
+                relatedSymbols: ["BTC"]
+            ),
+            NewsArticle(
+                title: "Tesla Expands Production in Europe",
+                source: "Reuters",
+                url: "https://example.com/tsla-news-1",
+                imageURL: nil,
+                publishedAt: Date().addingTimeInterval(-10_800),
+                summary: "Tesla announces a new Gigafactory in Eastern Europe to boost production capacity.",
+                relatedSymbols: ["TSLA"]
+            )
+        ]
     }
     
-    func removeFromWatchlist(_ asset: Asset) {
-        watchlist.removeAll { $0.symbol == asset.symbol }
-    }
+    // MARK: - Portfolio mutations
     
+    func updateHolding(_ holding: PortfolioHolding, shares: Double, avgCost: Double) {
+        guard let index = portfolio.firstIndex(where: { $0.id == holding.id }) else { return }
+        portfolio[index].shares = shares
+        
+        portfolio[index].avgCost = avgCost
+    }
     func addToPortfolio(asset: Asset, shares: Double, avgCost: Double) {
         let holding = PortfolioHolding(asset: asset, shares: shares, avgCost: avgCost)
         portfolio.append(holding)
@@ -299,8 +441,32 @@ final class MarketData: ObservableObject {
         portfolio.removeAll { $0.id == holding.id }
     }
     
-    func addCustomAsset(symbol: String, name: String, price: Double, kind: AssetKind) {
-        let asset = Asset(symbol: symbol, name: name, price: price, change: 0, changePercent: 0, volume: 0, kind: kind)
+    // MARK: - Watchlist mutations
+    
+    func removeFromWatchlist(_ asset: Asset) {
+        watchlist.removeAll { $0.id == asset.id }
+    }
+    
+    func addToWatchlist(_ asset: Asset) {
+        if !watchlist.contains(where: { $0.symbol == asset.symbol }) {
+            watchlist.append(asset)
+            Task { await refreshFromAPI() }  // Update live prices
+        }
+    }
+    
+    func updateWidgetData() {
+        let shared = UserDefaults(suiteName: "group.com.yourapp.stocktracker")!
+        shared.set(totalPortfolioValue, forKey: "portfolioValue")
+        shared.set(totalProfitLoss, forKey: "portfolioChange")
+        shared.set(totalProfitLossPercent, forKey: "portfolioChangePercent")
+        
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+    
+    // MARK: - Custom assets
+    
+    func addCustomAsset(symbol: String, name: String, price: Double, kind: AssetKind, exchange: String) {
+        let asset = Asset(symbol: symbol, name: name, price: price, change: 0, changePercent: 0, volume: 0, kind: kind, exchange: exchange)
         switch kind {
         case .stock:
             stocks.append(asset)
@@ -308,4 +474,5 @@ final class MarketData: ObservableObject {
             crypto.append(asset)
         }
     }
+    
 }

@@ -33,32 +33,42 @@ extension Double {
     }
 }
 
-// MARK: - Shimmering Skeleton Effect (if not already added)
-extension View {
-    func shimmering() -> some View {
-        self.overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.15))
-                .mask(
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                gradient: Gradient(colors: [.clear, .white.opacity(0.8), .clear]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .rotationEffect(.degrees(30))
-                        .offset(x: -150)
-                        .animation(
-                            Animation.linear(duration: 1.8)
-                                .repeatForever(autoreverses: false),
-                            value: UUID()
-                        )
-                )
-        )
-    }
-}
+//import CryptoKit
+//
+//extension String {
+//    func sha256() -> String {
+//        let data = Data(self.utf8)
+//        let hashed = SHA256.hash(data: data)
+//        return hashed.compactMap { String(format: "%02x", $0) }.joined()
+//    }
+//}
+
+//// MARK: - Shimmering Skeleton Effect (if not already added)
+//extension View {
+//    func shimmering() -> some View {
+//        self.overlay(
+//            RoundedRectangle(cornerRadius: 8)
+//                .fill(Color.white.opacity(0.15))
+//                .mask(
+//                    Rectangle()
+//                        .fill(
+//                            LinearGradient(
+//                                gradient: Gradient(colors: [.clear, .white.opacity(0.8), .clear]),
+//                                startPoint: .leading,
+//                                endPoint: .trailing
+//                            )
+//                        )
+//                        .rotationEffect(.degrees(30))
+//                        .offset(x: -150)
+//                        .animation(
+//                            Animation.linear(duration: 1.8)
+//                                .repeatForever(autoreverses: false),
+//                            value: UUID()
+//                        )
+//                )
+//        )
+//    }
+//}
 
 // MARK: - Haptic Feedback Helper
 enum Haptic {
