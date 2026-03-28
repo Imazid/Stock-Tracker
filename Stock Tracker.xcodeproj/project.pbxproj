@@ -7,10 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B38711A72F52825D00DD83A8 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B38710CC2F5281C300DD83A8 /* Supabase */; };
 		B3BEC3862EEA664D0063B198 /* Stock Tracker Notification.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B3BEC37F2EEA664D0063B198 /* Stock Tracker Notification.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B3BEC3D72EEAE6F30063B198 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3BEC31A2EEA63500063B198 /* WidgetKit.framework */; };
 		B3BEC3D82EEAE6F30063B198 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3BEC31C2EEA63510063B198 /* SwiftUI.framework */; };
 		B3BEC3E92EEAE6F50063B198 /* Stock Tracker WidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B3BEC3D62EEAE6F30063B198 /* Stock Tracker WidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B3E6C6EC2F664F2500BC2A5C /* GoogleMobileAds in Frameworks */ = {isa = PBXBuildFile; productRef = B3E6C6EB2F664F2500BC2A5C /* GoogleMobileAds */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -65,21 +67,14 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
-				PortfolioSummaryEntry.swift,
 			);
 			target = B3BEC3D52EEAE6F30063B198 /* Stock Tracker WidgetExtension */;
-		};
-		B3BEC3EE2EEAE7720063B198 /* Exceptions for "Stock Tracker Widget" folder in "Stock Tracker" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				PortfolioSummaryEntry.swift,
-			);
-			target = B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */;
 		};
 		B3BEC4002EF146BD0063B198 /* Exceptions for "Stock Tracker" folder in "Stock Tracker" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.txt,
+				UserDefaultExtentions.swift,
 			);
 			target = B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */;
 		};
@@ -93,6 +88,13 @@
 				Info.txt,
 			);
 		};
+		B3D53EBB2F06709A00CE5D9E /* Exceptions for "Stock Tracker" folder in "Copy Bundle Resources" phase from "Stock Tracker" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = B3B9AE232ED9CE2D005F35F7 /* Resources */;
+			membershipExceptions = (
+				UserDefaultExtentions.swift,
+			);
+		};
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -101,6 +103,7 @@
 			exceptions = (
 				B3BEC4002EF146BD0063B198 /* Exceptions for "Stock Tracker" folder in "Stock Tracker" target */,
 				B3BEC4012EF146BD0063B198 /* Exceptions for "Stock Tracker" folder in "Compile Sources" phase from "Stock Tracker" target */,
+				B3D53EBB2F06709A00CE5D9E /* Exceptions for "Stock Tracker" folder in "Copy Bundle Resources" phase from "Stock Tracker" target */,
 			);
 			path = "Stock Tracker";
 			sourceTree = "<group>";
@@ -116,7 +119,6 @@
 		B3BEC3D92EEAE6F30063B198 /* Stock Tracker Widget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				B3BEC3EE2EEAE7720063B198 /* Exceptions for "Stock Tracker Widget" folder in "Stock Tracker" target */,
 				B3BEC3EA2EEAE6F50063B198 /* Exceptions for "Stock Tracker Widget" folder in "Stock Tracker WidgetExtension" target */,
 			);
 			path = "Stock Tracker Widget";
@@ -129,6 +131,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B3E6C6EC2F664F2500BC2A5C /* GoogleMobileAds in Frameworks */,
+				B38711A72F52825D00DD83A8 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -204,6 +208,8 @@
 			);
 			name = "Stock Tracker";
 			packageProductDependencies = (
+				B38710CC2F5281C300DD83A8 /* Supabase */,
+				B3E6C6EB2F664F2500BC2A5C /* GoogleMobileAds */,
 			);
 			productName = "Stock Tracker";
 			productReference = B3B9AE252ED9CE2D005F35F7 /* Stock Tracker.app */;
@@ -283,6 +289,10 @@
 			);
 			mainGroup = B3B9AE1C2ED9CE2D005F35F7;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B38710CA2F52817C00DD83A8 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
+				B38710CB2F5281C300DD83A8 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B3B9AE262ED9CE2D005F35F7 /* Products */;
 			projectDirPath = "";
@@ -482,18 +492,22 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = "Stock Tracker/Stock Tracker.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "";
+				INFOPLIST_FILE = "Stock-Tracker-Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Securley lock the app ";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -518,18 +532,22 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = "Stock Tracker/Stock Tracker.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "";
+				INFOPLIST_FILE = "Stock-Tracker-Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Securley lock the app ";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -611,6 +629,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = "Stock Tracker Widget/Stock Tracker Widget.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -642,6 +661,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = "Stock Tracker Widget/Stock Tracker Widget.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -708,6 +728,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B38710CA2F52817C00DD83A8 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/googleads/swift-package-manager-google-mobile-ads.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 13.1.0;
+			};
+		};
+		B38710CB2F5281C300DD83A8 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B38710CC2F5281C300DD83A8 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B38710CB2F5281C300DD83A8 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+		B3E6C6EB2F664F2500BC2A5C /* GoogleMobileAds */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B38710CA2F52817C00DD83A8 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */;
+			productName = GoogleMobileAds;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B3B9AE1D2ED9CE2D005F35F7 /* Project object */;
 }

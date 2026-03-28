@@ -1,0 +1,3505 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "" : {
+
+    },
+    " %@" : {
+
+    },
+    "·" : {
+
+    },
+    "(%@)" : {
+
+    },
+    "(%@%@%%)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "(%1$@%2$@%%)"
+          }
+        }
+      }
+    },
+    "/mo" : {
+
+    },
+    "% return" : {
+
+    },
+    "%@ · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@"
+          }
+        }
+      }
+    },
+    "%@ alert: %@ %@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ alert: %2$@ %3$@, %4$@"
+          }
+        }
+      }
+    },
+    "%@ filter" : {
+
+    },
+    "%@ is now $%@ (%@ $%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ is now $%2$@ (%3$@ $%4$@)"
+          }
+        }
+      }
+    },
+    "%@ shares" : {
+
+    },
+    "%@ shares @ $%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ shares @ $%2$@"
+          }
+        }
+      }
+    },
+    "%@. Source: %@. %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@. Source: %2$@. %3$@"
+          }
+        }
+      }
+    },
+    "%@%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@%2$@"
+          }
+        }
+      }
+    },
+    "%@%@%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@%2$@%%"
+          }
+        }
+      }
+    },
+    "%@$%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@$%2$@"
+          }
+        }
+      }
+    },
+    "%lld" : {
+
+    },
+    "%lld %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld %2$@"
+          }
+        }
+      }
+    },
+    "%lld account%@ linked" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld account%2$@ linked"
+          }
+        }
+      }
+    },
+    "%lld analysts" : {
+
+    },
+    "%lld articles" : {
+
+    },
+    "%lld Buy" : {
+
+    },
+    "%lld Hold" : {
+
+    },
+    "%lld holding%@ over your plan limit" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld holding%2$@ over your plan limit"
+          }
+        }
+      }
+    },
+    "%lld holdings · %lld asset types" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld holdings · %2$lld asset types"
+          }
+        }
+      }
+    },
+    "%lld holdings found" : {
+
+    },
+    "%lld item%@ over your plan limit" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld item%2$@ over your plan limit"
+          }
+        }
+      }
+    },
+    "%lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "%lld of %lld alerts used" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld alerts used"
+          }
+        }
+      }
+    },
+    "%lld of %lld selected" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld selected"
+          }
+        }
+      }
+    },
+    "%lld position%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld position%2$@"
+          }
+        }
+      }
+    },
+    "%lld queries remaining today" : {
+
+    },
+    "%lld Sell" : {
+
+    },
+    "%llds" : {
+
+    },
+    "•" : {
+
+    },
+    "••••" : {
+
+    },
+    "••••••" : {
+
+    },
+    "+ New Alert" : {
+
+    },
+    "+$1,284  (2.79%) today" : {
+
+    },
+    "+2.79%" : {
+
+    },
+    "⚠️ Debug override active — ads hidden, all features unlocked." : {
+
+    },
+    "$" : {
+
+    },
+    "$%@" : {
+
+    },
+    "$%@ per month" : {
+
+    },
+    "$47,284" : {
+
+    },
+    "000000" : {
+
+    },
+    "0.00" : {
+
+    },
+    "24/7 AI assistant" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asistente IA 24/7"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistant IA 24/7"
+          }
+        }
+      }
+    },
+    "52-Week Range" : {
+
+    },
+    "AAPL reached $180 — your target price" : {
+
+    },
+    "About" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acerca de"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "À propos"
+          }
+        }
+      }
+    },
+    "About Dividend Data" : {
+
+    },
+    "Accessibility" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accesibilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accessibilité"
+          }
+        }
+      }
+    },
+    "Account" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cuenta"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte"
+          }
+        }
+      }
+    },
+    "Account creation requires internet.\nContinue without an account to get started." : {
+
+    },
+    "Actions" : {
+
+    },
+    "Active Custom Alerts" : {
+
+    },
+    "Active subscription" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suscripción activa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abonnement actif"
+          }
+        }
+      }
+    },
+    "Activity" : {
+
+    },
+    "Activity Log" : {
+
+    },
+    "Actual" : {
+
+    },
+    "Add" : {
+
+    },
+    "Add %@ to start tracking their performance" : {
+
+    },
+    "Add a %@ Position" : {
+
+    },
+    "Add a custom %@ to your watchlist. You can manually enter the current price." : {
+
+    },
+    "Add Asset" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agregar activo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter un actif"
+          }
+        }
+      }
+    },
+    "Add Buy Transaction" : {
+
+    },
+    "Add Custom %@" : {
+
+    },
+    "Add Custom Asset" : {
+
+    },
+    "Add from Watchlist" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agregar desde seguimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter depuis la liste"
+          }
+        }
+      }
+    },
+    "Add holding" : {
+
+    },
+    "Add holdings to\nsee P&L" : {
+
+    },
+    "Add holdings to compare your returns with the S&P 500." : {
+
+    },
+    "Add holdings to see allocation" : {
+
+    },
+    "Add Position" : {
+
+    },
+    "Add Sell Transaction" : {
+
+    },
+    "Add Stock" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agregar acción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter une action"
+          }
+        }
+      }
+    },
+    "Add to Portfolio" : {
+
+    },
+    "Add Transaction" : {
+
+    },
+    "Add Two-Factor Auth" : {
+
+    },
+    "Add your first holding to start tracking\nperformance, gains, and more." : {
+
+    },
+    "Add your first transaction to track your history" : {
+
+    },
+    "Add your holdings" : {
+
+    },
+    "Added (%lld)" : {
+
+    },
+    "Advanced Features" : {
+
+    },
+    "After Hours:" : {
+
+    },
+    "AI Agent" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agente IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent IA"
+          }
+        }
+      }
+    },
+    "AI Analysis" : {
+
+    },
+    "AI Assistant" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asistente IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistant IA"
+          }
+        }
+      }
+    },
+    "AI Investing Assistant" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asistente de inversión IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistant d'investissement IA"
+          }
+        }
+      }
+    },
+    "AI is typing%@" : {
+
+    },
+    "AI said: %@" : {
+
+    },
+    "AI-generated · Not financial advice" : {
+
+    },
+    "Alert when price goes" : {
+
+    },
+    "Alerts" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alertas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alertes"
+          }
+        }
+      }
+    },
+    "All data" : {
+
+    },
+    "All News" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Todas las noticias"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Toutes les actualités"
+          }
+        }
+      }
+    },
+    "All time unrealized gain loss: %@ %@ percent" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "All time unrealized gain loss: %1$@ %2$@ percent"
+          }
+        }
+      }
+    },
+    "Allocation" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asignación"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Répartition"
+          }
+        }
+      }
+    },
+    "Alpha Vantage key not set — add AlphaVantageKey to Secrets.plist" : {
+
+    },
+    "Analyst data unavailable" : {
+
+    },
+    "Analyst Ratings" : {
+
+    },
+    "Analyzing %@..." : {
+
+    },
+    "Annual · FMP" : {
+
+    },
+    "API Connection Status" : {
+
+    },
+    "API Keys Loaded" : {
+
+    },
+    "API Status" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Estado de API"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "État de l'API"
+          }
+        }
+      }
+    },
+    "API Tests" : {
+
+    },
+    "App Lock" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bloqueo de app"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verrouillage de l'app"
+          }
+        }
+      }
+    },
+    "Appearance" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apariencia"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apparence"
+          }
+        }
+      }
+    },
+    "Apple" : {
+
+    },
+    "Ask me anything..." : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pregúntame lo que sea..."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Demandez-moi n'importe quoi..."
+          }
+        }
+      }
+    },
+    "Asset Allocation" : {
+
+    },
+    "Asset Details" : {
+
+    },
+    "Asset Type" : {
+
+    },
+    "ASX" : {
+
+    },
+    "ASX Popular" : {
+
+    },
+    "ASX Stocks (Alpha Vantage)" : {
+
+    },
+    "ASX Symbol (e.g. BHP)" : {
+
+    },
+    "At least 8 characters" : {
+
+    },
+    "AU" : {
+
+    },
+    "Authenticates using biometrics to unlock the app" : {
+
+    },
+    "Authentication error: %@" : {
+
+    },
+    "Authenticator App" : {
+
+    },
+    "Auto Refresh" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualización automática"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rafraîchissement auto"
+          }
+        }
+      }
+    },
+    "Auto-sync your holdings" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sincroniza automáticamente tus posiciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Synchronisez automatiquement vos positions"
+          }
+        }
+      }
+    },
+    "Automatically receive portfolio reports via email" : {
+
+    },
+    "Available Plans" : {
+
+    },
+    "Average Cost per Share" : {
+
+    },
+    "Avg cost" : {
+
+    },
+    "Avg Yield" : {
+
+    },
+    "Balance" : {
+
+    },
+    "Base" : {
+
+    },
+    "Beat" : {
+
+    },
+    "BEAT" : {
+
+    },
+    "Beating the Market" : {
+
+    },
+    "Benchmark" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Referencia"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Référence"
+          }
+        }
+      }
+    },
+    "Benchmark chart requires market history data." : {
+
+    },
+    "Best Value" : {
+
+    },
+    "BodyHigh" : {
+
+    },
+    "BodyLow" : {
+
+    },
+    "Brokerage Connect" : {
+
+    },
+    "Browse by Sector" : {
+
+    },
+    "Browse stocks and add positions" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Explora acciones y agrega posiciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parcourez les actions et ajoutez des positions"
+          }
+        }
+      }
+    },
+    "Browse Watchlist" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Explorar seguimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parcourir la liste"
+          }
+        }
+      }
+    },
+    "Build your portfolio" : {
+
+    },
+    "Build Your Portfolio" : {
+
+    },
+    "Built for investors\nwho want clarity" : {
+
+    },
+    "Buy" : {
+
+    },
+    "by $%@" : {
+
+    },
+    "by $%@B" : {
+
+    },
+    "Cancel" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Annuler"
+          }
+        }
+      }
+    },
+    "Candle" : {
+
+    },
+    "Candlestick data unavailable" : {
+
+    },
+    "Capital gains taxes depend on how long you held the investment:" : {
+
+    },
+    "Change" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambio"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Variation"
+          }
+        }
+      }
+    },
+    "Chart" : {
+
+    },
+    "Check All APIs" : {
+
+    },
+    "Check your email" : {
+
+    },
+    "Checking APIs…" : {
+
+    },
+    "Chg%" : {
+
+    },
+    "Choose CSV file" : {
+
+    },
+    "Choose Different File" : {
+
+    },
+    "Choose how to add to your portfolio" : {
+
+    },
+    "Clear" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Borrar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Effacer"
+          }
+        }
+      }
+    },
+    "Clear All Local Data" : {
+
+    },
+    "Clear all local data?" : {
+
+    },
+    "Clear Everything" : {
+
+    },
+    "Close" : {
+
+    },
+    "Cloud account active" : {
+
+    },
+    "Cloud Sync" : {
+
+    },
+    "Color Vision" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visión de color"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vision des couleurs"
+          }
+        }
+      }
+    },
+    "Compare plans and choose the best fit" : {
+
+    },
+    "Connect" : {
+
+    },
+    "Connect Account" : {
+
+    },
+    "Connect an account to see holdings" : {
+
+    },
+    "Connect Another" : {
+
+    },
+    "Connect Broker" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conectar corredor"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecter le courtier"
+          }
+        }
+      }
+    },
+    "Connect Brokerage" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conectar corredor"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecter le courtier"
+          }
+        }
+      }
+    },
+    "Connect your broker in the Watchlist Setup step, or later in Settings." : {
+
+    },
+    "Connected" : {
+
+    },
+    "Connected Accounts" : {
+
+    },
+    "Connection Error" : {
+
+    },
+    "Connections are read-only. We can see your positions but can never place trades or move funds." : {
+
+    },
+    "Consensus data unavailable" : {
+
+    },
+    "Consider selling XYZ" : {
+
+    },
+    "Continue without an account" : {
+
+    },
+    "Cost Basis" : {
+
+    },
+    "Create" : {
+
+    },
+    "Create a password" : {
+
+    },
+    "Create Account" : {
+
+    },
+    "Create complex, multi-condition alerts that monitor multiple stocks, portfolio metrics, or market conditions simultaneously. Get notified when all your conditions are met." : {
+
+    },
+    "Crypto" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cripto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crypto"
+          }
+        }
+      }
+    },
+    "Crypto Prices" : {
+
+    },
+    "Cryptocurrency" : {
+
+    },
+    "CSV Import" : {
+
+    },
+    "Currency" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moneda"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Devise"
+          }
+        }
+      }
+    },
+    "Current" : {
+
+    },
+    "Current Price" : {
+
+    },
+    "Current Tier" : {
+
+    },
+    "Current: %@" : {
+
+    },
+    "Custom %@" : {
+
+    },
+    "Daily limit reached. Upgrade to Black for unlimited access." : {
+
+    },
+    "Data & Privacy" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datos y privacidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Données et confidentialité"
+          }
+        }
+      }
+    },
+    "Data May Be Outdated" : {
+
+    },
+    "Data Providers" : {
+
+    },
+    "Data Sources" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fuentes de datos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sources de données"
+          }
+        }
+      }
+    },
+    "Data Storage" : {
+
+    },
+    "Data Synced" : {
+
+    },
+    "Date" : {
+
+    },
+    "Debug Tools" : {
+
+    },
+    "Delete" : {
+
+    },
+    "Delete (%lld)" : {
+
+    },
+    "Deselect All" : {
+
+    },
+    "Developer" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desarrollador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Développeur"
+          }
+        }
+      }
+    },
+    "Device Permissions" : {
+
+    },
+    "Didn't get it? Resend code" : {
+
+    },
+    "Disable" : {
+
+    },
+    "Disable Two-Factor Auth" : {
+
+    },
+    "Disable two-factor authentication?" : {
+
+    },
+    "Disconnect All" : {
+
+    },
+    "Discover & Invest" : {
+
+    },
+    "Dividend Holdings" : {
+
+    },
+    "Dividend Payers (%lld)" : {
+
+    },
+    "Dividends" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dividendos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dividendes"
+          }
+        }
+      }
+    },
+    "Dividends display when your holdings have dividend yield data. Make sure your positions include dividend-paying stocks or ETFs." : {
+
+    },
+    "Done" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminé"
+          }
+        }
+      }
+    },
+    "Double tap to read full article" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Toca dos veces para leer el artículo completo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Touchez deux fois pour lire l'article complet"
+          }
+        }
+      }
+    },
+    "Down %@" : {
+
+    },
+    "Down $340 (-8.2%). Selling now could offset gains and reduce tax burden." : {
+
+    },
+    "Download Tax Report (PDF)" : {
+
+    },
+    "Dynamic Type: %@" : {
+
+    },
+    "Earnings" : {
+
+    },
+    "Earnings data unavailable" : {
+
+    },
+    "Edit" : {
+
+    },
+    "Email" : {
+
+    },
+    "Email address" : {
+
+    },
+    "Enable microphone and speech recognition in Settings to use voice search." : {
+
+    },
+    "Enable Microphone and Speech Recognition in Settings to use voice search." : {
+
+    },
+    "Enabled" : {
+
+    },
+    "Enhanced" : {
+
+    },
+    "EPS" : {
+
+    },
+    "Error" : {
+
+    },
+    "Est" : {
+
+    },
+    "Est. Annual Income" : {
+
+    },
+    "Estimated Annual Income" : {
+
+    },
+    "Example:" : {
+
+    },
+    "Expected columns: Symbol, Shares, Average Cost" : {
+
+    },
+    "Expected CSV Format" : {
+
+    },
+    "Export for TurboTax (CSV)" : {
+
+    },
+    "Export Portfolio Data" : {
+
+    },
+    "Fetch FMP Profile + Quote" : {
+
+    },
+    "Fetch Fundamentals" : {
+
+    },
+    "Fetching…" : {
+
+    },
+    "Financial data unavailable" : {
+
+    },
+    "Find your next investment" : {
+
+    },
+    "Firm" : {
+
+    },
+    "Fiscal.ai Fundamentals Test" : {
+
+    },
+    "Fiscal.ai key not set — add FiscalAIAPIKey to Secrets.plist" : {
+
+    },
+    "FMP Company Data Test" : {
+
+    },
+    "FMP key not set — add FMPAPIKey to Secrets.plist" : {
+
+    },
+    "Force Refresh All APIs" : {
+
+    },
+    "Force Save to Disk" : {
+
+    },
+    "Forgot Password?" : {
+
+    },
+    "From $%@/month" : {
+
+    },
+    "Gain/Loss" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ganancia/Pérdida"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gain/Perte"
+          }
+        }
+      }
+    },
+    "Gainers" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Subidas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hausses"
+          }
+        }
+      }
+    },
+    "Generate %@" : {
+
+    },
+    "Generate AI Analysis" : {
+
+    },
+    "Get alerts only when prices hit your targets.\nNo spam, no noise." : {
+
+    },
+    "Get instant insights, stock analysis, and portfolio advice powered by AI" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Obtén información instantánea, análisis de acciones y consejos de cartera con IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Obtenez des analyses instantanées et des conseils de portefeuille par IA"
+          }
+        }
+      }
+    },
+    "Give your portfolio a clear, descriptive name" : {
+
+    },
+    "Give your watchlist a clear, descriptive name" : {
+
+    },
+    "Good Afternoon," : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buenas tardes,"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bon après-midi,"
+          }
+        }
+      }
+    },
+    "Good Evening," : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buenas noches,"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bonsoir,"
+          }
+        }
+      }
+    },
+    "Good Morning," : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buenos días,"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bonjour,"
+          }
+        }
+      }
+    },
+    "Here's your market overview" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aquí está tu resumen del mercado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voici votre aperçu du marché"
+          }
+        }
+      }
+    },
+    "Hide password" : {
+
+    },
+    "High" : {
+
+    },
+    "High Contrast" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alto contraste"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contraste élevé"
+          }
+        }
+      }
+    },
+    "Highlights" : {
+
+    },
+    "History builds after first refresh" : {
+
+    },
+    "Hold" : {
+
+    },
+    "Holders data unavailable" : {
+
+    },
+    "Holdings" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Posiciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Positions"
+          }
+        }
+      }
+    },
+    "Holdings have been added to your portfolio" : {
+
+    },
+    "Holdings P&L" : {
+
+    },
+    "Holdings Summary" : {
+
+    },
+    "Home" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inicio"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accueil"
+          }
+        }
+      }
+    },
+    "How's my portfolio doing?" : {
+
+    },
+    "I Understand the Risks" : {
+
+    },
+    "I'll do this later" : {
+
+    },
+    "Import %lld Holding%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Import %1$lld Holding%2$@"
+          }
+        }
+      }
+    },
+    "Import Complete" : {
+
+    },
+    "Import CSV" : {
+
+    },
+    "Import holdings from a spreadsheet" : {
+
+    },
+    "Indexed to 100" : {
+
+    },
+    "Institution" : {
+
+    },
+    "Invest with Clarity" : {
+
+    },
+    "Invested" : {
+
+    },
+    "Language" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Idioma"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Langue"
+          }
+        }
+      }
+    },
+    "Last checked: %@ ago" : {
+
+    },
+    "Last updated: March 2026" : {
+
+    },
+    "Latest" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Últimas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dernières"
+          }
+        }
+      }
+    },
+    "Leading" : {
+
+    },
+    "Learn more →" : {
+
+    },
+    "Limited features" : {
+
+    },
+    "Line" : {
+
+    },
+    "LIVE" : {
+
+    },
+    "Live Indices" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Índices en vivo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Indices en direct"
+          }
+        }
+      }
+    },
+    "Load Holdings" : {
+
+    },
+    "Loading benchmark data..." : {
+
+    },
+    "Loading candlestick data…" : {
+
+    },
+    "Local Data" : {
+
+    },
+    "Lock the app so only you can\nsee your investments." : {
+
+    },
+    "Losers" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bajadas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Baisses"
+          }
+        }
+      }
+    },
+    "Low" : {
+
+    },
+    "Manage Subscription" : {
+
+    },
+    "Managed in iOS Settings" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gestionado en Configuración de iOS"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Géré dans les Réglages iOS"
+          }
+        }
+      }
+    },
+    "Manual Entry" : {
+
+    },
+    "Market data may be delayed by up to 15 minutes." : {
+
+    },
+    "Market News" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noticias del mercado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualités du marché"
+          }
+        }
+      }
+    },
+    "Market Stats" : {
+
+    },
+    "Market Value" : {
+
+    },
+    "Mean" : {
+
+    },
+    "Median" : {
+
+    },
+    "Microphone Access Needed" : {
+
+    },
+    "Miss" : {
+
+    },
+    "MISS" : {
+
+    },
+    "Mode" : {
+
+    },
+    "Monitor gains and losses" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monitorea ganancias y pérdidas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Surveillez les gains et les pertes"
+          }
+        }
+      }
+    },
+    "Monthly" : {
+
+    },
+    "Monthly Income Breakdown" : {
+
+    },
+    "Name" : {
+
+    },
+    "Name (optional)" : {
+
+    },
+    "New" : {
+
+    },
+    "New Alert" : {
+
+    },
+    "New Portfolio" : {
+
+    },
+    "New Position" : {
+
+    },
+    "New Watchlist" : {
+
+    },
+    "News" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noticias"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualités"
+          }
+        }
+      }
+    },
+    "No %@ Yet" : {
+
+    },
+    "No accounts found. Connect a broker above." : {
+
+    },
+    "No activity yet. Run a test above." : {
+
+    },
+    "No assets in watchlist yet" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay activos en seguimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun actif dans la liste"
+          }
+        }
+      }
+    },
+    "No broker accounts linked yet" : {
+
+    },
+    "No data available" : {
+
+    },
+    "No dividend-paying positions" : {
+
+    },
+    "No earnings data available" : {
+
+    },
+    "No holdings" : {
+
+    },
+    "No holdings yet" : {
+
+    },
+    "No Internet Connection" : {
+
+    },
+    "No news found" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se encontraron noticias"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune actualité trouvée"
+          }
+        }
+      }
+    },
+    "No news matching your %@ filter" : {
+
+    },
+    "No permission is required to use core features." : {
+
+    },
+    "No Price Alerts" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sin alertas de precio"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune alerte de prix"
+          }
+        }
+      }
+    },
+    "No ratings available" : {
+
+    },
+    "No results for \"%@\"" : {
+
+    },
+    "No transactions yet" : {
+
+    },
+    "Not enabled" : {
+
+    },
+    "Not enough overlapping data to compare.\nAdd more portfolio history." : {
+
+    },
+    "Not now" : {
+
+    },
+    "Not signed in" : {
+
+    },
+    "Notification Preview" : {
+
+    },
+    "now" : {
+
+    },
+    "Now %@" : {
+
+    },
+    "OK" : {
+
+    },
+    "On" : {
+
+    },
+    "on %@ invested" : {
+
+    },
+    "Open" : {
+
+    },
+    "Open any stock and tap the bell icon\nto set your first alert." : {
+
+    },
+    "Open Settings" : {
+
+    },
+    "OpenAI / ChatGPT Test" : {
+
+    },
+    "OpenAI key not set — add OpenAIAPIKey to Secrets.plist" : {
+
+    },
+    "Opens subscription options to unlock AI assistant" : {
+
+    },
+    "Optional" : {
+
+    },
+    "or" : {
+
+    },
+    "Or enter this key manually:" : {
+
+    },
+    "Other" : {
+
+    },
+    "Others (%lld more)" : {
+
+    },
+    "Outperforming the Market" : {
+
+    },
+    "Overall" : {
+
+    },
+    "Overrides the real StoreKit tier in-session only. Resets on relaunch." : {
+
+    },
+    "Password" : {
+
+    },
+    "Pct" : {
+
+    },
+    "Performance" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rendimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Performance"
+          }
+        }
+      }
+    },
+    "Performance Comparison" : {
+
+    },
+    "Personalized recommendations" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recomendaciones personalizadas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recommandations personnalisées"
+          }
+        }
+      }
+    },
+    "Pick stocks to watch, or connect your\nbrokerage or crypto exchange" : {
+
+    },
+    "Popular" : {
+
+    },
+    "Popular Picks" : {
+
+    },
+    "Popular stocks" : {
+
+    },
+    "Portfolio" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cartera"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Portefeuille"
+          }
+        }
+      }
+    },
+    "Portfolio Actions" : {
+
+    },
+    "Portfolio Analysis" : {
+
+    },
+    "Portfolio name" : {
+
+    },
+    "Portfolio Risk Assessment" : {
+
+    },
+    "Portfolio Value" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valor de cartera"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valeur du portefeuille"
+          }
+        }
+      }
+    },
+    "Portfolio vs S&P 500" : {
+
+    },
+    "Position Details" : {
+
+    },
+    "Position Summary" : {
+
+    },
+    "Positions" : {
+
+    },
+    "Powered by ChatGPT. Not financial advice." : {
+
+    },
+    "Pre-Market:" : {
+
+    },
+    "Preferences" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preferencias"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Préférences"
+          }
+        }
+      }
+    },
+    "Preview" : {
+
+    },
+    "Price" : {
+
+    },
+    "Price Alert: %@" : {
+
+    },
+    "Price Alerts" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alertas de precio"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alertes de prix"
+          }
+        }
+      }
+    },
+    "Price History" : {
+
+    },
+    "Price per Share" : {
+
+    },
+    "Price Target" : {
+
+    },
+    "Prices refresh every 15 min while markets are open." : {
+
+    },
+    "Privacy" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confidentialité"
+          }
+        }
+      }
+    },
+    "Privacy Controls" : {
+
+    },
+    "Privacy Policy" : {
+
+    },
+    "Professional tools for serious investors" : {
+
+    },
+    "Protect your portfolio" : {
+
+    },
+    "Purchase Failed" : {
+
+    },
+    "Quarter" : {
+
+    },
+    "Quick Set" : {
+
+    },
+    "Range" : {
+
+    },
+    "Rating" : {
+
+    },
+    "Re-check All APIs" : {
+
+    },
+    "Read Full Privacy Policy" : {
+
+    },
+    "Real-time market analysis" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Análisis de mercado en tiempo real"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyse de marché en temps réel"
+          }
+        }
+      }
+    },
+    "Refresh" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualizar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rafraîchir"
+          }
+        }
+      }
+    },
+    "Refresh Now" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualizar ahora"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rafraîchir maintenant"
+          }
+        }
+      }
+    },
+    "Refresh Schedule" : {
+
+    },
+    "Related News" : {
+
+    },
+    "Remove" : {
+
+    },
+    "Remove %@ (%@ shares) from your portfolio?" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Remove %1$@ (%2$@ shares) from your portfolio?"
+          }
+        }
+      }
+    },
+    "Remove Holding" : {
+
+    },
+    "Remove holdings or upgrade your plan." : {
+
+    },
+    "Remove items or upgrade your plan." : {
+
+    },
+    "Rename" : {
+
+    },
+    "Rename Portfolio" : {
+
+    },
+    "Rename Watchlist" : {
+
+    },
+    "Required" : {
+
+    },
+    "Resend code in 0:%@" : {
+
+    },
+    "Reset Onboarding" : {
+
+    },
+    "Reset Password" : {
+
+    },
+    "Restore Purchases" : {
+
+    },
+    "Retry" : {
+
+    },
+    "Return" : {
+
+    },
+    "Revenue" : {
+
+    },
+    "Risk Metrics" : {
+
+    },
+    "Room to Grow" : {
+
+    },
+    "S&P 500" : {
+
+    },
+    "S&P 500 data unavailable" : {
+
+    },
+    "S&P 500 History" : {
+
+    },
+    "Save" : {
+
+    },
+    "Save 33%" : {
+
+    },
+    "Scan QR Code" : {
+
+    },
+    "Scan with your authenticator app, then enter the 6-digit code." : {
+
+    },
+    "Scheduled Reports" : {
+
+    },
+    "Scrub" : {
+
+    },
+    "Search" : {
+
+    },
+    "Search by symbol or name, then enter your purchase details to track your position." : {
+
+    },
+    "Search by ticker symbol or company name" : {
+
+    },
+    "Search Crypto" : {
+
+    },
+    "Search crypto..." : {
+
+    },
+    "Search for any stock, ETF, or cryptocurrency" : {
+
+    },
+    "Search news, stocks, sources..." : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buscar noticias, acciones, fuentes..."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechercher actualités, actions, sources..."
+          }
+        }
+      }
+    },
+    "Search Stocks" : {
+
+    },
+    "Search stocks or funds" : {
+
+    },
+    "Search stocks..." : {
+
+    },
+    "Search symbols or companies..." : {
+
+    },
+    "Secure your portfolio" : {
+
+    },
+    "Security Warning" : {
+
+    },
+    "See Watchlist" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ver seguimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voir la liste"
+          }
+        }
+      }
+    },
+    "See your real portfolio value.\nYou can always add more later." : {
+
+    },
+    "Select All" : {
+
+    },
+    "Select Broker" : {
+
+    },
+    "Select CSV File" : {
+
+    },
+    "Select Exchange" : {
+
+    },
+    "Select your brokerage to connect" : {
+
+    },
+    "Select your crypto exchange to connect" : {
+
+    },
+    "Selected" : {
+
+    },
+    "Sell" : {
+
+    },
+    "Send message" : {
+
+    },
+    "Send Reset Email" : {
+
+    },
+    "Sends a minimal prompt to verify the API key works and returns a response." : {
+
+    },
+    "Sends your message to the AI assistant" : {
+
+    },
+    "Sends: %@" : {
+
+    },
+    "Session Security" : {
+
+    },
+    "Set alerts to get notified when prices hit your targets" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configura alertas para recibir notificaciones cuando los precios alcancen tus objetivos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Définissez des alertes pour être notifié lorsque les prix atteignent vos objectifs"
+          }
+        }
+      }
+    },
+    "Set Price Alert" : {
+
+    },
+    "Set Up Authenticator" : {
+
+    },
+    "Settings" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configuración"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paramètres"
+          }
+        }
+      }
+    },
+    "Setup Failed" : {
+
+    },
+    "Share" : {
+
+    },
+    "Shares" : {
+
+    },
+    "shares held" : {
+
+    },
+    "Show All News" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar todas las noticias"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afficher toutes les actualités"
+          }
+        }
+      }
+    },
+    "Show Less" : {
+
+    },
+    "Show More" : {
+
+    },
+    "Show password" : {
+
+    },
+    "Shows first 6 chars — verifies keys are loading from Secrets.plist / Keychain." : {
+
+    },
+    "Sign In" : {
+
+    },
+    "Sign in to sync" : {
+
+    },
+    "Sign in to sync your data across devices\nand keep your watchlist safe." : {
+
+    },
+    "Sign in to sync your watchlist, portfolio, alerts, and history across all your devices." : {
+
+    },
+    "Sign in with Apple" : {
+
+    },
+    "Sign Out" : {
+
+    },
+    "Sign out of your cloud account?" : {
+
+    },
+    "Sign-in method" : {
+
+    },
+    "Skip intro" : {
+
+    },
+    "Smart investment insights" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ideas de inversión inteligentes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyses d'investissement intelligentes"
+          }
+        }
+      }
+    },
+    "Sort by" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ordenar por"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trier par"
+          }
+        }
+      }
+    },
+    "Stale data" : {
+
+    },
+    "Standard" : {
+
+    },
+    "Start Building Your Portfolio" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empieza a construir tu cartera"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Commencez à construire votre portefeuille"
+          }
+        }
+      }
+    },
+    "Start voice input" : {
+
+    },
+    "Statistics" : {
+
+    },
+    "Stay ahead with real-time updates" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantente al día con actualizaciones en tiempo real"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restez informé avec des mises à jour en temps réel"
+          }
+        }
+      }
+    },
+    "Stay informed,\nnot overwhelmed" : {
+
+    },
+    "Stock / ETF" : {
+
+    },
+    "Stock Prices" : {
+
+    },
+    "Stock Tracker" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stock Tracker"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stock Tracker"
+          }
+        }
+      }
+    },
+    "Stocks" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actions"
+          }
+        }
+      }
+    },
+    "Stocks, ETFs, crypto..." : {
+
+    },
+    "Stop recording" : {
+
+    },
+    "Storage" : {
+
+    },
+    "Strong Buy" : {
+
+    },
+    "Strong Sell" : {
+
+    },
+    "Subscribe" : {
+
+    },
+    "Subscription" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suscripción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abonnement"
+          }
+        }
+      }
+    },
+    "Subscription Tier (Debug)" : {
+
+    },
+    "Supported Brokers" : {
+
+    },
+    "Supported Exchanges" : {
+
+    },
+    "Swipe for details →" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desliza para más detalles →"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Glissez pour les détails →"
+          }
+        }
+      }
+    },
+    "Swipe left to add to portfolio, swipe right to remove" : {
+
+    },
+    "Symbol" : {
+
+    },
+    "Symbol (e.g. AAPL, BTC)" : {
+
+    },
+    "Symbol (e.g. AAPL)" : {
+
+    },
+    "symbol,name,shares,avg_cost,type\nAAPL,Apple Inc.,10,150.00,stock\nBTC,Bitcoin,0.5,42000.00,crypto" : {
+
+    },
+    "Sync enabled" : {
+
+    },
+    "Sync error: %@" : {
+
+    },
+    "Sync Now" : {
+
+    },
+    "Sync Status" : {
+
+    },
+    "Sync to Portfolio" : {
+
+    },
+    "Sync Your Data" : {
+
+    },
+    "Sync your holdings automatically" : {
+
+    },
+    "Synced %@" : {
+
+    },
+    "Syncing…" : {
+
+    },
+    "Tap a processor to view their privacy policy." : {
+
+    },
+    "Tap anywhere to continue" : {
+
+    },
+    "Tap the mic to search by voice" : {
+
+    },
+    "Tap to load chart" : {
+
+    },
+    "Tap to Retry" : {
+
+    },
+    "Tap to start speaking your question" : {
+
+    },
+    "Tap to stop recording and send" : {
+
+    },
+    "Tap to upgrade" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Toca para mejorar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appuyez pour mettre à niveau"
+          }
+        }
+      }
+    },
+    "Target" : {
+
+    },
+    "Target data unavailable" : {
+
+    },
+    "Target Price" : {
+
+    },
+    "Tax Loss Harvesting Opportunities" : {
+
+    },
+    "Tax Year 2024" : {
+
+    },
+    "Terms & Privacy" : {
+
+    },
+    "Terms of Service" : {
+
+    },
+    "Test AI Chat (ping)" : {
+
+    },
+    "Test ASX History 1M" : {
+
+    },
+    "Test ASX Quote" : {
+
+    },
+    "Test Crypto Price (bitcoin)" : {
+
+    },
+    "Test Historical Bars (AAPL 1D)" : {
+
+    },
+    "Test News API" : {
+
+    },
+    "Test Stock Quote (AAPL)" : {
+
+    },
+    "Testing…" : {
+
+    },
+    "Tests Alpha Vantage GLOBAL_QUOTE + TIME_SERIES_DAILY for ASX. Symbol sent as %@.AX" : {
+
+    },
+    "Tests Fiscal.ai company profile + ratios. Free tier: 250 calls/day." : {
+
+    },
+    "Tests FMPService directly. Results appear in the Activity Log below." : {
+
+    },
+    "Third-Party Data Processors" : {
+
+    },
+    "This device appears to be jailbroken. Your financial data may be at risk. We recommend using a non-jailbroken device for financial applications." : {
+
+    },
+    "This will be added with the price you enter." : {
+
+    },
+    "This will replace your current portfolio with broker data" : {
+
+    },
+    "This will reset portfolio, watchlist, and all saved data to defaults. This cannot be undone." : {
+
+    },
+    "Three views. One clear picture." : {
+
+    },
+    "Tier" : {
+
+    },
+    "Today" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hoy"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aujourd'hui"
+          }
+        }
+      }
+    },
+    "TODAY" : {
+
+    },
+    "Today's Performance" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rendimiento de hoy"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Performance du jour"
+          }
+        }
+      }
+    },
+    "Today's portfolio change: %@ %@ dollars" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Today's portfolio change: %1$@ %2$@ dollars"
+          }
+        }
+      }
+    },
+    "Top Holdings" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Principales posiciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Principales positions"
+          }
+        }
+      }
+    },
+    "Top Movers" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mayores movimientos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plus fortes variations"
+          }
+        }
+      }
+    },
+    "Total" : {
+
+    },
+    "Total Assets" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activos totales"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total des actifs"
+          }
+        }
+      }
+    },
+    "Total Return" : {
+
+    },
+    "Total Value" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valor total"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valeur totale"
+          }
+        }
+      }
+    },
+    "TOTAL VALUE" : {
+
+    },
+    "TOTP" : {
+
+    },
+    "Track every position. See every move.\nAll in one place." : {
+
+    },
+    "Track Performance" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seguir rendimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suivre la performance"
+          }
+        }
+      }
+    },
+    "Track your favorite assets" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rastrea tus activos favoritos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suivez vos actifs favoris"
+          }
+        }
+      }
+    },
+    "Track your favourite assets" : {
+
+    },
+    "Track your investments, monitor performance, and make informed decisions all in one place." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rastrea tus inversiones, monitorea el rendimiento y toma decisiones informadas en un solo lugar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suivez vos investissements, surveillez les performances et prenez des décisions éclairées en un seul endroit."
+          }
+        }
+      }
+    },
+    "Transaction Date" : {
+
+    },
+    "Transaction Summary" : {
+
+    },
+    "Transactions" : {
+
+    },
+    "Trending" : {
+
+    },
+    "TRIGGERED" : {
+
+    },
+    "Try a different ticker or company name" : {
+
+    },
+    "Try a different ticker symbol or company name" : {
+
+    },
+    "Try a different time range" : {
+
+    },
+    "Try adjusting your search" : {
+
+    },
+    "Try Again" : {
+
+    },
+    "Two-Factor Auth" : {
+
+    },
+    "Two-Factor Auth is On" : {
+
+    },
+    "Two-Factor Authentication" : {
+
+    },
+    "Two-factor authentication is now enabled on your account." : {
+
+    },
+    "Type" : {
+
+    },
+    "Type a message first" : {
+
+    },
+    "Underperforming the Market" : {
+
+    },
+    "Understanding Tax Reporting" : {
+
+    },
+    "Unlock with Face ID" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desbloquear con Face ID"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déverrouiller avec Face ID"
+          }
+        }
+      }
+    },
+    "Unrealized G/L" : {
+
+    },
+    "Unrealized Return" : {
+
+    },
+    "Up %@" : {
+
+    },
+    "Updated %@" : {
+
+    },
+    "Updating…" : {
+
+    },
+    "Upgrade" : {
+
+    },
+    "Upgrade to %@" : {
+
+    },
+    "Upgrade to Pro" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mejorar a Pro"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Pro"
+          }
+        }
+      }
+    },
+    "Upgrade to Pro for AI insights" : {
+
+    },
+    "US" : {
+
+    },
+    "Use an authenticator app like Google Authenticator, Authy, or 1Password for extra security." : {
+
+    },
+    "Use Face ID to securely access your portfolio" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usa Face ID para acceder de forma segura a tu cartera"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utilisez Face ID pour accéder en toute sécurité à votre portefeuille"
+          }
+        }
+      }
+    },
+    "Use Market Price" : {
+
+    },
+    "V" : {
+
+    },
+    "Value" : {
+
+    },
+    "Verify & Enable" : {
+
+    },
+    "Verifying..." : {
+
+    },
+    "Version" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version"
+          }
+        }
+      }
+    },
+    "Version %@ (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version %1$@ (%2$@)"
+          }
+        }
+      }
+    },
+    "View Details" : {
+
+    },
+    "View Earnings Transcript" : {
+
+    },
+    "vs. cost basis" : {
+
+    },
+    "Watch your assets grow" : {
+
+    },
+    "Watchlist" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seguimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liste de suivi"
+          }
+        }
+      }
+    },
+    "Watchlist name" : {
+
+    },
+    "We sent a 6-digit code to\n**%@**" : {
+
+    },
+    "We'll send a password reset link to %@." : {
+
+    },
+    "We'll show relevant market hours\nand session data for you." : {
+
+    },
+    "Website" : {
+
+    },
+    "What are Custom Alerts?" : {
+
+    },
+    "Which markets do\nyou follow?" : {
+
+    },
+    "Wrong email? Go back" : {
+
+    },
+    "You" : {
+
+    },
+    "You said: %@" : {
+
+    },
+    "You're all set" : {
+
+    },
+    "You're All Set!" : {
+
+    },
+    "You've caught up!" : {
+
+    },
+    "Your %@" : {
+
+    },
+    "Your account is protected with an authenticator app." : {
+
+    },
+    "Your account will be less secure without two-factor authentication." : {
+
+    },
+    "Your Apple ID email is kept private." : {
+
+    },
+    "Your biometric data stays on your device. Stock Tracker never stores or transmits it." : {
+
+    },
+    "Your CSV should have these columns:" : {
+
+    },
+    "Your data is encrypted and stored securely.\nWe never sell your information." : {
+
+    },
+    "Your Holdings" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tus posiciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vos positions"
+          }
+        }
+      }
+    },
+    "Your Portfolio" : {
+
+    },
+    "Your portfolio data stays on this device. You can sign back in at any time." : {
+
+    },
+    "Your portfolio holdings, watchlist, price alerts, and transaction history are stored securely in the device Keychain — protected by the iOS secure enclave. This data never leaves your device and is not accessible when the device is locked." : {
+
+    },
+    "Your portfolio shows moderate volatility with good risk-adjusted returns. The Sharpe ratio of 1.45 indicates you're getting solid returns for the risk taken." : {
+
+    },
+    "Your Position" : {
+
+    },
+    "Your tech holdings are up **12%** this month, outperforming the S&P 500 by 4.2%." : {
+
+    },
+    "Your Watchlist" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu lista de seguimiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre liste de suivi"
+          }
+        }
+      }
+    },
+    "Zero" : {
+
+    }
+  },
+  "version" : "1.0"
+}

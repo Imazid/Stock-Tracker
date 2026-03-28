@@ -1,0 +1,12 @@
+# API Keys (real credentials — never commit these)
+SecretsConfig.swift
+Stock Tracker/Config/Secrets.plist
+
+# Xcode
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+
+# macOS
+.DS_Store

@@ -1,0 +1,12 @@
+{
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/AppIntent.swift" : {
+    "abi-baseline-json" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock_Tracker_WidgetExtension.abi.json",
+    "const-values" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock Tracker WidgetExtension-primary.swiftconstvalues",
+    "dependencies" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock Tracker WidgetExtension-primary.d",
+    "diagnostics" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock Tracker WidgetExtension-primary.dia",
+    "objc-header" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock_Tracker_WidgetExtension-Swift.h",
+    "swiftdoc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock_Tracker_WidgetExtension.swiftdoc",
+    "swiftmodule" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock_Tracker_WidgetExtension.swiftmodule",
+    "swiftsourceinfo" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/x86_64/Stock_Tracker_WidgetExtension.swiftsourceinfo"
+  }
+}

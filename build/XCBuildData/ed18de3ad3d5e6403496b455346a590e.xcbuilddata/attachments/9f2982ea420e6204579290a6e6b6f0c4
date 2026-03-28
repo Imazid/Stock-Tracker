@@ -1,0 +1,51 @@
+{
+  "" : {
+    "const-values" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Clocks-primary.swiftconstvalues",
+    "dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Clocks-primary.d",
+    "diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Clocks-primary.dia",
+    "emit-module-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Clocks-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Clocks-primary-emit-module.dia",
+    "pch" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Clocks-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Clocks-primary.swiftdeps"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/AnyClock.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/AnyClock.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/AnyClock.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/AnyClock.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/ImmediateClock.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/ImmediateClock.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/ImmediateClock.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/ImmediateClock.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/Internal/Lock.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Lock.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Lock.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Lock.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/Internal/_AsyncTimerSequence.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/_AsyncTimerSequence.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/_AsyncTimerSequence.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/_AsyncTimerSequence.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/SwiftUI.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/SwiftUI.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/SwiftUI.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/SwiftUI.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/TestClock.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/TestClock.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/TestClock.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/TestClock.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/Timer.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Timer.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Timer.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/Timer.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/Sources/Clocks/UnimplementedClock.swift" : {
+    "index-unit-output-path" : "/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/UnimplementedClock.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/UnimplementedClock.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-clocks/build/swift-clocks.build/Release-iphonesimulator/Clocks.build/Objects-normal/x86_64/UnimplementedClock.o"
+  }
+}

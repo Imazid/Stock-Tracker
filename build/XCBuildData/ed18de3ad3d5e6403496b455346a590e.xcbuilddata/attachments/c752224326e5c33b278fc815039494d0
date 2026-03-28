@@ -1,0 +1,16 @@
+{
+  "" : {
+    "const-values" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/IssueReportingPackageSupport-primary.swiftconstvalues",
+    "dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/IssueReportingPackageSupport-primary.d",
+    "diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/IssueReportingPackageSupport-primary.dia",
+    "emit-module-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/IssueReportingPackageSupport-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/IssueReportingPackageSupport-primary-emit-module.dia",
+    "pch" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/IssueReportingPackageSupport-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/IssueReportingPackageSupport-primary.swiftdeps"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/Sources/IssueReportingPackageSupport/_Test.swift" : {
+    "index-unit-output-path" : "/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/_Test.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/_Test.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/xctest-dynamic-overlay/build/xctest-dynamic-overlay.build/Release-iphonesimulator/IssueReportingPackageSupport.build/Objects-normal/x86_64/_Test.o"
+  }
+}

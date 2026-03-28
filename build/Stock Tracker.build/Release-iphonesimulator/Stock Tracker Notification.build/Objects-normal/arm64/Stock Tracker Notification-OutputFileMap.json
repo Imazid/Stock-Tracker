@@ -1,0 +1,16 @@
+{
+  "" : {
+    "const-values" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/Stock Tracker Notification-primary.swiftconstvalues",
+    "dependencies" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/Stock Tracker Notification-primary.d",
+    "diagnostics" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/Stock Tracker Notification-primary.dia",
+    "emit-module-dependencies" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/Stock Tracker Notification-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/Stock Tracker Notification-primary-emit-module.dia",
+    "pch" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/Stock Tracker Notification-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/Stock Tracker Notification-primary.swiftdeps"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Notification/NotificationService.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/NotificationService.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/NotificationService.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker Notification.build/Objects-normal/arm64/NotificationService.o"
+  }
+}

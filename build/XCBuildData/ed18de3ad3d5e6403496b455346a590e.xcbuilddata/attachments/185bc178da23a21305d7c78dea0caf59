@@ -1,0 +1,4 @@
+module UserMessagingPlatformTarget {
+umbrella "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-package-manager-google-user-messaging-platform/UserMessagingPlatformTarget/include"
+export *
+}

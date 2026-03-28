@@ -4,97 +4,119 @@
 //
 
 import Foundation
+import OSLog
 import SwiftUI
 import Combine
+import StoreKit
 
 // MARK: - Subscription Tier
 enum SubscriptionTier: String, Codable, CaseIterable {
     case free = "Free"
     case pro = "Pro"
-    case max = "Max"
-    
+    case black = "Black"
+
+    /// Numeric rank used for tier comparisons (avoids fragile string comparison).
+    var rank: Int {
+        switch self {
+        case .free: return 0
+        case .pro: return 1
+        case .black: return 2
+        }
+    }
+
     var displayName: String {
         rawValue
     }
-    
+
     var icon: String {
         switch self {
         case .free: return "star"
         case .pro: return "star.fill"
-        case .max: return "crown.fill"
+        case .black: return "crown.fill"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .free: return .gray
         case .pro: return .blue
-        case .max: return .purple
+        case .black: return Color.black
         }
     }
-    
+
     var gradientColors: [Color] {
         switch self {
         case .free: return [.gray.opacity(0.6), .gray.opacity(0.3)]
         case .pro: return [.blue, .cyan]
-        case .max: return [.purple, .pink]
+        case .black: return [Color(white: 0.15), Color.black]
         }
     }
-    
-    // Feature limits
-    var maxWatchlistAssets: Int? {
+
+    // Feature limits — source of truth is FeatureGate; these are convenience shims.
+
+    var maxWatchlistAssets: Int? { FeatureGate.maxWatchlistAssets(for: self) }
+
+    var maxPriceAlerts: Int? { FeatureGate.maxAlerts(for: self) }
+
+    var hasPortfolioBenchmark: Bool {
         switch self {
-        case .free: return 10
-        case .pro, .max: return nil
+        case .free, .pro: return false
+        case .black: return true
         }
     }
-    
-    var maxPriceAlerts: Int? {
-        switch self {
-        case .free: return 3
-        case .pro, .max: return nil
-        }
-    }
-    
-    var hasPortfolioAccess: Bool {
+
+    var maxPortfolioHoldings: Int? { FeatureGate.maxPortfolioHoldings(for: self) }
+
+    var hasPortfolioAccess: Bool { true }
+
+    /// Maximum number of watchlist groups allowed. nil = unlimited.
+    var watchlistLimit: Int? { FeatureGate.maxWatchlists(for: self) }
+
+    /// Maximum number of portfolio groups allowed. nil = unlimited.
+    var portfolioGroupLimit: Int? { FeatureGate.maxPortfolios(for: self) }
+
+    /// Auto-refresh interval in seconds. nil = manual only (free tier).
+    var autoRefreshInterval: TimeInterval? { FeatureGate.autoRefreshInterval(for: self) }
+
+    var canAddWatchlist: Bool {
         switch self {
         case .free: return false
-        case .pro, .max: return true
+        case .pro, .black: return true
         }
     }
-    
+
     var hasAdvancedStats: Bool {
         switch self {
         case .free: return false
-        case .pro, .max: return true
+        case .pro, .black: return true
         }
     }
-    
+
     var hasTechnicalAnalysis: Bool {
         switch self {
         case .free: return false
-        case .pro, .max: return true
+        case .pro, .black: return true
         }
     }
-    
+
     var hasAIInsights: Bool {
         switch self {
         case .free, .pro: return false
-        case .max: return true
+        case .black: return true
         }
     }
-    
+
     var availableTimeRanges: [TimeRange] {
         switch self {
         case .free: return [.oneDay, .oneWeek, .oneMonth]
-        case .pro, .max: return TimeRange.allCases
+        case .pro, .black: return TimeRange.allCases
         }
     }
-    
+
     var isAdFree: Bool {
         switch self {
         case .free: return false
-        case .pro, .max: return true
+        case .pro, .black: return true
         }
     }
 }
@@ -103,45 +125,261 @@ enum SubscriptionTier: String, Codable, CaseIterable {
 @MainActor
 class SubscriptionManager: ObservableObject {
     static let shared = SubscriptionManager()
-    
+
+    // MARK: - Published State
     @Published var currentTier: SubscriptionTier = .free
     @Published var isSubscriptionActive: Bool = false
     @Published var expirationDate: Date?
-    
-    private let userDefaultsKey = "user_subscription_tier"
-    
-    private init() {
-        loadSubscription()
+    @Published var products: [Product] = []
+    @Published var isPurchasing: Bool = false
+    @Published var purchaseError: String?
+    @Published var needsKeeperSelection: Bool = false
+
+    private static let previousTierKey = "com.stocktracker.previousTier"
+    private static let keeperDismissedKey = "com.stocktracker.keeperDismissed"
+
+    // MARK: - Product IDs
+    // Configure these in App Store Connect → your app → Subscriptions
+    enum ProductID {
+        static let proMonthly = "com.stocktracker.subscription.pro.monthly"
+        static let proYearly  = "com.stocktracker.subscription.pro.yearly"
+        static let blackMonthly = "com.stocktracker.subscription.max.monthly"
+        static let blackYearly  = "com.stocktracker.subscription.max.yearly"
+
+        static let all: Set<String> = [proMonthly, proYearly, blackMonthly, blackYearly]
     }
-    
-    func loadSubscription() {
-        if let savedTier = UserDefaults.standard.string(forKey: userDefaultsKey),
-           let tier = SubscriptionTier(rawValue: savedTier) {
-            currentTier = tier
-            isSubscriptionActive = tier != .free
+
+    // MARK: - Receipt Validation
+    //
+    // Settable so previews / tests can inject a mock validator without subclassing.
+    // Defaults to ChainedReceiptValidator (server → local fallback).
+    var receiptValidator: any ReceiptValidatorProtocol = ChainedReceiptValidator()
+
+    private var transactionUpdateTask: Task<Void, Never>?
+
+    private init() {
+        // Start listening for StoreKit transaction updates
+        transactionUpdateTask = observeTransactionUpdates()
+
+        Task {
+            await loadProducts()
+            await restoreEntitlements()
         }
     }
-    
+
+    deinit {
+        transactionUpdateTask?.cancel()
+    }
+
+    // MARK: - Load Products
+
+    func loadProducts() async {
+        do {
+            let loaded = try await Product.products(for: ProductID.all)
+            products = loaded.sorted { $0.price < $1.price }
+        } catch {
+            AppLogger.store.error("StoreKit: failed to load products — \(error)")
+        }
+    }
+
+    // MARK: - Purchase
+
+    func purchase(_ product: Product) async {
+        isPurchasing = true
+        purchaseError = nil
+        defer { isPurchasing = false }
+
+        do {
+            let result = try await product.purchase()
+
+            switch result {
+            case .success(let verification):
+                let transaction = try checkVerified(verification)
+                await updateTierFromTransaction(transaction)
+                await transaction.finish()
+
+            case .userCancelled:
+                break
+
+            case .pending:
+                purchaseError = "Purchase is pending approval (e.g. Ask to Buy)."
+
+            @unknown default:
+                break
+            }
+        } catch {
+            purchaseError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Restore
+
+    func restorePurchases() async {
+        isPurchasing = true
+        defer { isPurchasing = false }
+
+        await restoreEntitlements()
+    }
+
+    // MARK: - Entitlement Check
+
+    /// Rebuilds subscription tier from current StoreKit entitlements.
+    func restoreEntitlements() async {
+        var highestTier: SubscriptionTier = .free
+
+        for await result in StoreKit.Transaction.currentEntitlements {
+            guard let transaction = try? checkVerified(result) else { continue }
+            let tier = tier(for: transaction.productID)
+            if tier.rank > highestTier.rank {
+                highestTier = tier
+            }
+        }
+
+        setSubscription(tier: highestTier)
+    }
+
+    // MARK: - Internal Helpers
+
+    private func observeTransactionUpdates() -> Task<Void, Never> {
+        Task(priority: .background) {
+            for await result in StoreKit.Transaction.updates {
+                guard let transaction = try? checkVerified(result) else { continue }
+                await updateTierFromTransaction(transaction)
+                await transaction.finish()
+            }
+        }
+    }
+
+    private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
+        switch result {
+        case .unverified(_, let error):
+            throw error
+        case .verified(let value):
+            return value
+        }
+    }
+
+    private func updateTierFromTransaction(_ transaction: StoreKit.Transaction) async {
+        if transaction.revocationDate != nil {
+            // Subscription was refunded or revoked by Apple — rebuild from all entitlements
+            await restoreEntitlements()
+            return
+        }
+
+        // Run through the receipt validator (server-side if configured, local fallback otherwise)
+        let result = await receiptValidator.validate(
+            transactionID: transaction.id,
+            productID: transaction.productID
+        )
+
+        switch result {
+        case .valid(let tier, let expiresAt):
+            setSubscription(tier: tier)
+            if let expiresAt {
+                expirationDate = expiresAt
+            }
+        case .invalid:
+            // Transaction explicitly rejected — downgrade. Log prominently.
+            AppLogger.store.warning(
+                "Transaction \(transaction.id) rejected by receipt validator — downgrading to free"
+            )
+            setSubscription(tier: .free)
+        case .networkError(let reason):
+            // Transient error — preserve current tier, do not downgrade.
+            AppLogger.store.error(
+                "Receipt validation network error for tx \(transaction.id): \(reason) — keeping current tier"
+            )
+        }
+    }
+
+    private func tier(for productID: String) -> SubscriptionTier {
+        switch productID {
+        case ProductID.blackMonthly, ProductID.blackYearly:
+            return .black
+        case ProductID.proMonthly, ProductID.proYearly:
+            return .pro
+        default:
+            return .free
+        }
+    }
+
     func setSubscription(tier: SubscriptionTier) {
+        let previousTierRaw = UserDefaults.standard.string(forKey: Self.previousTierKey) ?? SubscriptionTier.free.rawValue
+        let previousTier = SubscriptionTier(rawValue: previousTierRaw) ?? .free
+
         currentTier = tier
         isSubscriptionActive = tier != .free
-        UserDefaults.standard.set(tier.rawValue, forKey: userDefaultsKey)
-        
+
         if tier != .free {
             expirationDate = Calendar.current.date(byAdding: .year, value: 1, to: Date())
         } else {
             expirationDate = nil
         }
+
+        // Detect downgrade
+        if tier.rank < previousTier.rank {
+            let dismissed = UserDefaults.standard.bool(forKey: Self.keeperDismissedKey)
+            if !dismissed {
+                needsKeeperSelection = true
+            }
+        }
+
+        UserDefaults.standard.set(tier.rawValue, forKey: Self.previousTierKey)
+    }
+
+    /// Called after user completes keeper selection or when assets are under limits.
+    func clearKeeperSelection() {
+        needsKeeperSelection = false
+        UserDefaults.standard.set(true, forKey: Self.keeperDismissedKey)
+    }
+
+    /// Reset the keeper dismissed flag (call when a new downgrade occurs).
+    func resetKeeperDismissed() {
+        UserDefaults.standard.set(false, forKey: Self.keeperDismissedKey)
+    }
+
+    /// Checks whether current watchlist/portfolio counts exceed the tier limits.
+    func checkDowngradeLimits(watchlistCount: Int, portfolioCount: Int) {
+        let overWatchlist: Bool
+        if let wLimit = FeatureGate.maxWatchlistAssets(for: currentTier) {
+            overWatchlist = watchlistCount > wLimit
+        } else {
+            overWatchlist = false
+        }
+
+        let overPortfolio: Bool
+        if let pLimit = FeatureGate.maxPortfolioHoldings(for: currentTier) {
+            overPortfolio = portfolioCount > pLimit
+        } else {
+            overPortfolio = false
+        }
+
+        if overWatchlist || overPortfolio {
+            resetKeeperDismissed()
+            needsKeeperSelection = true
+        } else {
+            clearKeeperSelection()
+        }
     }
     
     func canAddToWatchlist(currentCount: Int) -> Bool {
-        guard let limit = currentTier.maxWatchlistAssets else { return true }
-        return currentCount < limit
+        FeatureGate.canAddWatchlistAsset(currentCount: currentCount, tier: currentTier)
     }
-    
+
     func canAddPriceAlert(currentCount: Int) -> Bool {
-        guard let limit = currentTier.maxPriceAlerts else { return true }
-        return currentCount < limit
+        FeatureGate.canAddAlert(currentCount: currentCount, tier: currentTier)
+    }
+
+    func canAddPortfolioHolding(currentCount: Int) -> Bool {
+        FeatureGate.canAddPortfolioHolding(currentCount: currentCount, tier: currentTier)
+    }
+
+    func canAddPortfolio(currentCount: Int) -> Bool {
+        FeatureGate.canAddPortfolio(currentCount: currentCount, tier: currentTier)
+    }
+
+    func canAddWatchlistGroup(currentCount: Int) -> Bool {
+        FeatureGate.canAddWatchlist(currentCount: currentCount, tier: currentTier)
     }
     
     func hasFeatureAccess(feature: Feature) -> Bool {
@@ -154,6 +392,8 @@ class SubscriptionManager: ObservableObject {
             return currentTier.hasTechnicalAnalysis
         case .aiInsights:
             return currentTier.hasAIInsights
+        case .aiAgent:
+            return currentTier != .free
         case .allTimeRanges:
             return currentTier != .free
         case .adFree:
@@ -168,19 +408,23 @@ class SubscriptionManager: ObservableObject {
     func getRemainingCount(for limit: LimitType, currentCount: Int) -> String {
         switch limit {
         case .watchlist:
-            guard let max = currentTier.maxWatchlistAssets else { return "Unlimited" }
+            guard let max = FeatureGate.maxWatchlistAssets(for: currentTier) else { return "Unlimited" }
+            return "\(currentCount)/\(max)"
+        case .portfolio:
+            guard let max = FeatureGate.maxPortfolioHoldings(for: currentTier) else { return "Unlimited" }
             return "\(currentCount)/\(max)"
         case .alerts:
-            guard let max = currentTier.maxPriceAlerts else { return "Unlimited" }
+            guard let max = FeatureGate.maxAlerts(for: currentTier) else { return "Unlimited" }
             return "\(currentCount)/\(max)"
         }
     }
-    
+
     enum Feature {
         case portfolio
         case advancedStats
         case technicalAnalysis
         case aiInsights
+        case aiAgent          // NEW: For the AI Agent tab
         case allTimeRanges
         case adFree
         case realTimeData
@@ -189,6 +433,7 @@ class SubscriptionManager: ObservableObject {
     
     enum LimitType {
         case watchlist
+        case portfolio
         case alerts
     }
 }
@@ -218,43 +463,45 @@ struct SubscriptionPlan: Identifiable {
             features: [
                 "Track up to 10 assets",
                 "Basic charts (1D, 1W, 1M)",
-                "Basic statistics",
-                "3 price alerts",
-                "Standard news feed"
+                "1 price alert",
+                "5 news articles/day",
+                "Manual refresh only"
             ],
             badge: nil
         ),
-        
+
         SubscriptionPlan(
             tier: .pro,
             monthlyPrice: 9.99,
             yearlyPrice: 79.99,
             features: [
-                "Unlimited watchlist",
+                "Track up to 50 assets",
+                "2 watchlists",
                 "Full portfolio tracking",
                 "All chart timeframes",
-                "Unlimited price alerts",
-                "Advanced statistics",
-                "Technical analysis",
-                "Real-time data",
+                "25 price alerts",
+                "AI Investing Assistant (20/day)",
+                "Advanced statistics & technical analysis",
+                "60s auto-refresh",
+                "20 news articles/day",
                 "Export reports",
                 "Ad-free experience"
             ],
             badge: "POPULAR"
         ),
-        
+
         SubscriptionPlan(
-            tier: .max,
+            tier: .black,
             monthlyPrice: 19.99,
             yearlyPrice: 159.99,
             features: [
-                "Everything in Pro",
-                "AI-powered insights",
-                "Custom alert conditions",
-                "Advanced charting tools",
-                "Earnings calendar",
-                "Analyst ratings",
-                "Options data",
+                "Track 500+ assets",
+                "5 portfolios, unlimited watchlists",
+                "Unlimited AI insights",
+                "Unlimited price alerts",
+                "30s auto-refresh",
+                "Portfolio benchmark vs S&P 500",
+                "Unlimited news + Daily Brief",
                 "Priority support",
                 "Early feature access"
             ],
@@ -263,318 +510,45 @@ struct SubscriptionPlan: Identifiable {
     ]
 }
 
-// MARK: - Paywall View
-struct PaywallView: View {
-    @EnvironmentObject var subscriptionManager: SubscriptionManager
-    @Environment(\.dismiss) var dismiss
-    
-    let requiredTier: SubscriptionTier
-    let featureName: String
-    
-    @State private var selectedPeriod: SubscriptionPeriod = .yearly
-    @State private var showingPurchase = false
-    
-    enum SubscriptionPeriod {
-        case monthly
-        case yearly
-    }
-    
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                LinearGradient(
-                    colors: [Color.black, Color.purple.opacity(0.2), Color.black],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(spacing: 32) {
-                        VStack(spacing: 16) {
-                            ZStack {
-                                Circle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: requiredTier.gradientColors,
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                                    .frame(width: 100, height: 100)
-                                    .blur(radius: 30)
-                                
-                                Image(systemName: requiredTier.icon)
-                                    .font(.system(size: 50))
-                                    .foregroundColor(.white)
-                            }
-                            
-                            Text("Unlock \(requiredTier.displayName)")
-                                .font(.system(size: 32, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                            
-                            Text(featureName)
-                                .font(.title3)
-                                .foregroundColor(.white.opacity(0.7))
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 40)
-                        
-                        HStack(spacing: 16) {
-                            PeriodButton(
-                                period: .monthly,
-                                isSelected: selectedPeriod == .monthly,
-                                action: { selectedPeriod = .monthly }
-                            )
-                            
-                            PeriodButton(
-                                period: .yearly,
-                                isSelected: selectedPeriod == .yearly,
-                                action: { selectedPeriod = .yearly }
-                            )
-                        }
-                        .padding(.horizontal)
-                        
-                        VStack(spacing: 20) {
-                            ForEach(SubscriptionPlan.plans.filter { $0.tier != .free }) { plan in
-                                SubscriptionCard(
-                                    plan: plan,
-                                    period: selectedPeriod,
-                                    isRecommended: plan.tier == requiredTier
-                                )
-                            }
-                        }
-                        .padding(.horizontal)
-                        
-                        if let plan = SubscriptionPlan.plans.first(where: { $0.tier == requiredTier }) {
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("What You'll Get")
-                                    .font(.title2.bold())
-                                    .foregroundColor(.white)
-                                
-                                ForEach(plan.features, id: \.self) { feature in
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                        Text(feature)
-                                            .foregroundColor(.white.opacity(0.9))
-                                        Spacer()
-                                    }
-                                }
-                            }
-                            .padding()
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color.white.opacity(0.05))
-                            )
-                            .padding(.horizontal)
-                        }
-                        
-                        Button {
-                            showingPurchase = true
-                        } label: {
-                            Text("Start Free Trial")
-                                .font(.headline)
-                                .foregroundColor(.black)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 18)
-                                .background(
-                                    LinearGradient(
-                                        colors: [.white, .white.opacity(0.9)],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                                .cornerRadius(16)
-                        }
-                        .padding(.horizontal)
-                        
-                        VStack(spacing: 8) {
-                            Text("7-day free trial • Cancel anytime")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.6))
-                            
-                            HStack(spacing: 16) {
-                                Button("Terms") {}
-                                Button("Privacy") {}
-                                Button("Restore") {}
-                            }
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.5))
-                        }
-                        .padding(.bottom, 40)
-                    }
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .foregroundColor(.white)
-                    }
-                }
-            }
-            .alert("Purchase Subscription", isPresented: $showingPurchase) {
-                Button("Subscribe to \(requiredTier.displayName)") {
-                    subscriptionManager.setSubscription(tier: requiredTier)
-                    dismiss()
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This is a demo. In production, this would connect to App Store subscriptions.")
-            }
-        }
-    }
-}
-
-struct PeriodButton: View {
-    let period: PaywallView.SubscriptionPeriod
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Text(period == .monthly ? "Monthly" : "Yearly")
-                    .font(.headline)
-                    .foregroundColor(isSelected ? .black : .white)
-                
-                if period == .yearly {
-                    Text("Save 33%")
-                        .font(.caption.bold())
-                        .foregroundColor(isSelected ? .green : .green.opacity(0.7))
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(isSelected ? Color.white : Color.white.opacity(0.1))
-            .cornerRadius(12)
-        }
-    }
-}
-
-struct SubscriptionCard: View {
-    let plan: SubscriptionPlan
-    let period: PaywallView.SubscriptionPeriod
-    let isRecommended: Bool
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            if let badge = plan.badge {
-                Text(badge)
-                    .font(.caption.bold())
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: plan.tier.gradientColors,
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    )
-            }
-            
-            HStack {
-                Image(systemName: plan.tier.icon)
-                    .font(.title2)
-                    .foregroundColor(plan.tier.color)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(plan.tier.displayName)
-                        .font(.title3.bold())
-                        .foregroundColor(.white)
-                    
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text("$\(period == .monthly ? String(format: "%.2f", plan.monthlyPrice) : String(format: "%.2f", plan.yearlyPrice))")
-                            .font(.title2.bold())
-                            .foregroundColor(.white)
-                        
-                        Text(period == .monthly ? "/month" : "/year")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.6))
-                    }
-                }
-                
-                Spacer()
-                
-                if isRecommended {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title)
-                        .foregroundColor(.green)
-                }
-            }
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(
-                    isRecommended
-                        ? LinearGradient(
-                            colors: [plan.tier.color.opacity(0.2), plan.tier.color.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        : LinearGradient(
-                            colors: [Color.white.opacity(0.05), Color.white.opacity(0.02)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(
-                            isRecommended ? plan.tier.color.opacity(0.5) : Color.white.opacity(0.1),
-                            lineWidth: isRecommended ? 2 : 1
-                        )
-                )
-        )
-    }
-}
-
 // MARK: - Feature Lock View
 struct FeatureLockView: View {
     let featureName: String
     let requiredTier: SubscriptionTier
     @State private var showPaywall = false
     @EnvironmentObject var subscriptionManager: SubscriptionManager
-    
+
     var body: some View {
         Button {
             showPaywall = true
         } label: {
-            VStack(spacing: 12) {
+            HStack(spacing: 12) {
                 Image(systemName: "lock.fill")
-                    .font(.largeTitle)
+                    .font(.title3)
                     .foregroundColor(requiredTier.color)
-                
-                Text(featureName)
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
-                Text("Upgrade to \(requiredTier.displayName)")
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(featureName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                    Text("Upgrade to \(requiredTier.displayName)")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.5))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(.white.opacity(0.3))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(16)
+            .frame(maxWidth: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(
-                        LinearGradient(
-                            colors: [requiredTier.color.opacity(0.2), requiredTier.color.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color(white: 0.12))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 20)
-                            .stroke(requiredTier.color.opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(requiredTier.color.opacity(0.25), lineWidth: 0.5)
                     )
             )
         }

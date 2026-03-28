@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- AdMob: replace with your real AdMob App ID before App Store submission -->
+	<key>GADApplicationIdentifier</key>
+	<string>ca-app-pub-3940256099942544~1458002511</string>
+	<!-- App Tracking Transparency — required for personalised ads on iOS 14+ -->
+	<key>NSUserTrackingUsageDescription</key>
+	<string>Allow tracking to receive personalised financial news ads. You can change this in Settings.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs microphone access to record your voice for the AI assistant&apos;s voice input feature.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app uses speech recognition to convert your voice input into text for the AI assistant feature.</string>
+</dict>
+</plist>

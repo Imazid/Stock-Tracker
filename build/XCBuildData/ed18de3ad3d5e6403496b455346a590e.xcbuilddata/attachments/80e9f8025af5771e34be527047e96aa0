@@ -1,0 +1,56 @@
+{
+  "" : {
+    "const-values" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPTypes-primary.swiftconstvalues",
+    "dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPTypes-primary.d",
+    "diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPTypes-primary.dia",
+    "emit-module-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPTypes-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPTypes-primary-emit-module.dia",
+    "pch" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPTypes-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPTypes-primary.swiftdeps"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/HTTPField.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPField.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPField.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPField.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/HTTPFieldName.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPFieldName.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPFieldName.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPFieldName.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/HTTPFields.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPFields.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPFields.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPFields.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/HTTPParsedFields.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPParsedFields.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPParsedFields.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPParsedFields.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/HTTPRequest+URL.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPRequest+URL.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPRequest+URL.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPRequest+URL.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/HTTPRequest.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPRequest.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPRequest.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPRequest.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/HTTPResponse.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPResponse.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPResponse.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/HTTPResponse.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/ISOLatin1String.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/ISOLatin1String.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/ISOLatin1String.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/ISOLatin1String.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/Sources/HTTPTypes/NIOLock.swift" : {
+    "index-unit-output-path" : "/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/NIOLock.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/NIOLock.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/swift-http-types/build/swift-http-types.build/Release-iphonesimulator/HTTPTypes.build/Objects-normal/x86_64/NIOLock.o"
+  }
+}

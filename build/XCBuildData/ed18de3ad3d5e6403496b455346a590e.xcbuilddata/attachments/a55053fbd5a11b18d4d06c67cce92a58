@@ -1,0 +1,121 @@
+{
+  "" : {
+    "const-values" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock Tracker WidgetExtension-primary.swiftconstvalues",
+    "dependencies" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock Tracker WidgetExtension-primary.d",
+    "diagnostics" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock Tracker WidgetExtension-primary.dia",
+    "emit-module-dependencies" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock Tracker WidgetExtension-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock Tracker WidgetExtension-primary-emit-module.dia",
+    "pch" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock Tracker WidgetExtension-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock Tracker WidgetExtension-primary.swiftdeps"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/AppIntent.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/AppIntent.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/AppIntent.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/AppIntent.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/EventCalendarWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/EventCalendarWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/EventCalendarWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/EventCalendarWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/MarketOverviewWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/MarketOverviewWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/MarketOverviewWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/MarketOverviewWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/MiniChartWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/MiniChartWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/MiniChartWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/MiniChartWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/NewsWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/NewsWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/NewsWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/NewsWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/OrderLauncherWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/OrderLauncherWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/OrderLauncherWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/OrderLauncherWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/PortfolioWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PortfolioWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PortfolioWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PortfolioWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/PremiumWidgets.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PremiumWidgets.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PremiumWidgets.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PremiumWidgets.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/PriceAlertWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PriceAlertWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PriceAlertWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/PriceAlertWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/SentimentWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/SentimentWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/SentimentWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/SentimentWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/SingleStockWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/SingleStockWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/SingleStockWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/SingleStockWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/Stock_Tracker_WidgetBundle.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock_Tracker_WidgetBundle.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock_Tracker_WidgetBundle.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock_Tracker_WidgetBundle.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/Stock_Tracker_WidgetLiveActivity.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock_Tracker_WidgetLiveActivity.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock_Tracker_WidgetLiveActivity.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/Stock_Tracker_WidgetLiveActivity.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/TopMoversWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/TopMoversWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/TopMoversWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/TopMoversWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/TopPerformerWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/TopPerformerWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/TopPerformerWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/TopPerformerWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/WatchlistWidget.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WatchlistWidget.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WatchlistWidget.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WatchlistWidget.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/WidgetComponents.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetComponents.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetComponents.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetComponents.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/WidgetDeepLinks.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetDeepLinks.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetDeepLinks.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetDeepLinks.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/WidgetDesignTokens.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetDesignTokens.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetDesignTokens.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetDesignTokens.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/WidgetSharedModels.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetSharedModels.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetSharedModels.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetSharedModels.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/Stock Tracker Widget/WidgetSparklineView.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetSparklineView.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetSparklineView.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/WidgetSparklineView.o"
+  },
+  "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "index-unit-output-path" : "/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/ihtishammazid/Desktop/Stock Tracker/build/Stock Tracker.build/Release-iphonesimulator/Stock Tracker WidgetExtension.build/Objects-normal/arm64/GeneratedAssetSymbols.o"
+  }
+}

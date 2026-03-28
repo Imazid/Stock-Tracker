@@ -1,0 +1,36 @@
+{
+  "" : {
+    "const-values" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Supabase-primary.swiftconstvalues",
+    "dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Supabase-primary.d",
+    "diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Supabase-primary.dia",
+    "emit-module-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Supabase-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Supabase-primary-emit-module.dia",
+    "pch" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Supabase-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Supabase-primary.swiftdeps"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/Sources/Supabase/Constants.swift" : {
+    "index-unit-output-path" : "/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Constants.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Constants.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Constants.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/Sources/Supabase/Deprecated.swift" : {
+    "index-unit-output-path" : "/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Deprecated.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Deprecated.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Deprecated.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/Sources/Supabase/Exports.swift" : {
+    "index-unit-output-path" : "/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Exports.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Exports.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Exports.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/Sources/Supabase/SupabaseClient.swift" : {
+    "index-unit-output-path" : "/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/SupabaseClient.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/SupabaseClient.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/SupabaseClient.o"
+  },
+  "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/Sources/Supabase/Types.swift" : {
+    "index-unit-output-path" : "/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Types.o",
+    "llvm-bc" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Types.bc",
+    "object" : "/Users/ihtishammazid/Library/Developer/Xcode/DerivedData/Stock_Tracker-hiucakdfxdrvvhalewovfiwhuiyb/SourcePackages/checkouts/supabase-swift/build/Supabase.build/Release-iphonesimulator/Supabase.build/Objects-normal/arm64/Types.o"
+  }
+}

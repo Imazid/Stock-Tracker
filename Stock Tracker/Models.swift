@@ -216,6 +216,14 @@ enum TransactionType: String, Codable {
     case sell = "Sell"
 }
 
+
+// MARK: - Chat Message (for AI Agent)
+struct ChatMessage: Identifiable {
+    let id = UUID()
+    let text: String
+    let isUser: Bool
+    var role: String? = nil
+}
 // MARK: - News
 
 struct NewsArticle: Identifiable {
@@ -231,10 +239,70 @@ struct NewsArticle: Identifiable {
 
 // MARK: - Portfolio Snapshot (for portfolio performance chart)
 
-struct PortfolioSnapshot: Identifiable {
+struct PortfolioSnapshot: Identifiable, Codable {
     let id = UUID()
     let date: Date
     let totalValue: Double
+    
+    enum CodingKeys: String, CodingKey {
+        case date
+        case totalValue
+    }
+    
+    init(date: Date, totalValue: Double) {
+        self.date = date
+        self.totalValue = totalValue
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.date = try container.decode(Date.self, forKey: .date)
+        self.totalValue = try container.decode(Double.self, forKey: .totalValue)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(date, forKey: .date)
+        try container.encode(totalValue, forKey: .totalValue)
+    }
+}
+
+// MARK: - Portfolio Group
+
+struct PortfolioGroup: Identifiable, Codable {
+    var id: UUID
+    var name: String
+    var emoji: String
+    var holdings: [PortfolioHolding]
+    var history: [PortfolioSnapshot]
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        emoji: String = "💼",
+        holdings: [PortfolioHolding] = [],
+        history: [PortfolioSnapshot] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.emoji = emoji
+        self.holdings = holdings
+        self.history = history
+    }
+}
+
+// MARK: - Watchlist Group
+
+struct WatchlistGroup: Identifiable, Codable {
+    var id: UUID
+    var name: String
+    var assets: [Asset]
+
+    init(id: UUID = UUID(), name: String, assets: [Asset] = []) {
+        self.id = id
+        self.name = name
+        self.assets = assets
+    }
 }
 
 // MARK: - Market Index
@@ -245,6 +313,7 @@ struct MarketIndex: Identifiable {
     let price: Double
     let change: Double
     let changePercent: Double
-    
+    var sparkline: [Double] = []
+
     var isPositive: Bool { change >= 0 }
 }
