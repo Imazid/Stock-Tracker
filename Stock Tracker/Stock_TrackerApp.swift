@@ -231,22 +231,25 @@ struct StockCryptoTrackerApp: App {
     
     
     private func loadOnboardingStocks() {
-        if let stocks = UserDefaults.standard.array(forKey: "onboarding_stocks") as? [String] {
-            // Add stocks to watchlist
-            for symbol in stocks {
-                Task {
-                    do {
-                        let asset = try await APIService.shared.fetchAssetDetails(
-                            identifier: symbol,
-                            kind: .stock,
-                            name: symbol
-                        )
-                        await MainActor.run {
-                            marketData.addToWatchlist(asset)
-                        }
-                    } catch {
-                        AppLogger.api.error("Failed to load onboarding stock \(symbol): \(error)")
+        guard let stocks = UserDefaults.standard.array(forKey: "onboarding_stocks") as? [String],
+              !stocks.isEmpty else { return }
+
+        // Clear immediately so stocks aren't re-added on every launch
+        UserDefaults.standard.removeObject(forKey: "onboarding_stocks")
+
+        for symbol in stocks {
+            Task {
+                do {
+                    let asset = try await APIService.shared.fetchAssetDetails(
+                        identifier: symbol,
+                        kind: .stock,
+                        name: symbol
+                    )
+                    await MainActor.run {
+                        marketData.addToWatchlist(asset)
                     }
+                } catch {
+                    AppLogger.api.error("Failed to load onboarding stock \(symbol): \(error)")
                 }
             }
         }
