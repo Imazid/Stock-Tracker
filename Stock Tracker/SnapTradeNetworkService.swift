@@ -90,8 +90,27 @@ class SnapTradeNetworkService {
         return try await executeRequest(request)
     }
     
+    // MARK: - Users
+
+    /// Deletes the SnapTrade user and every broker connection it has (SnapTrade removes them
+    /// shortly after). Afterwards nothing can read the person's broker any more.
+    func deleteUser(userId: String) async throws {
+        let request = try createRequest(path: "/snapTrade/deleteUser", method: "DELETE",
+                                        queryParams: ["userId": userId])
+        let _: SnapTradeDeleteUserResponse = try await executeRequest(request)
+    }
+
+    // MARK: - Brokerages
+
+    /// Every institution SnapTrade can connect, with the slug `getLoginURL` needs, its
+    /// display name, logo and whether it's enabled / in maintenance. Partner-signed, no user.
+    func fetchBrokerages() async throws -> [SnapTradeBrokerage] {
+        let request = try createRequest(path: "/brokerages", method: "GET")
+        return try await executeRequest(request)
+    }
+
     // MARK: - Accounts
-    
+
     /// Fetch all accounts for a user
     func fetchAccounts(userId: String, userSecret: String) async throws -> [SnapTradeAccount] {
         SecureLogger.info("Fetching SnapTrade accounts")

@@ -106,7 +106,7 @@ struct TopPerformerContentView: View {
 
                 DeltaChip(value: data.changePercent, size: .regular, mode: cbMode)
 
-                Text(data.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                Text(WidgetMoney.format(data.price, digits: 2))
                     .font(WidgetFont.microSmall(.semibold))
                     .foregroundColor(WidgetColor.textSecondary)
                     .padding(.top, 4)
@@ -118,7 +118,7 @@ struct TopPerformerContentView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 VStack(alignment: .trailing, spacing: 1) {
                     MicroLabel(text: "Value")
-                    Text(data.currentValue, format: .currency(code: "USD").precision(.fractionLength(0)))
+                    Text(WidgetMoney.format(data.currentValue, digits: 0))
                         .font(WidgetFont.secondaryMedium(.bold))
                         .foregroundColor(WidgetColor.textPrimary)
                         .minimumScaleFactor(0.8)
@@ -146,7 +146,7 @@ struct TopPerformerContentView: View {
         .widgetURL(WidgetDeepLink.asset(data.symbol))
         .widgetContainerBG(accent: accent)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Top performer \(data.symbol), \(positive ? "up" : "down") \(String(format: "%.2f", abs(data.changePercent))) percent, value \(String(format: "$%.0f", data.currentValue))")
+        .accessibilityLabel("Top performer \(data.symbol), \(positive ? "up" : "down") \(String(format: "%.2f", abs(data.changePercent))) percent, value \(WidgetMoney.format(data.currentValue, digits: 0))")
     }
 }
 

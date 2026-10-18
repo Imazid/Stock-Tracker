@@ -84,6 +84,13 @@ class SnapTradeRepository {
         return url
     }
     
+    /// Deletes the user at SnapTrade (with all their broker connections), then forgets it here.
+    /// Throws — and keeps the local login — if SnapTrade can't be reached.
+    func deleteUserAndDisconnect() async throws {
+        if let userId { try await networkService.deleteUser(userId: userId) }
+        disconnect()
+    }
+
     /// Clear authentication and disconnect
     func disconnect() {
         userId = nil
@@ -94,7 +101,12 @@ class SnapTradeRepository {
     }
     
     // MARK: - Accounts
-    
+
+    /// Institutions SnapTrade can connect right now (no user needed).
+    func fetchBrokerages() async throws -> [SnapTradeBrokerage] {
+        try await networkService.fetchBrokerages()
+    }
+
     /// Fetch all brokerage accounts for the authenticated user
     func fetchAccounts() async throws -> [BrokerAccount] {
         guard let userId = userId, let userSecret = userSecret else {

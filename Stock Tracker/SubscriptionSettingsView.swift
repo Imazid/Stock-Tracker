@@ -2,168 +2,124 @@
 //  SubscriptionSettingsView.swift
 //  Stock Tracker
 //
+//  Your plan, the other plans (App Store prices in your currency), manage and restore.
+//
 
 import SwiftUI
-import UIKit
+import StoreKit
 
 struct SubscriptionSettingsView: View {
     @EnvironmentObject var subscriptionManager: SubscriptionManager
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.theme) private var theme
 
-    @State private var showPaywall = false
-    @State private var selectedTier: SubscriptionTier?
-    @State private var showRestoreAlert = false
-    @State private var restoreMessage = ""
-    
+    @State private var paywallTier: PaywallTier?
+    @State private var showManage = false
+    @State private var restoreMessage: String?
+
+    private struct PaywallTier: Identifiable { let tier: SubscriptionTier; var id: String { tier.rawValue } }
+
     var body: some View {
         List {
-            // Current Plan
             Section {
-                currentPlanCard
-            }
-            
-            // Available Plans
-            if subscriptionManager.currentTier != .black {
-                Section {
-                    ForEach(availablePlans, id: \.tier) { plan in
-                        PlanCard(plan: plan) {
-                            selectedTier = plan.tier
-                            showPaywall = true
-                        }
+                HStack(spacing: DS.Space.m) {
+                    Image(systemName: subscriptionManager.currentTier.icon)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(DS.accent)
+                        .frame(width: 48, height: 48)
+                        .background(Circle().fill(DS.accent.opacity(0.14)))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(subscriptionManager.currentTier.displayName) plan")
+                            .font(.headline)
+                            .foregroundStyle(theme.primaryText)
+                        Text(subscriptionManager.currentTier == .free ? "Free forever, with ads" : "Active subscription")
+                            .font(.subheadline)
+                            .foregroundStyle(theme.secondaryText)
                     }
-                } header: {
-                    Text("Available Plans")
+                }
+                .padding(.vertical, DS.Space.xs)
+            }
+
+            if subscriptionManager.currentTier != .black {
+                Section("Upgrade") {
+                    ForEach([SubscriptionTier.pro, .black].filter { $0.rank > subscriptionManager.currentTier.rank }, id: \.self) { tier in
+                        Button {
+                            paywallTier = PaywallTier(tier: tier)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(tier.displayName)
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(theme.primaryText)
+                                    Text(fromPrice(for: tier))
+                                        .font(.footnote)
+                                        .foregroundStyle(theme.secondaryText)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(theme.secondaryText.opacity(0.6))
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("subscription.plan.\(tier.rawValue.lowercased())")
+                    }
                 }
             }
-            
-            // Manage
+
             Section {
                 if subscriptionManager.currentTier != .free {
-                    Button {
-                        if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
-                            UIApplication.shared.open(url)
-                        }
-                    } label: {
-                        Label("Manage Subscription", systemImage: "app.badge")
-                    }
+                    Button("Manage subscription") { showManage = true }
                 }
-
                 Button {
                     Task {
                         await subscriptionManager.restorePurchases()
                         restoreMessage = subscriptionManager.currentTier != .free
-                            ? "Subscription restored successfully."
-                            : "No active subscription found."
-                        showRestoreAlert = true
+                            ? "Your subscription is restored."
+                            : "No active subscription was found for this Apple ID."
                     }
                 } label: {
                     HStack {
-                        Label("Restore Purchases", systemImage: "arrow.clockwise")
+                        Text("Restore purchases")
                         Spacer()
-                        if subscriptionManager.isPurchasing {
-                            ProgressView().scaleEffect(0.8)
-                        }
+                        if subscriptionManager.isPurchasing { ProgressView() }
                     }
                 }
                 .disabled(subscriptionManager.isPurchasing)
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(theme.background.ignoresSafeArea())
+        .listRowBackground(theme.subtleFill)
         .navigationTitle("Subscription")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showPaywall) {
-            if let tier = selectedTier {
-                PaywallView(requiredTier: tier, featureName: "Premium Features")
-                    .environmentObject(subscriptionManager)
-            }
+        .manageSubscriptionsSheet(isPresented: $showManage)
+        .task {
+            if subscriptionManager.products.isEmpty { await subscriptionManager.loadProducts() }
         }
-        .alert("Restore Purchases", isPresented: $showRestoreAlert) {
+        .sheet(item: $paywallTier) { item in
+            PaywallView(requiredTier: item.tier, featureName: "\(item.tier.displayName) plan")
+                .environmentObject(subscriptionManager)
+        }
+        .alert("Restore purchases", isPresented: Binding(
+            get: { restoreMessage != nil },
+            set: { if !$0 { restoreMessage = nil } }
+        )) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(restoreMessage)
+            Text(restoreMessage ?? "")
         }
     }
-    
-    private var currentPlanCard: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: subscriptionManager.currentTier.gradientColors,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 60, height: 60)
-                
-                Image(systemName: subscriptionManager.currentTier.icon)
-                    .font(.title2)
-                    .foregroundColor(.white)
-            }
-            
-            VStack(alignment: .leading, spacing: 6) {
-                Text(subscriptionManager.currentTier.displayName)
-                    .font(.title3.bold())
-                
-                if subscriptionManager.currentTier == .free {
-                    Text("Limited features")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("Active subscription")
-                        .font(.subheadline)
-                        .foregroundColor(.green)
-                }
-            }
-            
-            Spacer()
-        }
-        .padding()
-        .background(Color.secondary.opacity(0.05))
-        .cornerRadius(12)
-    }
-    
-    private var availablePlans: [SubscriptionPlan] {
-        SubscriptionPlan.plans.filter { $0.tier != subscriptionManager.currentTier }
-    }
-}
 
-// MARK: - Plan Card
-struct PlanCard: View {
-    let plan: SubscriptionPlan
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(plan.tier.displayName)
-                            .font(.headline)
-                        
-                        if let badge = plan.badge {
-                            Text(badge)
-                                .font(.caption2.bold())
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(plan.tier.color)
-                                .cornerRadius(4)
-                        }
-                    }
-                    
-                    Text("From $\(String(format: "%.2f", plan.monthlyPrice))/month")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                Image(systemName: "arrow.right.circle.fill")
-                    .font(.title3)
-                    .foregroundColor(plan.tier.color)
-            }
+    /// "From A$9.99 a month" using App Store prices, or a neutral line if they haven't loaded.
+    private func fromPrice(for tier: SubscriptionTier) -> String {
+        let id = tier == .pro ? SubscriptionManager.ProductID.proMonthly : SubscriptionManager.ProductID.blackMonthly
+        guard let product = subscriptionManager.products.first(where: { $0.id == id }) else {
+            return "See plans and prices"
         }
+        return "From \(product.displayPrice) a month"
     }
 }
 

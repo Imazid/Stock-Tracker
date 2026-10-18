@@ -12,6 +12,7 @@
 
 import Foundation
 import Supabase
+import Auth
 import Combine
 import OSLog
 
@@ -54,6 +55,11 @@ final class SyncManager: ObservableObject {
     var isSignedIn: Bool { SupabaseManager.auth.currentUser != nil }
 
     private init() {}
+
+    /// Resets the initial-sync flag so the next sign-in triggers a full merge.
+    func resetInitialSyncFlag() {
+        hasPerformedInitialSync = false
+    }
 
     // MARK: - First-sign-in merge (full sync)
 
@@ -164,9 +170,10 @@ final class SyncManager: ObservableObject {
             }
 
             for remote in remoteHoldings {
+                let remoteIdLower = remote.id.lowercased()
                 if remote.isDeleted {
-                    localPortfolio.removeAll { $0.id.uuidString == remote.id }
-                } else if !localPortfolio.contains(where: { $0.id.uuidString == remote.id || $0.asset.symbol == remote.assetSymbol }) {
+                    localPortfolio.removeAll { $0.id.uuidString.lowercased() == remoteIdLower }
+                } else if !localPortfolio.contains(where: { $0.id.uuidString.lowercased() == remoteIdLower || $0.asset.symbol == remote.assetSymbol }) {
                     localPortfolio.append(remote.toDomain())
                 }
             }
@@ -186,9 +193,10 @@ final class SyncManager: ObservableObject {
             }
 
             for remote in remoteAlerts {
+                let remoteIdLower = remote.id.lowercased()
                 if remote.isDeleted {
-                    localAlerts.removeAll { $0.id.uuidString == remote.id }
-                } else if !localAlerts.contains(where: { $0.id.uuidString == remote.id }) {
+                    localAlerts.removeAll { $0.id.uuidString.lowercased() == remoteIdLower }
+                } else if !localAlerts.contains(where: { $0.id.uuidString.lowercased() == remoteIdLower }) {
                     localAlerts.append(remote.toDomain())
                 }
             }
@@ -272,6 +280,28 @@ final class SyncManager: ObservableObject {
                 .execute()
         } catch {
             AppLogger.sync.error("Soft-delete holding failed: \(error)")
+        }
+    }
+
+    func softDeleteWatchlistAsset(symbol: String) async {
+        guard SupabaseManager.isConfigured, isSignedIn,
+              let userId = SupabaseManager.auth.currentUser?.id else { return }
+        do {
+            let nowStr = ISO8601DateFormatter().string(from: Date())
+            try await SupabaseManager.client
+                .from("watchlist_assets")
+                .update(["deleted_at": nowStr])
+                .eq("user_id", value: userId.uuidString)
+                .eq("symbol", value: symbol)
+                .execute()
+        } catch {
+            AppLogger.sync.error("Soft-delete watchlist asset failed: \(error)")
+        }
+    }
+
+    func softDeleteWatchlistAssets(symbols: [String]) async {
+        for symbol in symbols {
+            await softDeleteWatchlistAsset(symbol: symbol)
         }
     }
 
@@ -425,11 +455,11 @@ final class SyncManager: ObservableObject {
         }
 
         let remote     = all.filter { !$0.isDeleted }
-        let remoteById = Dictionary(uniqueKeysWithValues: remote.map { ($0.id, $0) })
+        let remoteById = Dictionary(uniqueKeysWithValues: remote.map { ($0.id.lowercased(), $0) })
         let local      = persist.loadPriceAlerts()
 
         var merged: [PriceAlert] = remote.map { $0.toDomain() }
-        let localOnly = local.filter { remoteById[$0.id.uuidString] == nil }
+        let localOnly = local.filter { remoteById[$0.id.uuidString.lowercased()] == nil }
         merged.append(contentsOf: localOnly)
         if !localOnly.isEmpty { try await upsertAlerts(localOnly, userId: userId) }
         return merged

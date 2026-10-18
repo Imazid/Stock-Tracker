@@ -42,6 +42,12 @@ extension TimeRange {
     }
 }
 
+// MARK: - Price Direction
+
+enum PriceDirection {
+    case up, down, unchanged
+}
+
 // MARK: - Asset
 
 struct Asset: Identifiable, Hashable, Codable {
@@ -106,6 +112,21 @@ struct Asset: Identifiable, Hashable, Codable {
     }
     
     var isPositive: Bool { change >= 0 }
+
+    /// Create an Asset from a MarketIndex for navigation into detail views.
+    init(from index: MarketIndex) {
+        let cryptoSymbols: Set<String> = ["BTC", "ETH"]
+        self.init(
+            symbol: index.symbol,
+            name: index.name,
+            price: index.price,
+            change: index.change,
+            changePercent: index.changePercent,
+            volume: 0,
+            kind: cryptoSymbols.contains(index.symbol) ? .crypto : .stock,
+            exchange: ""
+        )
+    }
 }
 
 
@@ -181,6 +202,23 @@ struct PortfolioHolding: Identifiable, Codable {
         guard costBasis != 0 else { return 0 }
         return (profitLoss / costBasis) * 100.0
     }
+
+    /// Replay of the transactions: realised profit from sales lives here.
+    var ledger: PositionLedger { PositionLedger(transactions) }
+
+    /// Profit already banked from sales (USD), after fees.
+    var realizedGain: Double { ledger.realized }
+
+    /// Unrealised on what's still held + realised on what was sold (USD).
+    var totalReturn: Double { profitLoss + realizedGain }
+
+    /// Everything ever paid for this holding: cost of what's held + cost of what was sold.
+    var totalInvested: Double { costBasis + ledger.costOfSold }
+
+    var totalReturnPercent: Double {
+        guard totalInvested > 0 else { return 0 }
+        return totalReturn / totalInvested * 100
+    }
 }
 
 // MARK: - Transactions
@@ -191,23 +229,113 @@ struct Transaction: Identifiable, Codable {
     let shares: Double
     let pricePerShare: Double
     let type: TransactionType
-    
+    /// Brokerage for this trade, USD. Added to the cost of a buy; taken off the proceeds of a sell.
+    let fees: Double
+    /// Average cost (USD) when a sale was recorded. Used only when the transaction list
+    /// doesn't show how the shares were bought (older holdings, broker imports).
+    let avgCostAtSale: Double?
+
     init(
         id: UUID = UUID(),
         date: Date = Date(),
         shares: Double,
         pricePerShare: Double,
-        type: TransactionType
+        type: TransactionType,
+        fees: Double = 0,
+        avgCostAtSale: Double? = nil
     ) {
         self.id = id
         self.date = date
         self.shares = shares
         self.pricePerShare = pricePerShare
         self.type = type
+        self.fees = fees
+        self.avgCostAtSale = avgCostAtSale
     }
-    
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        date = try c.decode(Date.self, forKey: .date)
+        shares = try c.decode(Double.self, forKey: .shares)
+        pricePerShare = try c.decode(Double.self, forKey: .pricePerShare)
+        type = try c.decode(TransactionType.self, forKey: .type)
+        // Added 2026-10-17; older saves don't have them.
+        fees = try c.decodeIfPresent(Double.self, forKey: .fees) ?? 0
+        avgCostAtSale = try c.decodeIfPresent(Double.self, forKey: .avgCostAtSale)
+    }
+
+    /// Shares × price, before fees.
     var totalValue: Double {
         shares * pricePerShare
+    }
+}
+
+/// A position replayed from its transactions in date order (average-cost method).
+/// Realised profit is computed here — never stored — so editing or deleting any
+/// transaction re-derives it.
+struct PositionLedger {
+    private(set) var shares = 0.0
+    /// Cost of the shares still held (USD, fees included).
+    private(set) var cost = 0.0
+    /// Profit banked from sales (USD): (sale price − average cost) × quantity − fees.
+    private(set) var realized = 0.0
+    /// What the sold shares had cost (USD) — the denominator for a realised %.
+    private(set) var costOfSold = 0.0
+    /// Sale proceeds after fees (USD).
+    private(set) var proceeds = 0.0
+    private(set) var sellCount = 0
+    /// Realised profit of each sale, by transaction id (USD).
+    private(set) var realizedBySale: [UUID: Double] = [:]
+    /// Sales whose cost isn't known (no earlier buys, no recorded basis, or cost left blank).
+    private(set) var unknownBasisSells = 0
+
+    var avgCost: Double { shares > 0 ? cost / shares : 0 }
+
+    init(_ transactions: [Transaction]) {
+        for t in transactions.sorted(by: { $0.date < $1.date }) {
+            switch t.type {
+            case .buy:
+                shares += t.shares
+                cost += t.shares * t.pricePerShare + t.fees
+            case .sell:
+                sellCount += 1
+                let covered = shares + 1e-9 >= t.shares
+                let basis: Double? = covered && shares > 0 ? cost / shares : t.avgCostAtSale
+                // A cost of 0 is the app's "cost not entered" — the gain is unknown, not the whole sale.
+                if let basis, basis > 0 {
+                    let gain = (t.pricePerShare - basis) * t.shares - t.fees
+                    realized += gain
+                    realizedBySale[t.id] = gain
+                    costOfSold += basis * t.shares
+                    proceeds += t.shares * t.pricePerShare - t.fees
+                } else {
+                    unknownBasisSells += 1
+                }
+                let n = min(t.shares, shares)
+                if shares > 0 { cost -= cost / shares * n }
+                shares -= n
+                if shares <= 1e-9 { shares = 0; cost = 0 }
+            }
+        }
+    }
+}
+
+/// A holding that was sold down to zero. Kept so its realised profit still counts
+/// in the portfolio's total return and the trades can be looked back on.
+struct ClosedPosition: Identifiable, Codable {
+    /// The id the holding had while it was open.
+    let id: UUID
+    let asset: Asset
+    let transactions: [Transaction]
+    let openedAt: Date
+    let closedAt: Date
+
+    var ledger: PositionLedger { PositionLedger(transactions) }
+    var realizedGain: Double { ledger.realized }
+    var realizedPercent: Double {
+        let base = ledger.costOfSold
+        return base > 0 ? realizedGain / base * 100 : 0
     }
 }
 
@@ -275,19 +403,34 @@ struct PortfolioGroup: Identifiable, Codable {
     var emoji: String
     var holdings: [PortfolioHolding]
     var history: [PortfolioSnapshot]
+    /// Holdings sold down to zero (their realised profit still counts).
+    var closedPositions: [ClosedPosition]
 
     init(
         id: UUID = UUID(),
         name: String,
         emoji: String = "💼",
         holdings: [PortfolioHolding] = [],
-        history: [PortfolioSnapshot] = []
+        history: [PortfolioSnapshot] = [],
+        closedPositions: [ClosedPosition] = []
     ) {
         self.id = id
         self.name = name
         self.emoji = emoji
         self.holdings = holdings
         self.history = history
+        self.closedPositions = closedPositions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        emoji = try c.decode(String.self, forKey: .emoji)
+        holdings = try c.decode([PortfolioHolding].self, forKey: .holdings)
+        history = try c.decode([PortfolioSnapshot].self, forKey: .history)
+        // Added 2026-10-17; older saves don't have it.
+        closedPositions = try c.decodeIfPresent([ClosedPosition].self, forKey: .closedPositions) ?? []
     }
 }
 

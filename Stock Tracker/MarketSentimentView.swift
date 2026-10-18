@@ -20,13 +20,15 @@ enum MarketSentiment: Int, CaseIterable, Equatable {
     case bullish     = 3
     case veryBullish = 4
 
+    /// Plain description of the S&P 500's move today. (This is not a
+    /// fear-and-greed index — it's derived only from the day's index change.)
     var displayName: String {
         switch self {
-        case .veryBearish: return "Extreme Fear"
-        case .bearish:     return "Bearish Sentiment"
-        case .neutral:     return "Neutral Sentiment"
-        case .bullish:     return "Bullish Sentiment"
-        case .veryBullish: return "Extreme Greed"
+        case .veryBearish: return "Markets down sharply"
+        case .bearish:     return "Markets down"
+        case .neutral:     return "Markets flat"
+        case .bullish:     return "Markets up"
+        case .veryBullish: return "Markets up strongly"
         }
     }
 

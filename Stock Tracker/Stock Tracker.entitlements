@@ -6,5 +6,9 @@
 	<array>
 		<string>group.com.cubeplay.stocktracker</string>
 	</array>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:join.yourdomain.com</string>
+	</array>
 </dict>
 </plist>

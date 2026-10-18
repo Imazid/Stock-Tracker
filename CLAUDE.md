@@ -13,46 +13,122 @@
 
 ## Key Architecture
 - `MarketData` — central `@MainActor ObservableObject`, injected via `@EnvironmentObject`
-- `APIService.shared` — all network calls (Alpaca, CoinGecko, Alpha Vantage, NewsAPI)
+- `APIService.shared` — all network calls (Alpaca, CoinGecko, Yahoo, FMP, Finnhub, Fiscal.ai)
 - `QuoteService` — stock/crypto quote logic, price history routing
 - `PortfolioService` — persistence, history generation
 - `SecretsConfig` — keys from `Config/Secrets.plist` → Keychain (plist always wins)
 
-## APIs
+## APIs (live-tested 2026-10-16)
 | Service | Purpose | Notes |
 |---------|---------|-------|
-| Alpaca `/v2/stocks/bars` | Stock price history | `feed=iex` required; Basic auth header |
-| Alpaca `/v2/stocks/quotes/latest` | Live stock quotes | |
-| CoinGecko `/api/v3/coins/{id}/market_chart` | **Crypto price history** | Routed via `QuoteService.fetchPriceHistory` |
-| CoinGecko `/api/v3/simple/price` | Live crypto batch prices | |
-| Alpha Vantage `SYMBOL_SEARCH` | Symbol search | Slow on demo key |
-| NewsAPI `/v2/everything` | News | Returns 426 on device; falls back to mock |
+| Alpaca `/v2/stocks/bars`, `/snapshot` | US quotes + history | `feed=iex`; timeframes must be `15Min`/`1Hour`/`1Day` (`15Minute` → 400); null `bars` = empty |
+| Alpaca crypto bars | Crypto history > 1Y | CoinGecko free caps history at 365 days (401 beyond) |
+| CoinGecko | Crypto prices/search/≤1Y history | No key → 429 after ~5 calls/min; add a free Demo key to `CoinGeckoAPIKey` |
+| Yahoo v8 chart / search | **ASX quotes** (`BHP.AX`) + search | Unofficial; only working ASX source. Quote uses `range=1d` (5d gave a 5-day "daily" change) |
+| FMP `/stable/*` | Fundamentals, ratios, statements, grades; logos | `/api/v3` is dead (403 "Legacy Endpoint"). Logos: `financialmodelingprep.com/image-stock/{SYM}.png` (no key; `BHP.AX`, `BTCUSD` work) |
+| Finnhub | News, earnings, recs, `/company-news` | upgrade-downgrade + fund-ownership are premium (403) |
+| Fiscal.ai | Fundamentals for ~28 symbols | Falls back to FMP |
+| Gemini `gemini-flash-latest` → OpenAI `gpt-4o-mini` | AI insights/agent | `gemini-2.0-flash` is retired (404) |
+| Frankfurter | FX rates | Replaced exchangerate.host (now needs a key) |
+| SnapTrade | Broker connect | Requests must include `clientId` |
+| Supabase | Auth, sync, referrals | **Project host was NXDOMAIN on 2026-10-16** — accounts can't work until it's restored |
 
-## Price History Routing (QuoteService.fetchPriceHistory)
-- `.crypto` assets → `api.fetchCryptoHistory(id: cgId, range:)` via CoinGecko
-- `.stock` assets → `api.fetchHistoricalData(symbol:range:)` via Alpaca
-- Both fall back to `generatePriceHistoryFallback` on error (synthetic random walk)
+Security: `Config/Secrets.plist` is copied into the app bundle, so every key ships in the IPA. Move OpenAI/Gemini/SnapTrade/Alpaca/FMP behind a backend proxy before release.
 
-## Chart Details (AssetDetailView)
-- **Line chart** (`ChartType.line`): area fill + line, smart Y-axis (never starts at 0)
-- **Candlestick chart** (`ChartType.candle`): stocks only, `RuleMark` for wick + `BarMark(yStart:yEnd:)` for body
-- **Displayed time ranges**: 1D, 1W, 1M, 3M, 6M, YTD, 1Y, 5Y
-- **Alpaca bar granularity**:
-  - 1D → 15-minute bars
-  - 1W → hourly bars
-  - 1M–1Y → daily bars
-  - 5Y+ → weekly bars
+## Onboarding (redesigned 2026-10-16)
+- Flow: welcome → markets → follow (stock picker) → portfolio (broker / CSV* / manual) → alerts → Face ID** → account** → done. *CSV only on Black (matches Portfolio tab). **Face ID only if enrolled; account only if signed out. Account is last on purpose (value before commitment).
+- Files: `OnboardingModel.swift` (steps, `PickedAsset`, `OnboardingCatalog`, `OnboardingHandoff`), `OnboardingView.swift` (container, top bar, `OnboardingPage` scaffold), `OnboardingIntroSteps.swift`, `OnboardingSetupSteps.swift`. Shared tokens/components in `DesignSystem.swift` (`DS`, pill button styles, `TickerLogo`, `ChangePill`, `SectionHeader`, `EmptyStateCard`).
+- Picks are queued (`onboarding_picks_v2`) and applied by `OnboardingHandoff.applyPending` on completion *and* at launch; a pick leaves the queue only once its quote loads. Legacy `onboarding_stocks` is still honoured.
+- Picks are capped at the plan's `maxWatchlistAssets` (free = 10) so new users never land in `TierKeeperSheet`.
+- Picker search shows curated matches at once and merges live (Yahoo) results when they arrive, with a 10 s deadline (`SymbolSearchModel.withDeadline`). Curated results used to wait for Yahoo, so a slow / rate-limited Yahoo left "Searching…" up even for Telstra (`testPickerSearch` failed late in a long run).
+- DEBUG launch args: `-OnboardingStep follow` (jump to a step), `-OnboardingDemoPicks YES`, `-UITestFreshInstall` (wipes defaults + keychain data, skips the ATT prompt).
 
-## MarketStatusView
-- Shows a single badge (NYSE or ASX) based on `@AppStorage("preferredMarket")` ("US" or "AU")
-- Preference is set in **Settings → Preferences → Market Status**
-- Updates live via `.onChange(of: preferredMarket)`
+## Data honesty rules
+- Fresh installs start with an **empty** portfolio and watchlist — never mock holdings (`MarketData.loadInitialData`). No placeholder news either.
+- Theme defaults to **System** for new installs (onboarding stays dark by design) — check light AND dark.
+- Unknown numbers are `0`/`nil` and render as "—" (`detailedStock(from:)`, `QuickStatsSection`, 52-week bar). Never synthesise market cap/volume/ranges — they're shown to users and fed to AI analysis.
+- Permission prompts are contextual: notifications in onboarding or on the first alert (`PriceAlertManager.addAlert`), ATT only after onboarding.
 
-## PortfolioIntelligenceView (real data)
-- **Allocation**: asset type split (stocks/crypto) + top holdings donut — from `marketData.portfolio`
-- **Performance**: real unrealized P&L via `marketData.totalProfitLoss / totalProfitLossPercent`
-- **Dividends**: filters holdings with `asset.dividend > 0`, shows annual/monthly income
-- **Benchmark**: S&P 500 history line (`sp500History`) + portfolio return dashed reference line
+## UI tests
+- Target `Stock TrackerUITests` (`OnboardingFlowTests`: first-run picks → Home, holding added mid-onboarding, every tab with an empty portfolio, picker search).
+- Run: `xcodebuild test -project "Stock Tracker.xcodeproj" -scheme "Stock Tracker" -destination "id=<sim>" -only-testing:"Stock TrackerUITests"`
+- Simulator traps: system alerts (ATT, notifications, "Open in…") stay pinned across relaunches — reboot the sim to clear; the sim keychain survives `uninstall` (`simctl keychain <udid> reset`); `simctl spawn defaults write` writes outside the app container and survives uninstall.
+- **Scroll helpers must scroll towards the target.** "Swipe up N times, then down N times" swiped down past the top of the Settings sheet, which *dismisses* it — the next tap hit Home (`testSettingsRowsAllDoSomething` failed 2 of 3). Settings is a lazy List, so a far-off row doesn't exist at all: `ListsFlowTests.scrollTo(_:row:)` uses the known row order (`settingsRows`) to pick the direction and never swipes down once `settings.account` (the top row) is visible. The other files' `scrollTo` use the element's frame when it exists.
+- **Runner stall — root cause (2026-10-18).** Symptom: "App animations complete notification not received" and every later step of that launch waits 60 s (`testDarkModeWalkthrough` took 63 min instead of ~4, still passed). XCUITest's in-app agent (`XCTAnimationsIdleNotifier` in XCTAutomationSupport) swizzles `UIViewAnimationState animationDidStart:` (+1) / `animationDidStop:finished:` (−1, floored at 0) and releases a wait only on a 1→0 stop. On iOS 27 UIKit sometimes never sends didStop for two 0.5 s springs (`position` + `bounds.size`) run as the holding sheet + keyboard come up; a probe mirroring that counter showed it pinned at 2 in all 3 caught stalls (≈1 in 4 long runs), nothing on any layer, so it never returns to 0. Not an app bug and invisible to users. Fix: `-UITestFreshInstall` turns off UIKit block animations (`UIView.setAnimationsEnabled(false)` in the App init) — counted animations fell from a median 1,544 to 19 per launch; 28/28 stall-prone runs on 4 sims, 0 stalls (before: 3 of 12). SwiftUI's own animations still run. Probe traps: AnimationKit calls those delegate methods with a **nil** animation (in-process, never on a layer) — type it optional or it crashes; the caret blink (`_uitcvba`, repeats forever, delegate nil) is never counted, so it's a red herring.
+
+## Money invariant (FXRates.swift)
+- Every stored price/cost/value is **USD**; `formattedPrice(in:rates:)` / `marketData.formatPrice` convert for display only.
+- Non-USD quotes are converted on the way in: Yahoo (ASX = AUD) via `APIService.yahooToUSD` (handles GBp/ZAc; index symbols `^…` are points and never converted). Before this, ASX showed ×1.5 (BHP A$60 → "A$90"). One-time migration `fx_usd_normalised_v1` converted saved ASX cost bases + alert targets.
+- User input in a currency: `marketData.usd(fromDisplay:)` / `addHolding(costCurrency:)` / `recordTransaction(priceCurrency:)`.
+
+## Charts (PriceHistoryService.swift + DSCharts.swift)
+- **Never synthetic.** All random-walk/mock generators were deleted; fetches throw and charts show "Chart unavailable · Try again".
+- `PriceHistoryService.shared.history(for:range:)` — cached (1D 60s TTL…), in-flight de-duped, shaped by `ChartShaper`: 1D = latest *regular* session in exchange time (`TradingHours.us` 9:30–16:00 ET, `.asx` 10:00–16:12 Sydney), 1W = regular hours, crypto 1D = trailing 24h. One bar allowed on 1D right after the open.
+- `portfolioSeries(holdings:range:liveValue:previousCloseValue:)` — value of *current* holdings over the range from real history; ends on the live value; 1D baseline = previous-close value. Reload when holding prices change or the end point goes stale (a "cliff"). On 1D the line runs on to *now* only while one of the holdings' markets is trading (in session hours **and** its latest bar is from today; crypto always): after the close it ends at the last trade. Running it to now drew a flat weekend line that squeezed Friday's session into the left sixth of the (time-axis) 1D chart (fixed 2026-10-18).
+- `candles(for:range:)` — real OHLC routed by listing; Alpaca bars use `adjustment=all` (else splits draw as crashes).
+- `miniSeries(for:)` — row sparklines; baseline = `price − change`, the same reference as the % pill.
+- `DSPriceChart`: colour = displayed period's direction; dashed baseline ("Prev close" on 1D); scrubbing via `chartXSelection` (works inside ScrollView); `.time(domain: session)` only when first+last point share one session, else `.ordinal` (no flat lines across nights/weekends); y-domain hugs data. `DSSparkline`, `DSRangePicker`.
+- Alpaca snapshot previous close: if the latest trade is on a later day than `dailyBar` (pre-market), previous close = `dailyBar.close`, else `prevDailyBar.close`.
+- Home index cards use Yahoo index levels (`^GSPC ^IXIC ^DJI ^AXJO`), not ETF prices. "Market sentiment" is just the S&P's day move, plainly worded (it used to blend a never-updated value with the user's all-time return).
+
+## MarketData APIs worth knowing
+- `addHolding` / `recordTransaction` (no overselling) / `deleteTransaction` / `canAddHolding` / `createPortfolio -> Bool` enforce plan limits (`FeatureGate`).
+- `refreshQuote(for:)` prices one asset immediately (new holdings were valued at cost until the next refresh cycle).
+- `quoteFailures` = symbols whose last quote failed. `QuoteService.isASX(_:)` is the single ASX rule (exchange first, popular-ticker fallback).
+- Portfolio groups persist (`DataPersistenceManager.savePortfolioGroups`); only the active one used to survive relaunch.
+- `BackgroundRefresh` — best-effort `BGAppRefreshTask` (`Cubeplay.Stock-Tracker.refresh`) checks price alerts; not testable on the simulator.
+
+## Market status, watchlist, search, news, alerts (2026-10-17)
+- `MarketStatusView`: pills for the markets you follow (`preferredMarket` = `auto`/`US`/`AU`/`BOTH`), 2026–27 NYSE/ASX holiday + early-close tables, US after-hours, "opens Mon 10:00" in local time. Legacy `MarketSession` kept for `MarketSentimentView`.
+- `SymbolSearch.swift`: one search (Search tab + watchlist Add sheet). Yahoo stocks/ETFs + local crypto (only the coins `QuoteService` can price), ranked exact ticker → prefix → name; every search ends in results / "No matches" / "Search isn't available"; respects `maxWatchlistAssets`. Yahoo occasionally answers a real ticker with nothing (MSFT → "No matches" once in a long run), so an empty answer from `query1` is re-asked on `query2.finance.yahoo.com` (a different URL, so the coalescer can't replay the empty one) before "No matches".
+- Watchlist rows: `TickerLogo`, fixed-size `DSSparkline` from `PriceHistoryService.miniSeries`, "No live price" from `quoteFailures`; native List edit/reorder.
+- Alerts: `AddPriceAlertSheet(asset:)` — typed in the display currency, stored USD; direction derived from the target. "Once" (fire, then delete) or "Every time" (re-arms after a 0.5% move back across the target). One rule for in-app and `BackgroundRefresh`: `PriceAlert.evaluate(price:)` via `checkAlerts`. `MarketData.alertManager` `didSet` re-checks, because the launch refresh can finish before `onAppear` wires the manager (free plans have no auto-refresh, so alerts went unchecked all session). DEBUG `-UITestAlertPrices "AAPL=100000"` drives fire/re-arm in tests. Alerts store the listing's `kind`/`exchange`, and `MarketData.alertOnlyAssets` / `refreshAlertOnlyQuotes()` price alert symbols that aren't watchlisted or held (before, alerts set from Search/a stock page were never checked). DEBUG `-UITestBackgroundOnly` turns off in-app checks and runs `BackgroundRefresh.run()` once at launch, so a test proves the background path.
+- Accounts: `AccountService` probes Supabase `/auth/v1/health` (6s, cached 30s) and tells "unavailable" from "offline"; account/onboarding/sign-in/referral screens show that with Try again + "Continue without an account" and never hang. Auth calls are single-flight with 15s deadlines. Sign in with Apple handles its own request/result (the old extra tap handler started a second sign-in). `supabase/migrations/20261017000000_stocktracker_schema.sql` rebuilds the backend (tables, RLS, `generate_referral_code`, `referral_code_owner`). Codes are NOT a readable table (that leaked every code + owner id); the app validates via the `referral_code_owner` RPC and the insert policy requires `referrer_id = referral_code_owner(code_used)`.
+- Local backend: `supabase start` in the repo root (`supabase/config.toml`, API on **58321** so it doesn't clash with Miraa's stacks). DEBUG launch args `-SupabaseURLOverride http://127.0.0.1:58321 -SupabaseAnonKeyOverride <local demo anon key>` point the app at it. `AccountSyncTests` (skips if the stack is down) drives sign-up → watchlist upload → referral code → fresh-install restore → friend redeems code, checking rows through REST as the user (RLS applies).
+- Account-test traps: `-UITestFreshInstall` also deletes all app keychain items (the Supabase SDK keeps its session in its own item — a previous test's account was silently restored and onboarding skipped sign-up). iOS "Use Strong Password?" swallows typing in new-password fields and "Save Password?" swallows the next tap — handle both. While the keyboard is up the onboarding footer is hidden (it rode up over "Create account" and a tap there hit "Not now").
+- News thumbnails: fixed square with a publisher monogram tile underneath; the photo fades in over it. Finnhub's generic Yahoo logo (all Yahoo stories) is treated as no image.
+- News: articles open in SFSafariViewController; ads labelled "Sponsored", Google test units only in DEBUG, Release needs `NewsNativeAdUnitID` in Info.plist.
+- Money display: `formattedPrice` / `WidgetMoney` print A$ / US$ / C$ explicitly (both markets appear side by side).
+
+## Stock detail (2026-10-17)
+`AppleStocksDetailView(stock:asset:position:)` (one scroll, no tabs) + `AssetDetailViewModel`, `DetailHeader` (header + chart card), `DetailSections` (position, key stats, analysts, earnings, financials, about, AI summary), `DetailCandleChart` (real OHLC, Pro), `CoinGeckoCoinService` (crypto facts). Chart = `DSPriceChart` from `PriceHistoryService`, ending on the live price; every value in the display currency, indices (`^…`) in points. FMP/Finnhub only for US listings (ASX would hit the NYSE ADR; crypto hit a Grayscale ETF); the FMP quote never overwrites the live quote. ~6 FMP calls per open (free plan 250/day — heavy UI testing exhausts it).
+- Key-stats fallbacks: US pages fetch FMP **and** `APIService.fetchFinnhubFundamentals` (`/stock/metric` + `/stock/profile2`, 60/min, US only — ASX is 403) in parallel; `DetailedStock.filling(from:to:)` fills only what FMP left empty. Finnhub units: market cap/shares/volumes in **millions**, margins/yields in **percent** (`FinnhubFundamentals` converts to USD / fractions).
+- Volume + day range: Alpaca's free IEX feed sees a few % of US volume, so consolidated volume/day range come from Yahoo (`fetchYahooListingFacts`, `range=1y&interval=1d&events=div`), also the whole ASX key-stats card (day range, volume, 3M avg volume, trailing-12M dividend yield, last dividend). Yahoo `quoteSummary` needs a crumb (401) — no ASX market cap/P/E.
+- `DetailFormat.compactMoney` prints the explicit A$/US$/C$ symbol (the locale currency style printed AUD as bare "$").
+
+## Enhancements (2026-10-17, round 3)
+- **Coming up / earnings** (`EarningsCalendar.swift`): Finnhub `/calendar/earnings` **per symbol** (the market-wide call caps at 1,500 rows and silently drops symbols), US listings only, cached 12h on disk, in-flight de-duped. Home `HomeComingUpSection` (next 30 days, hidden when none; the refresh `.task` lives on Home's ScrollView — a `.task` on a view that renders nothing never runs). Stock page `DetailNextEarningsCard` (loaded by `AssetDetailViewModel.loadNextEarnings`) with **Remind me** = local notification 1h before (bmo 8:00 / amc 16:05 / dmh 12:00 / unknown 9:30 ET).
+- **Deep links** (`handleWidgetDeepLink`): `asset/SYM` and `trade/SYM` now open the stock page (they used to set a symbol nothing read); `search`, `alerts` added. Notification taps (price alert, big move, earnings) carry `userInfo["symbol"]` and open that stock.
+- **Home Screen quick actions** (`QuickActions.swift` + `UIApplicationShortcutItems` in Stock-Tracker-Info.plist): Search, Price alerts, Portfolio, Watchlist; item types ARE deep links. SwiftUI needs `@UIApplicationDelegateAdaptor` + a scene delegate for these.
+- **Siri / Shortcuts / Spotlight** (`StockIntents.swift`): `CheckPriceIntent` ("What's Apple at in Stock Tracker") answers with a live quote in the display currency (app-group `displayCurrency`/`displayRate`, since intents can run with the app closed); `OpenStockIntent`; `StockEntityQuery` = followed stocks + live search. `updateAppShortcutParameters()` at launch/background. DEBUG `-IntentProbe apple` prints `INTENTPROBE …` (verify with `simctl launch --console-pty`).
+- **Large text**: `AdaptiveQuoteRow` / `QuoteNumbers` (DesignSystem) stack price+change under the name at accessibility sizes — side by side they broke mid-number ("A$60./03", "BH/P"). `ChangePill` and exchange badges never wrap. `LargeTextTests` captures the main screens at AX L.
+- Tests: `EnhancementTests` (coming up, deep links, real Home Screen long-press quick action via SpringBoard — the icon can match twice, use the first hittable). SpringBoard has the same iOS 27 lost-idle problem around its long-press menu (each action on a SpringBoard element waited 60 s). The press goes through the app's screen coordinates (no SpringBoard wait); the "Search" tap must stay a SpringBoard element tap — a coordinate gesture with the menu up makes XCUITest bring the app forward first, closing the menu (tried press-and-slide too). One 60 s wait remains: ~95 s instead of ~155 s.
+
+## Performance & dark mode (2026-10-17, round 3)
+- `APIRateLimiter.RequestCoalescer`: identical GETs share one in-flight request and reuse a 2xx response ≤10 s (≤2 MB) — below the minute-level "updated" times shown, so nothing displayed becomes untrue. Cancelled requests aren't retried. CoinGecko fails fast while rate-limited so the Alpaca fallback answers at once.
+- US quotes: one batched Alpaca call (`APIService.fetchStockQuotes(symbols:)`); ASX concurrent; stocks + crypto refresh concurrently. `addToWatchlist` prices only the new asset (it ran a full refresh per add). Onboarding picks are priced concurrently (one CoinGecko back-off used to stall every pick: median 33 s → ~1.4 s). `priceDirections` is not `@Published` (no reader; it re-rendered everything twice per refresh).
+- `LogoImageCache` (memory 6 MB + disk, shared downloads, ≤192 px decode off-main) behind `TickerLogo`; `LogoDisc` gives white-on-transparent logos (V, XRP, ADA, QQQ, AMZN) a dark disc and tones discs down in dark.
+- Measured A/B (sim 2406179A): requests 148 → 82 per scripted session; launch/scroll/chart-switch unchanged. `PerformanceTests` are opt-in: `TEST_RUNNER_RUN_PERF=1`. DEBUG `NETREQ` log (endpoint/host/path, no keys) + `$S/tools/netbucket.py`.
+- **Dark mode**: the App struct's `@Environment(\.colorScheme)` does NOT follow the device — System mode on a dark iPhone rendered the cream palette with white text. Theme now comes from `ThemeEnvironment` (ThemeManager.swift) at the root and on root sheets; onboarding forces dark at the root. `DS.accent` is dynamic (light #1461CC for 5.5:1 on cream; dark #6BA8FF). `DarkModeTests` measure screenshot luminance so this can't regress. App icon dark variant = `IconDark.png` (glyph on transparent).
+
+## Portfolio tab (2026-10-17)
+`PortfolioView` (List: hero → summary → Holdings | Allocation | Performance | Income; title menu = portfolio switcher; "+" = `AddHoldingFlow`), `PortfolioPerformanceChart` (shared with Home's hero), `PortfolioComponents`, `PortfolioAllocationView` (`PortfolioAllocationTab`), `PortfolioTabViews` (Performance vs `Benchmark` — Black only, never mocked; Income), `HoldingDetailView` (+ `TransactionFormSheet`), `PortfolioAddFlow` (`AddToPortfolioSheet`, `ManualPositionSheet`, `HoldingFormView`), `PortfolioAccountsCard` (see Brokers & accounts). Costs are typed in the trading currency (A$ ASX / US$) → `addHolding(costCurrency:)`. Broker sync only touches ids in `snaptrade_imported_holding_ids`. Total return = unrealised + realised: realised profit is recomputed from the holding's transactions on every read (sale price − average cost at the time) × qty − fees, USD; each new sale also stores its average cost for holdings whose buys aren't in the ledger; zero-cost sales are "unknown" and excluded. Selling to zero moves the holding to "Closed positions" (`ClosedPositionViews.swift`) and its realised profit stays in totals until "Remove from history". Optional brokerage fees on transactions. ASX dividend yield = trailing-12M Yahoo dividends ÷ price (`fetchYahooListingFacts`, cached 6h; cash only, no franking). Keyboard Done = sheet nav-bar button while a field is focused (keyboard accessory bars broke typeText in tests). Test traps: List rows are created lazily (scroll before querying `portfolio.holding.SYM`); keyboard toolbars / interactive keyboard dismissal inside sheets break typeText-after-tap.
+
+## Brokers & accounts (2026-10-18, after Coinbase / Origin / Copilot / Yahoo Finance on Mobbin)
+- Portfolio tab: `PortfolioAccountsCard` under the summary — one row per connected institution (holdings imported from it, live value, "Synced just now" / "Couldn't sync"), "Added by you" (manual holdings), a "no longer at your broker · Review" row, and "Connect a broker or exchange" when none is linked. Replaced the old "N broker accounts connected" row under the holdings.
+- Linked holdings import on their own: `SnapTradeViewModel.autoImport()` runs after every successful holdings sync (and when `marketData` is first set at launch — `Stock_TrackerApp` sets `SnapTradeViewModel.shared.marketData`). Adds/updates apply at once (plan limits respected → `overLimit`), symbols already tracked by hand are left alone (`skipped`), removals wait in `pendingRemovals` for Remove / Keep (Keep = becomes a manual holding). `lastImport` drives the "Added N holdings" banner + Portfolio toast. The old "Update my portfolio" button is gone.
+- `SnapTradeConnectionView`: not connected = hero, "Read-only / Secure sign-in" badges, a 2-column Popular grid that connects in one tap (CommSec/CoinSpot first when `preferredMarket == "AU"` or the iPhone region is AU), "See all" → `InstitutionPickerSheet` (local, then global, then the rest), promises. Connected = status + Sync now, import banner, removal card, one card per institution (Active / Needs attention pill, accounts with balance + cash in the display currency via `FXRates` → `formatPrice`, never `Money.formattedAmount`'s locale "$"), positions (the portfolio's live value when imported). Disconnect is global — `BrokerAccount` has no connection id for per-broker unlinking.
+- DEBUG fixture: `-UITestBrokerFixture` makes connect/sync link CommSec (CBA, BHP) + Coinbase (BTC) with no network; `-UITestBrokerFixtureDrop BHP` drops it from later syncs (removal review). `BrokerFlowTests` drives all of it (light + dark screenshots).
+- **Slugs come from SnapTrade, not from us.** `GET /brokerages` (`SnapTradeNetworkService.fetchBrokerages`, partner-signed, no user) → `SnapTradeViewModel.directory` (enabled only; logo, maintenance). The hard-coded list had "IBKR" (real: `INTERACTIVE-BROKERS-FLEX`), "ALPACA" (only `ALPACA-PAPER` exists) and CoinSpot / CoinJar / Gemini / Binance US, which SnapTrade doesn't support — every one failed with "Requested broker … does not exist" (found 2026-10-18 by the live test; the fixture can't catch it). The fallback list now uses real slugs; `SANDBOX` / `*-PAPER` / `*-PRACTICE` show in DEBUG only. DEBUG `-SnapTradeBrokerageProbe` prints `BROKERAGE slug|name|enabled|maintenance|type` (run with `simctl launch --console-pty`).
+- **Disconnect deletes at SnapTrade** (`DELETE /snapTrade/deleteUser` via `SnapTradeRepository.deleteUserAndDisconnect`): it used to only forget the login on the phone while the connection stayed live at SnapTrade. If SnapTrade can't be reached the connection is kept and an alert says so. An unfinished connection shows "Start over" (same call).
+- `LiveBrokerTests` (opt-in, `TEST_RUNNER_RUN_LIVE_BROKER=1`): (1) real registration → portal (app.snaptrade.com opens) → close → Start over (deleteUser); (2) **SnapTrade Sandbox end to end**: consent → "Self-directed" scenario → Connect → "Connection Complete" → close Safari → sync imports positions (12 across two accounts; free plan keeps the 4 largest) → Accounts card → Disconnect deletes it at SnapTrade. Each run registers a SnapTrade user and deletes it; the sandbox run uses one connection while it runs. Close Safari with its own top-left Close — the page has a Close too.
+- Real data lessons (from the sandbox): accounts can report a bare slug as institution name ("sandbox") → shown via `displayName(forInstitution:)` from the directory (slug match first); positions not imported read "shares" / the coin, not "units"; `makeSyncPlan` imports biggest positions first so a plan limit keeps what matters.
+- Stock page "Own AAPL?" card has "Or link your broker" (Yahoo's "Link broker") while no broker is connected.
+
+## Motion (2026-10-18, `Motion.swift`)
+- `staggeredAppear(i)` (short lists, Home sections, broker cards), `priceFlash(value:)` (watchlist / Home rows / holding values pulse green/red when the live price moves), `scrollCardMotion()` (Home cards), `CelebrationCheck` + `ConfettiBurst(trigger:origin:)` (onboarding "You're all set", holdings arriving from a broker), and `DSPriceChart` draws its plot in from the left when a series first shows or the range changes (`revealKey` = first point's date, so live ticks don't replay; only the plot is masked, axes stay).
+- `Motion.isEnabled` is false with Reduce Motion **and under `-UITestFreshInstall`** (taps/screenshots need settled screens) unless `-UITestKeepMotion`. `MotionTests` (opt-in, `TEST_RUNNER_RUN_MOTION=1`) captures confetti / stagger / chart draw-in mid-animation.
+- Ambient loops must stay finite: the confetti timeline pauses itself after 3 s.
 
 ## Common Swift / Build Pitfalls
 - `StoreKit.Transaction` must be fully qualified (local `Transaction` model causes ambiguity)

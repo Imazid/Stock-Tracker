@@ -1,1169 +1,922 @@
 //
-//  AssetDetailView.swift
+//  AppleStocksDetailView.swift
 //  Stock Tracker
+//
+//  The stock / crypto / index detail screen: one calm scroll, no tab bar.
+//
+//    identity · price · change for the period · market status
+//    chart (line or Pro candles) + range picker
+//    your position (or "Own AAPL? Add")
+//    key statistics
+//    analysts · earnings · financials (Pro) · AI summary (Pro)   — US listings
+//    about · sources
+//
+//  Data rules (see CLAUDE.md): the price and day change are the app's own live
+//  quote; FMP / Finnhub are asked only about US stocks (they answer "BHP" with
+//  the NYSE ADR and "BTC" with the Grayscale ETF); crypto facts come from
+//  CoinGecko; charts are real history or an honest "unavailable".
 //
 
 import SwiftUI
-import Charts
 import Combine
+import OSLog
+
+// MARK: - Screen
 
 struct AppleStocksDetailView: View {
-    let asset: Asset?
-    let position: StockPosition?
-
-    /// Always reads the live (possibly FMP-enriched) stock from the ViewModel.
-    private var stock: DetailedStock { viewModel.liveStock }
-
-    @StateObject private var viewModel: AssetDetailViewModel
+    @StateObject private var model: AssetDetailViewModel
     @ObservedObject private var subscriptions = SubscriptionManager.shared
-    @ObservedObject private var liveActivityManager = LiveActivityManager.shared
     @EnvironmentObject private var marketData: MarketData
     @EnvironmentObject private var alertManager: PriceAlertManager
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var appTheme
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.theme) private var theme
 
-    @State private var scrollOffset: CGFloat = 0
-    @State private var showStickyHeader = false
-    @State private var scrubbedPoint: ChartDataPoint?
-    @State private var showPaywall = false
-    @State private var showAlertSheet = false
-    @State private var selectedTab: DetailedStockTab = .overview
-    @StateObject private var insightService = StockInsightService.shared
+    @State private var sheet: DetailSheet?
+    @State private var toast: DetailToast?
+    @State private var showsCompactTitle = false
+    @State private var scrubbed: DSChartPoint?
+    @State private var scrubbedCandle: Candle?
+
+    /// `position` is kept for source compatibility; holdings are read live from
+    /// `marketData.portfolio` so the block is never stale or missing.
+    init(stock: DetailedStock, asset: Asset? = nil, position: StockPosition? = nil) {
+        let seed = asset ?? Asset(
+            symbol: stock.symbol, name: stock.name, price: stock.currentPrice,
+            change: stock.dayChange, changePercent: stock.dayChangePercent,
+            volume: Double(stock.volume), kind: stock.exchange == "Crypto" ? .crypto : .stock,
+            exchange: stock.exchange)
+        _model = StateObject(wrappedValue: AssetDetailViewModel(seed: seed, stock: stock))
+    }
+
+    // MARK: Derived
+
+    private var kind: DetailAssetKind { model.kind }
+    private var tracked: Asset? { model.trackedAsset(in: marketData) }
+    private var live: Asset { tracked ?? model.quote }
+
+    private var format: DetailFormatter {
+        DetailFormatter(currency: marketData.preferredCurrency, rates: marketData.exchangeRates,
+                        isPoints: kind == .index)
+    }
+
+    private var holding: PortfolioHolding? {
+        marketData.portfolio.first { model.matches($0.asset) }
+    }
+
+    private var watchEntry: Asset? {
+        marketData.watchlist.first { model.matches($0) }
+    }
 
     private var hasActiveAlert: Bool {
-        alertManager.alerts.contains { $0.symbol == stock.symbol && $0.isActive }
+        alertManager.alerts.contains { $0.symbol == live.symbol && $0.isActive }
     }
 
-    /// Candlestick toggle is shown only for stocks (not crypto)
-    private var isCryptoAsset: Bool { asset?.kind == .crypto }
+    private var isPro: Bool { subscriptions.currentTier != .free }
+    private var canTrack: Bool { kind != .index }
 
-    init(stock: DetailedStock, asset: Asset? = nil, position: StockPosition? = nil) {
-        self.asset = asset
-        self.position = position
-        self._viewModel = StateObject(wrappedValue: AssetDetailViewModel(stock: stock, asset: asset))
+    private var lastUpdated: Date? {
+        tracked != nil ? marketData.lastQuoteRefreshDate : model.refreshedAt
     }
-    
+
+    private var quoteFailed: Bool {
+        tracked != nil ? marketData.quoteFailures.contains(live.symbol) : model.ownQuoteFailed
+    }
+
+    // MARK: Body
+
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .top) {
-                ScrollView {
-                    scrollContent
-                }
-                .coordinateSpace(name: "scroll")
-                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showStickyHeader = value < -100
-                    }
-                }
-                .onAppear {
-                    Task { await insightService.fetchInsight(for: stock.symbol, currentPrice: stock.currentPrice) }
-                }
-                .onChange(of: selectedTab) { _, _ in
-                    Task { await insightService.fetchInsight(for: stock.symbol, currentPrice: stock.currentPrice) }
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Space.xl) {
+                    DetailHeaderChart(
+                        model: model,
+                        live: live,
+                        format: format,
+                        lastUpdated: lastUpdated,
+                        quoteFailed: quoteFailed,
+                        candlesLocked: !isPro,
+                        onLockedCandles: { sheet = .paywall("Candlestick Charts") },
+                        scrubbed: $scrubbed,
+                        scrubbedCandle: $scrubbedCandle
+                    )
 
-                if showStickyHeader {
-                    StickyHeaderView(stock: stock)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    if canTrack {
+                        if let holding {
+                            DetailPositionCard(holding: holding, live: live, format: format)
+                        } else {
+                            DetailOwnPrompt(symbol: live.symbol, onLinkBroker: { sheet = .broker }) { sheet = .portfolio }
+                        }
+                    }
+
+                    statistics
+
+                    switch kind {
+                    case .usStock:
+                        usSections
+                    case .asxStock:
+                        DetailNote(systemImage: "info.circle",
+                                   text: "Analyst ratings, earnings and financial statements aren't available for ASX listings yet.",
+                                   identifier: "detail.asxNote")
+                    case .crypto, .index, .otherStock:
+                        EmptyView()
+                    }
+
+                    about
+
+                    Text(sourcesText)
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("detail.sources")
                 }
+                .padding(.horizontal, DS.Space.gutter)
+                .padding(.top, DS.Space.s)
+                .padding(.bottom, DS.Space.xxl)
             }
-            .background((colorScheme == .dark ? Color(red: 0.03, green: 0.03, blue: 0.03) : Color(red: 0.98, green: 0.97, blue: 0.96)).ignoresSafeArea())
+            .accessibilityIdentifier("detail.screen")
+            .scrollIndicators(.hidden)
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top > 170
+            } action: { _, isPast in
+                if isPast != showsCompactTitle { dsAnimate(DS.quick) { showsCompactTitle = isPast } }
+            }
+            .refreshable {
+                if tracked != nil { await marketData.refreshFromAPI() }
+                await model.refresh()
+            }
+            .background(theme.background.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showPaywall) {
-                PaywallView(requiredTier: .pro, featureName: "Candlestick Charts")
+            .toolbar { toolbar }
+        }
+        .overlay(alignment: .bottom) { toastView }
+        .task { await model.start(isTracked: tracked != nil, candlesAllowed: isPro) }
+        .onChange(of: marketData.lastQuoteRefreshDate) { _, _ in
+            if model.range == .oneDay { model.loadChart() }
+        }
+        .onChange(of: subscriptions.currentTier) { _, tier in
+            if tier == .free && model.style == .candle { model.style = .line }
+        }
+        .onChange(of: model.stock.dividendYield) { _, yield in
+            if kind == .usStock, let yield, yield > 0 {
+                marketData.updateAssetDividend(symbol: live.symbol, yieldPercent: yield * 100)
+            }
+        }
+        .onChange(of: model.range) { _, _ in
+            scrubbed = nil
+            scrubbedCandle = nil
+        }
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case .alert:
+                AddPriceAlertSheet(asset: live)
+                    .environmentObject(alertManager)
+                    .environmentObject(SubscriptionManager.shared)
+                    .environmentObject(marketData)
+            case .portfolio:
+                AddToPortfolioSheet(asset: live)
+                    .environmentObject(marketData)
+                    .environmentObject(SubscriptionManager.shared)
+            case .broker:
+                SnapTradeConnectionView()
+                    .environmentObject(marketData)
+            case .paywall(let feature):
+                PaywallView(requiredTier: .pro, featureName: feature)
                     .environmentObject(SubscriptionManager.shared)
             }
-            .onChange(of: viewModel.isLoadingFMPData) { _, newValue in
-                // When FMP fetch completes, backfill dividend yield to Asset model
-                if !newValue, let dy = viewModel.liveStock.dividendYield, dy > 0 {
-                    marketData.updateAssetDividend(symbol: viewModel.liveStock.symbol, yieldPercent: dy * 100)
-                }
-            }
-            .sheet(isPresented: $showAlertSheet) {
-                AddPriceAlertSheet(stock: stock)
-                    .environmentObject(alertManager)
-                    .environmentObject(subscriptions)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.body.weight(.semibold))
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 16) {
-                        // Bell: price alerts
-                        Button {
-                            showAlertSheet = true
-                        } label: {
-                            Image(systemName: hasActiveAlert ? "bell.fill" : "bell")
-                                .font(.body.weight(.semibold))
-                                .foregroundColor(hasActiveAlert ? .orange : .primary)
-                        }
-
-                        // Share
-                        ShareLink(
-                            item: "\(stock.symbol) (\(stock.name)) — \(stock.currentPrice.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates)) \(String(format: "%+.2f%%", stock.dayChangePercent)) today"
-                        ) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.body.weight(.semibold))
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // MARK: - Scroll Content
-
-    @ViewBuilder
-    private var scrollContent: some View {
-        VStack(spacing: 0) {
-            mainHeaderSection
-                .padding(.top, 20)
-                .padding(.horizontal)
-                .background(GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: geo.frame(in: .named("scroll")).minY
-                    )
-                })
-
-            if !isCryptoAsset {
-                chartTypeToggle
-                    .padding(.horizontal)
-                    .padding(.top, 12)
-            }
-
-            InteractivePriceChart(
-                selectedRange: $viewModel.selectedTimeRange,
-                chartType: $viewModel.chartType,
-                chartData: viewModel.chartData,
-                candleData: viewModel.candleData,
-                isLoadingCandles: viewModel.isLoadingCandles,
-                stock: stock,
-                isLive: viewModel.isLive,
-                scrubbedPoint: $scrubbedPoint
-            )
-            .frame(height: 330)
-            .clipped()
-            .padding(.vertical, 20)
-            .onDisappear { viewModel.stopLiveCandleUpdates() }
-
-            if let position = position {
-                PositionSection(stock: stock, position: position)
-                    .padding(.horizontal)
-                    .padding(.bottom, 20)
-            }
-
-            // MARK: - Tab Bar
-            DetailedStockTabBar(selectedTab: $selectedTab)
-                .padding(.top, 8)
-
-            Divider()
-
-            // MARK: - Tab Content
-            tabContentView
-                .padding(.bottom, 100)
         }
     }
 
-    // MARK: - Expandable Sections Stack
+    // MARK: Toolbar
 
-    @ViewBuilder
-    private var expandableSections: some View {
-        VStack(spacing: 12) {
-            ExpandableStatsSection(
-                title: "Valuation",
-                icon: "chart.bar.fill",
-                isExpanded: $viewModel.valuationExpanded
-            ) {
-                ValuationMetrics(stock: stock)
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
             }
-
-            ExpandableStatsSection(
-                title: "Financial Health",
-                icon: "heart.text.square.fill",
-                isExpanded: $viewModel.financialHealthExpanded
-            ) {
-                FinancialHealthMetrics(stock: stock)
-            }
-
-            ExpandableStatsSection(
-                title: "Growth",
-                icon: "arrow.up.right",
-                isExpanded: $viewModel.growthExpanded
-            ) {
-                GrowthMetrics(stock: stock)
-            }
-
-            if stock.dividendYield != nil {
-                ExpandableStatsSection(
-                    title: "Dividends",
-                    icon: "dollarsign.circle.fill",
-                    isExpanded: $viewModel.dividendsExpanded
-                ) {
-                    DividendMetrics(stock: stock)
-                }
-            }
-
-            ExpandableStatsSection(
-                title: "Risk & Volatility",
-                icon: "waveform.path.ecg",
-                isExpanded: $viewModel.riskExpanded
-            ) {
-                RiskMetrics(stock: stock)
-            }
-
-            if !isCryptoAsset && analystTotal > 0 {
-                AnalystConsensusCard(stock: stock)
-            }
-
-            if !isCryptoAsset {
-                let insight = insightService.insights[stock.symbol]
-                EarningsHistoryCard(stock: stock, earningsEntries: insight?.earnings ?? [])
-            }
+            .accessibilityLabel("Close")
+            .accessibilityIdentifier("detail.close")
         }
-    }
-
-    private var analystTotal: Int {
-        (stock.analystStrongBuy ?? 0)
-            + (stock.analystBuy ?? 0)
-            + (stock.analystHold ?? 0)
-            + (stock.analystSell ?? 0)
-            + (stock.analystStrongSell ?? 0)
-    }
-
-    // MARK: - Tab Content
-
-    @ViewBuilder
-    private var tabContentView: some View {
-        let insight = insightService.insights[stock.symbol]
-        let isLoading = insightService.loadingSymbols.contains(stock.symbol)
-        switch selectedTab {
-        case .overview:
-            OverviewTabView(stock: stock, insight: insight, isLoading: isLoading)
-        case .financials:
-            FinancialsTabView(insight: insight, isLoading: isLoading, stock: stock)
-        case .earnings:
-            EarningsTabView(stock: stock, insight: insight, isLoading: isLoading)
-        case .holders:
-            HoldersTabView(insight: insight, isLoading: isLoading)
-        case .analysis:
-            AnalysisTabView(stock: stock, insight: insight, isLoading: isLoading)
-        }
-    }
-
-    // MARK: - Chart Type Toggle
-
-    private var chartTypeToggle: some View {
-        HStack {
-            Spacer()
-            HStack(spacing: 2) {
-                // Line
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        viewModel.chartType = .line
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Line")
-                            .font(.caption.weight(.medium))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(viewModel.chartType == .line
-                        ? Color.secondary.opacity(0.2) : Color.clear)
-                    .foregroundColor(viewModel.chartType == .line ? .primary : .secondary)
-                    .cornerRadius(9)
+        ToolbarItem(placement: .principal) {
+            if showsCompactTitle {
+                VStack(spacing: 0) {
+                    Text(kind == .index ? live.name : live.symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.primaryText)
+                    Text(live.price > 0 ? format.money(live.price) : "—")
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .foregroundStyle(theme.secondaryText)
                 }
-
-                // Candle (Pro-gated)
-                Button {
-                    if subscriptions.currentTier == .free {
-                        showPaywall = true
-                    } else {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                            viewModel.chartType = .candle
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chart.bar.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Candle")
-                            .font(.caption.weight(.medium))
-                        if subscriptions.currentTier == .free {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.orange)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(viewModel.chartType == .candle
-                        ? Color.secondary.opacity(0.2) : Color.clear)
-                    .foregroundColor(viewModel.chartType == .candle ? .primary : .secondary)
-                    .cornerRadius(9)
-                }
-            }
-            .padding(3)
-            .background(Color(.systemGray6))
-            .cornerRadius(12)
-        }
-    }
-
-    // MARK: - Main Header Section
-    private var displayPrice: Double { scrubbedPoint?.price ?? stock.currentPrice }
-
-    private var mainHeaderSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Symbol and Exchange
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(stock.symbol)
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-
-                ExchangeBadge(exchange: stock.exchange)
-            }
-
-            // Company Name
-            Text(stock.name)
-                .font(.title3)
-                .foregroundColor(.secondary)
-
-            Spacer().frame(height: 8)
-
-            // Price — updates live while scrubbing the chart
-            Text(displayPrice.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                .font(.system(size: 48, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .animation(.easeInOut(duration: 0.08), value: displayPrice)
-
-            // Scrubbing: show the hovered date. At rest: show day change.
-            if let point = scrubbedPoint {
-                Text(point.date, format: .dateTime.month(.abbreviated).day().year().hour().minute())
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .transition(.opacity)
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: stock.isPositive ? "arrow.up.right" : "arrow.down.right")
-                        .font(.body.weight(.semibold))
-
-                    Text((stock.dayChange >= 0 ? "+" : "") + stock.dayChange.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                        .font(.title3.weight(.semibold))
-
-                    Text("(\(String(format: stock.isPositive ? "+%.2f%%" : "%.2f%%", stock.dayChangePercent)))")
-                        .font(.title3.weight(.semibold))
-                }
-                .foregroundColor(stock.isPositive ? appTheme.positiveColor : appTheme.negativeColor)
                 .transition(.opacity)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.compactTitle")
             }
-
-            // Pre/After Market (if available)
-            if let preMarket = stock.preMarketPrice {
-                HStack(spacing: 6) {
-                    Text("Pre-Market:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(preMarket.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                        .font(.caption.weight(.semibold))
+        }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            if canTrack {
+                Button {
+                    toggleWatchlist()
+                } label: {
+                    Image(systemName: watchEntry == nil ? "star" : "star.fill")
+                        .foregroundStyle(watchEntry == nil ? theme.primaryText : DS.accent)
                 }
-            }
+                .accessibilityLabel(watchEntry == nil ? "Add to Watchlist" : "Remove from Watchlist")
+                .accessibilityIdentifier("detail.watchlist")
 
-            if let afterHours = stock.afterHoursPrice {
-                HStack(spacing: 6) {
-                    Text("After Hours:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(afterHours.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                        .font(.caption.weight(.semibold))
+                Button {
+                    Haptics.tap()
+                    sheet = .alert
+                } label: {
+                    Image(systemName: hasActiveAlert ? "bell.fill" : "bell")
+                        .foregroundStyle(hasActiveAlert ? DS.accent : theme.primaryText)
                 }
+                .accessibilityLabel(hasActiveAlert ? "Price alert set. Add another" : "Set a price alert")
+                .accessibilityIdentifier("detail.alert")
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
 
-// MARK: - Scroll Offset Preference Key
-struct ScrollOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-// MARK: - Asset Detail ViewModel
-@MainActor
-class AssetDetailViewModel: ObservableObject {
-    @Published var liveStock: DetailedStock
-    let asset: Asset?
-    private let quoteService = QuoteService()
-
-    @Published var selectedTimeRange: ChartTimeRange = .oneDay {
-        didSet {
-            stopLiveCandleUpdates()
-            candleData = []  // invalidate stale candles on range change
-            loadChartData()
-            if chartType == .candle { loadCandleData() }
-        }
-    }
-
-    @Published var chartType: ChartDisplayType {
-        didSet {
-            if chartType == .candle && candleData.isEmpty {
-                loadCandleData()
-            } else if chartType != .candle {
-                stopLiveCandleUpdates()
+            Menu {
+                ShareLink(item: shareText) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                if canTrack {
+                    Button {
+                        sheet = .portfolio
+                    } label: {
+                        Label(holding == nil ? "Add to portfolio" : "Add more to portfolio", systemImage: "briefcase")
+                    }
+                    .accessibilityIdentifier("detail.menu.addToPortfolio")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
             }
-            UserDefaults.standard.set(chartType.rawValue, forKey: "defaultChartType")
+            .accessibilityLabel("More actions")
+            .accessibilityIdentifier("detail.more")
         }
     }
 
-    @Published var chartData: [ChartDataPoint] = [] {
-        didSet {
-            // If candle mode is active but candles are still empty (API failed or
-            // the candle task finished before chart data arrived), fill in synthetic candles.
-            if chartType == .candle && candleData.isEmpty && !chartData.isEmpty && !isLoadingCandles {
-                candleData = syntheticCandles(from: chartData)
-            }
-        }
-    }
-    @Published var candleData: [Candle] = []
-    @Published var isLoadingChart = false
-    @Published var isLoadingCandles = false
-    @Published var isLive = false
+    // MARK: Actions
 
-    private var candleRefreshTask: Task<Void, Never>?
-
-    @Published var valuationExpanded = false
-    @Published var financialHealthExpanded = false
-    @Published var growthExpanded = false
-    @Published var dividendsExpanded = false
-    @Published var riskExpanded = false
-    @Published var companyExpanded = false
-    @Published var isLoadingFMPData = false
-
-    init(stock: DetailedStock, asset: Asset? = nil) {
-        self.liveStock = stock
-        self.asset = asset
-        let saved = UserDefaults.standard.string(forKey: "defaultChartType") ?? "line"
-        self.chartType = (saved == "candle") ? .candle : .line
-        loadChartData()
-        if self.chartType == .candle { loadCandleData() }
-        if asset?.kind == .stock {
-            Task { await self.fetchFMPData() }
-        }
-    }
-
-    func loadChartData() {
-        guard let asset = asset else {
-            chartData = generateMockChartData(for: selectedTimeRange, currentPrice: liveStock.currentPrice)
+    private func toggleWatchlist() {
+        if let entry = watchEntry {
+            Haptics.tap()
+            marketData.removeFromWatchlist(entry)
+            show(DetailToast(text: "Removed from Watchlist", icon: "star.slash"))
             return
         }
-        isLoadingChart = true
-        Task {
-            let range = selectedTimeRange.toTimeRange
-            let points = await quoteService.fetchPriceHistory(for: asset, range: range)
-            chartData = points.map { ChartDataPoint(date: $0.date, price: $0.price, volume: nil) }
-            isLoadingChart = false
+        if let limit = subscriptions.currentTier.maxWatchlistAssets, marketData.watchlist.count >= limit {
+            Haptics.warning()
+            sheet = .paywall("More watchlist slots")
+            return
         }
+        Haptics.success()
+        marketData.addToWatchlist(live)
+        show(DetailToast(text: "Added to Watchlist", icon: "star.fill"))
     }
 
-    func loadCandleData() {
-        guard let asset = asset, asset.kind == .stock else { return }
-        isLoadingCandles = true
-        Task {
-            let fetched = try? await quoteService.fetchHistoricalData(
-                symbol: asset.symbol,
-                range: selectedTimeRange.toTimeRange
-            )
-            if let candles = fetched, !candles.isEmpty {
-                candleData = candles
-            } else {
-                // Fallback: synthesise OHLCV candles from the line chart points
-                // so the chart is never blank after loading completes.
-                candleData = syntheticCandles(from: chartData)
+    private func show(_ newToast: DetailToast) {
+        dsAnimate(DS.spring) { toast = newToast }
+        UIAccessibility.post(notification: .announcement, argument: newToast.text)
+    }
+
+    @ViewBuilder
+    private var toastView: some View {
+        if let toast {
+            HStack(spacing: DS.Space.s) {
+                Image(systemName: toast.icon)
+                    .foregroundStyle(DS.accent)
+                Text(toast.text)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.primaryText)
             }
-            isLoadingCandles = false
-            startLiveCandleUpdates()
-        }
-    }
-
-    // MARK: - Live Candle Updates
-
-    func startLiveCandleUpdates() {
-        guard asset?.kind == .stock,
-              selectedTimeRange == .oneDay,
-              chartType == .candle else { return }
-        stopLiveCandleUpdates()
-        isLive = true
-        candleRefreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
-                guard !Task.isCancelled, let self else { break }
-                guard let symbol = self.asset?.symbol else { break }
-                if let latest = await self.quoteService.fetchLatestCandle(symbol: symbol, intervalMinutes: 5) {
-                    self.applyLatestCandle(latest)
-                }
+            .padding(.horizontal, DS.Space.l)
+            .frame(minHeight: 44)
+            .background(Capsule().fill(.regularMaterial))
+            .overlay(Capsule().strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5))
+            .padding(.bottom, DS.Space.l)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("detail.toast")
+            .task(id: toast.id) {
+                // A newer toast cancels this task; don't let the stale one clear it.
+                guard (try? await Task.sleep(for: .seconds(4))) != nil, self.toast?.id == toast.id else { return }
+                dsAnimate(DS.quick) { self.toast = nil }
             }
         }
     }
 
-    func stopLiveCandleUpdates() {
-        candleRefreshTask?.cancel()
-        candleRefreshTask = nil
-        if isLive { isLive = false }
+    private var shareText: String {
+        let price = live.price > 0 ? format.money(live.price) : ""
+        let name = kind == .index ? live.name : "\(live.name) (\(live.symbol))"
+        return "\(name) \(price) \(String(format: "%+.2f%%", live.changePercent)) today"
     }
 
-    private func applyLatestCandle(_ latest: Candle) {
-        guard !candleData.isEmpty else { return }
-        let interval: TimeInterval = 5 * 60  // 5-minute bucket
-        let lastDate = candleData[candleData.count - 1].date
-        // If within the same 5-min bucket, replace in-place; otherwise append
-        if abs(latest.date.timeIntervalSince(lastDate)) < interval {
-            candleData[candleData.count - 1] = Candle(
-                date: lastDate,
-                open: candleData[candleData.count - 1].open,
-                high: max(candleData[candleData.count - 1].high, latest.high),
-                low: min(candleData[candleData.count - 1].low, latest.low),
-                close: latest.close,
-                volume: latest.volume
-            )
-        } else {
-            candleData.append(latest)
+    // MARK: US sections
+
+    @ViewBuilder
+    private var usSections: some View {
+        if let insight = model.insight, insight.consensus != nil || insight.targets != nil || !insight.ratingChanges.isEmpty {
+            DetailAnalystsSection(insight: insight, price: live.price, format: format)
+        } else if model.insightState == .loading {
+            loadingSection("What analysts say")
         }
-        liveStock.currentPrice = latest.close
-    }
-
-    // MARK: - FMP Company Data
-
-    private func fetchFMPData() async {
-        guard let asset = asset else { return }
-        isLoadingFMPData = true
-        async let profileTask           = FMPService.shared.fetchProfile(symbol: asset.symbol)
-        async let quoteTask             = FMPService.shared.fetchQuote(symbol: asset.symbol)
-        async let ratiosTask            = FMPService.shared.fetchRatios(symbol: asset.symbol)
-        async let incomeStatementsTask  = FMPService.shared.fetchIncomeStatements(symbol: asset.symbol, limit: 8)
-        async let analystEstimatesTask  = FMPService.shared.fetchAnalystEstimates(symbol: asset.symbol)
-        async let analystRatingTask     = FMPService.shared.fetchAnalystRating(symbol: asset.symbol)
-        let (profile, quote, ratios, incomeStatements, analystEstimates, analystRating) =
-            await (profileTask, quoteTask, ratiosTask, incomeStatementsTask, analystEstimatesTask, analystRatingTask)
-        if profile != nil || quote != nil || ratios != nil || !incomeStatements.isEmpty {
-            liveStock = DetailedStock.applying(
-                profile: profile,
-                quote: quote,
-                ratios: ratios,
-                incomeStatements: incomeStatements,
-                analystEstimates: analystEstimates,
-                analystRating: analystRating,
-                to: liveStock
-            )
+        if let next = model.nextEarnings {
+            DetailNextEarningsCard(event: next, name: live.name)
         }
-        isLoadingFMPData = false
-    }
-
-    /// Converts line-chart points into approximate OHLCV candles with small realistic wicks.
-    private func syntheticCandles(from points: [ChartDataPoint]) -> [Candle] {
-        guard !points.isEmpty else { return [] }
-        return points.map { pt in
-            let spread = pt.price * 0.01
-            let open   = pt.price - Double.random(in: 0...spread)
-            let close  = pt.price
-            let high   = max(open, close) + Double.random(in: 0...spread)
-            let low    = min(open, close) - Double.random(in: 0...spread)
-            return Candle(
-                date:   pt.date,
-                open:   max(0.01, open),
-                high:   high,
-                low:    max(0.01, low),
-                close:  close,
-                volume: pt.volume ?? 1_000_000
-            )
+        if let earnings = model.insight?.earnings, earnings.contains(where: { $0.epsActual != nil }) {
+            DetailEarningsSection(entries: earnings, format: format)
         }
-    }
-
-    private func generateMockChartData(for range: ChartTimeRange, currentPrice: Double) -> [ChartDataPoint] {
-        let count = range.dataPointCount
-        let calendar = Calendar.current
-        let now = Date()
-
-        var points: [ChartDataPoint] = []
-        var price = currentPrice * 0.95
-
-        for i in 0..<count {
-            let date = calendar.date(byAdding: range.dateComponent, value: -i, to: now)!
-            price += Double.random(in: -currentPrice * 0.02...currentPrice * 0.02)
-            price = max(price, currentPrice * 0.8)
-
-            points.append(ChartDataPoint(
-                date: date,
-                price: price,
-                volume: Double.random(in: 1_000_000...10_000_000)
-            ))
-        }
-
-        return points.reversed()
-    }
-}
-
-// MARK: - Company Overview Content
-
-struct CompanyOverviewContent: View {
-    let stock: DetailedStock
-    @State private var showFullDescription = false
-
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        VStack(alignment: .leading, spacing: 16) {
-
-            // Sector / Industry chips
-            if stock.sector != nil || stock.industry != nil {
-                HStack(spacing: 8) {
-                    if let sector = stock.sector {
-                        Text(sector)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.blue.opacity(0.15))
-                            .foregroundColor(.blue)
-                            .cornerRadius(10)
-                    }
-                    if let industry = stock.industry {
-                        Text(industry)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.purple.opacity(0.15))
-                            .foregroundColor(.purple)
-                            .cornerRadius(10)
-                    }
-                }
-            }
-
-            // Description
-            if let desc = stock.companyDescription, !desc.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(desc)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(showFullDescription ? nil : 3)
-                    Button(showFullDescription ? "Show Less" : "Show More") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showFullDescription.toggle()
-                        }
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.blue)
-                }
-            }
-
-            Divider().opacity(0.4)
-
-            // Company facts
-            VStack(spacing: 12) {
-                if let ceo = stock.ceo {
-                    DetailRow(label: "CEO", value: ceo)
-                    Divider().opacity(0.4)
-                }
-                if let employees = stock.employees {
-                    DetailRow(label: "Employees", value: employees)
-                    Divider().opacity(0.4)
-                }
-                if let ipo = stock.ipoDate {
-                    DetailRow(label: "IPO Date", value: ipo)
-                    Divider().opacity(0.4)
-                }
-                if let website = stock.website, let url = URL(string: website) {
-                    HStack {
-                        Text("Website")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Link(website.replacingOccurrences(of: "https://", with: ""), destination: url)
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(theme.glassBackground)
-        .cornerRadius(16)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.glassBorder, lineWidth: 1)
+        DetailFinancialsSection(
+            isLocked: !isPro,
+            income: model.stock.incomeStatements,
+            statements: model.statements,
+            statementsLoading: model.statementsState == .loading,
+            format: format,
+            onUnlock: { sheet = .paywall("Financial statements") },
+            onNeedStatements: { Task { await model.loadStatements() } }
         )
-    }
-}
-
-// MARK: - Exchange Badge
-
-struct ExchangeBadge: View {
-    let exchange: String
-
-    private var color: Color {
-        switch exchange.uppercased() {
-        case "NASDAQ":       return .blue
-        case "NYSE":         return Color(red: 0.0, green: 0.55, blue: 0.3)
-        case "AMEX", "NYSEAM": return .orange
-        case "OTC", "OTCQB", "OTCQX": return .purple
-        case "ASX":          return Color(red: 0.6, green: 0.1, blue: 0.1)
-        default:             return .secondary
+        if isPro {
+            DetailAISummaryCard(symbol: live.symbol, facts: aiFacts)
         }
     }
 
-    var body: some View {
-        Text(exchange)
-            .font(.caption.weight(.semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.12))
-            .cornerRadius(6)
-    }
-}
-
-// MARK: - Analyst Consensus Card
-
-struct AnalystConsensusCard: View {
-    let stock: DetailedStock
-
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var total: Int {
-        (stock.analystStrongBuy ?? 0)
-            + (stock.analystBuy ?? 0)
-            + (stock.analystHold ?? 0)
-            + (stock.analystSell ?? 0)
-            + (stock.analystStrongSell ?? 0)
-    }
-
-    private func fraction(for count: Int?) -> CGFloat {
-        guard total > 0, let count = count, count > 0 else { return 0 }
-        return CGFloat(count) / CGFloat(total)
-    }
-
-    private func consensusColor(_ consensus: String) -> Color {
-        switch consensus.lowercased() {
-        case "strong buy":  return Color(red: 0.0, green: 0.50, blue: 0.20)
-        case "buy":         return .green
-        case "hold", "neutral": return .orange
-        case "sell":        return .red
-        case "strong sell": return Color(red: 0.65, green: 0.0, blue: 0.0)
-        default:            return .secondary
-        }
-    }
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-
-        VStack(alignment: .leading, spacing: 16) {
-            // Header row
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Analyst Ratings")
-                        .font(.headline.weight(.semibold))
-                    if let consensus = stock.analystConsensus, !consensus.isEmpty {
-                        Text(consensus.capitalized)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(consensusColor(consensus))
-                    }
+    private func loadingSection(_ title: LocalizedStringKey) -> some View {
+        DetailSection(title: title, identifier: "detail.loading") {
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                ForEach(0..<3, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 6).fill(theme.cardBorder.opacity(0.35)).frame(height: 14)
                 }
-                Spacer()
-                Text("\(total) analysts")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
-
-            // Segmented rating bar
-            GeometryReader { geo in
-                HStack(spacing: 2) {
-                    if let sb = stock.analystStrongBuy, sb > 0 {
-                        Capsule()
-                            .fill(Color(red: 0.0, green: 0.50, blue: 0.20))
-                            .frame(width: max(geo.size.width * fraction(for: sb), 4))
-                    }
-                    if let b = stock.analystBuy, b > 0 {
-                        Capsule()
-                            .fill(Color.green)
-                            .frame(width: max(geo.size.width * fraction(for: b), 4))
-                    }
-                    if let h = stock.analystHold, h > 0 {
-                        Capsule()
-                            .fill(Color.orange)
-                            .frame(width: max(geo.size.width * fraction(for: h), 4))
-                    }
-                    if let s = stock.analystSell, s > 0 {
-                        Capsule()
-                            .fill(Color.red)
-                            .frame(width: max(geo.size.width * fraction(for: s), 4))
-                    }
-                    if let ss = stock.analystStrongSell, ss > 0 {
-                        Capsule()
-                            .fill(Color(red: 0.65, green: 0.0, blue: 0.0))
-                            .frame(width: max(geo.size.width * fraction(for: ss), 4))
-                    }
-                }
-                .frame(height: 8)
-            }
-            .frame(height: 8)
-
-            // Legend row
-            HStack(alignment: .top, spacing: 0) {
-                AnalystLegendItem(label: "Strong\nBuy",  count: stock.analystStrongBuy,  color: Color(red: 0.0, green: 0.50, blue: 0.20))
-                Spacer()
-                AnalystLegendItem(label: "Buy",          count: stock.analystBuy,         color: .green)
-                Spacer()
-                AnalystLegendItem(label: "Hold",         count: stock.analystHold,         color: .orange)
-                Spacer()
-                AnalystLegendItem(label: "Sell",         count: stock.analystSell,         color: .red)
-                Spacer()
-                AnalystLegendItem(label: "Strong\nSell", count: stock.analystStrongSell,  color: Color(red: 0.65, green: 0.0, blue: 0.0))
-            }
+            .dsCard()
+            .accessibilityLabel("Loading")
         }
-        .padding(16)
-        .background(theme.glassBackground)
-        .cornerRadius(16)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.glassBorder, lineWidth: 1))
     }
-}
 
-private struct AnalystLegendItem: View {
-    let label: String
-    let count: Int?
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 3) {
-            Text("\(count ?? 0)")
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundColor((count ?? 0) > 0 ? color : .secondary)
-            Text(label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+    private var aiFacts: String {
+        var parts = ["\(live.name) (\(live.symbol)), a US-listed stock."]
+        if live.price > 0 { parts.append("Price \(format.money(live.price)), \(String(format: "%+.2f%%", live.changePercent)) today.") }
+        if model.pointsRange == .oneYear, let first = model.points.first?.price, first > 0 {
+            parts.append(String(format: "Past year: %+.1f%%.", (live.price - first) / first * 100))
         }
-        .frame(minWidth: 44)
-    }
-}
-
-// MARK: - Earnings History Card
-
-struct EarningsHistoryCard: View {
-    let stock: DetailedStock
-    let earningsEntries: [EarningsEntry]
-    @State private var showEPS = true
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.theme) private var appTheme
-
-    // Use insight entries (actual vs estimate) if available, else fall back to income statement data
-    private var displayedEntries: [EarningsEntry] {
-        if !earningsEntries.isEmpty {
-            return Array(earningsEntries.prefix(5).reversed())
+        let s = model.stock
+        if let pe = s.peRatio, pe > 0 { parts.append(String(format: "P/E %.1f.", pe)) }
+        if s.marketCap > 0 { parts.append("Market cap \(format.compactMoney(s.marketCap)).") }
+        if let m = s.profitMargin { parts.append("Net margin \(format.percent(m)).") }
+        if let g = s.revenueGrowthYoY { parts.append("Revenue growth \(format.percent(g, signed: true)) year on year.") }
+        if let c = model.insight?.consensus {
+            parts.append("Analysts: \(c.buyCount) buy, \(c.hold) hold, \(c.sellCount) sell.")
         }
-        // Fallback: convert EarningsPeriod → EarningsEntry (no estimate data)
-        return Array(stock.earningsHistory.prefix(5).reversed().compactMap { period -> EarningsEntry? in
-            EarningsEntry(
-                id: UUID(),
-                quarter: period.label,
-                date: "",
-                revenueEst: 0,
-                revenueActual: (period.revenue ?? 0) / 1_000_000_000,
-                epsEst: 0,
-                epsActual: period.eps ?? 0,
-                priceMove1D: 0
-            )
-        })
+        if let t = model.insight?.targets { parts.append("Average price target \(format.money(t.average)).") }
+        if let sector = s.sector { parts.append("Sector: \(sector).") }
+        return parts.joined(separator: " ")
     }
 
-    private var hasEstimateData: Bool {
-        displayedEntries.contains { $0.epsEst != 0 || $0.revenueEst != 0 }
+    // MARK: Statistics
+
+    @ViewBuilder
+    private var statistics: some View {
+        switch kind {
+        case .crypto:
+            cryptoStats
+        case .index:
+            DetailKeyStats(ranges: week52Range(low: live.week52Low, high: live.week52High),
+                           primary: [StatItem(label: "Prev close", value: previousCloseText)],
+                           format: format)
+        case .asxStock, .otherStock:
+            listingStats
+        case .usStock:
+            usStats
+        }
     }
 
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
+    /// ASX / other Yahoo listings. Market cap and P/E need paid data for the ASX,
+    /// so they're left out rather than shown as "—" forever.
+    private var listingStats: some View {
+        let f = model.listingFacts
+        var ranges: [RangeItem] = []
+        if let lo = f?.dayLow, let hi = f?.dayHigh, hi >= lo, live.price > 0 {
+            ranges.append(RangeItem(label: "Day range", low: min(lo, live.price), high: max(hi, live.price), current: live.price))
+        }
+        ranges += week52Range(low: live.week52Low, high: live.week52High)
 
-        VStack(alignment: .leading, spacing: 16) {
-            // Header
-            HStack(alignment: .center) {
-                Text("Earnings")
-                    .font(.title3.weight(.bold))
-
-                Spacer()
-
-                if hasEstimateData {
-                    // Legend
-                    HStack(spacing: 12) {
-                        legendDot(color: .white.opacity(0.5), label: "Consensus EPS")
-                    }
-                }
-
-                HStack(spacing: 2) {
-                    earningsToggleButton(title: "EPS", isSelected: showEPS) { showEPS = true }
-                    earningsToggleButton(title: "Revenue", isSelected: !showEPS) { showEPS = false }
-                }
-                .padding(3)
-                .background(colorScheme == .dark ? Color(.systemGray5) : theme.cardBackground)
-                .cornerRadius(10)
-            }
-
-            if displayedEntries.isEmpty {
-                Text("No earnings data available")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 160, alignment: .center)
+        let volume = f?.volume ?? (live.volume > 0 ? live.volume : nil)
+        var primary: [StatItem] = [
+            StatItem(label: "Prev close", value: previousCloseText),
+            StatItem(label: "Volume", value: volume.map(format.compactNumber) ?? "—"),
+            StatItem(label: "Avg. volume", value: f?.avgVolume3M.map(format.compactNumber) ?? "—")
+        ]
+        var more: [StatItem] = []
+        if let f {
+            if let ttm = f.trailing12MonthDividendUSD, live.price > 0 {
+                primary.append(StatItem(label: "Div. yield", value: format.percent(ttm / live.price)))
+                more.append(StatItem(label: "Dividends (12M)", value: format.money(ttm)))
             } else {
-                // Bar chart
-                earningsChart(theme: theme)
-                    .frame(height: 180)
-                    .animation(.easeInOut(duration: 0.25), value: showEPS)
-
-                // Beat/Miss badges
-                if hasEstimateData {
-                    beatMissBadges(theme: theme)
-                }
+                primary.append(StatItem(label: "Div. yield", value: "None (12M)"))
+            }
+            if let last = f.dividends.last {
+                more.append(StatItem(label: "Last dividend",
+                                     value: "\(format.money(last.amountUSD)) · \(last.date.formatted(.dateTime.day().month(.abbreviated).year()))"))
             }
         }
-        .padding(16)
-        .background(theme.glassBackground)
-        .cornerRadius(16)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.glassBorder, lineWidth: 1))
+        return DetailKeyStats(
+            caption: model.fundamentalsState == .failed ? "Volume and dividend figures couldn't be loaded right now." : nil,
+            ranges: ranges, primary: primary, more: more,
+            isLoading: model.fundamentalsState == .loading, format: format)
     }
 
-    // MARK: - Chart
+    private var previousCloseText: String {
+        let pc = live.price - live.change
+        return live.price > 0 && pc > 0 ? format.money(pc) : "—"
+    }
 
-    private func earningsChart(theme: Theme) -> some View {
-        Chart {
-            ForEach(displayedEntries) { entry in
-                if showEPS {
-                    // Estimate bar (darker)
-                    if entry.epsEst != 0 {
-                        BarMark(
-                            x: .value("Quarter", entry.quarter),
-                            y: .value("EPS", entry.epsEst)
-                        )
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.purple.opacity(0.4), Color.purple.opacity(0.25)],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .cornerRadius(4)
-                        .position(by: .value("Type", "est"))
-                    }
+    private func week52Range(low: Double?, high: Double?) -> [RangeItem] {
+        guard let low, let high, low > 0, high > low, live.price > 0 else { return [] }
+        return [RangeItem(label: "52-week range", low: low, high: high, current: live.price)]
+    }
 
-                    // Actual bar (brighter)
-                    BarMark(
-                        x: .value("Quarter", entry.quarter),
-                        y: .value("EPS", entry.epsActual)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.purple.opacity(0.9), Color.purple.opacity(0.6)],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                    .cornerRadius(4)
-                    .position(by: .value("Type", "actual"))
-
-                    // Consensus line (estimate level)
-                    if entry.epsEst != 0 {
-                        RuleMark(
-                            xStart: .value("Quarter", entry.quarter),
-                            xEnd: .value("Quarter", entry.quarter),
-                            y: .value("EPS", entry.epsEst)
-                        )
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .annotation(position: entry.id == displayedEntries.last?.id ? .top : .automatic) {
-                            if entry.id == displayedEntries.last?.id {
-                                VStack(spacing: 2) {
-                                    Text(String(format: "%.2f Est.", entry.epsEst))
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundColor(.secondary)
-                                    Text(String(format: "%.2f Actual", entry.epsActual))
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(.purple)
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Revenue estimate
-                    if entry.revenueEst != 0 {
-                        BarMark(
-                            x: .value("Quarter", entry.quarter),
-                            y: .value("Revenue", entry.revenueEst)
-                        )
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.blue.opacity(0.4), Color.blue.opacity(0.25)],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .cornerRadius(4)
-                        .position(by: .value("Type", "est"))
-                    }
-
-                    // Revenue actual
-                    BarMark(
-                        x: .value("Quarter", entry.quarter),
-                        y: .value("Revenue", entry.revenueActual)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.blue.opacity(0.9), Color.blue.opacity(0.6)],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                    .cornerRadius(4)
-                    .position(by: .value("Type", "actual"))
-                }
-            }
+    private var usStats: some View {
+        let s = model.stock
+        var ranges: [RangeItem] = []
+        if let lo = s.dayLow, let hi = s.dayHigh, lo > 0, hi >= lo, live.price > 0 {
+            ranges.append(RangeItem(label: "Day range", low: min(lo, live.price), high: max(hi, live.price), current: live.price))
         }
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                    .foregroundStyle(Color(.separator).opacity(0.3))
-                AxisValueLabel {
-                    if let v = value.as(Double.self) {
-                        Text(showEPS ? String(format: "%.2f", v) : String(format: "$%.1fB", v))
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
+        let lo52 = s.week52Low > 0 ? s.week52Low : (live.week52Low ?? 0)
+        let hi52 = s.week52High > 0 ? s.week52High : (live.week52High ?? 0)
+        ranges += week52Range(low: lo52, high: hi52)
+
+        // Alpaca's free IEX feed sees only a few percent of US volume; show
+        // consolidated volume from FMP or nothing.
+        let volume = Double(s.volume)
+        var primary: [StatItem] = [
+            StatItem(label: "Prev close", value: previousCloseText),
+            StatItem(label: "Market cap", value: s.marketCap > 0 ? format.compactMoney(s.marketCap) : "—"),
+            StatItem(label: "Volume", value: volume > 0 ? format.compactNumber(volume) : "—"),
+            StatItem(label: "P/E ratio", value: s.peRatio.map(format.ratio) ?? "—"),
+            StatItem(label: "Div. yield", value: s.dividendYield.flatMap { $0 > 0 ? format.percent($0) : nil } ?? "—"),
+            StatItem(label: "Beta", value: s.beta.map(format.ratio) ?? "—")
+        ]
+        if let open = s.openPrice, open > 0 {
+            primary.insert(StatItem(label: "Open", value: format.money(open)), at: 1)
         }
-        .chartXAxis {
-            AxisMarks { value in
-                AxisValueLabel {
-                    if let label = value.as(String.self) {
-                        Text(label)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
+        if s.avgVolume > 0 {
+            primary.append(StatItem(label: "Avg. volume", value: format.compactNumber(Double(s.avgVolume))))
+        }
+
+        var more: [StatItem] = []
+        func add(_ label: String, _ value: String?) { if let value { more.append(StatItem(label: label, value: value)) } }
+        add("Fwd P/E", s.forwardPE.map(format.ratio))
+        add("PEG", s.pegRatio.map(format.ratio))
+        add("Price/book", s.priceToBook.map(format.ratio))
+        add("Price/sales", s.priceToSales.map(format.ratio))
+        add("Gross margin", s.grossMargin.map { format.percent($0) })
+        add("Op. margin", s.operatingMargin.map { format.percent($0) })
+        add("Net margin", s.profitMargin.map { format.percent($0) })
+        add("Revenue (FY)", s.revenue.map(format.compactMoney))
+        add("Rev. growth", s.revenueGrowthYoY.map { format.percent($0, signed: true) })
+        add("EPS growth", s.earningsGrowthYoY.map { format.percent($0, signed: true) })
+        add("Debt/equity", s.debtToEquity.map(format.ratio))
+        add("Free cash flow", s.freeCashFlow.map(format.compactMoney))
+        add("Shares out.", s.sharesOutstanding > 0 ? format.compactNumber(s.sharesOutstanding) : nil)
+        add("50-day avg.", s.priceAvg50.map(format.money))
+        add("200-day avg.", s.priceAvg200.map(format.money))
+
+        return DetailKeyStats(
+            caption: model.fundamentalsState == .failed ? "Company figures couldn't be loaded right now." : nil,
+            ranges: ranges, primary: primary, more: more,
+            isLoading: model.fundamentalsState == .loading, format: format)
+    }
+
+    @ViewBuilder
+    private var cryptoStats: some View {
+        if let c = model.coin {
+            DetailKeyStats(
+                ranges: dayRange24h(c),
+                primary: [
+                    StatItem(label: "Market cap", value: c.marketCap.map(format.compactMoney) ?? "—"),
+                    StatItem(label: "24h volume", value: c.volume24h.map(format.compactMoney) ?? "—"),
+                    StatItem(label: "Rank", value: c.rank.map { "#\($0)" } ?? "—"),
+                    StatItem(label: "All-time high", value: c.allTimeHigh.map { $0 >= 10_000 ? format.compactMoney($0) : format.money($0) } ?? "—"),
+                    StatItem(label: "Circulating", value: c.circulatingSupply.map { format.compactNumber($0) } ?? "—"),
+                    StatItem(label: "Max supply", value: c.maxSupply.map { format.compactNumber($0) } ?? "No limit")
+                ],
+                more: [
+                    c.fullyDilutedValuation.map { StatItem(label: "Fully diluted", value: format.compactMoney($0)) },
+                    c.totalSupply.map { StatItem(label: "Total supply", value: format.compactNumber($0)) },
+                    c.allTimeHighDate.map { StatItem(label: "ATH date", value: $0.formatted(.dateTime.day().month(.abbreviated).year())) }
+                ].compactMap { $0 },
+                format: format)
+        } else {
+            DetailKeyStats(
+                caption: model.coinState == .failed ? "Coin figures couldn't be loaded right now." : nil,
+                ranges: [],
+                primary: [
+                    StatItem(label: "Market cap", value: "—"),
+                    StatItem(label: "24h volume", value: live.volume > 0 ? format.compactMoney(live.volume) : "—")
+                ],
+                isLoading: model.coinState == .loading,
+                format: format)
         }
     }
 
-    // MARK: - Beat/Miss Badges
+    private func dayRange24h(_ c: CoinFacts) -> [RangeItem] {
+        guard let lo = c.low24h, let hi = c.high24h, hi > lo, live.price > 0 else { return [] }
+        return [RangeItem(label: "24-hour range", low: min(lo, live.price), high: max(hi, live.price), current: live.price)]
+    }
 
-    private func beatMissBadges(theme: Theme) -> some View {
-        HStack(spacing: 0) {
-            ForEach(displayedEntries) { entry in
-                let isBeat = showEPS ? entry.epsBeat : entry.revenueBeat
-                let diff: Double = showEPS
-                    ? entry.epsActual - entry.epsEst
-                    : entry.revenueActual - entry.revenueEst
-                let hasData = showEPS ? entry.epsEst != 0 : entry.revenueEst != 0
+    // MARK: About
 
-                if hasData {
-                    VStack(spacing: 4) {
-                        Text(isBeat ? "BEAT" : "MISS")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(isBeat ? appTheme.positiveColor : appTheme.negativeColor)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(isBeat ? appTheme.positiveColor : appTheme.negativeColor, lineWidth: 1)
-                            )
-
-                        if showEPS {
-                            Text("by $\(String(format: "%.2f", abs(diff)))")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.secondary)
-                        } else {
-                            Text("by $\(String(format: "%.1f", abs(diff)))B")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
+    @ViewBuilder
+    private var about: some View {
+        switch kind {
+        case .usStock:
+            let s = model.stock
+            let facts = usFacts(s)
+            if s.companyDescription?.isEmpty == false || !facts.isEmpty {
+                DetailAboutSection(title: "About", text: s.companyDescription, facts: facts)
             }
+        case .crypto:
+            if let c = model.coin, c.about != nil || c.homepage != nil {
+                DetailAboutSection(
+                    title: "About \(c.name)",
+                    text: c.about,
+                    facts: c.homepage.map { [AboutFact(label: "Website", value: $0.host() ?? $0.absoluteString, link: $0)] } ?? [])
+            }
+        case .index:
+            if let text = Self.indexDescriptions[live.symbol.uppercased()] {
+                DetailAboutSection(title: "About", text: text, facts: [])
+            }
+        case .asxStock, .otherStock:
+            EmptyView()
         }
     }
 
-    // MARK: - Helpers
-
-    private func legendDot(color: Color, label: String) -> some View {
-        HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(color)
-                .frame(width: 12, height: 3)
-            Text(label)
-                .font(.system(size: 9))
-                .foregroundColor(.secondary)
+    private func usFacts(_ s: DetailedStock) -> [AboutFact] {
+        var facts: [AboutFact] = []
+        if let v = s.sector, !v.isEmpty { facts.append(AboutFact(label: "Sector", value: v)) }
+        if let v = s.industry, !v.isEmpty { facts.append(AboutFact(label: "Industry", value: v)) }
+        if let v = s.ceo, !v.isEmpty { facts.append(AboutFact(label: "CEO", value: v)) }
+        if let raw = s.employees, let n = Double(raw.replacingOccurrences(of: ",", with: "")), n > 0 {
+            facts.append(AboutFact(label: "Employees", value: format.wholeNumber(n)))
         }
+        if let date = StockInsightService.day(s.ipoDate) {
+            facts.append(AboutFact(label: "Listed since", value: date.formatted(.dateTime.month(.abbreviated).year())))
+        }
+        if let raw = s.website, !raw.isEmpty, let url = URL(string: raw.hasPrefix("http") ? raw : "https://\(raw)") {
+            facts.append(AboutFact(label: "Website", value: url.host() ?? raw, link: url))
+        }
+        return facts
     }
 
-    private func earningsToggleButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isSelected ? Color.blue : Color.clear)
-                .foregroundColor(isSelected ? .white : .secondary)
-                .cornerRadius(8)
+    static let indexDescriptions: [String: String] = [
+        "^GSPC": "The S&P 500 tracks 500 of the largest companies listed in the US, weighted by market value. It's the most common yardstick for the US stock market.",
+        "^IXIC": "The Nasdaq Composite tracks almost every stock listed on the Nasdaq exchange, so it leans heavily towards technology companies.",
+        "^DJI": "The Dow Jones Industrial Average follows 30 large US companies and is weighted by share price rather than company size.",
+        "^AXJO": "The S&P/ASX 200 tracks the 200 largest companies listed on the Australian Securities Exchange, weighted by market value."
+    ]
+
+    private var sourcesText: String {
+        var text: String
+        switch kind {
+        case .usStock:
+            text = "Prices from Alpaca (IEX); volume from Yahoo Finance. Company figures from Financial Modeling Prep and Finnhub; analyst ratings and earnings from Finnhub and FMP."
+        case .asxStock:
+            text = "Prices, volume and dividends from Yahoo Finance; prices may be delayed by up to 20 minutes."
+        case .otherStock:
+            text = "Prices from Yahoo Finance."
+        case .crypto:
+            text = "Prices and coin figures from CoinGecko."
+        case .index:
+            text = "Index levels from Yahoo Finance, in points."
         }
-        .buttonStyle(.plain)
+        if kind != .index && marketData.preferredCurrency != "USD" {
+            text += " Shown in \(marketData.preferredCurrency) at today's exchange rate."
+        }
+        return text + " Not investment advice."
     }
 }
 
-// MARK: - Chart Time Range
-enum ChartTimeRange: String, CaseIterable {
-    case oneDay = "1D"
-    case oneWeek = "1W"
-    case oneMonth = "1M"
-    case threeMonths = "3M"
-    case oneYear = "1Y"
-    case fiveYears = "5Y"
-    case all = "All"
+// MARK: - Sheet / toast models
 
-    var dataPointCount: Int {
+enum DetailSheet: Identifiable {
+    case alert, portfolio, broker
+    case paywall(String)
+
+    var id: String {
         switch self {
-        case .oneDay: return 78 // 5-min intervals
-        case .oneWeek: return 70 // 30-min intervals
-        case .oneMonth: return 30 // daily
-        case .threeMonths: return 90
-        case .oneYear: return 252
-        case .fiveYears: return 1260
-        case .all: return 2520
+        case .alert: return "alert"
+        case .portfolio: return "portfolio"
+        case .broker: return "broker"
+        case .paywall(let feature): return "paywall-\(feature)"
+        }
+    }
+}
+
+struct DetailToast: Equatable {
+    let id = UUID()
+    let text: String
+    let icon: String
+}
+
+// MARK: - View model
+
+@MainActor
+final class AssetDetailViewModel: ObservableObject {
+    enum ChartStyle: String { case line, candle }
+    enum LoadState: Equatable { case idle, loading, loaded, failed }
+
+    let seed: Asset
+    let kind: DetailAssetKind
+
+    @Published private(set) var stock: DetailedStock
+    @Published private(set) var refreshedQuote: Asset?
+    @Published private(set) var refreshedAt: Date?
+    @Published private(set) var ownQuoteFailed = false
+
+    @Published var range: TimeRange = .oneDay {
+        didSet {
+            guard oldValue != range else { return }
+            loadChart()
+            if style == .candle { loadCandles() }
+        }
+    }
+    @Published var style: ChartStyle {
+        didSet {
+            guard oldValue != style else { return }
+            UserDefaults.standard.set(style.rawValue, forKey: Self.styleKey)
+            if style == .candle { loadCandles() }
         }
     }
 
-    var dateComponent: Calendar.Component {
-        switch self {
-        case .oneDay: return .minute
-        case .oneWeek: return .hour
-        default: return .day
+    // Line chart
+    @Published private(set) var points: [PricePoint] = []
+    @Published private(set) var pointsRange: TimeRange?
+    @Published private(set) var chartPhase: DSChartPhase = .loading
+    // Candles
+    @Published private(set) var candles: [Candle] = []
+    @Published private(set) var candlesRange: TimeRange?
+    @Published private(set) var candlePhase: DSChartPhase = .loading
+    // Facts
+    @Published private(set) var fundamentalsState: LoadState = .idle
+    /// FMP didn't answer; key stats came from Finnhub alone.
+    @Published private(set) var fundamentalsUsedFallback = false
+    @Published private(set) var listingFacts: YahooListingFacts?
+    @Published private(set) var nextEarnings: EarningsEvent?
+    @Published private(set) var insight: StockInsight?
+    @Published private(set) var insightState: LoadState = .idle
+    @Published private(set) var coin: CoinFacts?
+    @Published private(set) var coinState: LoadState = .idle
+    @Published private(set) var statements: FinancialStatements?
+    @Published private(set) var statementsState: LoadState = .idle
+
+    private static let styleKey = "detailChartStyle"
+    private static let slowAfter: Double = 15
+    private var chartToken = UUID()
+    private var chartTask: Task<Void, Never>?
+    private var candleTask: Task<Void, Never>?
+    private var started = false
+
+    init(seed: Asset, stock: DetailedStock) {
+        self.seed = seed
+        self.kind = DetailAssetKind(seed)
+        var base = stock
+        // US quotes come from Alpaca's IEX feed, which sees a few percent of the
+        // day's volume; only FMP's consolidated figure is shown.
+        if DetailAssetKind(seed) == .usStock { base.volume = 0 }
+        self.stock = base
+        let saved = UserDefaults.standard.string(forKey: Self.styleKey)
+        self.style = (saved == ChartStyle.candle.rawValue && seed.kind == .stock) ? .candle : .line
+    }
+
+    deinit {
+        chartTask?.cancel()
+        candleTask?.cancel()
+    }
+
+    /// The best quote we have when the asset isn't tracked by MarketData.
+    var quote: Asset { refreshedQuote ?? seed }
+
+    /// Same instrument: symbol, kind and market (ASX "BHP" is not NYSE "BHP").
+    func matches(_ other: Asset) -> Bool {
+        other.symbol.uppercased() == seed.symbol.uppercased()
+            && other.kind == seed.kind
+            && QuoteService.isASX(other) == QuoteService.isASX(seed)
+    }
+
+    func trackedAsset(in data: MarketData) -> Asset? {
+        if let h = data.portfolio.first(where: { matches($0.asset) }), h.asset.price > 0 { return h.asset }
+        let pool = seed.kind == .crypto ? data.crypto : data.stocks
+        if let a = pool.first(where: matches), a.price > 0 { return a }
+        if let a = data.watchlist.first(where: matches), a.price > 0 { return a }
+        return nil
+    }
+
+    // MARK: Lifecycle
+
+    func start(isTracked: Bool, candlesAllowed: Bool) async {
+        guard !started else { return }
+        started = true
+        if !candlesAllowed && style == .candle { style = .line }
+        loadChart()
+        if style == .candle { loadCandles() }
+        async let a: Void = loadFundamentals()
+        async let b: Void = loadInsight()
+        async let c: Void = loadCoin()
+        async let d: Void = refreshQuote(skip: isTracked)
+        async let e: Void = loadNextEarnings()
+        _ = await (a, b, c, d, e)
+    }
+
+    func refresh() async {
+        loadChart(force: true)
+        if style == .candle { loadCandles(force: true) }
+        await refreshQuote()
+        if kind == .crypto { await loadCoin() }
+    }
+
+    // MARK: Charts
+
+    func loadChart(force: Bool = false) {
+        chartTask?.cancel()
+        let requested = range
+        let token = UUID()
+        chartToken = token
+        if pointsRange != requested || points.isEmpty || force { chartPhase = .loading }
+        let asset = seed
+        chartTask = Task { [weak self] in
+            do {
+                let pts = try await PriceHistoryService.shared.history(for: asset, range: requested, forceRefresh: force)
+                guard let self, !Task.isCancelled, self.range == requested else { return }
+                self.points = pts
+                self.pointsRange = requested
+                self.chartPhase = .loaded
+            } catch {
+                guard let self, !Task.isCancelled, self.range == requested else { return }
+                if self.pointsRange != requested {
+                    self.points = []
+                    self.pointsRange = requested
+                }
+                self.chartPhase = self.points.isEmpty ? .failed(Self.message(for: error)) : .loaded
+                AppLogger.api.warning("Detail chart \(asset.symbol) \(requested.rawValue) failed: \(error.localizedDescription)")
+            }
+        }
+        // Rate-limited sources (keyless CoinGecko backs off for minutes) shouldn't
+        // leave a spinner up indefinitely; say so and keep listening for the reply.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.slowAfter))
+            guard let self, self.chartToken == token, self.chartPhase == .loading,
+                  self.pointsRange != requested || self.points.isEmpty else { return }
+            self.chartPhase = .failed("The price source is busy. Try again in a minute.")
         }
     }
 
-    /// Maps to the shared TimeRange enum used by QuoteService.
-    var toTimeRange: TimeRange {
-        switch self {
-        case .oneDay:      return .oneDay
-        case .oneWeek:     return .oneWeek
-        case .oneMonth:    return .oneMonth
-        case .threeMonths: return .threeMonths
-        case .oneYear:     return .oneYear
-        case .fiveYears:   return .fiveYears
-        case .all:         return .all
+    func loadCandles(force: Bool = false) {
+        guard seed.kind == .stock else { return }
+        candleTask?.cancel()
+        let requested = range
+        if candlesRange != requested || candles.isEmpty || force { candlePhase = .loading }
+        let asset = seed
+        candleTask = Task { [weak self] in
+            do {
+                let result = try await PriceHistoryService.shared.candles(for: asset, range: requested)
+                guard let self, !Task.isCancelled, self.range == requested else { return }
+                self.candles = result
+                self.candlesRange = requested
+                self.candlePhase = .loaded
+            } catch {
+                guard let self, !Task.isCancelled, self.range == requested else { return }
+                self.candles = []
+                self.candlesRange = requested
+                self.candlePhase = .failed(Self.message(for: error))
+            }
+        }
+    }
+
+    private static func message(for error: Error) -> String {
+        if let urlError = error as? URLError, urlError.code == .notConnectedToInternet {
+            return "You're offline."
+        }
+        return "Price history for this period isn't available right now."
+    }
+
+    // MARK: Facts
+
+    private func loadFundamentals() async {
+        switch kind {
+        case .usStock: await loadUSFundamentals()
+        case .asxStock, .otherStock: await loadListingFacts()
+        case .crypto, .index: return
+        }
+    }
+
+    /// FMP (richest, 250 calls/day free) and Finnhub (60/min, free) in parallel;
+    /// Finnhub only fills what FMP left empty, so key stats survive FMP's quota running out.
+    private func loadUSFundamentals() async {
+        fundamentalsState = .loading
+        let symbol = seed.symbol.uppercased()
+        let hasFMP = !SecretsConfig.fmpAPIKey.isEmpty
+        async let p = hasFMP ? FMPService.shared.fetchProfile(symbol: symbol) : nil
+        async let q = hasFMP ? FMPService.shared.fetchQuote(symbol: symbol) : nil
+        async let r = hasFMP ? FMPService.shared.fetchRatios(symbol: symbol) : nil
+        async let i = hasFMP ? FMPService.shared.fetchIncomeStatements(symbol: symbol, limit: 4) : []
+        async let f = try? APIService.shared.fetchFinnhubFundamentals(symbol: symbol)
+        // Consolidated volume + day range (Alpaca's free IEX feed sees a few % of volume).
+        async let y = try? APIService.shared.fetchYahooListingFacts(symbol: symbol)
+        let (profile, fmpQuote, ratios, income, finnhub, yahoo) = await (p, q, r, i, f, y)
+        let fmpAnswered = profile != nil || fmpQuote != nil || ratios != nil || !income.isEmpty
+        guard fmpAnswered || finnhub != nil || yahoo != nil else {
+            fundamentalsState = .failed
+            return
+        }
+        var updated = stock
+        if fmpAnswered {
+            updated = DetailedStock.applying(profile: profile, quote: fmpQuote, ratios: ratios,
+                                             incomeStatements: income, to: updated)
+        }
+        if let finnhub { updated = DetailedStock.filling(from: finnhub, to: updated) }
+        if let yahoo {
+            if updated.volume <= 0, let v = yahoo.volume { updated.volume = Int(v) }
+            if updated.avgVolume <= 0, let v = yahoo.avgVolume3M { updated.avgVolume = Int(v) }
+            if updated.dayHigh == nil, updated.dayLow == nil, let hi = yahoo.dayHigh, let lo = yahoo.dayLow {
+                updated.dayHigh = hi
+                updated.dayLow = lo
+            }
+        }
+        stock = updated
+        fundamentalsUsedFallback = !fmpAnswered
+        fundamentalsState = .loaded
+    }
+
+    /// ASX/other Yahoo listings: day range, volume, 3-month average, dividends.
+    private func loadListingFacts() async {
+        fundamentalsState = .loading
+        let symbol = kind == .asxStock ? QuoteService.finnhubASXSymbol(for: seed.symbol) : seed.symbol
+        if let facts = try? await APIService.shared.fetchYahooListingFacts(symbol: symbol) {
+            listingFacts = facts
+            fundamentalsState = .loaded
+        } else {
+            fundamentalsState = .failed
+        }
+    }
+
+    private func loadNextEarnings() async {
+        guard kind == .usStock else { return }
+        nextEarnings = await EarningsCalendar.shared.next(for: seed.symbol)
+    }
+
+    private func loadInsight() async {
+        guard kind == .usStock else { return }
+        insightState = .loading
+        let result = await StockInsightService.shared.insight(for: seed.symbol)
+        insight = result
+        insightState = result.isEmpty ? .failed : .loaded
+    }
+
+    private func loadCoin() async {
+        guard kind == .crypto, let id = QuoteService.coinGeckoID(for: seed.symbol) else { return }
+        if coin == nil { coinState = .loading }
+        Task { [weak self] in
+            // Keyless CoinGecko can back off for minutes; don't leave skeletons up.
+            try? await Task.sleep(for: .seconds(Self.slowAfter))
+            guard let self, self.coin == nil, self.coinState == .loading else { return }
+            self.coinState = .failed
+        }
+        do {
+            coin = try await CoinGeckoCoinService.shared.facts(for: id)
+            coinState = .loaded
+        } catch {
+            if coin == nil { coinState = .failed }
+        }
+    }
+
+    func loadStatements() async {
+        guard kind == .usStock, statementsState != .loading, statements?.isEmpty != false else { return }
+        statementsState = .loading
+        let result = await StockInsightService.shared.statements(for: seed.symbol)
+        statements = result
+        statementsState = result.isEmpty ? .failed : .loaded
+    }
+
+    /// Prices an asset nobody tracks (opened from search or an index card).
+    private func refreshQuote(skip: Bool = false) async {
+        guard !skip else { return }
+        let current = quote
+        let service = QuoteService()
+        var fresh: Asset?
+        switch kind {
+        case .index:
+            if let api = try? await APIService.shared.fetchYahooQuote(symbol: seed.symbol, name: seed.name) {
+                fresh = service.mergedAsset(old: current, api: api)
+            }
+        case .crypto:
+            fresh = await service.refreshCryptoPrices(for: [current]).first
+        case .usStock, .asxStock, .otherStock:
+            fresh = await service.refreshStockQuotes(for: [current]).first
+        }
+        ownQuoteFailed = service.lastFailedSymbols.contains(seed.symbol) || (kind == .index && fresh == nil)
+        if let fresh, fresh.price > 0, !ownQuoteFailed {
+            refreshedQuote = fresh
+            refreshedAt = Date()
         }
     }
 }

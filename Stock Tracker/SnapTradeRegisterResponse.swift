@@ -250,3 +250,34 @@ struct SnapTradeErrorResponse: Codable {
         case code
     }
 }
+// MARK: - Brokerages (GET /brokerages)
+
+/// One institution SnapTrade can connect. `slug` is what `/snapTrade/login` expects as `broker`.
+struct SnapTradeBrokerage: Decodable {
+    let slug: String?
+    let name: String?
+    let displayName: String?
+    let squareLogoURL: String?
+    let logoURL: String?
+    let enabled: Bool?
+    let maintenanceMode: Bool?
+    let brokerageType: BrokerageType?
+
+    struct BrokerageType: Decodable { let name: String? }
+
+    enum CodingKeys: String, CodingKey {
+        case slug, name, enabled
+        case displayName = "display_name"
+        case squareLogoURL = "aws_s3_square_logo_url"
+        case logoURL = "aws_s3_logo_url"
+        case maintenanceMode = "maintenance_mode"
+        case brokerageType = "brokerage_type"
+    }
+}
+
+/// DELETE /snapTrade/deleteUser
+struct SnapTradeDeleteUserResponse: Decodable {
+    let status: String?
+    let detail: String?
+    let userId: String?
+}

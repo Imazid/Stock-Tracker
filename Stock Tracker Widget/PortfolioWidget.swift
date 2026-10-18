@@ -101,13 +101,7 @@ struct PortfolioWidgetData {
         )
     }
 
-    var totalValueAbbreviated: String {
-        switch abs(totalValue) {
-        case 1_000_000...: return String(format: "$%.1fM", totalValue / 1_000_000)
-        case 1_000...:     return String(format: "$%.1fK", totalValue / 1_000)
-        default:           return String(format: "$%.0f", totalValue)
-        }
-    }
+    var totalValueAbbreviated: String { WidgetMoney.compact(totalValue) }
 }
 
 // MARK: - Provider
@@ -159,7 +153,7 @@ struct PortfolioSmallView: View {
 
             Spacer()
 
-            Text(data.totalValue, format: .currency(code: "USD").precision(.fractionLength(0)))
+            Text(WidgetMoney.format(data.totalValue, digits: 0))
                 .font(WidgetFont.primaryLarge(.bold))
                 .foregroundColor(WidgetColor.textPrimary)
                 .minimumScaleFactor(0.7)
@@ -197,7 +191,7 @@ struct PortfolioMediumView: View {
             VStack(alignment: .leading, spacing: 6) {
                 WidgetHeaderRow(icon: "briefcase.fill", title: "Portfolio")
 
-                Text(data.totalValue, format: .currency(code: "USD").precision(.fractionLength(0)))
+                Text(WidgetMoney.format(data.totalValue, digits: 0))
                     .font(WidgetFont.primaryLarge(.bold))
                     .foregroundColor(WidgetColor.textPrimary)
                     .minimumScaleFactor(0.7)
@@ -278,7 +272,7 @@ struct PortfolioLargeView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     WidgetHeaderRow(icon: "briefcase.fill", title: "Portfolio")
-                    Text(data.totalValue, format: .currency(code: "USD").precision(.fractionLength(0)))
+                    Text(WidgetMoney.format(data.totalValue, digits: 0))
                         .font(WidgetFont.displaySmall(.bold))
                         .foregroundColor(WidgetColor.textPrimary)
                 }
@@ -337,7 +331,7 @@ struct PortfolioLargeView: View {
                     Spacer()
 
                     VStack(alignment: .trailing, spacing: 1) {
-                        Text(h.value, format: .currency(code: "USD").precision(.fractionLength(0)))
+                        Text(WidgetMoney.format(h.value, digits: 0))
                             .font(WidgetFont.microLarge(.bold))
                             .foregroundColor(WidgetColor.textPrimary)
                         Text("\(h.changePercent >= 0 ? "+" : "")\(String(format: "%.1f", h.changePercent))%")

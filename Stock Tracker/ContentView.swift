@@ -38,6 +38,20 @@ enum MainTab: String, CaseIterable, Hashable {
     }
 }
 
+// MARK: - Tab switching from inside a tab
+
+private struct SelectTabKey: EnvironmentKey {
+    static let defaultValue: (MainTab) -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+    /// Switches the root tab (e.g. Home's "See all" → Watchlist).
+    var selectTab: (MainTab) -> Void {
+        get { self[SelectTabKey.self] }
+        set { self[SelectTabKey.self] = newValue }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject var marketData: MarketData
     @EnvironmentObject var alertManager: PriceAlertManager
@@ -73,7 +87,8 @@ struct ContentView: View {
                 StockSearchView()
             }
         }
-        .tint(Color(red: 0.45, green: 0.75, blue: 1.0))
+        .tint(DS.accent)
+        .environment(\.selectTab, { [selectedTab = $selectedTab] tab in selectedTab.wrappedValue = tab })
         .sensoryFeedback(.impact(flexibility: .soft), trigger: selectedTab)
         .onChange(of: selectedTab) { _, _ in marketData.refreshIfStale() }
         .onAppear { configureTabBar() }
@@ -82,7 +97,7 @@ struct ContentView: View {
     private func configureTabBar() {
         let isDark = colorScheme == .dark
         let normalColor = isDark ? UIColor.white.withAlphaComponent(0.6) : UIColor.label.withAlphaComponent(0.5)
-        let selectedColor = UIColor(red: 0.45, green: 0.75, blue: 1.0, alpha: 1.0)
+        let selectedColor = UIColor(DS.accent)
 
         let appearance = UITabBarAppearance()
         appearance.configureWithTransparentBackground()

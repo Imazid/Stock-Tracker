@@ -18,9 +18,8 @@ protocol QuoteServiceProtocol: AnyObject {
     func refreshCryptoPrices(for crypto: [Asset]) async -> [Asset]
     func fetchExchangeRates(for currencies: [String]) async -> [String: Double]
     func fetchSP500History() async -> [PricePoint]
-    func generateMockSP500History() -> [PricePoint]
     func fetchPriceHistory(for asset: Asset, range: TimeRange) async -> [PricePoint]
-    func generatePriceHistoryFallback(for asset: Asset, range: TimeRange) -> [PricePoint]
+    func fetchPriceHistoryOrThrow(for asset: Asset, range: TimeRange) async throws -> [PricePoint]
     func fetchHistoricalData(for asset: Asset, range: TimeRange) async throws -> [Candle]
     func fetchHistoricalData(symbol: String, range: TimeRange) async throws -> [Candle]
     func fetchLatestCandle(symbol: String, intervalMinutes: Int) async -> Candle?
@@ -31,6 +30,8 @@ protocol QuoteServiceProtocol: AnyObject {
         crypto: [Asset]
     ) -> (portfolio: [PortfolioHolding], watchlist: [Asset])
     func mergedAsset(old: Asset, api: Asset) -> Asset
+    /// Symbols whose most recent quote request failed (shown as "No live price").
+    var lastFailedSymbols: Set<String> { get }
 }
 
 // MARK: - Implementation
@@ -41,7 +42,10 @@ final class QuoteService: QuoteServiceProtocol {
     private let api: APIService
 
     /// CoinGecko ID map for the most common crypto symbols.
-    private static let coinGeckoIDMap: [String: String] = [
+    /// CoinGecko id for a coin symbol ("BTC" → "bitcoin"), or nil if unsupported.
+    nonisolated static func coinGeckoID(for symbol: String) -> String? { coinGeckoIDMap[symbol.uppercased()] }
+
+    nonisolated private static let coinGeckoIDMap: [String: String] = [
         "BTC":   "bitcoin",
         "ETH":   "ethereum",
         "SOL":   "solana",
@@ -50,7 +54,10 @@ final class QuoteService: QuoteServiceProtocol {
         "XRP":   "ripple",
         "DOGE":  "dogecoin",
         "DOT":   "polkadot",
-        "MATIC": "matic-network",
+        // MATIC migrated 1:1 to POL; CoinGecko's "matic-network" price has been frozen
+        // since Feb 2026 (last_updated_at 1770083820), so both map to the live POL id.
+        "MATIC": "polygon-ecosystem-token",
+        "POL":   "polygon-ecosystem-token",
         "LINK":  "chainlink",
         "AVAX":  "avalanche-2",
         "UNI":   "uniswap",
@@ -59,7 +66,7 @@ final class QuoteService: QuoteServiceProtocol {
     ]
 
     /// Common ASX symbols and their display names.
-    static let popularASXSymbols: [String] = [
+    nonisolated static let popularASXSymbols: [String] = [
         "BHP", "CBA", "CSL", "NAB", "WBC", "ANZ", "FMG", "WES", "MQG", "RIO"
     ]
 
@@ -69,36 +76,78 @@ final class QuoteService: QuoteServiceProtocol {
         return upper.hasSuffix(".AX") ? upper : "\(upper).AX"
     }
 
-    init(api: APIService = .shared) {
-        self.api = api
+    init(api: APIService? = nil) {
+        self.api = api ?? .shared
     }
 
     // MARK: - Stock Quotes
 
-    /// Check if a stock should be routed to Finnhub (ASX/international) instead of Alpaca (US-only).
-    private func isASXStock(_ asset: Asset) -> Bool {
-        asset.exchange == "ASX"
-            || asset.symbol.hasSuffix(".AX")
-            || Self.popularASXSymbols.contains(asset.symbol.uppercased())
+    nonisolated private static let usExchanges: Set<String> = ["NYSE", "NASDAQ", "US", "AMEX", "ARCA", "NYSEARCA", "BATS", "NYSE AMERICAN", "OTC"]
+
+    /// Whether a stock trades on the ASX. The asset's own exchange wins; the
+    /// popular-ticker list is only a fallback for assets with no exchange
+    /// (otherwise Telstra "TLS" was priced as Telos and BHP's NYSE ADR as BHP.AX).
+    private func isASXStock(_ asset: Asset) -> Bool { Self.isASX(asset) }
+
+    /// Shared rule (quotes, history and trading hours must agree).
+    nonisolated static func isASX(_ asset: Asset) -> Bool {
+        guard asset.kind == .stock else { return false }
+        let exchange = asset.exchange.uppercased()
+        if exchange == "ASX" || asset.symbol.hasSuffix(".AX") { return true }
+        if Self.usExchanges.contains(exchange) || exchange == "INTERNATIONAL" { return false }
+        return Self.popularASXSymbols.contains(asset.symbol.uppercased())
     }
+
+    private(set) var lastFailedSymbols: Set<String> = []
 
     /// Refresh live quotes for every stock asset; keeps old metadata on failure.
     /// ASX stocks are routed through Finnhub; US stocks through Alpaca.
     func refreshStockQuotes(for stocks: [Asset]) async -> [Asset] {
         var updated = stocks
-        for index in updated.indices {
-            let current = updated[index]
-            do {
-                let apiAsset: Asset
-                if isASXStock(current) {
-                    let finnhubSymbol = Self.finnhubASXSymbol(for: current.symbol)
-                    apiAsset = try await api.fetchYahooQuote(symbol: finnhubSymbol, name: current.name)
+        for symbol in stocks.map(\.symbol) { lastFailedSymbols.remove(symbol) }
+
+        // US: one batched Alpaca request instead of one per symbol (they ran one after
+        // another: ten holdings = ten round trips before anything updated).
+        let usIndices = updated.indices.filter { !isASXStock(updated[$0]) }
+        var batch: [String: Asset]?
+        if usIndices.count > 1 {
+            batch = try? await api.fetchStockQuotes(symbols: usIndices.map { updated[$0].symbol })
+        }
+        if let batch {
+            for index in usIndices {
+                if let apiAsset = batch[updated[index].symbol.uppercased()] {
+                    updated[index] = mergedAsset(old: updated[index], api: apiAsset)
                 } else {
-                    apiAsset = try await api.fetchStockQuote(symbol: current.symbol)
+                    AppLogger.api.error("Stock quote failed for \(updated[index].symbol): not in Alpaca snapshot batch")
+                    lastFailedSymbols.insert(updated[index].symbol)
                 }
-                updated[index] = mergedAsset(old: current, api: apiAsset)
-            } catch {
-                AppLogger.api.error("Stock quote failed for \(current.symbol): \(error)")
+            }
+        }
+
+        // ASX (Yahoo), a lone US symbol, or the batch failing: one request each, concurrently.
+        let singles = updated.indices.filter { batch == nil || isASXStock(updated[$0]) }
+        await withTaskGroup(of: (Int, Asset?).self) { group in
+            for index in singles {
+                let current = updated[index]
+                group.addTask { @MainActor in
+                    do {
+                        if self.isASXStock(current) {
+                            let yahooSymbol = Self.finnhubASXSymbol(for: current.symbol)
+                            return (index, try await self.api.fetchYahooQuote(symbol: yahooSymbol, name: current.name))
+                        }
+                        return (index, try await self.api.fetchStockQuote(symbol: current.symbol))
+                    } catch {
+                        AppLogger.api.error("Stock quote failed for \(current.symbol): \(error)")
+                        return (index, nil)
+                    }
+                }
+            }
+            for await (index, apiAsset) in group {
+                if let apiAsset {
+                    updated[index] = mergedAsset(old: updated[index], api: apiAsset)
+                } else {
+                    lastFailedSymbols.insert(updated[index].symbol)
+                }
             }
         }
         return updated
@@ -110,6 +159,9 @@ final class QuoteService: QuoteServiceProtocol {
     func refreshCryptoPrices(for crypto: [Asset]) async -> [Asset] {
         // Collect all known CoinGecko IDs in one pass
         let ids = crypto.compactMap { Self.coinGeckoIDMap[$0.symbol] }
+        // Coins we can't map to CoinGecko never get a price — say so instead of showing a stale one.
+        for asset in crypto { lastFailedSymbols.remove(asset.symbol) }
+        for asset in crypto where Self.coinGeckoIDMap[asset.symbol] == nil { lastFailedSymbols.insert(asset.symbol) }
         guard !ids.isEmpty else { return crypto }
 
         do {
@@ -129,19 +181,37 @@ final class QuoteService: QuoteServiceProtocol {
 
     // MARK: - Exchange Rates
 
+    /// Frankfurter (ECB reference rates, updated each working day): free, no key, covers
+    /// AUD/EUR/GBP/JPY/CAD and ~25 more. Replaces api.exchangerate.host, which now
+    /// requires an access key and answered HTTP 200 `{"success":false,…}` — so the app
+    /// silently kept its hard-coded fallback rates.
+    private static let exchangeRateURL = "https://api.frankfurter.dev/v1/latest"
+
     /// Fetch live USD exchange rates for the given currency codes.
     func fetchExchangeRates(for currencies: [String]) async -> [String: Double] {
         let symbols = currencies.filter { $0 != "USD" }.joined(separator: ",")
         guard !symbols.isEmpty,
-              let url = URL(string: "\(Constants.URLs.exchangeRate)?base=USD&symbols=\(symbols)") else {
+              var components = URLComponents(string: Self.exchangeRateURL) else {
             return [:]
         }
+        components.queryItems = [
+            URLQueryItem(name: "base", value: "USD"),
+            URLQueryItem(name: "symbols", value: symbols)
+        ]
+        guard let url = components.url else { return [:] }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            NetRequestLog.record(endpoint: "fx", url: url)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard status == 200 else {
+                AppLogger.api.error("Exchange rate fetch HTTP \(status) — keeping previous rates")
+                return [:]
+            }
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let rates = json["rates"] as? [String: Double] {
+               let rates = json["rates"] as? [String: Double], !rates.isEmpty {
                 return rates
             }
+            AppLogger.api.error("Exchange rate response had no rates — keeping previous rates")
         } catch {
             AppLogger.api.error("Exchange rate fetch failed: \(error)")
         }
@@ -150,37 +220,35 @@ final class QuoteService: QuoteServiceProtocol {
 
     // MARK: - S&P 500
 
-    /// Fetch 1-year S&P 500 history; falls back to synthetic data on error.
+    /// 1-year S&P 500 history via SPY (Alpaca serves no index data). Empty on
+    /// failure — benchmark views show "unavailable" rather than an invented index.
     func fetchSP500History() async -> [PricePoint] {
         do {
-            // Alpaca does not serve index data; SPY (S&P 500 ETF) is a supported proxy
-        return try await api.fetchHistoricalData(symbol: "SPY", range: .oneYear)
+            return try await api.fetchHistoricalData(symbol: "SPY", range: .oneYear)
         } catch {
-            AppLogger.api.warning("S&P 500 history unavailable, using mock: \(error)")
-            return generateMockSP500History()
+            AppLogger.api.warning("S&P 500 history unavailable: \(error)")
+            return []
         }
-    }
-
-    func generateMockSP500History() -> [PricePoint] {
-        let calendar = Calendar.current
-        let now = Date()
-        var currentPrice = 4783.45
-        var points: [PricePoint] = []
-        for i in 0..<365 {
-            guard let date = calendar.date(byAdding: .day, value: -i, to: now) else { continue }
-            currentPrice = max(3000, currentPrice * (1 + Double.random(in: -0.02...0.02)))
-            points.append(PricePoint(date: date, price: currentPrice))
-        }
-        return points.sorted { $0.date < $1.date }
     }
 
     // MARK: - Price History
 
-    /// Fetch API price history for an asset; falls back to a synthetic random-walk on error.
-    /// - Crypto: CoinGecko market chart
-    /// - ASX/International: Yahoo Finance chart
-    /// - US stock: Alpaca bars, Yahoo fallback on error
+    /// Price history for an asset, or an empty array if every source fails.
+    /// Never synthetic: an empty result makes charts show "unavailable".
     func fetchPriceHistory(for asset: Asset, range: TimeRange) async -> [PricePoint] {
+        do {
+            return try await fetchPriceHistoryOrThrow(for: asset, range: range)
+        } catch {
+            AppLogger.api.warning("Price history unavailable for \(asset.symbol) \(range.rawValue): \(error)")
+            return []
+        }
+    }
+
+    /// Price history for an asset (USD), throwing when no source can supply it.
+    /// - Crypto: CoinGecko market chart (Alpaca for > 1Y)
+    /// - ASX/International: Yahoo Finance chart (converted to USD)
+    /// - US stock: Alpaca bars, Yahoo fallback on error
+    func fetchPriceHistoryOrThrow(for asset: Asset, range: TimeRange) async throws -> [PricePoint] {
         do {
             if asset.kind == .crypto,
                let cgId = Self.coinGeckoIDMap[asset.symbol.uppercased()] {
@@ -200,39 +268,7 @@ final class QuoteService: QuoteServiceProtocol {
                 AppLogger.api.info("Alpaca history failed for \(asset.symbol), trying Yahoo: \(error)")
                 return try await api.fetchYahooHistory(symbol: asset.symbol, range: range)
             }
-        } catch {
-            AppLogger.api.warning("Price history unavailable for \(asset.symbol), using fallback: \(error)")
-            return generatePriceHistoryFallback(for: asset, range: range)
         }
-    }
-
-    func generatePriceHistoryFallback(for asset: Asset, range: TimeRange) -> [PricePoint] {
-        let calendar = Calendar.current
-        let now = Date()
-        let (numPoints, component): (Int, Calendar.Component) = {
-            switch range {
-            case .oneDay:       return (24, .hour)
-            case .oneWeek:      return (7,  .day)
-            case .oneMonth:     return (30, .day)
-            case .threeMonths:  return (13, .weekOfYear)
-            case .sixMonths:    return (26, .weekOfYear)
-            case .ytd:          return (12, .month)
-            case .oneYear:      return (12, .month)
-            case .twoYears:     return (24, .month)
-            case .fiveYears:    return (30, .month)
-            case .tenYears:     return (40, .month)
-            case .all:          return (60, .month)
-            }
-        }()
-        let volatility = range.volatility
-        var points: [PricePoint] = []
-        var currentPrice = asset.price
-        for i in 0..<numPoints {
-            guard let date = calendar.date(byAdding: component, value: -i, to: now) else { continue }
-            currentPrice = max(0.01, currentPrice * (1 + Double.random(in: (-volatility)...(volatility))))
-            points.append(PricePoint(date: date, price: currentPrice))
-        }
-        return points.sorted { $0.date < $1.date }
     }
 
     // MARK: - OHLCV Candles
@@ -311,13 +347,16 @@ final class QuoteService: QuoteServiceProtocol {
         stocks: [Asset],
         crypto: [Asset]
     ) -> (portfolio: [PortfolioHolding], watchlist: [Asset]) {
-        let lookup = Dictionary(uniqueKeysWithValues: (stocks + crypto).map { ($0.symbol, $0) })
+        // Keyed by kind + symbol: a stock and a coin can share a ticker (LINK, ATOM),
+        // which used to crash `uniqueKeysWithValues`.
+        func key(_ a: Asset) -> String { "\(a.kind.rawValue):\(a.symbol)" }
+        let lookup = Dictionary((stocks + crypto).map { (key($0), $0) }, uniquingKeysWith: { first, _ in first })
         let updatedPortfolio = portfolio.map { holding -> PortfolioHolding in
             var h = holding
-            if let updated = lookup[h.asset.symbol] { h.asset = updated }
+            if let updated = lookup[key(h.asset)] { h.asset = updated }
             return h
         }
-        let updatedWatchlist = watchlist.map { lookup[$0.symbol] ?? $0 }
+        let updatedWatchlist = watchlist.map { lookup[key($0)] ?? $0 }
         return (updatedPortfolio, updatedWatchlist)
     }
 
@@ -326,11 +365,15 @@ final class QuoteService: QuoteServiceProtocol {
     /// Keep old metadata (id, name, fundamentals) but overwrite live fields from the API.
     /// 52-week data: prefer fresh API values, fall back to existing.
     func mergedAsset(old: Asset, api: Asset) -> Asset {
-        Asset(
+        let resolvedPrice = api.price > 0 ? api.price : old.price
+        // Placeholders ("Manual"/empty exchange, ticker-as-name) give way to real data.
+        let placeholderExchange = old.exchange.isEmpty || old.exchange == "Manual"
+        let name = (old.name == old.symbol || old.name.isEmpty) && !api.name.isEmpty ? api.name : old.name
+        return Asset(
             id: old.id,
             symbol: old.symbol,
-            name: old.name,
-            price: api.price,
+            name: name,
+            price: resolvedPrice,
             change: api.change,
             changePercent: api.changePercent,
             volume: api.volume,
@@ -343,7 +386,7 @@ final class QuoteService: QuoteServiceProtocol {
             avgVolume: old.avgVolume,
             dividend: old.dividend,
             beta: old.beta,
-            exchange: old.exchange
+            exchange: placeholderExchange && !api.exchange.isEmpty ? api.exchange : old.exchange
         )
     }
 }

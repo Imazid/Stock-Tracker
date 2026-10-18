@@ -32,12 +32,7 @@ protocol PortfolioServiceProtocol: AnyObject {
     func loadWatchlistGroups() -> [WatchlistGroup]
     func loadActiveWatchlistIndex() -> Int
     func appendCurrentSnapshot(to history: [PortfolioSnapshot], currentValue: Double) -> [PortfolioSnapshot]
-    func seedInitialHistory(currentValue: Double, costBasis: Double) -> [PortfolioSnapshot]
     func mockAssets() -> (stocks: [Asset], crypto: [Asset])
-    func mockPortfolio(
-        stocks: [Asset],
-        crypto: [Asset]
-    ) -> (portfolio: [PortfolioHolding], watchlist: [Asset])
 }
 
 // MARK: - Implementation
@@ -47,8 +42,8 @@ final class PortfolioService: PortfolioServiceProtocol {
 
     private let persistence: DataPersistenceManager
 
-    init(persistence: DataPersistenceManager = .shared) {
-        self.persistence = persistence
+    init(persistence: DataPersistenceManager? = nil) {
+        self.persistence = persistence ?? .shared
     }
 
     // MARK: - Persistence
@@ -112,33 +107,6 @@ final class PortfolioService: PortfolioServiceProtocol {
         return updated.sorted { $0.date < $1.date }
     }
 
-    /// Generates seed history so the portfolio chart has data points to display
-    /// immediately on first launch, rather than waiting for multiple days of usage.
-    /// Creates 30 daily snapshots with a gentle random walk from costBasis → currentValue.
-    func seedInitialHistory(currentValue: Double, costBasis: Double) -> [PortfolioSnapshot] {
-        let calendar = Calendar.current
-        let now = Date()
-        let days = 30
-        let startValue = costBasis > 0 ? costBasis : currentValue * 0.95
-        let endValue = currentValue
-
-        var snapshots: [PortfolioSnapshot] = []
-        for i in 0..<days {
-            let dayOffset = -(days - 1 - i)
-            guard let date = calendar.date(byAdding: .day, value: dayOffset, to: now) else { continue }
-            let progress = Double(i) / Double(max(1, days - 1))
-            // Linear interpolation with small random noise
-            let noise = Double.random(in: -0.01...0.01) * endValue
-            let value = startValue + (endValue - startValue) * progress + noise
-            snapshots.append(PortfolioSnapshot(date: date, totalValue: max(0, value)))
-        }
-        // Ensure the last point is exactly the current value
-        if !snapshots.isEmpty {
-            snapshots[snapshots.count - 1] = PortfolioSnapshot(date: now, totalValue: currentValue)
-        }
-        return snapshots
-    }
-
     // MARK: - Mock Data (first launch)
 
     func mockAssets() -> (stocks: [Asset], crypto: [Asset]) {
@@ -157,18 +125,4 @@ final class PortfolioService: PortfolioServiceProtocol {
         return (stocks, crypto)
     }
 
-    func mockPortfolio(
-        stocks: [Asset],
-        crypto: [Asset]
-    ) -> (portfolio: [PortfolioHolding], watchlist: [Asset]) {
-        guard stocks.count >= 2, crypto.count >= 2 else { return ([], []) }
-        let portfolio: [PortfolioHolding] = [
-            PortfolioHolding(asset: stocks[0], shares: 10,  avgCost: 170),
-            PortfolioHolding(asset: stocks[1], shares:  8,  avgCost: 130),
-            PortfolioHolding(asset: crypto[0], shares:  0.3, avgCost: 50_000),
-            PortfolioHolding(asset: crypto[1], shares:  1.5, avgCost:  2_900)
-        ]
-        let watchlist = Array(stocks.prefix(4)) + Array(crypto.prefix(2))
-        return (portfolio, watchlist)
-    }
 }

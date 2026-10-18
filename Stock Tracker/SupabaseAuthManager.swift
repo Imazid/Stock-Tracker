@@ -32,6 +32,15 @@ enum CloudAuthState: Equatable {
     case error(String)
 }
 
+// MARK: - Copy
+
+/// What account screens say when the service can't be used.
+enum AuthCopy {
+    static let unavailable = "Accounts are unavailable right now. Everything you've set up stays on this iPhone, and you can sign in later from Settings."
+    static let offline = "You're offline. Connect to the internet and try again."
+    static let tryAgain = "Something went wrong. Please try again."
+}
+
 // MARK: - SupabaseAuthManager
 
 @MainActor
@@ -85,87 +94,143 @@ final class SupabaseAuthManager: NSObject, ObservableObject {
 
     // MARK: - Sign in with Apple
 
+    /// For custom "Continue with Apple" buttons (onboarding): presents Apple's sheet
+    /// itself. One call = one attempt; a second tap while one is running is ignored.
     func signInWithApple() async {
-        guard SupabaseManager.isConfigured else {
-            authState = .error("Supabase not configured. Add credentials to Secrets.plist.")
-            return
-        }
+        guard authState != .signingIn, appleSignInContinuation == nil else { return }
+        guard await accountServiceReady() else { return }
         authState = .signingIn
 
         do {
-            // 1. Generate and store a cryptographic nonce
             let nonce = generateNonce()
             currentNonce = nonce
+            let authorization = try await requestAppleCredential(nonce: nonce)
+            await exchangeAppleCredential(authorization, nonce: nonce)
+        } catch {
+            fail(error, context: "Apple sign-in")
+        }
+    }
 
-            // 2. Request Apple credential
-            let appleCredential = try await requestAppleCredential(nonce: nonce)
-            guard
-                let appleIDCredential = appleCredential.credential as? ASAuthorizationAppleIDCredential,
-                let idTokenData = appleIDCredential.identityToken,
-                let idTokenString = String(data: idTokenData, encoding: .utf8)
-            else {
-                authState = .error("Apple credential invalid. Please try again.")
+    /// For SwiftUI's `SignInWithAppleButton`: fills in the request it is about to send.
+    /// The button presents Apple's sheet; `completeAppleSignIn` takes the result.
+    func prepareAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        let nonce = generateNonce()
+        currentNonce = nonce
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = sha256(nonce)
+    }
+
+    func completeAppleSignIn(_ result: Result<ASAuthorization, Error>) async {
+        guard authState != .signingIn else { return }
+        switch result {
+        case .failure(let error):
+            fail(error, context: "Apple sign-in")
+        case .success(let authorization):
+            guard let nonce = currentNonce else {
+                authState = .error(AuthCopy.tryAgain)
                 return
             }
+            guard await accountServiceReady() else { return }
+            authState = .signingIn
+            await exchangeAppleCredential(authorization, nonce: nonce)
+        }
+    }
 
-            // 3. Exchange Apple id_token for a Supabase session
-            let session = try await SupabaseManager.auth.signInWithIdToken(
-                credentials: OpenIDConnectCredentials(
-                    provider: .apple,
-                    idToken: idTokenString,
-                    nonce: nonce
+    /// Swaps Apple's id_token for a Supabase session.
+    private func exchangeAppleCredential(_ authorization: ASAuthorization, nonce: String) async {
+        guard
+            let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+            let tokenData = credential.identityToken,
+            let idToken = String(data: tokenData, encoding: .utf8)
+        else {
+            authState = .error("Apple didn't return a sign-in token. Please try again.")
+            return
+        }
+        do {
+            let session = try await withAccountDeadline {
+                try await SupabaseManager.auth.signInWithIdToken(
+                    credentials: OpenIDConnectCredentials(provider: .apple, idToken: idToken, nonce: nonce)
                 )
-            )
+            }
             cloudUser = session.user
             authState = .signedIn
             AppLogger.sync.info("Signed in with Apple: \(session.user.email ?? session.user.id.uuidString)")
-
         } catch {
-            authState = .error(error.localizedDescription)
-            AppLogger.sync.error("Apple sign-in failed: \(error)")
+            fail(error, context: "Apple sign-in")
         }
     }
 
     // MARK: - Sign in with Email
 
     func signIn(email: String, password: String) async {
-        guard SupabaseManager.isConfigured else {
-            authState = .error("Supabase not configured. Add credentials to Secrets.plist.")
-            return
-        }
+        guard authState != .signingIn else { return }
+        guard await accountServiceReady() else { return }
         authState = .signingIn
         do {
-            let session = try await SupabaseManager.auth.signIn(email: email, password: password)
+            let session = try await withAccountDeadline {
+                try await SupabaseManager.auth.signIn(email: email, password: password)
+            }
             cloudUser = session.user
             authState = .signedIn
             AppLogger.sync.info("Signed in with email: \(session.user.email ?? "unknown")")
         } catch {
-            authState = .error(error.localizedDescription)
-            AppLogger.sync.error("Email sign-in failed: \(error)")
+            fail(error, context: "Email sign-in")
         }
     }
 
     // MARK: - Sign up with Email
 
     func signUp(email: String, password: String) async {
-        guard SupabaseManager.isConfigured else {
-            authState = .error("Supabase not configured. Add credentials to Secrets.plist.")
-            return
-        }
+        guard authState != .signingIn else { return }
+        guard await accountServiceReady() else { return }
         authState = .signingIn
         do {
-            let response = try await SupabaseManager.auth.signUp(email: email, password: password)
-            cloudUser = response.user
-            authState = response.user != nil ? .signedIn : .signedOut
-            if response.session == nil {
-                // Email confirmation required
-                authState = .error("Check your email to confirm your account, then sign in.")
+            let response = try await withAccountDeadline {
+                try await SupabaseManager.auth.signUp(email: email, password: password)
             }
-            let email = response.user.email ?? "unknown"
-            AppLogger.sync.info("Signed up: \(email)")
+            cloudUser = response.user
+            // No session yet = the project wants the email confirmed first.
+            authState = response.session == nil
+                ? .error("Check your email to confirm your account, then sign in.")
+                : .signedIn
+            AppLogger.sync.info("Signed up: \(response.user.email ?? "unknown")")
         } catch {
+            fail(error, context: "Email sign-up")
+        }
+    }
+
+    // MARK: - Account service availability
+
+    /// Checks the account service before an attempt, so a dead or unreachable
+    /// backend is reported in plain words straight away — never a hang.
+    private func accountServiceReady() async -> Bool {
+        switch await AccountService.shared.check() {
+        case .offline:
+            authState = .error(AuthCopy.offline)
+            return false
+        case .unavailable:
+            authState = .error(AuthCopy.unavailable)
+            return false
+        default:
+            return true
+        }
+    }
+
+    private func fail(_ error: Error, context: String) {
+        AppLogger.sync.error("\(context) failed: \(error)")
+        if let auth = error as? ASAuthorizationError, auth.code == .canceled {
+            authState = .signedOut   // the person closed Apple's sheet — not an error
+            return
+        }
+        AccountService.shared.noteFailure(error)
+        if error is AccountServiceError {
+            authState = .error(AuthCopy.unavailable)
+        } else if AccountService.shared.status == .offline {
+            authState = .error(AuthCopy.offline)
+        } else if AccountService.shared.status == .unavailable {
+            authState = .error(AuthCopy.unavailable)
+        } else {
             authState = .error(error.localizedDescription)
-            AppLogger.sync.error("Email sign-up failed: \(error)")
         }
     }
 
@@ -276,10 +341,13 @@ extension SupabaseAuthManager: ASAuthorizationControllerDelegate {
 
 extension SupabaseAuthManager: ASAuthorizationControllerPresentationContextProviding {
     nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        // Returns the key window — works for both scenes and single-window apps
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-        return scene?.keyWindow ?? UIWindow()
+        // ASAuthorizationController asks on the main thread.
+        MainActor.assumeIsolated {
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+            if let window = scene?.keyWindow { return window }
+            if let scene { return UIWindow(windowScene: scene) }
+            return ASPresentationAnchor()
+        }
     }
 }

@@ -37,7 +37,7 @@ enum WidgetColor {
     // ── Text ─────────────────────────────────────────────────────────────
     static let textPrimary   = Color.white
     static let textSecondary = Color.white.opacity(0.7)
-    static let textTertiary  = Color.white.opacity(0.45)
+    static let textTertiary  = Color.white.opacity(0.55)   // 0.45 was 4.2:1 on bg0; 0.55 ≈ 5.9:1 (WCAG AA)
 
     // ── Semantic (standard mode) ─────────────────────────────────────────
     static let positiveStandard = Color(red: 0.18, green: 0.85, blue: 0.45)

@@ -42,4 +42,6 @@ enum AppLogger {
     static let search    = Logger(subsystem: subsystem, category: "Search")
     /// Supabase cloud sync.
     static let sync      = Logger(subsystem: subsystem, category: "Sync")
+    /// Referral program events.
+    static let referral  = Logger(subsystem: subsystem, category: "Referral")
 }

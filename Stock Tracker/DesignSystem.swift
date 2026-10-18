@@ -1,0 +1,440 @@
+//
+//  DesignSystem.swift
+//  Stock Tracker
+//
+//  Shared tokens and building blocks for the redesigned onboarding and home.
+//  Direction: calm and ledger-like — one brand accent, white/ink pill CTAs,
+//  serif display type for moments of emphasis, monospaced digits for money,
+//  short gentle motion (150–250ms), honest empty states.
+//
+//  Gain/loss colour always comes from `Theme.positiveColor/negativeColor`
+//  so colour-blind modes keep working; this file never hardcodes red/green.
+//
+
+import SwiftUI
+import UIKit
+
+// MARK: - Tokens
+
+enum DS {
+    enum Space {
+        static let xs: CGFloat = 4
+        static let s: CGFloat = 8
+        static let m: CGFloat = 12
+        static let l: CGFloat = 16
+        static let xl: CGFloat = 24
+        static let xxl: CGFloat = 32
+        /// Horizontal page gutter.
+        static let gutter: CGFloat = 20
+    }
+
+    enum Radius {
+        static let chip: CGFloat = 12
+        static let card: CGFloat = 20
+        static let sheet: CGFloat = 28
+    }
+
+    /// The single brand accent: selection states, links, focus.
+    /// Brand blue. Dark keeps the bright #6BA8FF (8.7:1 on black); light uses #1461CC,
+    /// because #6BA8FF on the cream page was 2.3:1 — links like "Show all statistics",
+    /// "Use current" and "See all" failed WCAG AA. ≥4.7:1 on the light page and cards.
+    static let accent = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.42, green: 0.66, blue: 1.0, alpha: 1)
+            : UIColor(red: 0.08, green: 0.38, blue: 0.80, alpha: 1)
+    })
+
+    /// Short, un-bouncy spring for state changes.
+    static let spring = Animation.spring(response: 0.28, dampingFraction: 0.88)
+    static let quick = Animation.easeOut(duration: 0.18)
+
+    /// Large money/number style: rounded SF with tabular digits.
+    static func money(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+        .system(size: size, weight: weight, design: .rounded).monospacedDigit()
+    }
+
+    /// Serif display type (New York) for headlines.
+    static func display(_ style: Font.TextStyle = .largeTitle, weight: Font.Weight = .regular) -> Font {
+        .system(style, design: .serif, weight: weight)
+    }
+}
+
+// MARK: - Haptics
+
+enum Haptics {
+    static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    static func select() { UISelectionFeedbackGenerator().selectionChanged() }
+    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
+}
+
+/// `withAnimation` that degrades to no animation under Reduce Motion.
+@MainActor
+func dsAnimate(_ animation: Animation? = nil, _ body: () -> Void) {
+    if UIAccessibility.isReduceMotionEnabled {
+        body()
+    } else {
+        withAnimation(animation ?? DS.spring, body)
+    }
+}
+
+// MARK: - Button styles
+
+/// Subtle press feedback for any tappable surface.
+struct PressableButtonStyle: ButtonStyle {
+    var scale: CGFloat = 0.97
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(DS.quick, value: configuration.isPressed)
+    }
+}
+
+/// Full-width primary action: ink-on-paper in light mode, paper-on-ink in dark.
+struct PrimaryPillButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let isDark = colorScheme == .dark
+        configuration.label
+            .font(.body.weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .foregroundStyle(isDark ? Color.black : Color.white)
+            .background(
+                Capsule().fill(isDark ? Color.white : Color.black)
+            )
+            .opacity(isEnabled ? 1 : 0.32)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(DS.quick, value: configuration.isPressed)
+            .contentShape(Capsule())
+    }
+}
+
+/// Full-width secondary action on a quiet fill.
+struct SecondaryPillButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        let isDark = colorScheme == .dark
+        configuration.label
+            .font(.body.weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .foregroundStyle(isDark ? Color.white : Color.black)
+            .background(
+                Capsule().fill(isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06))
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(DS.quick, value: configuration.isPressed)
+            .contentShape(Capsule())
+    }
+}
+
+/// Text-only action ("Not now", "Skip for now"). Keeps a 44pt target.
+struct QuietTextButtonStyle: ButtonStyle {
+    /// Onboarding paints its own dark background; `.secondary` follows the app's
+    /// light/dark setting, so in Light mode it went dark-grey-on-navy and read as disabled.
+    var onDark = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.medium))
+            .foregroundStyle(onDark ? AnyShapeStyle(Color.white.opacity(0.72)) : AnyShapeStyle(.secondary))
+            .frame(minHeight: 44)
+            .padding(.horizontal, DS.Space.m)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.5 : 1)
+    }
+}
+
+// MARK: - Ticker logo
+
+/// Company / coin logo on a white disc, with a monogram fallback.
+/// Logos come from FMP's public image CDN (no key needed); it covers US
+/// tickers, ASX (`BHP.AX`), ETFs and crypto pairs (`BTCUSD`).
+struct TickerLogo: View {
+    let symbol: String
+    var kind: AssetKind = .stock
+    var exchange: String = ""
+    var size: CGFloat = 40
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var logoSymbol: String {
+        let upper = symbol.uppercased()
+        switch kind {
+        case .crypto:
+            return upper.hasSuffix("USD") ? upper : upper + "USD"
+        case .stock:
+            if exchange == "ASX", !upper.hasSuffix(".AX") { return upper + ".AX" }
+            return upper
+        }
+    }
+
+    private var url: URL? {
+        URL(string: "https://financialmodelingprep.com/image-stock/\(logoSymbol).png")
+    }
+
+    /// Set when the logo arrives from the network; a logo already in memory is drawn
+    /// straight away (AsyncImage re-fetched on every appearance and flashed the monogram).
+    @State private var loaded: UIImage?
+
+    var body: some View {
+        Group {
+            if let uiImage = loaded ?? url.flatMap({ LogoImageCache.shared.cached($0) }) {
+                let image = Image(uiImage: uiImage)
+                ZStack {
+                    // White marks (Visa, XRP…) get a dark disc; white is toned down in dark.
+                    Circle().fill(LogoDisc.fill(for: image, key: logoSymbol, dark: colorScheme == .dark))
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .padding(size * 0.18)
+                }
+            } else {
+                monogram
+            }
+        }
+        .task(id: url) {
+            guard let url, LogoImageCache.shared.cached(url) == nil else { return }
+            let image = await LogoImageCache.shared.load(url)
+            withAnimation(DS.quick) { loaded = image }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .accessibilityHidden(true)
+    }
+
+    private var monogram: some View {
+        let letters = String(symbol.replacingOccurrences(of: ".AX", with: "").prefix(symbol.count > 3 ? 2 : 1))
+        return ZStack {
+            Circle().fill(Self.tint(for: symbol).gradient)
+            Text(letters)
+                .font(.system(size: size * 0.38, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.6)
+        }
+    }
+
+    /// Stable colour per symbol so a ticker always looks the same.
+    static func tint(for symbol: String) -> Color {
+        let palette: [Color] = [
+            Color(red: 0.35, green: 0.45, blue: 0.95), Color(red: 0.55, green: 0.36, blue: 0.90),
+            Color(red: 0.13, green: 0.62, blue: 0.60), Color(red: 0.90, green: 0.45, blue: 0.25),
+            Color(red: 0.22, green: 0.55, blue: 0.85), Color(red: 0.75, green: 0.30, blue: 0.50)
+        ]
+        let hash = symbol.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+        return palette[hash % palette.count]
+    }
+}
+
+// MARK: - Change pill
+
+/// "▲ 1.58%" style pill. Arrow + sign keep it readable without colour.
+struct ChangePill: View {
+    let percent: Double
+    var amount: String? = nil
+    var compact = false
+    @Environment(\.theme) private var theme
+
+    private var isFlat: Bool { abs(percent) < 0.005 }
+    private var isUp: Bool { percent >= 0 }
+    private var tint: Color { isFlat ? theme.secondaryText : (isUp ? theme.positiveColor : theme.negativeColor) }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if !isFlat {
+                Image(systemName: isUp ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
+                    .font(.system(size: compact ? 7 : 8, weight: .bold))
+            }
+            if let amount {
+                Text(amount)
+            }
+            Text(String(format: "%.2f%%", abs(percent)))
+        }
+        // A number must never break across lines ("3.50" / "%" at large text sizes).
+        .lineLimit(1)
+        .fixedSize()
+        .font((compact ? Font.caption : Font.subheadline).weight(.semibold).monospacedDigit())
+        .foregroundStyle(tint)
+        .padding(.horizontal, compact ? 7 : 10)
+        .padding(.vertical, compact ? 3 : 5)
+        .background(Capsule().fill(tint.opacity(0.14)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isFlat ? "Unchanged" : "\(isUp ? "Up" : "Down") \(String(format: "%.2f", abs(percent))) percent")
+    }
+}
+
+// MARK: - Quote row layout
+
+/// Logo + name on the left, price + change on the right. At accessibility text sizes
+/// the numbers move under the name: side by side they broke mid-word and mid-number
+/// ("BH/P", "A$60./03", "3.50/%"). After Apple Stocks, which stacks the same way.
+struct AdaptiveQuoteRow<Identity: View, Numbers: View>: View {
+    var spacing: CGFloat = DS.Space.m
+    @ViewBuilder var identity: () -> Identity
+    /// `stacked` = laid out under the name, so lay the numbers out in a row.
+    @ViewBuilder var numbers: (_ stacked: Bool) -> Numbers
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                identity()
+                numbers(true)
+            }
+        } else {
+            HStack(spacing: spacing) {
+                identity()
+                Spacer(minLength: DS.Space.xs)
+                numbers(false)
+            }
+        }
+    }
+}
+
+/// Price over change (side by side when stacked under the name).
+struct QuoteNumbers: View {
+    let price: String
+    let percent: Double
+    let stacked: Bool
+    var priceFont: Font = .body.weight(.semibold).monospacedDigit()
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let priceText = Text(price)
+            .font(priceFont)
+            .foregroundStyle(theme.primaryText)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .contentTransition(.numericText())
+        if stacked {
+            HStack(spacing: DS.Space.s) {
+                priceText
+                ChangePill(percent: percent, compact: true)
+                Spacer(minLength: 0)
+            }
+        } else {
+            VStack(alignment: .trailing, spacing: 4) {
+                priceText
+                ChangePill(percent: percent, compact: true)
+            }
+        }
+    }
+}
+
+// MARK: - Section header
+
+struct SectionHeader: View {
+    let title: LocalizedStringKey
+    var actionTitle: LocalizedStringKey? = nil
+    var action: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            if let actionTitle, let action {
+                Button(actionTitle) {
+                    Haptics.tap()
+                    action()
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(DS.accent)
+                .frame(minHeight: 44)
+            }
+        }
+    }
+}
+
+// MARK: - Empty state
+
+/// Branded, actionable empty state. Never a blank screen.
+struct EmptyStateCard: View {
+    let systemImage: String
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
+    var primaryTitle: LocalizedStringKey? = nil
+    var primaryAction: (() -> Void)? = nil
+    var secondaryTitle: LocalizedStringKey? = nil
+    var secondaryAction: (() -> Void)? = nil
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(spacing: DS.Space.l) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 52, height: 52)
+                .background(Circle().fill(DS.accent.opacity(0.14)))
+                .accessibilityHidden(true)
+
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let primaryTitle, let primaryAction {
+                Button(primaryTitle) {
+                    Haptics.tap()
+                    primaryAction()
+                }
+                .buttonStyle(PrimaryPillButtonStyle())
+            }
+            if let secondaryTitle, let secondaryAction {
+                Button(secondaryTitle) {
+                    Haptics.tap()
+                    secondaryAction()
+                }
+                .buttonStyle(QuietTextButtonStyle())
+            }
+        }
+        .padding(DS.Space.xl)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .fill(theme.subtleFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Card surface
+
+extension View {
+    /// The standard card surface used across the redesigned screens.
+    func dsCard(padding: CGFloat = DS.Space.l) -> some View {
+        modifier(DSCardModifier(padding: padding))
+    }
+}
+
+private struct DSCardModifier: ViewModifier {
+    let padding: CGFloat
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                    .fill(theme.subtleFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                    .strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5)
+            )
+    }
+}

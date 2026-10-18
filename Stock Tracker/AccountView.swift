@@ -15,6 +15,7 @@ struct AccountView: View {
     @EnvironmentObject var mfaManager: MFAManager
     @EnvironmentObject var marketData: MarketData
     @EnvironmentObject var alertManager: PriceAlertManager
+    @ObservedObject private var accountService = AccountService.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.theme) var theme
@@ -31,27 +32,24 @@ struct AccountView: View {
     @State private var showMFASheet = false
     @State private var showDisableMFAConfirm = false
 
-    // Palette (matches SettingsSheetView)
+    // Palette (matches SettingsSheetView exactly)
     private var pageBg: Color {
-        colorScheme == .dark ? Color(red: 0.06, green: 0.06, blue: 0.07)
+        colorScheme == .dark ? Color(red: 0.04, green: 0.04, blue: 0.05)
                              : Color(red: 0.980, green: 0.973, blue: 0.961)
     }
     private var cardBg: Color {
-        colorScheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12)
+        colorScheme == .dark ? Color(red: 0.10, green: 0.10, blue: 0.11)
                              : Color(red: 0.953, green: 0.937, blue: 0.910)
     }
-    private var iconTint: Color {
-        colorScheme == .dark ? Color.white.opacity(0.35) : .secondary
-    }
-    private var chevronTint: Color {
-        colorScheme == .dark ? Color.white.opacity(0.18) : Color.secondary.opacity(0.4)
-    }
-    private var valueTint: Color {
-        colorScheme == .dark ? Color.white.opacity(0.28) : .secondary
-    }
+    // System label colours: white at 30–40% on the dark card measured 2.7–3.6:1,
+    // under WCAG AA (4.5:1) for the row values and section headers that use them.
+    private var iconTint: Color { Color(UIColor.secondaryLabel) }
+    private var chevronTint: Color { Color(UIColor.tertiaryLabel) }
+    private var valueTint: Color { Color(UIColor.secondaryLabel) }
     private var sepColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.06) : Color(UIColor.separator).opacity(0.3)
     }
+    private var sectionTint: Color { Color(UIColor.secondaryLabel) }
     private var inputBg: Color {
         colorScheme == .dark ? Color(UIColor.secondarySystemBackground) : Color(red: 0.953, green: 0.937, blue: 0.910)
     }
@@ -67,7 +65,7 @@ struct AccountView: View {
                     signedOutContent
                 }
             }
-            .navigationTitle(supabaseAuthManager.isSignedIn ? "Account" : "Sign In")
+            .navigationTitle(supabaseAuthManager.isSignedIn || accountService.isUnavailable ? "Account" : "Sign In")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -105,63 +103,99 @@ struct AccountView: View {
                     }
                     .padding(.top, 20)
 
-                    Text("Sync Your Data")
+                    Text("Sync your data")
                         .font(.title2.bold())
 
-                    Text("Sign in to sync your watchlist, portfolio, alerts, and history across all your devices.")
+                    Text("Sign in to back up your lists and use them on your other devices. Watchlists sync on every plan; holdings, alerts and history sync on Pro and Black.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
                 }
 
-                // Error banner
-                if case .error(let msg) = supabaseAuthManager.authState {
-                    HStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                        Text(msg)
-                            .font(.footnote)
-                    }
-                    .foregroundColor(.white)
-                    .padding(12)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.red.opacity(0.85))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal, 24)
-                }
-
-                // Features card
-                syncFeaturesCard
-
-                // Auth method picker
-                Picker("Sign-in method", selection: $selectedTab) {
-                    Text("Apple").tag(0)
-                    Text("Email").tag(1)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 24)
-
-                if selectedTab == 0 {
-                    appleSignInSection
+                if accountService.isUnavailable {
+                    // The news first; what an account would give underneath.
+                    unavailableCard
+                    syncFeaturesCard
+                } else if accountService.status == .checking || accountService.status == .unknown {
+                    syncFeaturesCard
+                    ProgressView("Checking your connection…")
+                        .font(.footnote)
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .accessibilityIdentifier("account.checking")
                 } else {
-                    emailSignInSection
+                    syncFeaturesCard
+
+                    // Error banner (wrong password, cancelled, …) in plain words.
+                    if case .error(let msg) = supabaseAuthManager.authState {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(theme.warningColor)
+                            Text(friendlyAuthError(msg))
+                                .font(.footnote)
+                                .foregroundStyle(theme.primaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.subtleFill))
+                        .padding(.horizontal, 24)
+                        .accessibilityIdentifier("account.error")
+                    }
+
+                    // Auth method picker
+                    Picker("Sign-in method", selection: $selectedTab) {
+                        Text("Apple").tag(0)
+                        Text("Email").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 24)
+
+                    if selectedTab == 0 {
+                        appleSignInSection
+                    } else {
+                        emailSignInSection
+                    }
                 }
             }
             .padding(.bottom, 40)
         }
+        .task { await accountService.check() }
+    }
+
+    // MARK: - Account service down
+
+    /// Shown instead of the sign-in forms when the account service can't be
+    /// reached — after the "network error" states in Glow and Opera on Mobbin.
+    private var unavailableCard: some View {
+        let offline = accountService.status == .offline
+        return VStack(spacing: 12) {
+            EmptyStateCard(
+                systemImage: offline ? "wifi.slash" : "icloud.slash",
+                title: offline ? "You're offline" : "Accounts are unavailable right now",
+                message: offline
+                    ? "Connect to the internet to sign in. Everything you've set up stays on this iPhone."
+                    : "We can't reach Stock Tracker's account service, so you can't sign in or create an account at the moment. Your watchlist, holdings and alerts stay on this iPhone and keep working.",
+                primaryTitle: "Try again",
+                primaryAction: { Task { await accountService.check(force: true) } },
+                secondaryTitle: "Continue without an account",
+                secondaryAction: { dismiss() }
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("account.unavailable")
+        }
+        .padding(.horizontal, 24)
     }
 
     // MARK: - Features Card
 
     private var syncFeaturesCard: some View {
         VStack(spacing: 0) {
-            featureRow(icon: "list.bullet", text: "Sync watchlist across devices")
+            featureRow(icon: "list.bullet", text: "Watchlists — every plan")
             divider()
-            featureRow(icon: "chart.pie", text: "Sync portfolio and holdings")
+            featureRow(icon: "chart.pie", text: "Holdings and history — Pro and Black")
             divider()
-            featureRow(icon: "bell", text: "Sync price alerts")
-            divider()
-            featureRow(icon: "clock.arrow.circlepath", text: "Sync portfolio history")
+            featureRow(icon: "bell", text: "Price alerts — Pro and Black")
             divider()
             featureRow(icon: "lock.shield", text: "Two-factor authentication")
         }
@@ -174,7 +208,7 @@ struct AccountView: View {
         HStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.body)
-                .foregroundColor(.green)
+                .foregroundColor(DS.accent)
             Image(systemName: icon)
                 .font(.body)
                 .foregroundColor(iconTint)
@@ -192,16 +226,20 @@ struct AccountView: View {
 
     private var appleSignInSection: some View {
         VStack(spacing: 14) {
+            // The button presents Apple's sheet itself; we only fill in the request and
+            // take the result. (It used to also start a second sign-in from a tap
+            // gesture, so one tap ran two Apple flows.)
             SignInWithAppleButton(.signIn) { request in
-                request.requestedScopes = [.fullName, .email]
-            } onCompletion: { _ in }
+                supabaseAuthManager.prepareAppleRequest(request)
+            } onCompletion: { result in
+                Task { await supabaseAuthManager.completeAppleSignIn(result) }
+            }
+            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
             .frame(height: 50)
-            .cornerRadius(12)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .padding(.horizontal, 24)
             .disabled(supabaseAuthManager.authState == .signingIn)
-            .onTapGesture {
-                Task { await supabaseAuthManager.signInWithApple() }
-            }
+            .accessibilityIdentifier("account.apple")
 
             Text("Your Apple ID email is kept private.")
                 .font(.caption)
@@ -293,47 +331,57 @@ struct AccountView: View {
 
     private var signedInContent: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 24) {
+            VStack(spacing: 28) {
                 // Profile header
                 profileCard
                     .padding(.top, 8)
 
                 // Cloud sync
-                section("Cloud Sync") {
-                    syncStatusRow
-                    divider()
-                    dataSyncRow
-                    divider()
-                    syncNowRow
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionLabel("Cloud Sync")
+                    VStack(spacing: 0) {
+                        syncStatusRow
+                        divider()
+                        dataSyncRow
+                        divider()
+                        syncNowRow
+                    }
+                    .background(cardBg)
+                    .cornerRadius(14)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(sepColor, lineWidth: 1))
                 }
+                .padding(.horizontal, 20)
 
                 // Security
-                section("Security") {
-                    mfaRow
-                    divider()
-                    aalRow
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionLabel("Security")
+                    VStack(spacing: 0) {
+                        mfaRow
+                        divider()
+                        aalRow
+                    }
+                    .background(cardBg)
+                    .cornerRadius(14)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(sepColor, lineWidth: 1))
                 }
+                .padding(.horizontal, 20)
 
                 // Account actions
-                section("Account") {
-                    Button {
-                        showSignOutConfirm = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                                .font(.body)
-                                .foregroundColor(.red)
-                                .frame(width: 22)
-                            Text("Sign Out")
-                                .font(.body)
-                                .foregroundColor(.red)
-                            Spacer()
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionLabel("Account")
+                    VStack(spacing: 0) {
+                        Button {
+                            showSignOutConfirm = true
+                        } label: {
+                            flatRow("rectangle.portrait.and.arrow.right", "Sign Out", tintOverride: .red)
                         }
-                        .frame(minHeight: 46)
-                        .padding(.horizontal, 16)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    .background(cardBg)
+                    .cornerRadius(14)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(sepColor, lineWidth: 1))
                 }
+                .padding(.horizontal, 20)
             }
             .padding(.bottom, 40)
         }
@@ -346,32 +394,25 @@ struct AccountView: View {
         .onAppear {
             Task { await mfaManager.checkMFAStatus() }
         }
+        .task { await accountService.check() }
     }
 
     // MARK: - Profile Card
 
     private var profileCard: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(
-                        LinearGradient(colors: [.blue.opacity(0.3), .cyan.opacity(0.15)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .frame(width: 56, height: 56)
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing),
-                        lineWidth: 2
-                    )
-                    .frame(width: 56, height: 56)
+                    .fill(Color.blue.opacity(0.15))
+                    .frame(width: 64, height: 64)
                 Text(initials)
-                    .font(.title3.bold())
+                    .font(.title2.bold())
                     .foregroundColor(.blue)
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(supabaseAuthManager.userEmail ?? "Signed In")
-                    .font(.headline)
+                    .font(.body.weight(.semibold))
                     .foregroundColor(.primary)
                     .lineLimit(1)
 
@@ -386,21 +427,27 @@ struct AccountView: View {
             }
 
             Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundColor(chevronTint)
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .background(cardBg)
-        .cornerRadius(12)
-        .padding(.horizontal, 24)
+        .cornerRadius(14)
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(sepColor, lineWidth: 1))
+        .padding(.horizontal, 20)
     }
 
     // MARK: - Sync Section Rows
 
     private var syncStatusRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Image(systemName: syncIcon)
                 .font(.body)
                 .foregroundColor(syncIconColor)
-                .frame(width: 22)
+                .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Sync Status")
                     .font(.body)
@@ -415,26 +462,26 @@ struct AccountView: View {
                     .controlSize(.small)
             }
         }
-        .frame(minHeight: 46)
-        .padding(.horizontal, 16)
+        .frame(minHeight: 52)
+        .padding(.horizontal, 4)
     }
 
     private var dataSyncRow: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "doc.on.doc")
+        HStack(spacing: 14) {
+            Image(systemName: "externaldrive.fill.badge.icloud")
                 .font(.body)
                 .foregroundColor(iconTint)
-                .frame(width: 22)
-            Text("Data Synced")
+                .frame(width: 24)
+            Text("Data Sync")
                 .font(.body)
                 .foregroundColor(.primary)
             Spacer()
-            Text("All data")
+            Text("All Data")
                 .font(.subheadline)
                 .foregroundColor(valueTint)
         }
-        .frame(minHeight: 46)
-        .padding(.horizontal, 16)
+        .frame(minHeight: 52)
+        .padding(.horizontal, 4)
     }
 
     private var syncNowRow: some View {
@@ -446,18 +493,18 @@ struct AccountView: View {
                 )
             }
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.triangle.2.circlepath")
+            HStack(spacing: 14) {
+                Image(systemName: "arrow.clockwise")
                     .font(.body)
                     .foregroundColor(.blue)
-                    .frame(width: 22)
+                    .frame(width: 24)
                 Text("Sync Now")
                     .font(.body)
                     .foregroundColor(.blue)
                 Spacer()
             }
-            .frame(minHeight: 46)
-            .padding(.horizontal, 16)
+            .frame(minHeight: 52)
+            .padding(.horizontal, 4)
         }
         .buttonStyle(.plain)
         .disabled(syncManager.syncState == .syncing)
@@ -467,19 +514,14 @@ struct AccountView: View {
 
     private var mfaRow: some View {
         Button { showMFASheet = true } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 Image(systemName: mfaManager.isMFAEnabled ? "lock.shield.fill" : "lock.shield")
                     .font(.body)
                     .foregroundColor(mfaManager.isMFAEnabled ? .green : iconTint)
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Two-Factor Authentication")
-                        .font(.body)
-                        .foregroundColor(.primary)
-                    Text(mfaManager.isMFAEnabled ? "Enabled" : "Not enabled")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                    .frame(width: 24)
+                Text("Two-Factor Auth")
+                    .font(.body)
+                    .foregroundColor(.primary)
                 Spacer()
                 if mfaManager.isMFAEnabled {
                     Text("On")
@@ -489,23 +531,27 @@ struct AccountView: View {
                         .padding(.vertical, 3)
                         .background(Color.green.opacity(0.15))
                         .cornerRadius(6)
+                } else {
+                    Text("Off")
+                        .font(.subheadline)
+                        .foregroundColor(valueTint)
                 }
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundColor(chevronTint)
             }
-            .frame(minHeight: 46)
-            .padding(.horizontal, 16)
+            .frame(minHeight: 52)
+            .padding(.horizontal, 4)
         }
         .buttonStyle(.plain)
     }
 
     private var aalRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Image(systemName: "shield.checkered")
                 .font(.body)
                 .foregroundColor(iconTint)
-                .frame(width: 22)
+                .frame(width: 24)
             Text("Session Security")
                 .font(.body)
                 .foregroundColor(.primary)
@@ -514,8 +560,8 @@ struct AccountView: View {
                 .font(.subheadline)
                 .foregroundColor(valueTint)
         }
-        .frame(minHeight: 46)
-        .padding(.horizontal, 16)
+        .frame(minHeight: 52)
+        .padding(.horizontal, 4)
     }
 
     // MARK: - MFA Sheet
@@ -622,28 +668,47 @@ struct AccountView: View {
             .environmentObject(mfaManager)
     }
 
-    // MARK: - Section / Divider (matches SettingsSheetView)
+    // MARK: - Settings-Style Helpers
 
-    private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.medium))
-                .foregroundColor(chevronTint)
-                .kerning(0.5)
-                .padding(.leading, 4)
-
-            VStack(spacing: 0) { content() }
-                .background(cardBg)
-                .cornerRadius(12)
+    private func sectionLabel(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(sectionTint)
+            Spacer()
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 4)
+        .padding(.bottom, 4)
+    }
+
+    private func flatRow(_ sf: String, _ title: String, trailing: String? = nil, tintOverride: Color? = nil) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: sf)
+                .font(.body)
+                .foregroundColor(tintOverride ?? iconTint)
+                .frame(width: 24)
+            Text(title)
+                .font(.body)
+                .foregroundColor(tintOverride ?? .primary)
+            Spacer()
+            if let t = trailing {
+                Text(t)
+                    .font(.subheadline)
+                    .foregroundColor(valueTint)
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundColor(chevronTint)
+        }
+        .frame(minHeight: 52)
+        .padding(.horizontal, 4)
     }
 
     private func divider() -> some View {
         Rectangle()
             .fill(sepColor)
             .frame(height: 0.5)
-            .padding(.leading, 50)
+            .padding(.leading, 52)
     }
 
     // MARK: - Helpers
@@ -676,7 +741,14 @@ struct AccountView: View {
         case .idle: return "Connected"
         case .syncing: return "Syncing..."
         case .lastSyncedAt(let d): return "Synced \(d.formatted(.relative(presentation: .named)))"
-        case .error(let m): return m
+        // Never the raw system error ("A server with the specified hostname could not be
+        // found."); your data is safe on this iPhone either way.
+        case .error:
+            switch accountService.status {
+            case .offline: return "Sync paused — you're offline"
+            case .unavailable: return "Sync paused — accounts are unavailable right now"
+            default: return "Couldn't sync — your data is safe on this iPhone"
+            }
         }
     }
 

@@ -38,10 +38,6 @@ enum Constants {
         static let retryDelay: TimeInterval = 1.0
         /// Maximum number of automatic retries per request.
         static let maxRetries = 3
-        /// Search debounce delay (milliseconds).
-        static let searchDebouncems: Int = 350
-        /// Number of search results to eagerly detail-fetch.
-        static let searchDetailPrefetch = 5
     }
 
     // MARK: - Rate Limiting (requests per minute)
@@ -111,6 +107,19 @@ enum Constants {
 
     enum Notifications {
         static let blackTierRefreshIntervalChanged = "blackTierRefreshIntervalChanged"
+    }
+
+    // MARK: - Referral
+
+    enum Referral {
+        /// Days before a referral expires.
+        static let codeExpiryDays = 30
+        /// Maximum referrals one user can generate (anti-abuse).
+        static let maxReferralsPerUser = 50
+        /// Base URL for shareable referral links.
+        static let referralBaseURL = "https://join.yourdomain.com/r/"   // TODO: Replace with real domain
+        /// UserDefaults key for a pending referral code captured before signup.
+        static let pendingReferralCodeKey = "pending_referral_code"
     }
 
     // MARK: - Sync

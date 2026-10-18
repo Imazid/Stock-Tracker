@@ -328,3 +328,50 @@ struct AllocationSlice: Codable, Identifiable {
     var colorG: Double
     var colorB: Double
 }
+
+
+// MARK: - Money (matches the app's display currency)
+
+/// Every value the app writes is USD; the app also writes its display currency
+/// and rate so widgets show the same numbers as the app (A$ for AU users).
+enum WidgetMoney {
+    private static var defaults: UserDefaults? { UserDefaults(suiteName: widgetAppGroup) }
+
+    static var currency: String { defaults?.string(forKey: "displayCurrency") ?? "USD" }
+
+    static var rate: Double {
+        let r = defaults?.double(forKey: "displayRate") ?? 1
+        return r > 0 ? r : 1
+    }
+
+    /// Formats a USD amount in the display currency.
+    static func format(_ usd: Double, digits: Int = 2, signed: Bool = false) -> String {
+        let value = usd * rate
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = currency
+        // Same explicit symbols as the app (A$ / US$ / C$).
+        switch currency {
+        case "AUD": f.currencySymbol = "A$"
+        case "USD": f.currencySymbol = "US$"
+        case "CAD": f.currencySymbol = "C$"
+        default: break
+        }
+        f.minimumFractionDigits = digits
+        f.maximumFractionDigits = digits
+        let text = f.string(from: NSNumber(value: abs(value))) ?? String(format: "%.\(digits)f", abs(value))
+        if value < 0 { return "−" + text }
+        return signed ? "+" + text : text
+    }
+
+    /// Compact form for tight spaces: "A$5.2K", "US$1.3M".
+    static func compact(_ usd: Double) -> String {
+        let value = usd * rate
+        let symbol = format(0, digits: 0).replacingOccurrences(of: "0", with: "").trimmingCharacters(in: .whitespaces)
+        switch abs(value) {
+        case 1_000_000...: return String(format: "%@%.1fM", symbol, value / 1_000_000)
+        case 1_000...:     return String(format: "%@%.1fK", symbol, value / 1_000)
+        default:           return String(format: "%@%.0f", symbol, value)
+        }
+    }
+}

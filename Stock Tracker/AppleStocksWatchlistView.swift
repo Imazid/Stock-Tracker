@@ -2,493 +2,635 @@
 //  AppleStocksWatchlistView.swift
 //  Stock Tracker
 //
+//  The Watchlist tab, after Apple Stocks / Yahoo Finance / Stake on Mobbin:
+//  one card of rows (logo, ticker, name, today's sparkline against the previous
+//  close, price, change), a title menu for switching and managing lists, sort,
+//  native edit (multi-select delete + drag to reorder), swipe to remove or set
+//  an alert, and honest empty / loading / "no live price" states.
+//
 
 import SwiftUI
-import Charts
+
+// MARK: - Sort & filter
+
+enum WatchlistSort: String, CaseIterable, Identifiable {
+    case manual, biggestMove, gainers, name
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .manual:      return "My order"
+        case .biggestMove: return "Biggest move today"
+        case .gainers:     return "Today's change"
+        case .name:        return "Name"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .manual:      return "hand.draw"
+        case .biggestMove: return "arrow.up.arrow.down"
+        case .gainers:     return "chart.line.uptrend.xyaxis"
+        case .name:        return "textformat"
+        }
+    }
+}
+
+enum WatchlistFilter: String, CaseIterable, Identifiable {
+    case all, stocks, crypto
+    var id: String { rawValue }
+
+    func includes(_ asset: Asset) -> Bool {
+        switch self {
+        case .all:    return true
+        case .stocks: return asset.kind == .stock
+        case .crypto: return asset.kind == .crypto
+        }
+    }
+}
+
+// MARK: - Watchlist
 
 struct AppleStocksWatchlistView: View {
     @EnvironmentObject var marketData: MarketData
     @EnvironmentObject var subscriptionManager: SubscriptionManager
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-
-    @State private var filter: AssetKind = .stock
-    @State private var selectedAsset: Asset?
-    @State private var showSearchSheet = false
-    @State private var showAlerts = false
-    @State private var assetToAddToPortfolio: Asset?
-    @State private var showPortfolioPaywall = false
-    @State private var showCreateWatchlist = false
-    @State private var showWatchlistPaywall = false
-    @State private var showWatchlistDropdown = false
     @EnvironmentObject var insightService: AIInsightService
+    @EnvironmentObject var alertManager: PriceAlertManager
+    @Environment(\.theme) private var theme
+
+    @AppStorage("watchlist_sort") private var sortRaw: String = WatchlistSort.manual.rawValue
+    @State private var filter: WatchlistFilter = .all
+    @State private var editMode: EditMode = .inactive
+    @State private var selection = Set<UUID>()
+
+    @State private var addScope: AddScope?
+    @State private var showAlerts = false
+    @State private var paywallFeature: PaywallFeature?
+    @State private var detailAsset: Asset?
+    @State private var alertAsset: Asset?
+    @State private var portfolioAsset: Asset?
+
+    @State private var naming: Naming?
+    @State private var nameDraft = ""
+    @State private var confirmDeleteList = false
+
     @State private var spotlightText: String?
     @State private var spotlightLoading = false
-    @State private var isEditing = false
-    @State private var selectedForDeletion: Set<UUID> = []
 
-    private var activeWatchlistName: String {
-        let idx = marketData.activeWatchlistIndex
-        guard marketData.watchlistGroups.indices.contains(idx) else { return "Watchlist" }
-        return marketData.watchlistGroups[idx].name
+    private struct AddScope: Identifiable { let scope: SymbolSearchScope; var id: String { scope.rawValue } }
+    private struct PaywallFeature: Identifiable { let name: String; var id: String { name } }
+    private enum Naming { case create, rename }
+
+    private var sort: WatchlistSort { WatchlistSort(rawValue: sortRaw) ?? .manual }
+    private var isEditing: Bool { editMode.isEditing }
+
+    private var listName: String {
+        let i = marketData.activeWatchlistIndex
+        return marketData.watchlistGroups.indices.contains(i) ? marketData.watchlistGroups[i].name : "Watchlist"
     }
 
-    private var topMovers: [Asset] {
-        marketData.watchlist
-            .sorted { abs($0.changePercent) > abs($1.changePercent) }
-            .prefix(5)
-            .map { $0 }
+    private var hasBothKinds: Bool {
+        marketData.watchlist.contains { $0.kind == .stock } && marketData.watchlist.contains { $0.kind == .crypto }
     }
 
-    private var filteredAssets: [Asset] {
-        marketData.watchlist.filter { $0.kind == filter }
+    private var visibleAssets: [Asset] {
+        let filtered = marketData.watchlist.filter(filter.includes)
+        guard !isEditing else { return filtered }
+        switch sort {
+        case .manual:      return filtered
+        case .biggestMove: return filtered.sorted { abs($0.changePercent) > abs($1.changePercent) }
+        case .gainers:     return filtered.sorted { $0.changePercent > $1.changePercent }
+        case .name:        return filtered.sorted { $0.symbol.localizedStandardCompare($1.symbol) == .orderedAscending }
+        }
     }
+
+    private var followedMarkets: [StockExchangeMarket] {
+        let stocks = marketData.watchlist.filter { $0.kind == .stock }
+        var result: [StockExchangeMarket] = []
+        if stocks.contains(where: { QuoteService.isASX($0) }) { result.append(.asx) }
+        if stocks.contains(where: { !QuoteService.isASX($0) }) { result.append(.us) }
+        return result
+    }
+
+    private var overLimitCount: Int {
+        guard let limit = FeatureGate.maxWatchlistAssets(for: subscriptionManager.currentTier) else { return 0 }
+        return max(0, marketData.watchlist.count - limit)
+    }
+
+    private var activeAlertCount: Int { alertManager.alerts.filter(\.isActive).count }
+
+    // MARK: Body
 
     var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
         NavigationStack {
-            ZStack(alignment: .top) {
-                theme.background.ignoresSafeArea()
+            List(selection: $selection) {
+                headerSection
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        headerView
-                            .padding(.horizontal)
-
-                        WatchlistStatsCard()
-                            .padding(.horizontal)
-
-                        // AI Watchlist Spotlight (Pro/Black only)
-                        if subscriptionManager.currentTier != .free {
-                            watchlistSpotlightCard
-                                .padding(.horizontal)
-                        }
-
-                        if !topMovers.isEmpty {
-                            TopMoversSection(movers: Array(topMovers))
-                                .padding(.horizontal)
-                        }
-
-                        Picker("Asset Type", selection: $filter) {
-                            Text("Stocks").tag(AssetKind.stock)
-                            Text("Crypto").tag(AssetKind.crypto)
-                        }
-                        .pickerStyle(.segmented)
-                        .padding(.horizontal)
-
-                        // Over-limit banner
-                        if marketData.isOverWatchlistLimit {
-                            overLimitBanner(theme: theme)
-                                .padding(.horizontal)
-                        }
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Your \(filter == .stock ? "Stocks" : "Crypto")")
-                                    .font(.title2.bold())
-                                    .foregroundColor(theme.primaryText)
-                                Spacer()
-
-                                if isEditing && !selectedForDeletion.isEmpty {
-                                    Button {
-                                        motionSafeWithAnimation {
-                                            marketData.removeMultipleFromWatchlist(selectedForDeletion)
-                                        }
-                                        selectedForDeletion.removeAll()
-                                        UINotificationFeedbackGenerator().notificationOccurred(.success)
-                                    } label: {
-                                        Text("Delete (\(selectedForDeletion.count))")
-                                            .font(.caption.weight(.bold))
-                                            .foregroundColor(.white)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(Color.red)
-                                            .clipShape(Capsule())
-                                    }
-                                }
-
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        isEditing.toggle()
-                                        if !isEditing { selectedForDeletion.removeAll() }
-                                    }
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                } label: {
-                                    Text(isEditing ? "Done" : "Edit")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                            .padding(.horizontal)
-
-                            if filteredAssets.isEmpty {
-                                EmptyWatchlistCard(kind: filter)
-                            } else if isEditing {
-                                // Edit mode: checkboxes + drag reorder
-                                List {
-                                    ForEach(marketData.watchlist.filter { $0.kind == filter }) { asset in
-                                        HStack(spacing: 12) {
-                                            Button {
-                                                if selectedForDeletion.contains(asset.id) {
-                                                    selectedForDeletion.remove(asset.id)
-                                                } else {
-                                                    selectedForDeletion.insert(asset.id)
-                                                }
-                                            } label: {
-                                                Image(systemName: selectedForDeletion.contains(asset.id)
-                                                    ? "checkmark.circle.fill" : "circle")
-                                                    .font(.title3)
-                                                    .foregroundColor(selectedForDeletion.contains(asset.id) ? .red : .secondary)
-                                            }
-                                            .buttonStyle(.plain)
-
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(asset.symbol)
-                                                    .font(.subheadline.weight(.semibold))
-                                                Text(asset.name)
-                                                    .font(.caption)
-                                                    .foregroundColor(.secondary)
-                                                    .lineLimit(1)
-                                            }
-
-                                            Spacer()
-
-                                            Image(systemName: "line.3.horizontal")
-                                                .foregroundColor(.secondary)
-                                                .font(.subheadline)
-                                        }
-                                        .padding(.vertical, 4)
-                                    }
-                                    .onMove { source, destination in
-                                        // Map filtered indices back to the full watchlist
-                                        let filtered = marketData.watchlist.enumerated().filter { $0.element.kind == filter }
-                                        let sourceIndices = IndexSet(source.compactMap { filtered.indices.contains($0) ? filtered[$0].offset : nil })
-                                        let destIndex: Int = {
-                                            if destination < filtered.count {
-                                                return filtered[destination].offset
-                                            }
-                                            return (filtered.last?.offset ?? marketData.watchlist.count - 1) + 1
-                                        }()
-                                        marketData.moveWatchlistItem(from: sourceIndices, to: destIndex)
-                                    }
-                                }
-                                .listStyle(.plain)
-                                .frame(minHeight: CGFloat(filteredAssets.count) * 56)
-                                .environment(\.editMode, .constant(.active))
-                            } else {
-                                LazyVStack(spacing: 12) {
-                                    ForEach(filteredAssets) { asset in
-                                        EnhancedWatchlistRow(asset: asset)
-                                            .id(asset.id)
-                                            .accessibilityHint("Swipe left to add to portfolio, swipe right to remove")
-                                            .onTapGesture {
-                                                selectedAsset = asset
-                                            }
-                                            // LEFT SWIPE → Add to Portfolio (Pro only)
-                                            .swipeActions(edge: .leading) {
-                                                Button {
-                                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                                    if subscriptionManager.currentTier.hasPortfolioAccess {
-                                                        assetToAddToPortfolio = asset
-                                                    } else {
-                                                        showPortfolioPaywall = true
-                                                    }
-                                                } label: {
-                                                    Label("Portfolio", systemImage: "briefcase.fill")
-                                                }
-                                                .tint(.blue)
-                                            }
-                                            // RIGHT SWIPE → Remove
-                                            .swipeActions(edge: .trailing) {
-                                                Button(role: .destructive) {
-                                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                                    motionSafeWithAnimation {
-                                                        marketData.removeFromWatchlist(asset)
-                                                    }
-                                                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                                                } label: {
-                                                    Label("Remove", systemImage: "trash.fill")
-                                                }
-                                            }
-                                            .contextMenu {
-                                                Button {
-                                                    if subscriptionManager.currentTier.hasPortfolioAccess {
-                                                        assetToAddToPortfolio = asset
-                                                    } else {
-                                                        showPortfolioPaywall = true
-                                                    }
-                                                } label: {
-                                                    Label("Add to Portfolio", systemImage: "briefcase")
-                                                }
-
-                                                Button {
-                                                    shareAsset(asset)
-                                                } label: {
-                                                    Label("Share", systemImage: "square.and.arrow.up")
-                                                }
-
-                                                Divider()
-
-                                                Button(role: .destructive) {
-                                                    motionSafeWithAnimation {
-                                                        marketData.removeFromWatchlist(asset)
-                                                    }
-                                                } label: {
-                                                    Label("Remove", systemImage: "trash")
-                                                }
-                                            }
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
-                        }
-
-                        Spacer(minLength: 120)
-                    }
-                    .padding(.top)
+                if overLimitCount > 0 {
+                    Section { overLimitBanner }
+                        .listRowBackground(theme.warningColor.opacity(0.12))
                 }
-                .refreshable { await marketData.refreshFromAPI() }
 
-            }
-            .navigationTitle("Watchlist")
-            .navigationBarTitleDisplayMode(.large)
-            .sheet(isPresented: $showSearchSheet) { SearchSheet(kind: filter) }
-            .sheet(isPresented: $showAlerts) { PriceAlertsView() }
-            .sheet(item: $selectedAsset) { asset in
-                AppleStocksDetailView(
-                    stock: detailedStock(from: asset),
-                    asset: asset,
-                    position: nil
-                )
-            }
-            .sheet(item: $assetToAddToPortfolio) { AddToPortfolioSheet(asset: $0) }
-            .sheet(isPresented: $showPortfolioPaywall) {
-                PaywallView(requiredTier: .pro, featureName: "Portfolio Tracking")
-                    .environmentObject(subscriptionManager)
-            }
-            .sheet(isPresented: $showCreateWatchlist) {
-                CreateWatchlistSheet()
-                    .environmentObject(marketData)
-            }
-            .sheet(isPresented: $showWatchlistPaywall) {
-                PaywallView(requiredTier: .pro, featureName: "Multiple Watchlists")
-                    .environmentObject(subscriptionManager)
-            }
-            .alert("Rename Watchlist", isPresented: Binding(
-                get: { renameTargetIndex != nil },
-                set: { if !$0 { renameTargetIndex = nil } }
-            )) {
-                TextField("Name", text: $renameText)
-                Button("Save") {
-                    if let i = renameTargetIndex {
-                        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-                        if !trimmed.isEmpty { marketData.renameWatchlist(at: i, to: trimmed) }
-                    }
-                    renameTargetIndex = nil
+                if marketData.watchlist.isEmpty {
+                    emptySection(
+                        icon: "star",
+                        title: "Add your first stock",
+                        message: "Search US and ASX stocks, ETFs and crypto, then follow their prices and today's moves here.",
+                        action: "Add symbols",
+                        scope: .all
+                    )
+                } else if visibleAssets.isEmpty {
+                    emptySection(
+                        icon: filter == .crypto ? "bitcoinsign.circle" : "chart.line.uptrend.xyaxis",
+                        title: filter == .crypto ? "No crypto on this list" : "No stocks on this list",
+                        message: filter == .crypto ? "Add Bitcoin, Ethereum and more to track them 24/7."
+                                                   : "Add US or ASX stocks and ETFs.",
+                        action: filter == .crypto ? "Add crypto" : "Add stocks",
+                        scope: filter == .crypto ? .crypto : .all
+                    )
+                } else {
+                    rowsSection
                 }
-                Button("Cancel", role: .cancel) { renameTargetIndex = nil }
+
+                if subscriptionManager.currentTier != .free && !marketData.watchlist.isEmpty && !isEditing {
+                    Section {
+                        watchlistSpotlightCard
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                }
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(theme.background.ignoresSafeArea())
+            .environment(\.editMode, $editMode)
+            .refreshable { await marketData.refreshFromAPI() }
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .bottom) {
+                if isEditing { editBar }
+            }
+            .onChange(of: marketData.activeWatchlistIndex) { _, _ in
+                selection.removeAll()
+                filter = .all
+            }
+            .onChange(of: hasBothKinds) { _, both in
+                if !both { filter = .all }
+            }
+        }
+        .sheet(item: $addScope) { item in
+            AddSymbolsSheet(initialScope: item.scope)
+                .environmentObject(marketData)
+                .environmentObject(subscriptionManager)
+        }
+        .sheet(isPresented: $showAlerts) {
+            PriceAlertsView()
+                .environmentObject(marketData)
+                .environmentObject(alertManager)
+                .environmentObject(subscriptionManager)
+        }
+        .sheet(item: $detailAsset) { asset in
+            AppleStocksDetailView(stock: detailedStock(from: asset), asset: asset, position: nil)
+        }
+        .sheet(item: $alertAsset) { asset in
+            AddPriceAlertSheet(asset: asset)
+                .environmentObject(marketData)
+                .environmentObject(alertManager)
+                .environmentObject(subscriptionManager)
+        }
+        .sheet(item: $portfolioAsset) { AddToPortfolioSheet(asset: $0) }
+        .sheet(item: $paywallFeature) { feature in
+            PaywallView(requiredTier: .pro, featureName: feature.name)
+                .environmentObject(subscriptionManager)
+        }
+        .alert(naming == .rename ? "Rename list" : "New list", isPresented: Binding(
+            get: { naming != nil },
+            set: { if !$0 { naming = nil } }
+        )) {
+            TextField("Name", text: $nameDraft)
+                .accessibilityIdentifier("watchlist.nameField")
+            Button(naming == .rename ? "Save" : "Create") { commitName() }
+            Button("Cancel", role: .cancel) { naming = nil }
+        } message: {
+            Text(naming == .rename ? "Give this list a new name." : "Lists keep different ideas apart, like “Dividends” or “Tech”.")
+        }
+        .confirmationDialog("Delete “\(listName)”?", isPresented: $confirmDeleteList, titleVisibility: .visible) {
+            Button("Delete list", role: .destructive) {
+                dsAnimate { marketData.deleteWatchlist(at: marketData.activeWatchlistIndex) }
+                Haptics.success()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The \(marketData.watchlist.count) symbols on it will be removed from this list. Your other lists and holdings aren't affected.")
         }
     }
 
-    private var headerView: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        return VStack(alignment: .leading, spacing: 0) {
-            // Top row: dropdown trigger + bell
-            HStack(alignment: .center) {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                        showWatchlistDropdown.toggle()
-                    }
-                } label: {
-                    HStack(alignment: .center, spacing: 5) {
-                        Text(activeWatchlistName)
-                            .font(.title2.weight(.semibold))
-                            .foregroundColor(theme.primaryText)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.secondary)
-                            .rotationEffect(.degrees(showWatchlistDropdown ? -180 : 0))
-                            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: showWatchlistDropdown)
-                    }
-                }
-                .buttonStyle(.plain)
+    // MARK: Header
 
-                Spacer()
-
-                Button { showAlerts = true } label: {
-                    Image(systemName: "bell.fill")
-                        .font(.title2)
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [.orange, Color(red: 1.0, green: 0.4, blue: 0.2)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 44, height: 44)
-                        .background(
-                            LinearGradient(
-                                colors: [Color.orange.opacity(0.18), Color(red: 1.0, green: 0.4, blue: 0.2).opacity(0.12)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(Color.orange.opacity(0.25), lineWidth: 1))
-                }
-            }
-
-            // Inline expanding pills
-            if showWatchlistDropdown {
-                watchlistPillsRow
-                    .padding(.top, 14)
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .top)),
-                        removal: .opacity.combined(with: .move(edge: .top))
-                    ))
-            }
-
-            // Slogan — always visible, below the dropdown
-            Text("Track your favourite assets")
-                .font(.largeTitle.bold())
-                .foregroundColor(theme.primaryText)
-                .padding(.top, 4)
-
-            RefreshStatusBadge()
-                .padding(.top, 6)
-        }
-    }
-
-    private var watchlistPillsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(marketData.watchlistGroups.enumerated()), id: \.1.id) { index, group in
-                    let isActive = index == marketData.activeWatchlistIndex
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
-                            marketData.switchToWatchlist(index: index)
-                            showWatchlistDropdown = false
+    private var headerSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: DS.Space.m) {
+                HStack(alignment: .center, spacing: DS.Space.s) {
+                    listMenu
+                    Spacer(minLength: DS.Space.s)
+                    if isEditing {
+                        Button { endEditing() } label: {
+                            Text("Done")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(DS.accent)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
-                    } label: {
-                        Text(group.name)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(isActive ? .white : .secondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 9)
-                            .background(isActive ? appTheme.accentColor : (colorScheme == .dark ? Color(.systemGray5) : Color(red: 0.929, green: 0.910, blue: 0.878)))
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button {
-                            // Rename handled via alert on MarketData directly
-                            renameWatchlistAlert(index: index, current: group.name)
-                        } label: {
-                            Label("Rename", systemImage: "pencil")
-                        }
-                        if marketData.watchlistGroups.count > 1 {
-                            Button(role: .destructive) {
-                                withAnimation { marketData.deleteWatchlist(at: index) }
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
-
-                // New watchlist pill
-                Button {
-                    showWatchlistDropdown = false
-                    let tier = subscriptionManager.currentTier
-                    if let limit = tier.watchlistLimit, marketData.watchlistGroups.count >= limit {
-                        showWatchlistPaywall = true
-                    } else if !tier.canAddWatchlist {
-                        showWatchlistPaywall = true
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("watchlist.done")
                     } else {
-                        showCreateWatchlist = true
+                        circleButton("bell", label: "Price alerts", id: "watchlist.alerts", badge: activeAlertCount) {
+                            showAlerts = true
+                        }
+                        circleButton("plus", label: "Add symbols", id: "watchlist.add") {
+                            addScope = AddScope(scope: filter == .crypto ? .crypto : .all)
+                        }
                     }
+                }
+
+                if !followedMarkets.isEmpty {
+                    MarketStatusView(markets: followedMarkets)
+                }
+
+                if !marketData.watchlist.isEmpty {
+                    HStack(spacing: DS.Space.s) {
+                        if hasBothKinds {
+                            ForEach(WatchlistFilter.allCases) { f in filterChip(f) }
+                        } else {
+                            RefreshStatusBadge()
+                        }
+                        Spacer(minLength: 0)
+                        if !isEditing {
+                            sortMenu
+                            Button { beginEditing() } label: {
+                                Text("Edit")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(DS.accent)
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("watchlist.edit")
+                        }
+                    }
+                }
+            }
+            .padding(.top, DS.Space.s)
+        }
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 0, leading: DS.Space.xs, bottom: 0, trailing: DS.Space.xs))
+        .selectionDisabled()
+    }
+
+    private var listMenu: some View {
+        Menu {
+            Section("Lists") {
+                ForEach(Array(marketData.watchlistGroups.enumerated()), id: \.element.id) { index, group in
+                    Button {
+                        Haptics.select()
+                        dsAnimate { marketData.switchToWatchlist(index: index) }
+                        Task { await marketData.refreshFromAPI() }
+                    } label: {
+                        if index == marketData.activeWatchlistIndex {
+                            Label("\(group.name) · \(group.assets.count)", systemImage: "checkmark")
+                        } else {
+                            Text("\(group.name) · \(group.assets.count)")
+                        }
+                    }
+                }
+            }
+            Button("New list…", systemImage: "plus") { startCreate() }
+            Button("Rename “\(listName)”…", systemImage: "pencil") {
+                nameDraft = listName
+                naming = .rename
+            }
+            if marketData.watchlistGroups.count > 1 {
+                Button("Delete “\(listName)”…", systemImage: "trash", role: .destructive) {
+                    confirmDeleteList = true
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(listName)
+                    .font(DS.display(.title))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("\(listName), list menu")
+        .accessibilityHint("Switch, create, rename or delete lists")
+        .accessibilityIdentifier("watchlist.listMenu")
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort by", selection: $sortRaw) {
+                ForEach(WatchlistSort.allCases) { option in
+                    Label(option.title, systemImage: option.icon).tag(option.rawValue)
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(sort == .manual ? theme.secondaryText : DS.accent)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Sort, \(sort.title)")
+        .accessibilityIdentifier("watchlist.sort")
+    }
+
+    private func filterChip(_ f: WatchlistFilter) -> some View {
+        let isOn = f == filter
+        let count = marketData.watchlist.filter(f.includes).count
+        let title: String = {
+            switch f {
+            case .all: return "All"
+            case .stocks: return "Stocks"
+            case .crypto: return "Crypto"
+            }
+        }()
+        return Button {
+            Haptics.select()
+            dsAnimate(DS.quick) { filter = f }
+        } label: {
+            Text("\(title) \(count)")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(isOn ? theme.invertedPrimaryText : theme.primaryText)
+                .padding(.horizontal, DS.Space.m)
+                .frame(minHeight: 34)
+                .background(Capsule().fill(isOn ? theme.primaryText : theme.subtleFill))
+                .overlay(Capsule().strokeBorder(theme.cardBorder.opacity(isOn ? 0 : 0.6), lineWidth: 0.5))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(count)")
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .accessibilityIdentifier("watchlist.filter.\(f.rawValue)")
+    }
+
+    private func circleButton(_ icon: String, label: String, id: String, badge: Int = 0,
+                              action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.tap()
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(theme.primaryText)
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(theme.subtleFill))
+                .overlay(Circle().strokeBorder(theme.cardBorder.opacity(0.5), lineWidth: 0.5))
+                .overlay(alignment: .topTrailing) {
+                    if badge > 0 {
+                        Text("\(badge)")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .frame(minWidth: 18, minHeight: 18)
+                            .background(Capsule().fill(DS.accent))
+                            .offset(x: 4, y: -2)
+                    }
+                }
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel(badge > 0 ? "\(label), \(badge) active" : label)
+        .accessibilityIdentifier(id)
+    }
+
+    // MARK: Rows
+
+    private var rowsSection: some View {
+        let mover: ((IndexSet, Int) -> Void)? = isEditing ? { move(from: $0, to: $1) } : nil
+        return Section {
+            ForEach(visibleAssets) { asset in
+                watchRow(asset)
+            }
+            .onMove(perform: mover)
+        } header: {
+            summaryHeader
+        }
+    }
+
+    private func watchRow(_ asset: Asset) -> some View {
+        Group {
+            if isEditing {
+                // No button in edit mode, so a tap selects the row.
+                WatchlistRow(asset: asset, isEditing: true)
+            } else {
+                Button {
+                    Haptics.tap()
+                    detailAsset = asset
                 } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .bold))
-                        Text("New")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(colorScheme == .dark ? Color(.systemGray5) : Color(red: 0.929, green: 0.910, blue: 0.878))
-                    .clipShape(Capsule())
+                    WatchlistRow(asset: asset)
                 }
                 .buttonStyle(.plain)
             }
         }
+        .listRowBackground(theme.subtleFill)
+        .accessibilityIdentifier("watchlist.row.\(asset.symbol)")
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) { remove(asset) } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        }
+        .swipeActions(edge: .leading) {
+            Button { alertAsset = asset } label: {
+                Label("Alert", systemImage: "bell")
+            }
+            .tint(DS.accent)
+        }
+        .contextMenu { rowMenu(asset) }
     }
-
-    @State private var renameTargetIndex: Int? = nil
-    @State private var renameText = ""
-    private func renameWatchlistAlert(index: Int, current: String) {
-        renameTargetIndex = index
-        renameText = current
-    }
-
-    private func shareAsset(_ asset: Asset) {
-        let text = "\(asset.symbol) is at \(asset.price.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))! 📈"
-        let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-        UIApplication.shared.windows.first?.rootViewController?.present(activityVC, animated: true)
-    }
-
-    // MARK: - Over-Limit Banner
 
     @ViewBuilder
-    private func overLimitBanner(theme: Theme) -> some View {
-        let overCount = marketData.watchlist.count - (FeatureGate.maxWatchlistAssets(for: subscriptionManager.currentTier) ?? Int.max)
-        if overCount > 0 {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(overCount) item\(overCount == 1 ? "" : "s") over your plan limit")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text("Remove items or upgrade your plan.")
-                        .font(.caption2)
-                        .foregroundColor(theme.secondaryText)
-                }
-                Spacer()
-                Button("Upgrade") {
-                    showPortfolioPaywall = true
-                }
-                .font(.caption.weight(.bold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.blue)
-                .cornerRadius(8)
+    private func rowMenu(_ asset: Asset) -> some View {
+        Button { alertAsset = asset } label: { Label("Set price alert", systemImage: "bell") }
+        Button { portfolioAsset = asset } label: { Label("Add to portfolio", systemImage: "briefcase") }
+        ShareLink(item: shareText(for: asset)) { Label("Share", systemImage: "square.and.arrow.up") }
+        Divider()
+        Button(role: .destructive) { remove(asset) } label: { Label("Remove from \(listName)", systemImage: "trash") }
+    }
+
+    private var summaryHeader: some View {
+        let loaded = visibleAssets.filter { $0.price > 0 }
+        let up = loaded.filter { $0.changePercent >= 0.005 }.count
+        let down = loaded.filter { $0.changePercent <= -0.005 }.count
+        // One Text, so at large sizes it wraps like a sentence instead of in fragments.
+        let count = visibleAssets.count == 1 ? "1 symbol" : "\(visibleAssets.count) symbols"
+        // Non-breaking spaces keep "3 up" and "2 down today" whole ("3 up 2 / down today" before).
+        let upText = Text("\(up)\u{00A0}up").foregroundStyle(up > 0 ? theme.positiveColor : theme.secondaryText)
+        let downText = Text("\(down)\u{00A0}down").foregroundStyle(down > 0 ? theme.negativeColor : theme.secondaryText)
+        let summary = loaded.isEmpty ? Text(count) : Text("\(count) · \(upText) · \(downText)\u{00A0}today")
+        return HStack(spacing: DS.Space.s) {
+            summary
+            Spacer()
+            if hasBothKinds { RefreshStatusBadge() }
+        }
+        .font(.footnote.weight(.medium).monospacedDigit())
+        .foregroundStyle(theme.secondaryText)
+        .textCase(nil)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("watchlist.summary")
+    }
+
+    private func emptySection(icon: String, title: LocalizedStringKey, message: LocalizedStringKey,
+                              action: LocalizedStringKey, scope: SymbolSearchScope) -> some View {
+        Section {
+            EmptyStateCard(
+                systemImage: icon,
+                title: title,
+                message: message,
+                primaryTitle: action,
+                primaryAction: { addScope = AddScope(scope: scope) }
+            )
+            .accessibilityIdentifier("watchlist.empty")
+        }
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: DS.Space.s, leading: 0, bottom: DS.Space.s, trailing: 0))
+        .selectionDisabled()
+    }
+
+    private var overLimitBanner: some View {
+        HStack(spacing: DS.Space.m) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(theme.warningColor)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(overLimitCount) over your plan's limit")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.primaryText)
+                Text("Remove some, or upgrade to keep them all updating.")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryText)
             }
-            .padding(12)
-            .background(Color.orange.opacity(0.1))
-            .cornerRadius(12)
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.3), lineWidth: 0.5))
+            Spacer()
+            Button { paywallFeature = PaywallFeature(name: "More watchlist items") } label: {
+                Text("Upgrade")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .selectionDisabled()
+    }
+
+    private var editBar: some View {
+        HStack {
+            Button(role: .destructive) {
+                let count = selection.count
+                dsAnimate { marketData.removeMultipleFromWatchlist(selection) }
+                selection.removeAll()
+                Haptics.success()
+                AccessibilityNotification.Announcement("Removed \(count)").post()
+            } label: {
+                Text(selection.isEmpty ? "Select to remove" : "Remove \(selection.count)")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(selection.isEmpty ? theme.secondaryText : theme.negativeColor)
+                    .frame(minHeight: 44)
+            }
+            .disabled(selection.isEmpty)
+            .accessibilityIdentifier("watchlist.deleteSelected")
+            Spacer()
+            Text("Drag ≡ to reorder")
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryText)
+        }
+        .padding(.horizontal, DS.Space.gutter)
+        .padding(.vertical, DS.Space.s)
+        .background(.bar)
+    }
+
+    // MARK: Actions
+
+    private func beginEditing() {
+        Haptics.tap()
+        selection.removeAll()
+        dsAnimate { editMode = .active }
+    }
+
+    private func endEditing() {
+        Haptics.tap()
+        selection.removeAll()
+        dsAnimate { editMode = .inactive }
+    }
+
+    private func remove(_ asset: Asset) {
+        Haptics.tap()
+        dsAnimate { marketData.removeFromWatchlist(asset) }
+        AccessibilityNotification.Announcement("Removed \(asset.symbol)").post()
+    }
+
+    /// Moves within the filtered rows map back to positions in the full list.
+    private func move(from source: IndexSet, to destination: Int) {
+        let shown = marketData.watchlist.enumerated().filter { filter.includes($0.element) }
+        let sourceIndices = IndexSet(source.compactMap { shown.indices.contains($0) ? shown[$0].offset : nil })
+        let target: Int = destination < shown.count
+            ? shown[destination].offset
+            : (shown.last?.offset ?? marketData.watchlist.count - 1) + 1
+        marketData.moveWatchlistItem(from: sourceIndices, to: target)
+        if sort != .manual { sortRaw = WatchlistSort.manual.rawValue }
+        Haptics.select()
+    }
+
+    private func startCreate() {
+        let tier = subscriptionManager.currentTier
+        if let limit = tier.watchlistLimit, marketData.watchlistGroups.count >= limit {
+            paywallFeature = PaywallFeature(name: "Multiple watchlists")
+        } else {
+            nameDraft = ""
+            naming = .create
         }
     }
 
-    // MARK: - AI Watchlist Spotlight
+    private func commitName() {
+        let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        defer { naming = nil }
+        guard !trimmed.isEmpty else { return }
+        switch naming {
+        case .create:
+            dsAnimate { marketData.createWatchlist(name: trimmed) }
+            filter = .all
+        case .rename:
+            marketData.renameWatchlist(at: marketData.activeWatchlistIndex, to: trimmed)
+        case .none:
+            break
+        }
+        Haptics.success()
+    }
+
+    private func shareText(for asset: Asset) -> String {
+        guard asset.price > 0 else { return "\(asset.symbol) — \(asset.name)" }
+        return "\(asset.symbol) (\(asset.name)) is \(marketData.formatPrice(asset.price)), "
+            + String(format: "%@%.2f%% today.", asset.changePercent >= 0 ? "+" : "−", abs(asset.changePercent))
+    }
+
+    // MARK: AI spotlight (Pro / Black)
 
     private var watchlistSpotlightCard: some View {
         let tier = subscriptionManager.currentTier
-        let isLocked = tier == .free
         let cacheKey = "watchlist_spotlight_\(insightService.todayString)"
-        let cachedText: String? = insightService.cached(cacheKey)?.text ?? spotlightText
         return AIInsightCard(
             title: "Market Spotlight",
             icon: "sparkles",
-            insightText: cachedText,
+            insightText: insightService.cached(cacheKey)?.text ?? spotlightText,
             isLoading: spotlightLoading,
-            isLocked: isLocked,
+            isLocked: tier == .free,
             tier: tier,
             onGenerate: { await loadWatchlistSpotlight() },
             onRegenerate: { await loadWatchlistSpotlight(force: true) }
@@ -496,783 +638,169 @@ struct AppleStocksWatchlistView: View {
     }
 
     private func loadWatchlistSpotlight(force: Bool = false) async {
-        guard !marketData.watchlist.isEmpty else { return }
+        let movers = marketData.watchlist
+            .filter { $0.price > 0 }
+            .sorted { abs($0.changePercent) > abs($1.changePercent) }
+            .prefix(3)
+        guard !movers.isEmpty else { return }
         spotlightLoading = true
         defer { spotlightLoading = false }
 
         let tier = subscriptionManager.currentTier
         let cacheKey = "watchlist_spotlight_\(insightService.todayString)"
-
-        let movers = marketData.watchlist
-            .sorted { abs($0.changePercent) > abs($1.changePercent) }
-            .prefix(3)
-
         let moverDetails = movers.map { a in
-            var detail = "\(a.symbol): \(String(format: "$%.2f", a.price)) (\(String(format: "%+.1f%%", a.changePercent)))"
+            var detail = "\(a.symbol): \(marketData.formatPrice(a.price)) (\(String(format: "%+.1f%%", a.changePercent)))"
             if let pe = a.peRatio, pe > 0 { detail += ", P/E \(String(format: "%.1f", pe))" }
-            if a.volume > 0 && a.avgVolume ?? 0 > 0 {
-                let volRatio = a.volume / (a.avgVolume ?? 1)
-                if volRatio > 1.5 { detail += ", vol \(String(format: "%.1fx", volRatio)) avg" }
+            if a.volume > 0, let avg = a.avgVolume, avg > 0, a.volume / avg > 1.5 {
+                detail += ", vol \(String(format: "%.1fx", a.volume / avg)) avg"
             }
             return detail
         }.joined(separator: ". ")
 
         let systemPrompt = "For each stock, write ONE sentence about what's notable today. Be factual. Format: SYMBOL: sentence."
         let userPrompt = "Top movers on my watchlist: \(moverDetails). Give a brief 1-sentence insight for each."
-
-        let result: String?
-        if force {
-            result = await insightService.regenerateInsight(
-                key: cacheKey, type: .watchlistSpotlight,
-                systemPrompt: systemPrompt, userPrompt: userPrompt,
-                tier: tier, ttl: Constants.AI.dailyCacheTTL
-            )
-        } else {
-            result = await insightService.generateInsight(
-                key: cacheKey, type: .watchlistSpotlight,
-                systemPrompt: systemPrompt, userPrompt: userPrompt,
-                tier: tier, ttl: Constants.AI.dailyCacheTTL
-            )
-        }
-        if let text = result { spotlightText = text }
+        let result = force
+            ? await insightService.regenerateInsight(key: cacheKey, type: .watchlistSpotlight,
+                                                     systemPrompt: systemPrompt, userPrompt: userPrompt,
+                                                     tier: tier, ttl: Constants.AI.dailyCacheTTL)
+            : await insightService.generateInsight(key: cacheKey, type: .watchlistSpotlight,
+                                                   systemPrompt: systemPrompt, userPrompt: userPrompt,
+                                                   tier: tier, ttl: Constants.AI.dailyCacheTTL)
+        if let result { spotlightText = result }
     }
 }
 
+// MARK: - Row
 
-// MARK: - Top Movers Section
-struct TopMoversSection: View {
-    let movers: [Asset]
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Top Movers")
-                .font(.title2.bold())
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 16) {
-                    ForEach(movers) { asset in
-                        TopMoverCard(asset: asset)
-                            .frame(width: 210)
-                    }
-                }
-                .padding(.horizontal)
-            }
-        }
-    }
-}
-
-struct TopMoverCard: View {
+struct WatchlistRow: View {
     let asset: Asset
-    @State private var isLoading = true
-    @State private var miniHistory: [PricePoint] = []
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
+    /// In edit mode the selection circle and drag handle need the room: drop the sparkline.
+    var isEditing = false
+    @EnvironmentObject private var marketData: MarketData
+    @Environment(\.theme) private var theme
+    @State private var series: MiniSeries?
 
-    private var lineColor: Color { asset.changePercent >= 0 ? appTheme.positiveColor : appTheme.negativeColor }
+    private var isLoaded: Bool { asset.price > 0 }
+    private var hasNoQuote: Bool { !isLoaded && marketData.quoteFailures.contains(asset.symbol) }
+    private var shownSeries: MiniSeries? { series ?? MiniSeriesStore.shared.cached(for: asset) }
 
     var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    if isLoading {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 80, height: 12)
-                            .cornerRadius(4)
-                            .shimmering()
-
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 120, height: 16)
-                            .cornerRadius(6)
-                            .shimmering()
-                    } else {
+        AdaptiveQuoteRow {
+            HStack(spacing: DS.Space.m) {
+                TickerLogo(symbol: asset.symbol, kind: asset.kind, exchange: asset.exchange, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
                         Text(asset.symbol)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Text(asset.name)
-                            .font(.subheadline.bold())
-                            .foregroundColor(theme.primaryText)
-                    }
-                }
-                Spacer()
-                Image(systemName: asset.changePercent >= 0 ? "arrow.up.right" : "arrow.down.right")
-                    .font(.caption.bold())
-                    .foregroundColor(lineColor)
-            }
-
-            HStack(alignment: .bottom, spacing: 10) {
-                if isLoading {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 100, height: 28)
-                        .cornerRadius(8)
-                        .shimmering()
-
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 60, height: 20)
-                        .cornerRadius(6)
-                        .shimmering()
-                } else {
-                    Text(asset.price.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                        .font(.title2.bold())
-                        .foregroundColor(theme.primaryText)
-
-                    Text("\(asset.changePercent >= 0 ? "+" : "")\(String(format: "%.2f%%", asset.changePercent))")
-                        .font(.title3.bold())
-                        .foregroundColor(lineColor)
-                }
-            }
-
-            if isLoading {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(height: 60)
-                    .shimmering()
-            } else {
-                GeometryReader { proxy in
-                    let w = proxy.size.width
-                    let h = proxy.size.height
-                    let prices = miniHistory.map(\.price)
-
-                    if prices.count >= 2 {
-                        let minP = prices.min()!
-                        let maxP = prices.max()!
-                        let range = max(maxP - minP, maxP * 0.001)
-                        let step = w / CGFloat(prices.count - 1)
-
-                        Path { path in
-                            for (i, price) in prices.enumerated() {
-                                let x = CGFloat(i) * step
-                                let normalized = CGFloat((price - minP) / range)
-                                let y = h - (normalized * h * 0.85 + h * 0.075)
-                                if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                                else { path.addLine(to: CGPoint(x: x, y: y)) }
-                            }
-                        }
-                        .stroke(lineColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .shadow(color: colorScheme == .dark ? lineColor.opacity(0.6) : lineColor.opacity(0.04), radius: 8)
-                        .shadow(color: colorScheme == .dark ? lineColor.opacity(0.4) : Color.clear, radius: 16)
-                    }
-                }
-                .frame(height: 60)
-            }
-        }
-        .padding(20)
-        .frame(height: 170)
-        .background(theme.glassBackground)
-        .cornerRadius(22)
-        .overlay(
-            RoundedRectangle(cornerRadius: 22)
-                .stroke(lineColor.opacity(0.4), lineWidth: 2)
-        )
-        .accessibilityElement(children: .combine)
-        .task {
-            let points = await marketData.fetchMiniChartHistory(for: asset)
-            miniHistory = points
-            motionSafeWithAnimation(.easeInOut) {
-                isLoading = false
-            }
-        }
-    }
-}
-
-// MARK: - Watchlist Stats Card with Skeleton
-struct WatchlistStatsCard: View {
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-    @State private var isLoading = true
-
-    private var totalValue: Double {
-        marketData.watchlist.reduce(0) { $0 + $1.price }
-    }
-
-    private var gainers: Int {
-        marketData.watchlist.filter { $0.changePercent > 0 }.count
-    }
-
-    private var losers: Int {
-        marketData.watchlist.filter { $0.changePercent < 0 }.count
-    }
-
-    private var totalAssets: Int {
-        marketData.watchlist.count
-    }
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                // Total Assets Card
-                VStack(alignment: .leading, spacing: 8) {
-                    if isLoading {
-                        Rectangle().fill(Color.gray.opacity(0.3)).frame(width: 120, height: 14).cornerRadius(4).shimmering()
-                        Rectangle().fill(Color.gray.opacity(0.3)).frame(width: 80, height: 32).cornerRadius(8).shimmering()
-                    } else {
-                        HStack {
-                            Image(systemName: "chart.bar.fill")
-                                .font(.title3)
-                                .foregroundColor(.blue)
-                            Text("Total Assets")
-                                .font(.caption)
-                                .foregroundColor(theme.secondaryText)
-                        }
-                        Text("\(totalAssets)")
-                            .font(.title.bold())
-                            .foregroundColor(theme.primaryText)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(RoundedRectangle(cornerRadius: 16).fill(theme.glassBackground))
-
-                // Gainers/Losers
-                VStack(spacing: 12) {
-                    if isLoading {
-                        Rectangle().fill(Color.gray.opacity(0.3)).frame(height: 60).cornerRadius(12).shimmering()
-                        Divider().background(Color.gray.opacity(0.2))
-                        Rectangle().fill(Color.gray.opacity(0.3)).frame(height: 40).cornerRadius(12).shimmering()
-                    } else {
-                        // Existing gainers/losers content...
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.up.circle.fill")
-                                        .font(.caption)
-                                        .foregroundColor(appTheme.positiveColor)
-                                    Text("Gainers")
-                                        .font(.caption2)
-                                        .foregroundColor(appTheme.positiveColor.opacity(0.8))
-                                }
-                                Text("\(gainers)")
-                                    .font(.title2.bold())
-                                    .foregroundColor(appTheme.positiveColor)
-                            }
-                            Spacer()
-                            ZStack {
-                                Circle().stroke(appTheme.negativeColor.opacity(0.3), lineWidth: 6)
-                                Circle()
-                                    .trim(from: 0, to: totalAssets > 0 ? CGFloat(gainers) / CGFloat(totalAssets) : 0)
-                                    .stroke(appTheme.positiveColor, lineWidth: 6)
-                                    .rotationEffect(.degrees(-90))
-                            }
-                            .frame(width: 40, height: 40)
-                        }
-
-                        Divider().background(theme.glassBorder)
-
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.down.circle.fill")
-                                        .font(.caption)
-                                        .foregroundColor(appTheme.negativeColor)
-                                    Text("Losers")
-                                        .font(.caption2)
-                                        .foregroundColor(appTheme.negativeColor.opacity(0.8))
-                                }
-                                Text("\(losers)")
-                                    .font(.title2.bold())
-                                    .foregroundColor(appTheme.negativeColor)
-                            }
-                            Spacer()
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(theme.primaryText)
+                            .lineLimit(1)
+                        if asset.kind == .stock && QuoteService.isASX(asset) {
+                            SymbolExchangeBadge(text: "ASX")
                         }
                     }
+                    Text(asset.name)
+                        .font(.subheadline)
+                        .foregroundStyle(theme.secondaryText)
+                        .lineLimit(1)
                 }
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(RoundedRectangle(cornerRadius: 16).fill(theme.glassBackground))
+            }
+            .layoutPriority(1)
+        } numbers: { stacked in
+            HStack(spacing: DS.Space.m) {
+                if !isEditing && !stacked {
+                    DSSparkline(values: shownSeries?.values ?? [], baseline: shownSeries?.baseline)
+                        .frame(width: 52, height: 26)
+                }
+                priceColumn(stacked: stacked)
+                    .frame(minWidth: isEditing || stacked ? 0 : 86, alignment: .trailing)
             }
         }
-        .padding(.horizontal)
-        .task {
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            motionSafeWithAnimation { isLoading = false }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .task(id: asset.price) {
+            guard isLoaded else { return }
+            if let fresh = await MiniSeriesStore.shared.series(for: asset) { series = fresh }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint("Opens details")
     }
-}
 
-// MARK: - Index Card with Chart
-struct IndexCardWithChart: View {
-    let index: MarketIndex
-    let history: [PricePoint]
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-    @EnvironmentObject var marketData: MarketData
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(index.name)
-                        .font(.headline)
-                        .foregroundColor(theme.primaryText.opacity(0.9))
-
-                    HStack(spacing: 4) {
-                        Image(systemName: index.change >= 0 ? "arrow.up.right" : "arrow.down.right")
-                            .font(.caption2)
-                        Text(String(format: "%+.2f%%", index.changePercent))
-                            .font(.caption.bold())
-                    }
-                    .foregroundColor(index.change >= 0 ? appTheme.positiveColor : appTheme.negativeColor)
-                }
-                Spacer()
-            }
-
-            // Mini Chart
-            if !history.isEmpty {
-                let _prices = history.map { $0.price }
-                let _minP = _prices.min() ?? 0
-                let _maxP = _prices.max() ?? 1
-                let _pad  = max((_maxP - _minP) * 0.04, _maxP * 0.005)
-                let _color = index.change >= 0 ? appTheme.positiveColor : appTheme.negativeColor
-                Chart(history) {
-                    AreaMark(x: .value("Date", $0.date), y: .value("Price", $0.price))
-                        .foregroundStyle(LinearGradient(colors: [_color.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom))
-                        .interpolationMethod(.linear)
-                    LineMark(x: .value("Date", $0.date), y: .value("Price", $0.price))
-                        .foregroundStyle(_color)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .interpolationMethod(.linear)
-                }
-                .chartYScale(domain: max(0, _minP - _pad)...(_maxP + _pad))
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .frame(height: 60)
-                .clipped()
-            }
-
-            // Price
-            Text(index.price.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                .font(.title3.bold())
-                .foregroundColor(theme.primaryText)
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.glassBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke((index.change >= 0 ? appTheme.positiveColor : appTheme.negativeColor).opacity(0.3), lineWidth: 1)
-                )
-        )
-    }
-}
-
-// MARK: - Empty Watchlist Card
-struct EmptyWatchlistCard: View {
-    let kind: AssetKind
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 100, height: 100)
-                    .blur(radius: 20)
-
-                Image(systemName: kind == .stock ? "chart.line.uptrend.xyaxis" : "bitcoinsign.circle")
-                    .font(.system(size: 50))
-                    .foregroundColor(theme.primaryText.opacity(0.8))
-            }
-
-            Text("No \(kind == .stock ? "Stocks" : "Crypto") Yet")
-                .font(.headline)
-                .foregroundColor(theme.primaryText)
-
-            Text("Add \(kind == .stock ? "stocks" : "cryptocurrencies") to start tracking their performance")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-        .padding(.horizontal)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.chartPlaceholder)
-        )
-        .padding(.horizontal)
-    }
-}
-
-struct EnhancedWatchlistRow: View {
-    let asset: Asset
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-    @State private var miniHistory: [PricePoint] = []
-    @State private var isLoading = true
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        HStack(spacing: 16) {
-            // Icon
-            // Info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(asset.symbol)
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-                Text(asset.name)
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            // Mini Chart with Skeleton
-            if isLoading {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 70, height: 35)
-                    .shimmering()  // Pulsing animation
-            } else if !miniHistory.isEmpty {
-                let _prices = miniHistory.map { $0.price }
-                let _minP = _prices.min() ?? 0
-                let _maxP = _prices.max() ?? 1
-                let _pad  = max((_maxP - _minP) * 0.04, _maxP * 0.005)
-                let _color = asset.changePercent >= 0 ? appTheme.positiveColor : appTheme.negativeColor
-                Chart(miniHistory) {
-                    AreaMark(
-                        x: .value("Date", $0.date),
-                        y: .value("Price", $0.price)
-                    )
-                    .foregroundStyle(LinearGradient(colors: [_color.opacity(0.25), .clear], startPoint: .top, endPoint: .bottom))
-                    .interpolationMethod(.linear)
-                    LineMark(
-                        x: .value("Date", $0.date),
-                        y: .value("Price", $0.price)
-                    )
-                    .foregroundStyle(_color)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
-                    .interpolationMethod(.linear)
-                }
-                .chartYScale(domain: max(0, _minP - _pad)...(_maxP + _pad))
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .frame(width: 70, height: 35)
-                .clipped()
-            }
-
-            // Price Info
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(asset.price.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-
-                HStack(spacing: 4) {
-                    Image(systemName: asset.changePercent >= 0 ? "arrow.up.right" : "arrow.down.right")
-                        .font(.caption2)
-                    Text(String(format: "%+.2f%%", asset.changePercent))
-                        .font(.caption.bold())
-                }
-                .foregroundColor(asset.changePercent >= 0 ? appTheme.positiveColor : appTheme.negativeColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill((asset.changePercent >= 0 ? appTheme.positiveColor : appTheme.negativeColor).opacity(0.2))
-                )
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.glassBackground)
-        )
-        .task {
-            // If we already have cached data for this symbol, apply it immediately
-            // without showing the loading skeleton — stable across tab navigation.
-            if let cached = marketData.miniChartCache[asset.symbol], !cached.isEmpty {
-                miniHistory = cached
-                isLoading = false
-            } else {
-                let points = await marketData.fetchMiniChartHistory(for: asset)
-                miniHistory = points
-                motionSafeWithAnimation(.easeInOut) {
-                    isLoading = false
-                }
-            }
-        }
-    }
-}
-// MARK: - Search Sheet (Aesthetic)
-//struct SearchSheet: View {
-//    @EnvironmentObject var marketData: MarketData
-//    @Environment(\.dismiss) var dismiss
-//    let kind: AssetKind
-//
-//    @State private var searchText = ""
-//    @State private var isSearching = false
-//    @State private var isShowingCustomAdd = false
-//
-//    var body: some View {
-//        NavigationStack {
-//            ZStack {
-//                Color.black.ignoresSafeArea()
-//
-//                if filteredResults.isEmpty && !searchText.isEmpty && !isSearching {
-//                    VStack(spacing: 24) {
-//                        ZStack {
-//                            Circle()
-//                                .fill(LinearGradient(colors: [.blue.opacity(0.3), .purple.opacity(0.2)], startPoint: .topLeading, endPoint: .bottomTrailing))
-//                                .frame(width: 180, height: 180)
-//                                .blur(radius: 40)
-//
-//                            Image(systemName: "magnifyingglass")
-//                                .font(.system(size: 80))
-//                                .foregroundColor(.white.opacity(0.4))
-//                        }
-//
-//                        Text("No results for \"\(searchText)\"")
-//                            .font(.title2.bold())
-//                            .foregroundColor(.white.opacity(0.8))
-//
-//                        Text("Try a different symbol or add it manually")
-//                            .font(.subheadline)
-//                            .foregroundColor(.gray)
-//                            .multilineTextAlignment(.center)
-//                            .padding(.horizontal, 40)
-//
-//                        Button {
-//                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-//                            isShowingCustomAdd = true
-//                        } label: {
-//                            HStack {
-//                                Image(systemName: "plus.circle.fill")
-//                                Text("Add \"\(searchText.uppercased())\" Manually")
-//                            }
-//                            .font(.headline)
-//                            .foregroundColor(.white)
-//                            .padding(.horizontal, 28)
-//                            .padding(.vertical, 16)
-//                            .background(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing))
-//                            .cornerRadius(20)
-//                            .shadow(color: .purple.opacity(0.6), radius: 20, y: 10)
-//                        }
-//                    }
-//                    .transition(.opacity.combined(with: .scale))
-//                } else {
-//                    List {
-//                        ForEach(filteredResults) { asset in
-//                            SearchResultRow(asset: asset)
-//                                .onTapGesture {
-//                                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-//                                    marketData.addToWatchlist(asset)
-//                                    dismiss()
-//                                }
-//                        }
-//                        .listRowBackground(Color.clear)
-//                        .listRowSeparator(.hidden)
-//                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-//                    }
-//                    .listStyle(PlainListStyle())
-//                    .animation(.easeInOut(duration: 0.3), value: filteredResults)
-//                }
-//
-//                if isSearching {
-//                    Color.black.opacity(0.6)
-//                        .ignoresSafeArea()
-//                        .overlay(
-//                            ProgressView("Searching...")
-//                                .scaleEffect(1.2)
-//                                .foregroundColor(.white)
-//                                .padding()
-//                                .background(Color.black.opacity(0.8))
-//                                .cornerRadius(16)
-//                                .shadow(radius: 20)
-//                        )
-//                }
-//            }
-//            .navigationTitle("Search \(kind == .stock ? "Stocks" : "Crypto")")
-//            .navigationBarTitleDisplayMode(.large)
-//            .toolbarBackground(.hidden, for: .navigationBar)
-//            .toolbar {
-//                ToolbarItem(placement: .cancellationAction) {
-//                    Button("Cancel") { dismiss() }
-//                        .foregroundColor(.white.opacity(0.8))
-//                }
-//            }
-//            .searchable(
-//                text: $searchText,
-//                placement: .navigationBarDrawer(displayMode: .always),
-//                prompt: Text("Search symbols or names (e.g., AAPL, Bitcoin)")
-//                    .foregroundColor(.white.opacity(0.6))
-//            )
-//            .onChange(of: searchText) { _, newValue in
-//                Task {
-//                    isSearching = !newValue.isEmpty
-//                    if !newValue.isEmpty {
-//                        await marketData.searchAssets(query: newValue, kind: kind)
-//                    }
-//                    withAnimation(.easeInOut) {
-//                        isSearching = false
-//                    }
-//                }
-//            }
-//            .sheet(isPresented: $isShowingCustomAdd) {
-//                AddCustomAssetSheet(kind: kind, presetSymbol: searchText)
-//            }
-//        }
-//        .preferredColorScheme(.dark)
-//    }
-//
-//    private var filteredResults: [Asset] {
-//        marketData.searchResults.filter { $0.kind == kind }
-//    }
-//}
-
-// MARK: - Aesthetic Search Result Row with Skeleton Loading
-struct SearchResultRow: View {
-    let asset: Asset
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-    @State private var miniHistory: [PricePoint] = []
-    @State private var isLoading = true  // New: loading state for skeleton
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(asset.symbol)
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-
-                Text(asset.name)
-                    .font(.subheadline)
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            // Mini Sparkline with Skeleton
-            if isLoading {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 80, height: 40)
-                    .shimmering()  // Pulsing shimmer effect
-            } else if !miniHistory.isEmpty {
-                let _prices = miniHistory.map { $0.price }
-                let _minP = _prices.min() ?? 0
-                let _maxP = _prices.max() ?? 1
-                let _pad  = max((_maxP - _minP) * 0.04, _maxP * 0.005)
-                let _color = asset.changePercent >= 0 ? appTheme.positiveColor : appTheme.negativeColor
-                Chart(miniHistory) {
-                    AreaMark(x: .value("Date", $0.date), y: .value("Price", $0.price))
-                        .foregroundStyle(LinearGradient(colors: [_color.opacity(0.2), .clear], startPoint: .top, endPoint: .bottom))
-                        .interpolationMethod(.linear)
-                    LineMark(x: .value("Date", $0.date), y: .value("Price", $0.price))
-                        .foregroundStyle(_color)
-                        .lineStyle(StrokeStyle(lineWidth: 1.5))
-                        .interpolationMethod(.linear)
-                }
-                .chartYScale(domain: max(0, _minP - _pad)...(_maxP + _pad))
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .frame(width: 80, height: 40)
-                .clipped()
-            }
-
-            // Price & Change
-            VStack(alignment: .trailing, spacing: 4) {
-                if isLoading {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 90, height: 20)
-                        .shimmering()
-
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 70, height: 24)
-                        .shimmering()
-                } else {
-                    Text(asset.price.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                        .font(.headline)
-                        .foregroundColor(theme.primaryText)
-
-                    Text(String(format: "%+.2f%%", asset.changePercent))
-                        .font(.caption.bold())
-                        .foregroundColor(asset.changePercent >= 0 ? appTheme.positiveColor : appTheme.negativeColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill((asset.changePercent >= 0 ? appTheme.positiveColor : appTheme.negativeColor).opacity(0.2))
-                        )
-                }
-            }
-
-            Image(systemName: "plus.circle.fill")
-                .font(.title2)
-                .foregroundColor(isLoading ? .gray.opacity(0.5) : appTheme.positiveColor.opacity(0.8))
-                .opacity(isLoading ? 0.6 : 1.0)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal)
-        .background(theme.chartPlaceholder)
-        .cornerRadius(18)
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(LinearGradient(colors: [theme.separator, .clear], startPoint: .top, endPoint: .bottom), lineWidth: 1)
-        )
-        .shadow(color: colorScheme == .dark ? .black.opacity(0.3) : .black.opacity(0.04), radius: 10, y: 5)
-        .task {
-            if let cached = marketData.miniChartCache[asset.symbol], !cached.isEmpty {
-                miniHistory = cached
-                isLoading = false
-            } else {
-                let points = await marketData.fetchMiniChartHistory(for: asset)
-                miniHistory = points
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    isLoading = false
-                }
-            }
+    @ViewBuilder
+    private func priceColumn(stacked: Bool) -> some View {
+        if hasNoQuote {
+            Text("No live price")
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryText)
+        } else {
+            QuoteNumbers(price: marketData.formatPrice(isLoaded ? asset.price : 100),
+                         percent: asset.changePercent, stacked: stacked)
+                .redacted(reason: isLoaded ? [] : .placeholder)
+                .priceFlash(value: asset.price)
         }
     }
 
+    private var accessibilityText: String {
+        var parts = [asset.symbol, asset.name]
+        if isLoaded {
+            parts.append(marketData.formatPrice(asset.price))
+            let pct = abs(asset.changePercent)
+            parts.append(pct < 0.005 ? "unchanged today"
+                         : String(format: "%@ %.2f percent today", asset.changePercent >= 0 ? "up" : "down", pct))
+        } else {
+            parts.append(hasNoQuote ? "no live price" : "loading price")
+        }
+        return parts.joined(separator: ", ")
+    }
 }
 
-// shimmering() is defined in SkeletonView.swift
+/// Today's sparkline per symbol, so rows don't refetch (or flash) as they scroll.
+@MainActor
+final class MiniSeriesStore {
+    static let shared = MiniSeriesStore()
+    private var entries: [String: (series: MiniSeries, price: Double, at: Date)] = [:]
+
+    private func key(_ asset: Asset) -> String { "\(asset.kind.rawValue):\(asset.exchange):\(asset.symbol)" }
+
+    func cached(for asset: Asset) -> MiniSeries? { entries[key(asset)]?.series }
+
+    /// Cached while fresh (same price, under 2 minutes old); otherwise refetched.
+    func series(for asset: Asset) async -> MiniSeries? {
+        let k = key(asset)
+        if let e = entries[k], e.price == asset.price, Date().timeIntervalSince(e.at) < 120 {
+            return e.series
+        }
+        guard let fresh = await PriceHistoryService.shared.miniSeries(for: asset) else {
+            return entries[k]?.series
+        }
+        entries[k] = (fresh, asset.price, Date())
+        return fresh
+    }
+}
+
+// MARK: - Shared helpers kept for other screens
 
 
-private func detailedStock(from asset: Asset) -> DetailedStock {
+/// Seeds the detail screen from a quote until the live profile loads.
+func detailedStock(from asset: Asset) -> DetailedStock {
     let price = asset.price
     let changePercent = asset.changePercent
     let changeAmount = price * (changePercent / 100.0)
     let previousClose = price - changeAmount
 
-    // Reasonable defaults/mocks for fields we don't have in the simple Asset model
-    let exchange = asset.kind == .stock ? "NASDAQ" : "Crypto"
-    let marketCap: Double = asset.kind == .stock ? 2_800_000_000_000 : 600_000_000_000  // e.g. AAPL vs BTC scale
-    let volume = Int.random(in: 20_000_000...80_000_000)
-    let avgVolume = Int.random(in: 20_000_000...80_000_000)
-    let sharesOutstanding: Double = asset.kind == .stock ? 15_800_000_000 : 0
-    let week52High = price * 1.3
-    let week52Low = price * 0.7
-    let beta: Double? = asset.kind == .stock ? 1.24 : nil
-    let dividendYield: Double? = asset.kind == .stock ? 0.58 : nil
+    // Only what we actually know. Unknown numbers are 0 / nil and render as "—";
+    // the detail view fills them in when the live profile loads. Never invent
+    // market data — it would be shown (and fed to AI analysis) as if real.
+    let exchange = asset.kind == .crypto ? "Crypto" : (asset.exchange.isEmpty ? "—" : asset.exchange)
+    let marketCap: Double = asset.marketCap ?? 0
+    let volume = Int(asset.volume)
+    let avgVolume = Int(asset.avgVolume ?? 0)
+    let sharesOutstanding: Double = 0
+    let week52High = asset.week52High ?? 0
+    let week52Low = asset.week52Low ?? 0
+    let beta: Double? = asset.beta
+    let dividendYield: Double? = asset.dividend.map { $0 / 100 }   // Asset stores percent; DetailedStock a fraction
 
     return DetailedStock(
         symbol: asset.symbol,
@@ -1448,123 +976,5 @@ extension StockPosition {
             shares: 25.0,
             avgCost: 220.50
         )
-    }
-}
-
-// MARK: - Custom Asset Sheet
-struct AddCustomAssetSheet: View {
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.dismiss) var dismiss
-
-    let kind: AssetKind
-    let presetSymbol: String
-
-    @State private var symbol = ""
-    @State private var name = ""
-    @State private var priceText = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Custom \(kind == .stock ? "Stock" : "Crypto")") {
-                    TextField("Symbol", text: $symbol)
-                        .textInputAutocapitalization(.characters)
-                    TextField("Name (optional)", text: $name)
-                    TextField("Current Price", text: $priceText)
-                        .keyboardType(.decimalPad)
-                }
-
-                Section {
-                    Text("This will be added with the price you enter.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .navigationTitle("Add Custom Asset")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        guard let price = Double(priceText),
-                              !symbol.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-
-                        let cleanSymbol = symbol.trimmingCharacters(in: .whitespaces).uppercased()
-                        let cleanName = name.isEmpty ? cleanSymbol : name
-
-                        marketData.addCustomAsset(
-                            symbol: cleanSymbol,
-                            name: cleanName,
-                            price: price,
-                            kind: kind,
-                            exchange: "NYSE"
-                        )
-                        dismiss()
-                        dismiss()
-                    }
-                    .disabled(symbol.isEmpty || priceText.isEmpty || Double(priceText) == nil)
-                }
-            }
-            .onAppear {
-                symbol = presetSymbol.uppercased()
-            }
-        }
-    }
-}
-
-// MARK: - Create Watchlist Sheet
-
-struct CreateWatchlistSheet: View {
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.dismiss) var dismiss
-
-    @State private var name = ""
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 28) {
-                Spacer()
-
-                VStack(spacing: 8) {
-                    TextField("Watchlist name", text: $name)
-                        .font(.title3)
-                        .multilineTextAlignment(.center)
-                        .focused($focused)
-                        .submitLabel(.done)
-                        .onSubmit { create() }
-
-                    Text("Give your watchlist a clear, descriptive name")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.horizontal, 32)
-
-                Spacer()
-            }
-            .navigationTitle("New Watchlist")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") { create() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .fontWeight(.semibold)
-                }
-            }
-            .onAppear { focused = true }
-        }
-    }
-
-    private func create() {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        marketData.createWatchlist(name: trimmed)
-        dismiss()
     }
 }

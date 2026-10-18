@@ -101,7 +101,7 @@ struct OrderLauncherSmallView: View {
                     .font(WidgetFont.primaryLarge(.black))
                     .foregroundColor(WidgetColor.textPrimary)
 
-                Text(item.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                Text(WidgetMoney.format(item.price, digits: 2))
                     .font(WidgetFont.microLarge(.semibold))
                     .foregroundColor(WidgetColor.textSecondary)
 
@@ -168,7 +168,7 @@ struct OrderLauncherMediumView: View {
                 .font(WidgetFont.secondaryMedium(.bold))
                 .foregroundColor(WidgetColor.textPrimary)
 
-            Text(item.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+            Text(WidgetMoney.format(item.price, digits: 2))
                 .font(WidgetFont.microSmall(.semibold))
                 .foregroundColor(WidgetColor.textSecondary)
                 .minimumScaleFactor(0.7)

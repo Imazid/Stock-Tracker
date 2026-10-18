@@ -10,3 +10,12 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Website
+website/node_modules/
+website/.next/
+website/.env.local
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/

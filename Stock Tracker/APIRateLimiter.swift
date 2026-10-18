@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import OSLog
 
 // MARK: - Rate Limiter
 
@@ -21,6 +22,10 @@ actor APIRateLimiter {
         let baseRetryDelay: TimeInterval      // seconds
         let maxRetryDelay: TimeInterval        // seconds
         let maxRetries: Int
+        /// Throw at once while the provider is rate-limiting instead of sleeping in line.
+        /// For providers whose callers have a fallback (CoinGecko → Alpaca): sleeping
+        /// through a 20–120s back-off stalled every later request in the same chain.
+        var failFastWhenLimited = false
 
         static let `default` = EndpointConfig(
             maxRequestsPerMinute: 30,
@@ -43,7 +48,8 @@ actor APIRateLimiter {
             maxRequestsPerHour: 100,
             baseRetryDelay: 2.0,
             maxRetryDelay: 120.0,
-            maxRetries: 2
+            maxRetries: 0,
+            failFastWhenLimited: true
         )
 
         static let newsAPI = EndpointConfig(  // now used for Finnhub
@@ -92,6 +98,15 @@ actor APIRateLimiter {
             baseRetryDelay: 2.0,
             maxRetryDelay: 60.0,
             maxRetries: 2
+        )
+
+        /// Financial Modeling Prep free plan: 250 calls/day (FMPService also caches responses).
+        static let fmp = EndpointConfig(
+            maxRequestsPerMinute: 30,
+            maxRequestsPerHour: 250,
+            baseRetryDelay: 2.0,
+            maxRetryDelay: 30.0,
+            maxRetries: 1
         )
 
         static let yahoo = EndpointConfig(
@@ -188,17 +203,35 @@ extension URLSession {
         endpoint: String,
         config: APIRateLimiter.EndpointConfig = .default
     ) async throws -> (Data, URLResponse) {
+        // Identical GETs share one request (Home's index cards, sentiment, hero and
+        // sparklines asked for the same ^GSPC chart up to six times at once).
+        guard (request.httpMethod ?? "GET") == "GET", request.httpBody == nil,
+              let key = request.url?.absoluteString else {
+            return try await performRateLimited(request, endpoint: endpoint, config: config)
+        }
+        return try await RequestCoalescer.shared.data(for: key) {
+            try await self.performRateLimited(request, endpoint: endpoint, config: config)
+        }
+    }
+
+    private func performRateLimited(
+        _ request: URLRequest,
+        endpoint: String,
+        config: APIRateLimiter.EndpointConfig
+    ) async throws -> (Data, URLResponse) {
         let limiter = APIRateLimiter.shared
 
         for attempt in 0...config.maxRetries {
             // Check throttle
             if let delay = await limiter.throttleDelay(for: endpoint, config: config) {
+                if config.failFastWhenLimited { throw RateLimitError.tooManyRequests(retryAfter: delay) }
                 SecureLogger.info("Rate limited for \(endpoint): waiting \(String(format: "%.1f", delay))s")
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
 
             // Record the request
             await limiter.recordRequest(for: endpoint)
+            NetRequestLog.record(endpoint: endpoint, url: request.url)
 
             do {
                 let (data, response) = try await self.data(for: request)
@@ -243,6 +276,11 @@ extension URLSession {
             } catch let error as RateLimitError {
                 throw error
             } catch {
+                // A cancelled request (its screen went away) is not a network error:
+                // retrying it kept fetching for views that no longer existed.
+                if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+                    throw error
+                }
                 // Network error - retry with backoff
                 if attempt < config.maxRetries {
                     let delay = await limiter.backoffDelay(attempt: attempt, config: config)
@@ -331,5 +369,67 @@ enum SecureURLSessionFactory {
         config.waitsForConnectivity = false
 
         return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+    }
+}
+
+
+// MARK: - DEBUG request log (performance work)
+
+/// DEBUG builds log every network request as `NETREQ <endpoint> <host><path>` — never the
+/// query string, so no API keys — to find redundant fetches:
+/// `xcrun simctl spawn <sim> log show --predicate 'category == "netreq"'`.
+enum NetRequestLog {
+    #if DEBUG
+    nonisolated private static let logger = Logger(subsystem: "Cubeplay.Stock-Tracker", category: "netreq")
+    #endif
+
+    nonisolated static func record(endpoint: String, url: URL?) {
+        #if DEBUG
+        let host = url?.host() ?? "?"
+        let path = url?.path() ?? ""
+        logger.notice("NETREQ \(endpoint, privacy: .public) \(host, privacy: .public)\(path, privacy: .public)")
+        #endif
+    }
+}
+
+
+// MARK: - Request coalescing
+
+/// Shares identical GET requests: callers asking for a URL that is already in flight
+/// await the same response, and a successful response is reused for `ttl` seconds.
+/// The window is shorter than any provider's own delay (Alpaca IEX, Yahoo ~15 min for
+/// ASX), so a reused answer is never older than what a fresh request could return.
+actor RequestCoalescer {
+    static let shared = RequestCoalescer()
+    private let ttl: TimeInterval = 10
+    private let maxBytes = 2 * 1024 * 1024
+    private var inFlight: [String: Task<(Data, URLResponse), Error>] = [:]
+    private var recent: [String: (at: Date, data: Data, response: URLResponse)] = [:]
+
+    func data(for key: String,
+              load: @escaping @Sendable () async throws -> (Data, URLResponse)) async throws -> (Data, URLResponse) {
+        if let hit = recent[key], Date().timeIntervalSince(hit.at) < ttl { return (hit.data, hit.response) }
+        if let running = inFlight[key] { return try await running.value }
+        // Unstructured on purpose: one caller's screen going away mustn't cancel the
+        // request others are waiting on.
+        let task = Task { try await load() }
+        inFlight[key] = task
+        defer { inFlight[key] = nil }
+        let result = try await task.value
+        if let http = result.1 as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+            // Only the last few seconds are worth keeping; holding every chart body until
+            // a count limit cost ~45 MB after visiting every tab.
+            let cutoff = Date().addingTimeInterval(-ttl)
+            recent = recent.filter { $0.value.at > cutoff }
+            if result.0.count <= maxBytes / 4 {
+                recent[key] = (Date(), result.0, result.1)
+                var total = recent.values.reduce(0) { $0 + $1.data.count }
+                for (oldKey, entry) in recent.sorted(by: { $0.value.at < $1.value.at }) where total > maxBytes {
+                    recent[oldKey] = nil
+                    total -= entry.data.count
+                }
+            }
+        }
+        return result
     }
 }

@@ -190,6 +190,9 @@ struct RemoteTransaction: Codable {
     let shares: Double
     let pricePerShare: Double
     let type: String        // "Buy" | "Sell"
+    /// Optional so rows written before fees/realised profit existed still decode.
+    let fees: Double?
+    let avgCostAtSale: Double?
     let updatedAt: String
     let deletedAt: String?
 
@@ -201,6 +204,8 @@ struct RemoteTransaction: Codable {
         case shares
         case pricePerShare   = "price_per_share"
         case type
+        case fees
+        case avgCostAtSale   = "avg_cost_at_sale"
         case updatedAt       = "updated_at"
         case deletedAt       = "deleted_at"
     }
@@ -213,7 +218,9 @@ struct RemoteTransaction: Codable {
             date: parseDate(transactionDate),
             shares: shares,
             pricePerShare: pricePerShare,
-            type: TransactionType(rawValue: type) ?? .buy
+            type: TransactionType(rawValue: type) ?? .buy,
+            fees: fees ?? 0,
+            avgCostAtSale: avgCostAtSale
         )
     }
 
@@ -225,7 +232,9 @@ struct RemoteTransaction: Codable {
             transaction_date: iso8601Basic.string(from: tx.date),
             shares:           tx.shares,
             price_per_share:  tx.pricePerShare,
-            type:             tx.type.rawValue
+            type:             tx.type.rawValue,
+            fees:             tx.fees,
+            avg_cost_at_sale: tx.avgCostAtSale
         )
     }
 }
@@ -238,6 +247,8 @@ struct TransactionUpsert: Encodable {
     let shares: Double
     let price_per_share: Double
     let type: String
+    let fees: Double
+    let avg_cost_at_sale: Double?
 }
 
 // MARK: - RemotePriceAlert
@@ -253,6 +264,12 @@ struct RemotePriceAlert: Codable {
     let targetPrice: Double
     let condition: String   // "Above" | "Below"
     let isActive: Bool
+    /// Optional so rows written before repeating alerts existed still decode.
+    let repeats: Bool?
+    let isArmed: Bool?
+    let lastTriggeredAt: String?
+    let assetKind: String?
+    let assetExchange: String?
     let createdAt: String
     let updatedAt: String
     let deletedAt: String?
@@ -265,6 +282,11 @@ struct RemotePriceAlert: Codable {
         case targetPrice = "target_price"
         case condition
         case isActive    = "is_active"
+        case repeats
+        case isArmed     = "is_armed"
+        case lastTriggeredAt = "last_triggered_at"
+        case assetKind   = "asset_kind"
+        case assetExchange = "asset_exchange"
         case createdAt   = "created_at"
         case updatedAt   = "updated_at"
         case deletedAt   = "deleted_at"
@@ -280,7 +302,12 @@ struct RemotePriceAlert: Codable {
             targetPrice: targetPrice,
             condition: AlertCondition(rawValue: condition) ?? .above,
             isActive: isActive,
-            createdAt: parseDate(createdAt)
+            createdAt: parseDate(createdAt),
+            repeats: repeats ?? false,
+            isArmed: isArmed ?? true,
+            lastTriggeredAt: lastTriggeredAt.map(parseDate),
+            kind: assetKind.flatMap(AssetKind.init(rawValue:)),
+            exchange: assetExchange
         )
     }
 
@@ -293,6 +320,11 @@ struct RemotePriceAlert: Codable {
             target_price: alert.targetPrice,
             condition:    alert.condition.rawValue,
             is_active:    alert.isActive,
+            repeats:      alert.repeats,
+            is_armed:     alert.isArmed,
+            last_triggered_at: alert.lastTriggeredAt.map { iso8601Basic.string(from: $0) },
+            asset_kind:   alert.kind?.rawValue,
+            asset_exchange: alert.exchange,
             created_at:   iso8601Basic.string(from: alert.createdAt)
         )
     }
@@ -306,6 +338,11 @@ struct AlertUpsert: Encodable {
     let target_price: Double
     let condition: String
     let is_active: Bool
+    let repeats: Bool
+    let is_armed: Bool
+    let last_triggered_at: String?
+    let asset_kind: String?
+    let asset_exchange: String?
     let created_at: String
 }
 

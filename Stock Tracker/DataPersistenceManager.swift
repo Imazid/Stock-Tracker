@@ -55,6 +55,8 @@ final class DataPersistenceManager {
         static let portfolioHistory     = "com.stocktracker.persist.portfolioHistory"
         static let customAssets         = "com.stocktracker.persist.customAssets"
         static let watchlistGroups      = "com.stocktracker.persist.watchlistGroups"
+        static let portfolioGroups      = "com.stocktracker.persist.portfolioGroups"
+        static let referralCode         = "com.stocktracker.persist.referralCode"
     }
 
     // MARK: - UserDefaults keys (non-sensitive preferences)
@@ -86,6 +88,20 @@ final class DataPersistenceManager {
             return decoded2
         }
         return decoded
+    }
+
+    // MARK: - Portfolio Groups
+
+    func savePortfolioGroups(_ groups: [PortfolioGroup], activeIndex: Int) {
+        guard let data = try? encoder.encode(groups) else { return }
+        _ = keychain.saveData(key: KeychainKeys.portfolioGroups, value: data)
+        UserDefaults.standard.set(activeIndex, forKey: "active_portfolio_index")
+    }
+
+    func loadPortfolioGroups() -> (groups: [PortfolioGroup], activeIndex: Int) {
+        guard let data = keychain.retrieveData(key: KeychainKeys.portfolioGroups),
+              let groups = try? decoder.decode([PortfolioGroup].self, from: data) else { return ([], 0) }
+        return (groups, UserDefaults.standard.integer(forKey: "active_portfolio_index"))
     }
 
     // MARK: - Watchlist Groups
@@ -221,14 +237,46 @@ final class DataPersistenceManager {
         AppLogger.persist.info("Sync credentials cleared from Keychain")
     }
 
+    // MARK: - Referral Code (Keychain — user's own code)
+
+    func saveReferralCode(_ code: ReferralCode) {
+        guard let data = try? encoder.encode(code) else { return }
+        _ = keychain.saveData(key: KeychainKeys.referralCode, value: data)
+    }
+
+    func loadReferralCode() -> ReferralCode? {
+        guard let data = keychain.retrieveData(key: KeychainKeys.referralCode),
+              let decoded = try? decoder.decode(ReferralCode.self, from: data) else { return nil }
+        return decoded
+    }
+
+    // MARK: - Pending Referral Code (UserDefaults — temporary, pre-signup)
+
+    func savePendingReferralCode(_ code: String) {
+        defaults.set(code, forKey: Constants.Referral.pendingReferralCodeKey)
+    }
+
+    func loadPendingReferralCode() -> String? {
+        defaults.string(forKey: Constants.Referral.pendingReferralCodeKey)
+    }
+
+    func clearPendingReferralCode() {
+        defaults.removeObject(forKey: Constants.Referral.pendingReferralCodeKey)
+    }
+
     // MARK: - Clear All
 
     func clearAllData() {
         _ = keychain.delete(key: KeychainKeys.watchlist)
+        // Groups hold their own copy of the watchlist and win on reload — clear them too,
+        // or "cleared" watchlists come back.
+        _ = keychain.delete(key: KeychainKeys.watchlistGroups)
+        _ = keychain.delete(key: KeychainKeys.portfolioGroups)
         _ = keychain.delete(key: KeychainKeys.portfolio)
         _ = keychain.delete(key: KeychainKeys.customAssets)
         _ = keychain.delete(key: KeychainKeys.priceAlerts)
         _ = keychain.delete(key: KeychainKeys.portfolioHistory)
+        _ = keychain.delete(key: KeychainKeys.referralCode)
         // Leave UserDefaults preferences intact (currency, theme)
         AppLogger.persist.info("All secure data cleared from Keychain")
     }

@@ -128,7 +128,7 @@ struct SingleStockSmallView: View {
         .widgetURL(WidgetDeepLink.asset(entry.symbol))
         .widgetContainerBG(accent: color)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(entry.symbol), \(String(format: "$%.2f", entry.price)), \(entry.isPositive ? "up" : "down") \(String(format: "%.2f", abs(entry.changePercent))) percent")
+        .accessibilityLabel("\(entry.symbol), \(WidgetMoney.format(entry.price, digits: 2)), \(entry.isPositive ? "up" : "down") \(String(format: "%.2f", abs(entry.changePercent))) percent")
     }
 }
 
@@ -165,7 +165,7 @@ struct SingleStockMediumView: View {
                 VStack(alignment: .trailing, spacing: 8) {
                     VStack(alignment: .trailing, spacing: 2) {
                         MicroLabel(text: "Change")
-                        Text(entry.change, format: .currency(code: "USD").sign(strategy: .always()))
+                        Text(WidgetMoney.format(entry.change, digits: 2, signed: true))
                             .font(WidgetFont.microLarge(.bold))
                             .foregroundColor(color)
                     }
@@ -180,7 +180,7 @@ struct SingleStockMediumView: View {
         .widgetURL(WidgetDeepLink.asset(entry.symbol))
         .widgetContainerBG(accent: color)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(entry.symbol), \(String(format: "$%.2f", entry.price)), \(entry.isPositive ? "up" : "down") \(String(format: "%.2f", abs(entry.changePercent))) percent")
+        .accessibilityLabel("\(entry.symbol), \(WidgetMoney.format(entry.price, digits: 2)), \(entry.isPositive ? "up" : "down") \(String(format: "%.2f", abs(entry.changePercent))) percent")
     }
 }
 
@@ -227,7 +227,7 @@ struct SingleStockLargeView: View {
                 if entry.change != 0 {
                     VStack(alignment: .leading, spacing: 2) {
                         MicroLabel(text: "CHG")
-                        Text(entry.change, format: .currency(code: "USD").sign(strategy: .always()))
+                        Text(WidgetMoney.format(entry.change, digits: 2, signed: true))
                             .font(WidgetFont.secondaryMedium(.bold))
                             .foregroundColor(color)
                     }
@@ -239,7 +239,7 @@ struct SingleStockLargeView: View {
         .widgetURL(WidgetDeepLink.asset(entry.symbol))
         .widgetContainerBG(accent: color)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(entry.symbol), \(String(format: "$%.2f", entry.price)), \(entry.isPositive ? "up" : "down") \(String(format: "%.2f", abs(entry.changePercent))) percent")
+        .accessibilityLabel("\(entry.symbol), \(WidgetMoney.format(entry.price, digits: 2)), \(entry.isPositive ? "up" : "down") \(String(format: "%.2f", abs(entry.changePercent))) percent")
     }
 }
 
@@ -286,7 +286,7 @@ struct SingleStockAccessoryRectangular: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundColor(.secondary)
                     .widgetAccentable()
-                Text(entry.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                Text(WidgetMoney.format(entry.price, digits: 2))
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .minimumScaleFactor(0.8)
                     .lineLimit(1)
@@ -314,7 +314,7 @@ struct SingleStockAccessoryInline: View {
     let entry: SingleStockEntry
 
     var body: some View {
-        Text("\(entry.symbol) \(String(format: "$%.2f", entry.price)) \(entry.isPositive ? "▲" : "▼")\(String(format: "%.1f", abs(entry.changePercent)))%")
+        Text("\(entry.symbol) \(WidgetMoney.format(entry.price, digits: 2)) \(entry.isPositive ? "▲" : "▼")\(String(format: "%.1f", abs(entry.changePercent)))%")
             .widgetAccentable()
             .widgetURL(WidgetDeepLink.asset(entry.symbol))
             .containerBackground(.clear, for: .widget)

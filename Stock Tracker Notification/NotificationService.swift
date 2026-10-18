@@ -17,9 +17,9 @@ class NotificationService: UNNotificationServiceExtension {
         bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
         
         if let bestAttemptContent = bestAttemptContent {
-            // Modify the notification content here...
-            bestAttemptContent.title = "\(bestAttemptContent.title) [modified]"
-            
+            // Deliver the push as sent. (The Xcode template's "[modified]" title
+            // suffix used to leak into every real notification.)
+
             contentHandler(bestAttemptContent)
         }
     }

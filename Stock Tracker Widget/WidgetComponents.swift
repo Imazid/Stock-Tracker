@@ -40,7 +40,7 @@ struct HeroPriceBlock: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            Text(value, format: .currency(code: "USD").precision(.fractionLength(value >= 1000 ? 0 : 2)))
+            Text(WidgetMoney.format(value, digits: value >= 1000 ? 0 : 2))
                 .font(font)
                 .foregroundColor(WidgetColor.textPrimary)
                 .minimumScaleFactor(0.6)

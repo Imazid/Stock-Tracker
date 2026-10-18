@@ -1,309 +1,264 @@
+//
 //  PortfolioAllocationView.swift
 //  Stock Tracker
-//  Allocation tab: composition card (donut + legend), horizontal risk strip.
+//
+//  Allocation segment of the Portfolio tab (after Origin / Revolut on Mobbin):
+//  a selectable donut by holding, type or market with the total in the centre,
+//  a legend with value and share, and an honest concentration card.
+//
+//  Every number here is derived from live holdings. Volatility is shown only
+//  when it can be computed from a year of real price history — never guessed.
+//
 
 import SwiftUI
 import Charts
 
-// MARK: - PortfolioRiskCalculator
+struct PortfolioAllocationTab: View {
+    @EnvironmentObject private var marketData: MarketData
+    @Environment(\.theme) private var theme
+    @AppStorage("portfolioValueHidden") private var valueHidden = false
+    @AppStorage("portfolioAllocationGrouping") private var groupingRaw = Grouping.holding.rawValue
 
-struct PortfolioRiskCalculator {
-    /// Annualized volatility as % (std dev of daily returns x sqrt(252) x 100)
-    static func volatility(from history: [PortfolioSnapshot]) -> Double {
-        let sorted = history.sorted { $0.date < $1.date }
-        guard sorted.count > 1 else { return 0 }
-        let returns = zip(sorted, sorted.dropFirst()).compactMap { prev, curr -> Double? in
-            guard prev.totalValue > 0 else { return nil }
-            return (curr.totalValue - prev.totalValue) / prev.totalValue
+    @State private var selectedAngle: Double?
+    @State private var volatility: Double?
+    @State private var volatilityState: LoadState = .idle
+
+    enum Grouping: String, CaseIterable {
+        case holding, type, market
+        var title: String {
+            switch self {
+            case .holding: return "Holdings"
+            case .type:    return "Type"
+            case .market:  return "Market"
+            }
         }
-        guard !returns.isEmpty else { return 0 }
-        let mean = returns.reduce(0, +) / Double(returns.count)
-        let variance = returns.map { pow($0 - mean, 2) }.reduce(0, +) / Double(returns.count)
-        return sqrt(variance) * sqrt(252) * 100
     }
 
-    /// Weighted average beta of holdings (falls back to 1.0 if no beta data)
-    static func beta(from portfolio: [PortfolioHolding]) -> Double {
-        let betas = portfolio.compactMap { h -> (Double, Double)? in
-            guard let b = h.asset.beta, h.currentValue > 0 else { return nil }
-            return (b, h.currentValue)
+    enum LoadState { case idle, loading, done, unavailable }
+
+    struct Slice: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let detail: String
+        let value: Double
+        let color: Color
+    }
+
+    private var grouping: Grouping { Grouping(rawValue: groupingRaw) ?? .holding }
+    private var total: Double { marketData.totalPortfolioValue }
+
+    private var slices: [Slice] {
+        let holdings = marketData.portfolio.filter { $0.currentValue > 0 }.sorted { $0.currentValue > $1.currentValue }
+        switch grouping {
+        case .holding:
+            let top = holdings.prefix(6)
+            var out = top.enumerated().map { i, h in
+                Slice(id: h.id.uuidString, label: h.asset.symbol,
+                      detail: h.asset.name == h.asset.symbol ? h.asset.marketLabel : h.asset.name,
+                      value: h.currentValue, color: AllocationPalette.color(i))
+            }
+            let rest = holdings.dropFirst(6)
+            if !rest.isEmpty {
+                out.append(Slice(id: "other", label: "Other", detail: "\(rest.count) holdings",
+                                 value: rest.reduce(0) { $0 + $1.currentValue }, color: AllocationPalette.other))
+            }
+            return out
+        case .type:
+            return grouped(holdings) { $0.asset.kind == .crypto ? "Crypto" : "Stocks & ETFs" }
+        case .market:
+            return grouped(holdings) { $0.asset.marketLabel == "Crypto" ? "Crypto" : "\($0.asset.marketLabel) shares" }
         }
-        guard !betas.isEmpty else { return 1.0 }
-        let totalV = betas.reduce(0) { $0 + $1.1 }
-        return betas.reduce(0) { $0 + ($1.0 * $1.1 / totalV) }
     }
 
-    /// Sharpe ratio: (annualizedReturn% - riskFreeRate%) / volatility%
-    static func sharpeRatio(totalPLPercent: Double, volatility: Double, riskFreeRate: Double = 4.5) -> Double {
-        guard volatility > 0 else { return 0 }
-        return (totalPLPercent - riskFreeRate) / volatility
+    private func grouped(_ holdings: [PortfolioHolding], key: (PortfolioHolding) -> String) -> [Slice] {
+        let groups = Dictionary(grouping: holdings, by: key)
+        return groups
+            .map { (name: $0.key, value: $0.value.reduce(0) { $0 + $1.currentValue }, count: $0.value.count) }
+            .sorted { $0.value > $1.value }
+            .enumerated()
+            .map { i, g in
+                Slice(id: g.name, label: g.name, detail: g.count == 1 ? "1 holding" : "\(g.count) holdings",
+                      value: g.value, color: AllocationPalette.color(i))
+            }
     }
 
-    /// 0–100 diversification score based on inverse HHI
-    static func diversificationScore(from portfolio: [PortfolioHolding], totalValue: Double) -> Int {
-        guard totalValue > 0, portfolio.count > 1 else { return 0 }
-        let hhi = portfolio.reduce(0.0) { $0 + pow($1.currentValue / totalValue, 2) }
-        let n = Double(portfolio.count)
-        let maxScore = 1.0 - 1.0 / n
-        guard maxScore > 0 else { return 0 }
-        return Int(min(100, max(0, (1 - hhi) / maxScore * 100)))
-    }
-}
-
-// MARK: - Segment Model
-
-private struct AllocationSegment: Identifiable {
-    let id: UUID
-    let label: String
-    let value: Double
-    let pct: Double
-    let color: Color
-
-    init(label: String, value: Double, pct: Double, color: Color) {
-        self.id    = UUID()
-        self.label = label
-        self.value = value
-        self.pct   = pct
-        self.color = color
-    }
-}
-
-// MARK: - AllocationChartView
-
-struct AllocationChartView: View {
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.theme) var appTheme
-    @Environment(\.colorScheme) var colorScheme
-
-    // MARK: - Data
-
-    private var portfolio: [PortfolioHolding] { marketData.portfolio }
-    private var totalValue: Double { marketData.totalPortfolioValue }
-
-    private var sortedByValue: [PortfolioHolding] {
-        portfolio.sorted { $0.currentValue > $1.currentValue }
-    }
-
-    private let localPalette: [Color] = [
-        Color(red: 0.18, green: 0.40, blue: 1.00),
-        Color(red: 0.58, green: 0.18, blue: 1.00),
-        Color(red: 1.00, green: 0.48, blue: 0.00),
-        Color(red: 0.08, green: 0.72, blue: 0.42),
-        Color(red: 1.00, green: 0.28, blue: 0.60),
-        Color(red: 0.00, green: 0.78, blue: 0.92),
-        Color(red: 0.90, green: 0.20, blue: 0.20),
-    ]
-
-    private var topSegments: [AllocationSegment] {
-        guard totalValue > 0 else { return [] }
-        let top6 = Array(sortedByValue.prefix(6))
-        var segments: [AllocationSegment] = []
-        for (idx, holding) in top6.enumerated() {
-            let pct: Double = holding.currentValue / totalValue * 100
-            let c: Color = localPalette[idx % localPalette.count]
-            segments.append(AllocationSegment(label: holding.asset.symbol, value: holding.currentValue, pct: pct, color: c))
+    private var selected: Slice? {
+        guard let selectedAngle else { return nil }
+        var running = 0.0
+        for s in slices {
+            running += s.value
+            if selectedAngle <= running { return s }
         }
-        if sortedByValue.count > 6 {
-            let othersValue: Double = sortedByValue.dropFirst(6).reduce(0.0) { $0 + $1.currentValue }
-            let othersPct: Double = othersValue / totalValue * 100
-            segments.append(AllocationSegment(label: "Others", value: othersValue, pct: othersPct, color: Color(UIColor.systemGray3)))
-        }
-        return segments
+        return slices.last
     }
 
-    private var volatility: Double {
-        PortfolioRiskCalculator.volatility(from: marketData.portfolioHistory)
-    }
-    private var beta: Double {
-        PortfolioRiskCalculator.beta(from: portfolio)
-    }
-    private var sharpe: Double {
-        PortfolioRiskCalculator.sharpeRatio(
-            totalPLPercent: marketData.totalProfitLossPercent,
-            volatility: volatility
-        )
-    }
-    private var diversificationScore: Int {
-        PortfolioRiskCalculator.diversificationScore(from: portfolio, totalValue: totalValue)
-    }
+    private func share(_ value: Double) -> Double { total > 0 ? value / total * 100 : 0 }
 
-    // MARK: - Body
+    // MARK: Body
 
     var body: some View {
-        if portfolio.isEmpty {
-            emptyPlaceholder
-                .padding(.horizontal, 16)
-                .padding(.top, 60)
+        if marketData.portfolio.isEmpty || total <= 0 {
+            EmptyStateCard(systemImage: "chart.pie", title: "Nothing to break down yet",
+                           message: "Once your holdings have a value, you'll see how it's split by holding, type and market.")
         } else {
-            VStack(spacing: 16) {
-                compositionCard
-                riskCard
+            VStack(alignment: .leading, spacing: DS.Space.l) {
+                DSSegmentBar(options: Grouping.allCases,
+                             selection: Binding(get: { grouping }, set: { groupingRaw = $0.rawValue; selectedAngle = nil }),
+                             title: { $0.title }, identifier: { "portfolio.allocation.\($0.rawValue)" })
+
+                donutCard
+                concentrationCard
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 120)
+            .task(id: marketData.portfolio.map { "\($0.asset.symbol):\($0.shares)" }.joined()) { await loadVolatility() }
         }
     }
 
-    // MARK: - Composition Card
-
-    private var compositionCard: some View {
-        VStack(spacing: 0) {
-            // Donut chart
-            ZStack {
-                Chart(topSegments) { seg in
-                    SectorMark(
-                        angle: .value("Value", seg.value),
-                        innerRadius: .ratio(0.60),
-                        angularInset: 1.5
-                    )
-                    .foregroundStyle(seg.color)
+    private var donutCard: some View {
+        let data = slices
+        return VStack(spacing: DS.Space.l) {
+            Chart(data) { slice in
+                SectorMark(angle: .value("Value", slice.value), innerRadius: .ratio(0.64), angularInset: 1.5)
                     .cornerRadius(3)
-                }
-
-                VStack(spacing: 3) {
-                    Text(marketData.formatPrice(totalValue))
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(.primary)
-                    Text("\(portfolio.count) position\(portfolio.count == 1 ? "" : "s")")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                    .foregroundStyle(slice.color)
+                    .opacity(selected == nil || selected == slice ? 1 : 0.3)
+            }
+            .chartAngleSelection(value: $selectedAngle)
+            .chartLegend(.hidden)
+            .frame(height: 220)
+            .chartBackground { proxy in
+                GeometryReader { geo in
+                    if let frame = proxy.plotFrame {
+                        let rect = geo[frame]
+                        centerLabel(data)
+                            .frame(width: rect.width * 0.56)
+                            .position(x: rect.midX, y: rect.midY)
+                    }
                 }
             }
-            .frame(height: 190)
-            .padding(.top, 20)
-            .padding(.horizontal, 28)
+            .accessibilityLabel(data.map { "\($0.label) \(String(format: "%.1f", share($0.value))) percent" }.joined(separator: ", "))
+            .accessibilityIdentifier("portfolio.allocation.donut")
 
-            Divider()
-                .padding(.top, 16)
-
-            // Holdings list
             VStack(spacing: 0) {
-                ForEach(Array(topSegments.enumerated()), id: \.element.id) { idx, seg in
-                    HStack(spacing: 12) {
-                        // Color bar accent
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(seg.color)
-                            .frame(width: 3, height: 34)
-
-                        // Symbol + name
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(seg.label)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(.primary)
-                            Text(nameForSymbol(seg.label))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer(minLength: 8)
-
-                        // Value + percentage
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(String(format: "%.1f%%", seg.pct))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(.primary)
-                                .monospacedDigit()
-                            Text(marketData.formatPrice(seg.value))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-
-                    if idx < topSegments.count - 1 {
-                        Divider()
-                            .padding(.leading, 31)
-                    }
+                ForEach(data) { slice in
+                    legendRow(slice)
+                    if slice != data.last { Divider().overlay(theme.cardBorder.opacity(0.4)).padding(.leading, 22) }
                 }
             }
-            .padding(.bottom, 8)
         }
-        .background(colorScheme == .dark ? Color(UIColor.secondarySystemBackground) : Color(red: 0.953, green: 0.937, blue: 0.910))
-        .cornerRadius(16)
+        .dsCard()
     }
 
-    private func nameForSymbol(_ symbol: String) -> String {
-        if symbol == "Others" { return "Multiple positions" }
-        return portfolio.first { $0.asset.symbol == symbol }?.asset.name ?? symbol
-    }
-
-    // MARK: - Risk Card
-
-    private var riskCard: some View {
-        HStack(spacing: 0) {
-            riskItem(
-                title: "Volatility",
-                value: String(format: "%.1f%%", volatility),
-                sub: volatility > 25 ? "High" : volatility < 10 ? "Low" : "Normal",
-                color: volatility > 25 ? appTheme.negativeColor : volatility < 10 ? appTheme.positiveColor : .primary
-            )
-
-            Divider().frame(height: 44)
-
-            riskItem(
-                title: "Beta",
-                value: String(format: "%.2f", beta),
-                sub: beta > 1.2 ? "Aggressive" : beta < 0.8 ? "Defensive" : "Neutral",
-                color: beta > 1.2 ? Color.orange : .primary
-            )
-
-            Divider().frame(height: 44)
-
-            riskItem(
-                title: "Sharpe",
-                value: String(format: "%.2f", sharpe),
-                sub: sharpe > 1 ? "Excellent" : sharpe < 0 ? "Negative" : "Moderate",
-                color: sharpe > 1 ? appTheme.positiveColor : sharpe < 0 ? appTheme.negativeColor : .primary
-            )
-
-            Divider().frame(height: 44)
-
-            riskItem(
-                title: "Diversity",
-                value: "\(diversificationScore)",
-                sub: "/100",
-                color: diversificationScore >= 70 ? appTheme.positiveColor : diversificationScore >= 40 ? .orange : appTheme.negativeColor
-            )
+    private func centerLabel(_ data: [Slice]) -> some View {
+        VStack(spacing: 2) {
+            Text(selected?.label ?? "Total")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(theme.secondaryText)
+                .lineLimit(1)
+            Text(valueHidden ? "••••" : marketData.formatPrice(selected?.value ?? total))
+                .font(DS.money(20, weight: .bold))
+                .foregroundStyle(theme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(selected.map { formatPercent(share($0.value)) } ?? "\(marketData.portfolio.count) holdings")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(theme.secondaryText)
         }
-        .padding(.vertical, 16)
-        .frame(maxWidth: .infinity)
-        .background(colorScheme == .dark ? Color(UIColor.secondarySystemBackground) : Color(red: 0.953, green: 0.937, blue: 0.910))
-        .cornerRadius(16)
+        .multilineTextAlignment(.center)
     }
 
-    private func riskItem(title: String, value: String, sub: String, color: Color) -> some View {
-        VStack(spacing: 4) {
-            Text(title)
+    private func legendRow(_ slice: Slice) -> some View {
+        HStack(spacing: DS.Space.m) {
+            Circle().fill(slice.color).frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(slice.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.primaryText)
+                Text(slice.detail)
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: DS.Space.s)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formatPercent(share(slice.value)))
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(theme.primaryText)
+                Text(valueHidden ? "••••" : marketData.formatPrice(slice.value))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(theme.secondaryText)
+            }
+        }
+        .padding(.vertical, DS.Space.s)
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Concentration
+
+    private var concentrationCard: some View {
+        let sorted = marketData.portfolio.sorted { $0.currentValue > $1.currentValue }
+        let largest = sorted.first
+        let largestShare = largest.map { share($0.currentValue) } ?? 0
+        let top3 = share(sorted.prefix(3).reduce(0) { $0 + $1.currentValue })
+
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            Text("Concentration")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 0) {
+                if let largest {
+                    LedgerLine(label: "Largest holding", value: "\(largest.asset.symbol) · \(formatPercent(largestShare))")
+                }
+                if sorted.count > 3 {
+                    LedgerLine(label: "Top 3 holdings", value: formatPercent(top3))
+                }
+                LedgerLine(label: "Volatility (past year)", value: volatilityText)
+            }
+            if let largest, largestShare >= 40, sorted.count > 1 {
+                Text("\(largest.asset.symbol) is \(formatPercent(largestShare)) of this portfolio, so its price moves drive most of your returns.")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryText)
+            }
+            Text("Volatility is how much your current holdings' combined value swung day to day over the past year, annualised.")
                 .font(.caption2)
-                .foregroundColor(.secondary)
-            Text(value)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundColor(color)
-                .monospacedDigit()
-            Text(sub)
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundStyle(theme.secondaryText)
         }
-        .frame(maxWidth: .infinity)
+        .dsCard()
     }
 
-    // MARK: - Empty State
-
-    private var emptyPlaceholder: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "chart.pie")
-                .font(.system(size: 40))
-                .foregroundColor(.secondary.opacity(0.4))
-            Text("Add holdings to see allocation")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+    private var volatilityText: String {
+        switch volatilityState {
+        case .idle, .loading: return "Calculating…"
+        case .unavailable:    return "—"
+        case .done:           return volatility.map { String(format: "%.1f%% a year", $0) } ?? "—"
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+    }
+
+    /// Annualised standard deviation of the reconstructed 1Y series' period returns.
+    private func loadVolatility() async {
+        guard !marketData.portfolio.isEmpty else { return }
+        volatilityState = .loading
+        do {
+            let value = marketData.totalPortfolioValue
+            let series = try await PriceHistoryService.shared.portfolioSeries(
+                holdings: marketData.portfolio, range: .oneYear,
+                liveValue: value, previousCloseValue: value - marketData.dailyProfitLoss)
+            let pts = series.points
+            guard pts.count >= 60, let first = pts.first?.date, let last = pts.last?.date else {
+                volatilityState = .unavailable; return
+            }
+            var returns: [Double] = []
+            for (a, b) in zip(pts, pts.dropFirst()) where a.price > 0 {
+                returns.append(b.price / a.price - 1)
+            }
+            let years = last.timeIntervalSince(first) / (365.25 * 86_400)
+            guard returns.count >= 30, years > 0.5 else { volatilityState = .unavailable; return }
+            let mean = returns.reduce(0, +) / Double(returns.count)
+            let variance = returns.reduce(0) { $0 + pow($1 - mean, 2) } / Double(returns.count - 1)
+            let perYear = Double(returns.count) / years
+            volatility = sqrt(variance) * sqrt(perYear) * 100
+            volatilityState = .done
+        } catch {
+            volatilityState = .unavailable
+        }
     }
 }

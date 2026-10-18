@@ -12,5 +12,62 @@
 	<string>This app needs microphone access to record your voice for the AI assistant&apos;s voice input feature.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>This app uses speech recognition to convert your voice input into text for the AI assistant feature.</string>
+	<!-- Best-effort background price-alert checks (BackgroundRefresh.swift) -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>Cubeplay.Stock-Tracker.refresh</string>
+	</array>
+	<!-- stocktracker:// — widget taps and in-app deep links (handleWidgetDeepLink) -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>stocktracker</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>stocktracker</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Home Screen quick actions (long-press the icon). Types are deep links — QuickActions.swift -->
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>stocktracker://search</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Search</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>magnifyingglass</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>stocktracker://alerts</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Price alerts</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>bell</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>stocktracker://portfolio</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Portfolio</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>briefcase</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>stocktracker://watchlist</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Watchlist</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>star</string>
+		</dict>
+	</array>
 </dict>
 </plist>

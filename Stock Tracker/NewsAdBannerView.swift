@@ -25,8 +25,33 @@ import SwiftUI
 import Combine
 import OSLog
 
-// Replace with your real Native Ad Unit ID from the AdMob console.
-private let kNewsNativeAdUnitID = "ca-app-pub-3940256099942544/3986624511"
+/// Where News ads come from. Google's test unit only runs in DEBUG; a Release build
+/// shows ads only when a real native unit ID is configured (Info.plist
+/// `NewsNativeAdUnitID`), otherwise the ad slots are hidden entirely.
+enum NewsAds {
+    private static let googleTestUnitID = "ca-app-pub-3940256099942544/3986624511"
+
+    static var unitID: String? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-UITestFreshInstall") { return nil }
+        return googleTestUnitID
+        #else
+        guard let id = Bundle.main.object(forInfoDictionaryKey: "NewsNativeAdUnitID") as? String,
+              id.hasPrefix("ca-app-pub-"), id != googleTestUnitID else { return nil }
+        return id
+        #endif
+    }
+
+    static var isEnabled: Bool {
+        #if canImport(GoogleMobileAds)
+        return unitID != nil
+        #else
+        return false
+        #endif
+    }
+}
+
+private let kNewsNativeAdUnitID = NewsAds.unitID ?? ""
 
 #if canImport(GoogleMobileAds)
 import GoogleMobileAds
@@ -35,10 +60,11 @@ import GoogleMobileAds
 
 final class NewsNativeAdLoader: NSObject, ObservableObject {
     @Published var nativeAd: NativeAd?
+    @Published var failed = false
     private var adLoader: AdLoader?
 
     func load() {
-        guard adLoader == nil else { return }
+        guard adLoader == nil, NewsAds.isEnabled else { return }
         let rootVC = UIApplication.shared
             .connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }
@@ -64,6 +90,7 @@ extension NewsNativeAdLoader: NativeAdLoaderDelegate {
 
     func adLoader(_ adLoader: AdLoader, didFailToReceiveAdWithError error: Error) {
         AppLogger.api.warning("AdMob native ad failed: \(error.localizedDescription)")
+        DispatchQueue.main.async { self.failed = true }
     }
 }
 
@@ -280,32 +307,31 @@ private struct StockNativeAdUIView: UIViewRepresentable {
 
 // MARK: - SwiftUI card (drop-in replacement for NewsAdBannerCard)
 
-/// Renders a native ad styled identically to NewsCompactCard.
+/// A native ad in the news feed, clearly labelled "Sponsored". Takes no space
+/// until an ad has actually loaded, and none at all if it fails.
 struct NewsAdBannerCard: View {
     @StateObject private var loader = NewsNativeAdLoader()
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
         Group {
             if let ad = loader.nativeAd {
-                StockNativeAdUIView(nativeAd: ad)
-                    .frame(minHeight: 114)
-                    .background(theme.glassBackground)
-                    .cornerRadius(16)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Sponsored")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.secondaryText)
+                        .accessibilityIdentifier("news.sponsored")
+                    StockNativeAdUIView(nativeAd: ad)
+                        .frame(minHeight: 114)
+                        .background(theme.subtleFill)
+                        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
+                                .strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5)
+                        )
+                }
             } else {
-                // Skeleton placeholder — same dimensions as NewsCompactCard
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(theme.glassBackground.opacity(0.5))
-                    .frame(height: 114)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
+                Color.clear.frame(height: 0)
             }
         }
         .onAppear { loader.load() }

@@ -111,7 +111,7 @@ struct PriceAlertSmallView: View {
                     .foregroundColor(WidgetColor.textSecondary)
 
                 if let first = entry.alerts.first {
-                    MicroLabel(text: "\(first.symbol) → \(String(format: "$%.2f", first.targetPrice))")
+                    MicroLabel(text: "\(first.symbol) → \(WidgetMoney.format(first.targetPrice, digits: 2))")
                 }
             }
         }
@@ -175,7 +175,7 @@ struct PriceAlertMediumView: View {
                 Text(alert.symbol)
                     .font(WidgetFont.microLarge(.semibold))
                     .foregroundColor(WidgetColor.textPrimary)
-                Text("\(alert.isAbove ? "▲" : "▼") \(alert.targetPrice, format: .currency(code: "USD").precision(.fractionLength(2)))")
+                Text("\(alert.isAbove ? "▲" : "▼") \(WidgetMoney.format(alert.targetPrice, digits: 2))")
                     .font(WidgetFont.microTiny())
                     .foregroundColor(WidgetColor.warning.opacity(0.8))
             }
@@ -183,7 +183,7 @@ struct PriceAlertMediumView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(alert.currentPrice, format: .currency(code: "USD").precision(.fractionLength(2)))
+                Text(WidgetMoney.format(alert.currentPrice, digits: 2))
                     .font(WidgetFont.microLarge(.semibold))
                     .foregroundColor(WidgetColor.textPrimary)
                 let pct = alert.percentAway

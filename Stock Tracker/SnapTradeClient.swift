@@ -40,9 +40,12 @@ final class SnapTradeClient {
         body: [String: Any]? = nil
     ) throws -> URLRequest {
         
-        // Add timestamp
+        // Add clientId + timestamp. SnapTrade rejects any signed request without clientId
+        // (HTTP 401 code 1083 "Please provide clientId in query params", verified live);
+        // getLoginURL and checkConnectionStatus in SnapTradeAuthManager omitted it.
         let timestamp = String(Int(Date().timeIntervalSince1970))
         var allParams = queryParams
+        if allParams["clientId"] == nil { allParams["clientId"] = clientID }
         allParams["timestamp"] = timestamp
         
         // Sort params alphabetically

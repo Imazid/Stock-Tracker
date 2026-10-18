@@ -78,25 +78,46 @@ struct DetailedStock: Identifiable {
     var ipoDate: String? = nil
     var country: String? = nil
 
-    // Analyst Consensus (from FMP /stable/grades-consensus)
-    var analystStrongBuy: Int? = nil
-    var analystBuy: Int? = nil
-    var analystHold: Int? = nil
-    var analystSell: Int? = nil
-    var analystStrongSell: Int? = nil
-    var analystConsensus: String? = nil
-
-    // Earnings History — up to 8 quarters (from income-statement, newest first)
-    var earningsHistory: [EarningsPeriod] = []
-
     // Raw income statements from FMP (newest first), used by FinancialsTabView
     var incomeStatements: [FMPIncomeStatement] = []
 
     var isPositive: Bool { dayChange >= 0 }
 
+    /// Seeded from a quote; nil until FMP's profile names the listing.
+    var hasProfile: Bool { companyDescription?.isEmpty == false || sector?.isEmpty == false }
+
     // MARK: - FMP Merge
 
     /// Returns a new DetailedStock updated with real data from all FMP responses.
+    /// Fills only what FMP left empty (FMP's figures win when both answer), so the
+    /// page still has real key stats when FMP's free daily quota is spent.
+    static func filling(from f: FinnhubFundamentals, to base: DetailedStock) -> DetailedStock {
+        var s = base
+        if s.marketCap <= 0, let v = f.marketCapUSD, v > 0 { s.marketCap = v }
+        if s.sharesOutstanding <= 0, let v = f.sharesOutstanding, v > 0 { s.sharesOutstanding = v }
+        if s.avgVolume <= 0, let v = f.avgVolume3M, v > 0 { s.avgVolume = Int(v) }
+        if s.week52High <= 0, let v = f.week52High, v > 0 { s.week52High = v }
+        if s.week52Low <= 0, let v = f.week52Low, v > 0 { s.week52Low = v }
+        if s.peRatio == nil, let v = f.peTTM, v > 0 { s.peRatio = v }
+        if s.forwardPE == nil, let v = f.forwardPE, v > 0 { s.forwardPE = v }
+        if s.pegRatio == nil, let v = f.peg, v > 0 { s.pegRatio = v }
+        if s.priceToBook == nil, let v = f.priceToBook, v > 0 { s.priceToBook = v }
+        if s.priceToSales == nil, let v = f.priceToSales, v > 0 { s.priceToSales = v }
+        if s.beta == nil { s.beta = f.beta }
+        if s.dividendYield == nil { s.dividendYield = f.dividendYield }
+        if s.grossMargin == nil { s.grossMargin = f.grossMargin }
+        if s.operatingMargin == nil { s.operatingMargin = f.operatingMargin }
+        if s.profitMargin == nil { s.profitMargin = f.netMargin }
+        if s.revenueGrowthYoY == nil { s.revenueGrowthYoY = f.revenueGrowthYoY }
+        if s.earningsGrowthYoY == nil { s.earningsGrowthYoY = f.epsGrowthYoY }
+        if s.debtToEquity == nil { s.debtToEquity = f.debtToEquity }
+        if s.industry?.isEmpty ?? true { s.industry = f.industry }
+        if s.website?.isEmpty ?? true { s.website = f.website }
+        if s.ipoDate?.isEmpty ?? true { s.ipoDate = f.ipoDate }
+        if let short = f.exchangeShortName, ["", "US", "—"].contains(s.exchange.uppercased()) { s.exchange = short }
+        return s
+    }
+
     static func applying(
         profile: FMPProfile?,
         quote: FMPQuote?,
@@ -108,34 +129,37 @@ struct DetailedStock: Identifiable {
     ) -> DetailedStock {
         var s = base
 
-        // --- Quote (live price + intraday + market data) ---
+        // --- Quote: fundamentals only ---
+        // The live price, day change and previous close come from the app's own
+        // quote (Alpaca/Yahoo/CoinGecko). FMP's quote can be a session behind, so
+        // it never overwrites them (Home showed $523.97 +1.50% and the detail
+        // $514.71 −0.28% for the same tap). Intraday open/high/low are kept only
+        // when FMP's previous close matches ours, i.e. it describes the same session.
         if let q = quote {
-            s.currentPrice = q.price
-            if let ch  = q.change             { s.dayChange        = ch }
-            if let chp = q.changesPercentage  { s.dayChangePercent = chp }
-            if let pc  = q.previousClose      { s.previousClose    = pc }
-            if let mc  = q.marketCap          { s.marketCap        = mc }
-            if let v   = q.volume             { s.volume           = v }
-            if let av  = q.avgVolume          { s.avgVolume        = av }
-            if let so  = q.sharesOutstanding  { s.sharesOutstanding = so }
-            if let pe  = q.pe                 { s.peRatio          = pe }
-            if let yh  = q.yearHigh           { s.week52High       = yh }
-            if let yl  = q.yearLow            { s.week52Low        = yl }
-            // Intraday
-            if let op  = q.open               { s.openPrice        = op }
-            if let dh  = q.dayHigh            { s.dayHigh          = dh }
-            if let dl  = q.dayLow             { s.dayLow           = dl }
-            // Moving averages
-            if let ma50  = q.priceAvg50       { s.priceAvg50       = ma50 }
-            if let ma200 = q.priceAvg200      { s.priceAvg200      = ma200 }
-            // Exchange (quote may carry short name like "NASDAQ")
-            if let exc = q.exchange, !exc.isEmpty { s.exchange = exc }
+            if let mc  = q.marketCap, mc > 0          { s.marketCap        = mc }
+            if let v   = q.volume, v > 0              { s.volume           = v }
+            if let av  = q.avgVolume, av > 0          { s.avgVolume        = av }
+            if let so  = q.sharesOutstanding, so > 0  { s.sharesOutstanding = so }
+            if let pe  = q.pe, pe > 0                 { s.peRatio          = pe }
+            if let yh  = q.yearHigh, yh > 0           { s.week52High       = yh }
+            if let yl  = q.yearLow, yl > 0            { s.week52Low        = yl }
+            if let ma50  = q.priceAvg50               { s.priceAvg50       = ma50 }
+            if let ma200 = q.priceAvg200              { s.priceAvg200      = ma200 }
+            let sameSession: Bool = {
+                guard let pc = q.previousClose, pc > 0, base.previousClose > 0 else { return false }
+                return abs(pc - base.previousClose) / base.previousClose < 0.002
+            }()
+            if sameSession {
+                s.openPrice = q.open
+                s.dayHigh   = q.dayHigh
+                s.dayLow    = q.dayLow
+            }
         }
 
         // --- Profile (company info + dividend + exchange) ---
         if let p = profile {
             if let beta = p.beta             { s.beta = beta }
-            if let mc   = p.mktCap          { s.marketCap = mc }
+            if let mc   = p.mktCap, mc > 0  { s.marketCap = mc }
             // Prefer exchangeShortName (e.g. "NASDAQ"), fall back to full exchange string
             if let short = p.exchangeShortName, !short.isEmpty {
                 s.exchange = short
@@ -237,48 +261,8 @@ struct DetailedStock: Identifiable {
             s.pegRatio = pe / (growth * 100)
         }
 
-        // --- Analyst Consensus (buy/hold/sell distribution) ---
-        if let ar = analystRating {
-            s.analystStrongBuy  = ar.strongBuy
-            s.analystBuy        = ar.buy
-            s.analystHold       = ar.hold
-            s.analystSell       = ar.sell
-            s.analystStrongSell = ar.strongSell
-            s.analystConsensus  = ar.consensus
-        }
-
-        // --- Earnings History (up to 8 quarters, newest first) ---
-        if !incomeStatements.isEmpty {
-            s.earningsHistory = incomeStatements.compactMap { stmt -> EarningsPeriod? in
-                guard let date = stmt.date else { return nil }
-                // date is typically "2024-09-28" — parse year and derive quarter label
-                let parts = date.split(separator: "-")
-                let label: String
-                if parts.count >= 2, let month = Int(parts[1]), let year = Int(parts[0]) {
-                    let quarter = (month - 1) / 3 + 1
-                    label = "Q\(quarter) '\(String(year).suffix(2))"
-                } else {
-                    label = String(date.prefix(7))
-                }
-                return EarningsPeriod(
-                    label: label,
-                    eps: stmt.epsDiluted ?? stmt.eps,
-                    revenue: stmt.revenue
-                )
-            }
-        }
-
         return s
     }
-}
-
-// MARK: - Earnings Period
-
-struct EarningsPeriod: Identifiable {
-    let id = UUID()
-    let label: String       // e.g. "Q1 2024"
-    let eps: Double?
-    let revenue: Double?
 }
 
 // MARK: - User Position
@@ -300,12 +284,4 @@ struct StockPosition {
         guard totalCost > 0 else { return 0 }
         return (unrealizedGainLoss(at: price) / totalCost) * 100
     }
-}
-
-// MARK: - Chart Data Point
-struct ChartDataPoint: Identifiable {
-    let id = UUID()
-    let date: Date
-    let price: Double
-    let volume: Double?
 }

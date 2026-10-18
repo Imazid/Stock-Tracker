@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UserNotifications
 
 struct DebugView: View {
     @EnvironmentObject var marketData: MarketData
@@ -218,6 +219,15 @@ struct DebugView: View {
                             HStack {
                                 Image(systemName: "arrow.counterclockwise.circle.fill")
                                 Text("Reset Onboarding")
+                            }
+                        }
+
+                        Button {
+                            sendTestNotification()
+                        } label: {
+                            HStack {
+                                Image(systemName: "bell.badge")
+                                Text("Send Test Notification")
                             }
                         }
                     }
@@ -510,6 +520,24 @@ struct DebugView: View {
 
     private func log(_ message: String, isError: Bool = false) {
         apiLog.insert(APILogEntry(message: message, isError: isError), at: 0)
+    }
+
+    private func sendTestNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Test Notification"
+        content.body = "If you see this, notifications are working correctly."
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)
+        let request = UNNotificationRequest(identifier: "debug_test_\(Date().timeIntervalSince1970)", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request) { error in
+            Task { @MainActor in
+                if let error {
+                    log("Notification failed: \(error.localizedDescription)", isError: true)
+                } else {
+                    log("Test notification scheduled — will appear in 2 seconds")
+                }
+            }
+        }
     }
 
     // MARK: - API Status Checks

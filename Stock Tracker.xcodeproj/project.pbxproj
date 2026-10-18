@@ -16,6 +16,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		5E7A0C1D2E3F4A5B6C7D8E03 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B3B9AE1D2ED9CE2D005F35F7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B3B9AE242ED9CE2D005F35F7;
+			remoteInfo = "Stock Tracker";
+		};
 		B3BEC3842EEA664D0063B198 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = B3B9AE1D2ED9CE2D005F35F7 /* Project object */;
@@ -48,6 +55,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5E7A0C1D2E3F4A5B6C7D8E01 /* Stock TrackerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Stock TrackerUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3B9AE252ED9CE2D005F35F7 /* Stock Tracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Stock Tracker.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3BEC31A2EEA63500063B198 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		B3BEC31C2EEA63510063B198 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -98,6 +106,11 @@
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		5E7A0C1D2E3F4A5B6C7D8E02 /* Stock TrackerUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Stock TrackerUITests";
+			sourceTree = "<group>";
+		};
 		B3B9AE272ED9CE2D005F35F7 /* Stock Tracker */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -127,6 +140,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		5E7A0C1D2E3F4A5B6C7D8E07 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B3B9AE222ED9CE2D005F35F7 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -161,6 +181,7 @@
 				B3B9AE272ED9CE2D005F35F7 /* Stock Tracker */,
 				B3BEC3802EEA664D0063B198 /* Stock Tracker Notification */,
 				B3BEC3D92EEAE6F30063B198 /* Stock Tracker Widget */,
+				5E7A0C1D2E3F4A5B6C7D8E02 /* Stock TrackerUITests */,
 				B3BEC3192EEA63500063B198 /* Frameworks */,
 				B3B9AE262ED9CE2D005F35F7 /* Products */,
 			);
@@ -172,6 +193,7 @@
 				B3B9AE252ED9CE2D005F35F7 /* Stock Tracker.app */,
 				B3BEC37F2EEA664D0063B198 /* Stock Tracker Notification.appex */,
 				B3BEC3D62EEAE6F30063B198 /* Stock Tracker WidgetExtension.appex */,
+				5E7A0C1D2E3F4A5B6C7D8E01 /* Stock TrackerUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -188,6 +210,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		5E7A0C1D2E3F4A5B6C7D8E05 /* Stock TrackerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5E7A0C1D2E3F4A5B6C7D8E0B /* Build configuration list for PBXNativeTarget "Stock TrackerUITests" */;
+			buildPhases = (
+				5E7A0C1D2E3F4A5B6C7D8E06 /* Sources */,
+				5E7A0C1D2E3F4A5B6C7D8E07 /* Frameworks */,
+				5E7A0C1D2E3F4A5B6C7D8E08 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5E7A0C1D2E3F4A5B6C7D8E04 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5E7A0C1D2E3F4A5B6C7D8E02 /* Stock TrackerUITests */,
+			);
+			name = "Stock TrackerUITests";
+			packageProductDependencies = (
+			);
+			productName = "Stock TrackerUITests";
+			productReference = 5E7A0C1D2E3F4A5B6C7D8E01 /* Stock TrackerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B3B9AE302ED9CE31005F35F7 /* Build configuration list for PBXNativeTarget "Stock Tracker" */;
@@ -269,6 +314,10 @@
 				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2610;
 				TargetAttributes = {
+					5E7A0C1D2E3F4A5B6C7D8E05 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = B3B9AE242ED9CE2D005F35F7;
+					};
 					B3B9AE242ED9CE2D005F35F7 = {
 						CreatedOnToolsVersion = 26.1.1;
 					};
@@ -301,11 +350,19 @@
 				B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */,
 				B3BEC37E2EEA664D0063B198 /* Stock Tracker Notification */,
 				B3BEC3D52EEAE6F30063B198 /* Stock Tracker WidgetExtension */,
+				5E7A0C1D2E3F4A5B6C7D8E05 /* Stock TrackerUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		5E7A0C1D2E3F4A5B6C7D8E08 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B3B9AE232ED9CE2D005F35F7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -330,6 +387,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		5E7A0C1D2E3F4A5B6C7D8E06 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B3B9AE212ED9CE2D005F35F7 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -354,6 +418,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		5E7A0C1D2E3F4A5B6C7D8E04 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */;
+			targetProxy = 5E7A0C1D2E3F4A5B6C7D8E03 /* PBXContainerItemProxy */;
+		};
 		B3BEC3852EEA664D0063B198 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = B3BEC37E2EEA664D0063B198 /* Stock Tracker Notification */;
@@ -367,6 +436,42 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		5E7A0C1D2E3F4A5B6C7D8E09 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Cubeplay.Stock-Tracker.UITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "Stock Tracker";
+			};
+			name = Debug;
+		};
+		5E7A0C1D2E3F4A5B6C7D8E0A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Cubeplay.Stock-Tracker.UITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "Stock Tracker";
+			};
+			name = Release;
+		};
 		B3B9AE2E2ED9CE31005F35F7 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -501,7 +606,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Stock-Tracker-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "Securley lock the app ";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to keep your portfolio private.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -541,7 +646,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Stock-Tracker-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "Securley lock the app ";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to keep your portfolio private.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -691,6 +796,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		5E7A0C1D2E3F4A5B6C7D8E0B /* Build configuration list for PBXNativeTarget "Stock TrackerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5E7A0C1D2E3F4A5B6C7D8E09 /* Debug */,
+				5E7A0C1D2E3F4A5B6C7D8E0A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		B3B9AE202ED9CE2D005F35F7 /* Build configuration list for PBXProject "Stock Tracker" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

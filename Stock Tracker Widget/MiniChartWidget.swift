@@ -80,7 +80,7 @@ struct MiniChartMediumView: View {
                     HStack(spacing: 3) {
                         Image(systemName: dailyPositive ? "arrow.up.right" : "arrow.down.right")
                             .font(.system(size: 8, weight: .bold))
-                        Text("\(dailyPositive ? "+" : "")\(String(format: "$%.0f", data.dailyChange))")
+                        Text("\(dailyPositive ? "+" : "")\(WidgetMoney.format(data.dailyChange, digits: 0))")
                             .font(WidgetFont.microSmall(.bold))
                     }
                     .foregroundColor(WidgetColor.semantic(isPositive: dailyPositive, mode: cbMode))
@@ -115,15 +115,13 @@ struct MiniChartMediumView: View {
                     .padding(.trailing, 12)
                     .padding(.bottom, 12)
                 } else {
-                    HStack(alignment: .bottom, spacing: 3) {
-                        ForEach(0..<12, id: \.self) { _ in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(WidgetColor.textTertiary.opacity(0.2))
-                                .frame(width: 4, height: CGFloat.random(in: 10...40))
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(12)
+                    // No real series yet — say so rather than drawing placeholder bars.
+                    Text("Chart appears after prices update")
+                        .font(.caption2)
+                        .foregroundStyle(WidgetColor.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(12)
                 }
             }
         }

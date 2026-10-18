@@ -13,6 +13,12 @@ class AIAgentService: ObservableObject {
     private var geminiKey: String { SecretsConfig.geminiAPIKey }
 
     private let openAIBaseURL = "https://api.openai.com/v1/chat/completions"
+
+    /// Gemini model. `gemini-2.0-flash` was retired (HTTP 404 "no longer available", verified
+    /// 2026-10-16), which made every Gemini call fail and silently fall through to OpenAI.
+    /// The `-latest` alias tracks Google's current Flash release so a future retirement
+    /// doesn't break the app again; pin a versioned id here if you need stable output.
+    private static let geminiModel = "gemini-flash-latest"
     private let secureSession = SecureURLSessionFactory.makeSecureSession(timeoutInterval: 60)
 
     @Published var isLoading = false
@@ -109,7 +115,7 @@ class AIAgentService: ObservableObject {
     // MARK: - Gemini
 
     private func sendViaGemini(messages: [ChatMessage]) async throws -> String {
-        let geminiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(geminiKey)"
+        let geminiURL = "https://generativelanguage.googleapis.com/v1beta/models/\(Self.geminiModel):generateContent"
         guard let url = URL(string: geminiURL) else { throw URLError(.badURL) }
 
         // Separate system instruction from conversation
@@ -130,6 +136,8 @@ class AIAgentService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Header auth instead of `?key=` keeps the key out of URLs and URL logging.
+        request.setValue(geminiKey, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = try JSONEncoder().encode(requestBody)
 
         let (data, response) = try await secureSession.rateLimitedData(
@@ -147,10 +155,17 @@ class AIAgentService: ObservableObject {
         }
 
         let decoded = try JSONDecoder().decode(GeminiResponse.self, from: data)
-        guard let text = decoded.candidates?.first?.content.parts.first?.text else {
-            return "No response from AI."
+        // Current Gemini models are "thinking" models: a candidate can carry several parts
+        // (some with only a thoughtSignature), so join every text part instead of taking the first.
+        let text = (decoded.candidates?.first?.content?.parts ?? [])
+            .compactMap { $0.text }
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            SecureLogger.error("Gemini returned no text (finishReason: \(decoded.candidates?.first?.finishReason ?? "nil"))")
+            throw URLError(.cannotParseResponse)
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text
     }
 }
 
@@ -200,6 +215,17 @@ struct GeminiResponse: Codable {
     let candidates: [GeminiCandidate]?
 
     struct GeminiCandidate: Codable {
-        let content: GeminiContent
+        let content: GeminiResponseContent?
+        let finishReason: String?
+    }
+
+    /// Response-side content: parts may omit `text` (e.g. thought-signature-only parts),
+    /// and `parts` itself is absent when the output budget is spent on thinking.
+    struct GeminiResponseContent: Codable {
+        let parts: [GeminiResponsePart]?
+    }
+
+    struct GeminiResponsePart: Codable {
+        let text: String?
     }
 }

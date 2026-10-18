@@ -58,7 +58,7 @@ struct Stock_Tracker_WidgetLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     let color: Color = context.state.isPositive ? .green : .red
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(context.state.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                        Text(WidgetMoney.format(context.state.price, digits: 2))
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                         HStack(spacing: 3) {
@@ -83,7 +83,7 @@ struct Stock_Tracker_WidgetLiveActivity: Widget {
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.5))
                             let changeColor: Color = context.state.isPositive ? .green : .red
-                            Text(context.state.change, format: .currency(code: "USD").sign(strategy: .always()))
+                            Text(WidgetMoney.format(context.state.change, digits: 2, signed: true))
                                 .font(.caption.weight(.bold))
                                 .foregroundColor(changeColor)
                         }
@@ -184,13 +184,13 @@ struct Stock_Tracker_WidgetLiveActivity: Widget {
                     .font(.caption2)
                     .foregroundColor(.white.opacity(0.6))
                     .lineLimit(1)
-                Text(context.state.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                Text(WidgetMoney.format(context.state.price, digits: 2))
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 HStack(spacing: 5) {
                     Image(systemName: context.state.isPositive ? "arrow.up.right" : "arrow.down.right")
                         .font(.system(size: 10, weight: .bold))
-                    Text(context.state.change, format: .currency(code: "USD").sign(strategy: .always()).precision(.fractionLength(2)))
+                    Text(WidgetMoney.format(context.state.change, digits: 2, signed: true))
                         .font(.subheadline.weight(.semibold))
                     Text("(\(context.state.isPositive ? "+" : "")\(String(format: "%.2f", context.state.changePercent))%)")
                         .font(.subheadline)

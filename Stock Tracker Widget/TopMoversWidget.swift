@@ -181,7 +181,7 @@ struct TopMoversLargeView: View {
                 let intensity = maxChange > 0 ? abs(item.changePercent) / maxChange : 0.5
                 HStack(spacing: 8) {
                     TickerBadge(symbol: item.symbol, color: color)
-                    Text(item.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                    Text(WidgetMoney.format(item.price, digits: 2))
                         .font(WidgetFont.microSmall())
                         .foregroundColor(WidgetColor.textSecondary)
                     Spacer()

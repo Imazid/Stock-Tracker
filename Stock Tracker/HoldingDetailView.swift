@@ -2,960 +2,643 @@
 //  HoldingDetailView.swift
 //  Stock Tracker
 //
+//  One holding, pushed from the Portfolio tab (after Public "Your position"
+//  and Fidelity "Positions" on Mobbin): live header, real price chart, a
+//  position ledger, and the transactions the position is built from — each
+//  editable or deletable, with overselling blocked.
+//
+//  Reads the holding live from MarketData by id, so every change shows at once.
+//
 
 import SwiftUI
-import Charts
 
 struct HoldingDetailView: View {
-    let holding: PortfolioHolding
-    @EnvironmentObject var marketData: MarketData
-    @EnvironmentObject var insightService: AIInsightService
-    @Environment(\.dismiss) var dismiss
-    @Environment(\.colorScheme) var colorScheme
+    let holdingID: UUID
 
-    @Environment(\.theme) var appTheme
+    @EnvironmentObject private var marketData: MarketData
+    @EnvironmentObject private var insightService: AIInsightService
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    @ObservedObject private var broker = SnapTradeViewModel.shared
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("portfolioValueHidden") private var valueHidden = false
+    @AppStorage("holdingChartRange") private var rangeRaw = TimeRange.oneMonth.rawValue
 
-    @State private var showAddTransaction = false
-    @State private var showBreakdown = false
-    @State private var holdingInsightText: String?
-    @State private var holdingInsightLoading = false
+    @State private var points: [PricePoint] = []
+    @State private var phase: DSChartPhase = .loading
+    @State private var scrubbed: DSChartPoint?
+    @State private var txSheet: TransactionSheetItem?
+    @State private var confirmRemove = false
+    @State private var stockPage: Asset?
+    @State private var alertText: String?
+    @State private var insightText: String?
+    @State private var insightLoading = false
 
-    private var isPositive: Bool { holding.profitLoss >= 0 }
+    private var holding: PortfolioHolding? { marketData.portfolio.first { $0.id == holdingID } }
+    private var range: TimeRange { TimeRange(rawValue: rangeRaw) ?? .oneMonth }
 
     var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        NavigationStack {
-            ZStack {
-                theme.background.ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(spacing: 28) {
-                        // MARK: - Header
-                        headerSection
-                            .padding(.horizontal)
-                            .padding(.top, 20)
-                        
-                        // MARK: - Price Chart
-                        priceChartSection
-                            .padding(.horizontal)
+        Group {
+            if let holding {
+                content(holding)
+            } else if let closed = marketData.closedPositions.first(where: { $0.id == holdingID }) {
+                closedState(closed)
+            } else {
+                EmptyStateCard(systemImage: "checkmark.circle", title: "Holding removed",
+                               message: "It's no longer in this portfolio.",
+                               primaryTitle: "Back to portfolio", primaryAction: { dismiss() })
+                    .padding(DS.Space.gutter)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+        }
+        .background(theme.background.ignoresSafeArea())
+        .navigationTitle(holding?.asset.symbol ?? "")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let holding {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { txSheet = .add } label: { Label("Add transaction", systemImage: "plus") }
+                        Button { stockPage = holding.asset } label: { Label("View stock page", systemImage: "chart.xyaxis.line") }
+                        Divider()
+                        Button(role: .destructive) { confirmRemove = true } label: { Label("Remove holding", systemImage: "trash") }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("More actions")
+                    .accessibilityIdentifier("holding.more")
+                }
+            }
+        }
+        .sheet(item: $txSheet) { item in
+            if let holding {
+                TransactionFormSheet(holding: holding, editing: item.transaction)
+            }
+        }
+        .sheet(item: $stockPage) { asset in
+            AppleStocksDetailView(stock: detailedStock(from: asset), asset: asset, position: nil)
+        }
+        .confirmationDialog("Remove \(holding?.asset.symbol ?? "holding")?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove holding", role: .destructive) {
+                if let holding {
+                    marketData.removeFromPortfolio(holding)
+                    Haptics.success()
+                    dismiss()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The holding and all its transactions are removed from this portfolio.")
+        }
+        .alert("Can't change that", isPresented: Binding(get: { alertText != nil }, set: { if !$0 { alertText = nil } })) {
+            Button("OK", role: .cancel) { alertText = nil }
+        } message: {
+            Text(alertText ?? "")
+        }
+    }
 
-                        // MARK: - AI Holding Insight (Pro/Black only)
-                        if SubscriptionManager.shared.currentTier != .free {
-                            holdingInsightCard
-                                .padding(.horizontal)
+    // MARK: Content
+
+    private func content(_ h: PortfolioHolding) -> some View {
+        List {
+            header(h).portfolioRow(top: DS.Space.m, bottom: DS.Space.m)
+            chartBlock(h).portfolioRow(bottom: DS.Space.l)
+            positionCard(h).portfolioRow(bottom: DS.Space.l)
+
+            transactionsHeader(h).portfolioRow(bottom: DS.Space.xs)
+            if h.transactions.isEmpty {
+                Text("No transactions recorded. Add one to keep your position and average cost accurate.")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.secondaryText)
+                    .portfolioRow(bottom: DS.Space.s)
+            } else {
+                let realizedBySale = h.ledger.realizedBySale
+                ForEach(h.transactions.sorted { $0.date > $1.date }) { tx in
+                    Button { txSheet = .edit(tx) } label: {
+                        TransactionRow(tx: tx, asset: h.asset, realized: realizedBySale[tx.id], hidesValues: valueHidden)
+                    }
+                        .buttonStyle(PressableButtonStyle(scale: 0.99))
+                        .listRowInsets(EdgeInsets(top: 0, leading: DS.Space.l, bottom: 0, trailing: DS.Space.l))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparatorTint(theme.cardBorder.opacity(0.6))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) { delete(tx, from: h) } label: { Label("Delete", systemImage: "trash") }
                         }
+                        .accessibilityIdentifier("holding.tx.\(tx.id.uuidString.prefix(8))")
+                        .accessibilityHint("Opens the transaction to edit")
+                }
+            }
+            Button {
+                Haptics.tap()
+                txSheet = .add
+            } label: {
+                Label("Add transaction", systemImage: "plus")
+            }
+            .buttonStyle(SecondaryPillButtonStyle())
+            .accessibilityIdentifier("holding.addTransaction")
+            .portfolioRow(top: DS.Space.m, bottom: DS.Space.l)
 
-                        // MARK: - Holdings Summary
-                        holdingsSummarySection
-                            .padding(.horizontal)
-                        
-                        // MARK: - Performance Metrics
-                        performanceMetricsSection
-                            .padding(.horizontal)
-                        
-                        // MARK: - Transactions
-                        transactionsSection
-                            .padding(.horizontal)
-                        
-                        Spacer(minLength: 100)
+            if subscriptionManager.currentTier != .free {
+                insightCard(h).portfolioRow(bottom: DS.Space.l)
+            }
+
+            Button("Remove from portfolio", role: .destructive) { confirmRemove = true }
+                .font(.body.weight(.medium))
+                .foregroundStyle(theme.negativeColor)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("holding.remove")
+                .portfolioRow(bottom: DS.Space.xxl)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .task(id: "\(rangeRaw)|\(h.asset.symbol)") { await loadChart(h.asset) }
+    }
+
+    private func header(_ h: PortfolioHolding) -> some View {
+        let asset = h.asset
+        let reference = range == .oneDay ? asset.price - asset.change : points.first?.price
+        let shown = scrubbed?.value ?? asset.price
+        let change = reference.map { shown - $0 } ?? asset.change
+        let pct = (reference ?? 0) > 0 ? change / reference! * 100 : asset.changePercent
+        let noLive = marketData.hasNoLivePrice(asset)
+
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            HStack(spacing: DS.Space.m) {
+                TickerLogo(symbol: asset.symbol, kind: asset.kind, exchange: asset.exchange, size: 48)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(asset.name)
+                        .font(.headline)
+                        .lineLimit(2)
+                    HStack(spacing: 6) {
+                        Text(asset.symbol)
+                        Text("·")
+                        Text(asset.marketLabel)
                     }
+                    .font(.subheadline)
+                    .foregroundStyle(theme.secondaryText)
                 }
             }
-            .navigationTitle(holding.asset.symbol)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                    .foregroundColor(theme.primaryText)
+            Text(marketData.formatPrice(shown))
+                .font(DS.money(34, weight: .bold))
+                .contentTransition(.numericText())
+                .accessibilityIdentifier("holding.price")
+            if noLive {
+                Label("No live price — showing the last known price", systemImage: "exclamationmark.circle")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(theme.warningColor)
+            } else {
+                HStack(spacing: DS.Space.s) {
+                    ChangePill(percent: pct, amount: marketData.signedMoney(change))
+                    (scrubbed.map { Text(range.scrubLabel(for: $0.date)) } ?? Text(range.periodLabel))
+                        .font(.subheadline)
+                        .foregroundStyle(theme.secondaryText)
                 }
-            }
-            .overlay(alignment: .bottom) {
-                addTransactionButton
-                    .padding(.bottom, 40)
-            }
-            .sheet(isPresented: $showAddTransaction) {
-                AddTransactionSheet(holding: holding)
             }
         }
     }
-    
-    // MARK: - Header Section
-    private var headerSection: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        let plColor: Color = isPositive ? appTheme.positiveColor : appTheme.negativeColor
 
-        return ZStack(alignment: .top) {
-            LinearGradient(
-                colors: [plColor.opacity(0.07), theme.background.opacity(0)],
-                startPoint: .top, endPoint: .bottom
+    private func chartBlock(_ h: PortfolioHolding) -> some View {
+        VStack(spacing: DS.Space.m) {
+            DSPriceChart(
+                points: points.chartPoints,
+                phase: phase,
+                baseline: range == .oneDay && h.asset.price - h.asset.change > 0 ? h.asset.price - h.asset.change : nil,
+                baselineLabel: range == .oneDay ? "Prev close" : nil,
+                xMode: xMode(for: h.asset),
+                height: 200,
+                valueText: { marketData.formatPrice($0) },
+                dateText: { range.scrubLabel(for: $0) },
+                selection: $scrubbed,
+                onRetry: { Task { await loadChart(h.asset, force: true) } },
+                accessibilityID: "holding.chart"
             )
-
-            VStack(spacing: 20) {
-                // Colored symbol badge + name
-                VStack(spacing: 8) {
-                    ZStack {
-                        Circle()
-                            .fill(LinearGradient(
-                                colors: [plColor.opacity(0.22), plColor.opacity(0.06)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
-                            ))
-                            .frame(width: 72, height: 72)
-                        Text(String(holding.asset.symbol.prefix(2)))
-                            .font(.title2.weight(.bold))
-                            .foregroundColor(plColor)
-                    }
-                    Text(holding.asset.symbol)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-                    Text(holding.asset.name)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-
-                // Market Value
-                VStack(spacing: 4) {
-                    Text("Market Value")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    Text(holding.currentValue.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(theme.primaryText)
-                        .contentTransition(.numericText())
-                }
-
-                // P&L pill
-                HStack(spacing: 6) {
-                    Image(systemName: isPositive ? "arrow.up.right" : "arrow.down.right")
-                        .font(.system(size: 12, weight: .bold))
-                    Text(holding.profitLoss.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                        .font(.subheadline.weight(.semibold))
-                        .monospacedDigit()
-                    Text("(\(isPositive ? "+" : "")\(String(format: "%.2f", holding.profitLossPercent))%)")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .foregroundColor(plColor)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(plColor.opacity(0.12))
-                .clipShape(Capsule())
-            }
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, -4)
+            DSRangePicker(options: DSRangePicker.standard,
+                          selection: Binding(get: { range }, set: { rangeRaw = $0.rawValue }))
         }
     }
-    
-    // MARK: - AI Holding Insight
 
-    private var holdingInsightCard: some View {
-        let tier = SubscriptionManager.shared.currentTier
-        let isLocked = tier == .free
-        let cacheKey = "holding_insight_\(holding.asset.symbol)"
-        let cachedText: String? = insightService.cached(cacheKey)?.text ?? holdingInsightText
+    private func positionCard(_ h: PortfolioHolding) -> some View {
+        let total = marketData.totalPortfolioValue
+        let weight = total > 0 ? h.currentValue / total * 100 : 0
+        let today = h.shares * h.asset.change
+        let hasCost = h.costBasis > 0
+        let hide = valueHidden
+        let ledger = h.ledger
+        let hasSales = ledger.sellCount > 0
+        return VStack(alignment: .leading, spacing: DS.Space.xs) {
+            Text("Your position")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 0) {
+                LedgerLine(label: "Market value", value: hide ? "••••" : marketData.formatPrice(h.currentValue))
+                LedgerLine(label: h.asset.kind == .crypto ? "Quantity" : "Shares", value: formatQuantity(h.shares))
+                LedgerLine(label: "Average cost",
+                           value: hasCost ? marketData.formatPrice(h.avgCost) : "Not set",
+                           detail: hasCost && h.asset.tradingCurrency != marketData.preferredCurrency
+                                ? h.asset.formatTrading(h.asset.toTradingCurrency(h.avgCost)) : nil)
+                    .accessibilityIdentifier("holding.avgCost")
+                LedgerLine(label: "Total cost", value: hasCost ? (hide ? "••••" : marketData.formatPrice(h.costBasis)) : "—")
+                LedgerLine(label: "Today",
+                           value: (hide ? "" : marketData.signedMoney(today) + "  ") + formatPercent(h.asset.changePercent, signed: true),
+                           tint: today >= 0 ? theme.positiveColor : theme.negativeColor)
+                if hasSales {
+                    // After Cash App "Unrealized + realized" and QuestMobile "Open / Closed P&L".
+                    LedgerLine(label: "Unrealised return",
+                               value: hasCost ? (hide ? "" : marketData.signedMoney(h.profitLoss) + "  ") + formatPercent(h.profitLossPercent, signed: true) : "Add what you paid",
+                               tint: hasCost ? (h.profitLoss >= 0 ? theme.positiveColor : theme.negativeColor) : nil)
+                        .accessibilityIdentifier("holding.unrealized")
+                    LedgerLine(label: "Realised from sales",
+                               value: ledger.costOfSold > 0 ? (hide ? "••••" : marketData.signedMoney(h.realizedGain)) : "—",
+                               tint: ledger.costOfSold > 0 ? (h.realizedGain >= 0 ? theme.positiveColor : theme.negativeColor) : nil,
+                               detail: ledger.unknownBasisSells > 0 ? "Some sales have no cost recorded" : nil)
+                        .accessibilityIdentifier("holding.realized")
+                    LedgerLine(label: "Total return",
+                               value: hasCost ? (hide ? "" : marketData.signedMoney(h.totalReturn) + "  ") + formatPercent(h.totalReturnPercent, signed: true) : "Add what you paid",
+                               tint: hasCost ? (h.totalReturn >= 0 ? theme.positiveColor : theme.negativeColor) : nil)
+                        .accessibilityIdentifier("holding.totalReturn")
+                } else {
+                    LedgerLine(label: "Total return",
+                               value: hasCost ? (hide ? "" : marketData.signedMoney(h.profitLoss) + "  ") + formatPercent(h.profitLossPercent, signed: true) : "Add what you paid",
+                               tint: hasCost ? (h.profitLoss >= 0 ? theme.positiveColor : theme.negativeColor) : nil)
+                        .accessibilityIdentifier("holding.totalReturn")
+                }
+                LedgerLine(label: "Share of portfolio", value: formatPercent(weight))
+            }
+        }
+        .dsCard()
+        // A container, so each line keeps its own identifier (holding.realized, …).
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("holding.position")
+    }
+
+    /// Shown when the last shares were just sold: the holding moved to Closed positions.
+    private func closedState(_ c: ClosedPosition) -> some View {
+        let known = c.ledger.costOfSold > 0
+        let gain = c.realizedGain
+        return ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.l) {
+                VStack(alignment: .leading, spacing: DS.Space.s) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.largeTitle)
+                        .foregroundStyle(DS.accent)
+                    Text("Position closed")
+                        .font(.title2.weight(.bold))
+                    Text("You sold all your \(c.asset.symbol). It's kept under Closed positions, and its realised profit stays in your total return.")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                VStack(spacing: 0) {
+                    LedgerLine(label: "Realised profit",
+                               value: known ? (valueHidden ? "••••" : marketData.signedMoney(gain) + "  ") + (valueHidden ? "" : formatPercent(c.realizedPercent, signed: true)) : "—",
+                               tint: known ? (gain >= 0 ? theme.positiveColor : theme.negativeColor) : nil)
+                        .accessibilityIdentifier("holding.closed.realized")
+                    LedgerLine(label: "Sales", value: "\(c.ledger.sellCount)")
+                }
+                .dsCard()
+                Button("Back to portfolio") { dismiss() }
+                    .buttonStyle(PrimaryPillButtonStyle())
+                    .accessibilityIdentifier("holding.closed.back")
+            }
+            .padding(DS.Space.gutter)
+        }
+        .accessibilityIdentifier("holding.closed")
+    }
+
+    private func transactionsHeader(_ h: PortfolioHolding) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Transactions")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                if !h.transactions.isEmpty {
+                    Text("\(h.transactions.count)")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(theme.secondaryText)
+                }
+            }
+            // A sync replaces an imported holding's shares and average cost — say so before
+            // someone edits transactions here and loses them on the next sync.
+            if broker.isImported(h) {
+                Label("Synced from \(broker.institution(for: h) ?? "your broker"). Shares and average cost update from your broker each time it syncs.",
+                      systemImage: "arrow.triangle.2.circlepath")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("holding.syncedFrom")
+            }
+        }
+    }
+
+    private func insightCard(_ h: PortfolioHolding) -> some View {
+        let tier = subscriptionManager.currentTier
+        let key = "holding_insight_\(h.asset.symbol)"
         return AIInsightCard(
-            title: "Holding Insight",
-            icon: "lightbulb.fill",
-            insightText: cachedText,
-            isLoading: holdingInsightLoading,
-            isLocked: isLocked,
+            title: "Holding insight",
+            icon: "lightbulb",
+            insightText: insightService.cached(key)?.text ?? insightText,
+            isLoading: insightLoading,
+            isLocked: tier == .free,
             tier: tier,
-            onGenerate: { await loadHoldingInsight() },
-            onRegenerate: { await loadHoldingInsight(force: true) }
+            onGenerate: { await loadInsight(h) },
+            onRegenerate: { await loadInsight(h, force: true) }
         )
     }
 
-    private func loadHoldingInsight(force: Bool = false) async {
-        holdingInsightLoading = true
-        defer { holdingInsightLoading = false }
+    // MARK: Actions
 
-        let tier = SubscriptionManager.shared.currentTier
-        let cacheKey = "holding_insight_\(holding.asset.symbol)"
-
-        let plSign = holding.profitLoss >= 0 ? "+" : ""
-        var context = "\(holding.asset.name) (\(holding.asset.symbol)): \(String(format: "%.2f", holding.shares)) shares, avg cost $\(String(format: "%.2f", holding.avgCost)), current $\(String(format: "%.2f", holding.asset.price))."
-        context += " P&L: \(plSign)$\(String(format: "%.2f", holding.profitLoss)) (\(plSign)\(String(format: "%.1f", holding.profitLossPercent))%)."
-        context += " Day change: \(String(format: "%+.2f%%", holding.asset.changePercent))."
-
-        let systemPrompt = "You are a portfolio analyst. Give a brief 2-3 sentence insight about this holding position. Comment on the cost basis vs current price, and whether the position sizing looks reasonable."
-        let userPrompt = context + " Provide a quick insight on this position."
-
-        let result: String?
-        if force {
-            result = await insightService.regenerateInsight(
-                key: cacheKey, type: .holdingInsight,
-                systemPrompt: systemPrompt, userPrompt: userPrompt,
-                tier: tier, ttl: Constants.AI.holdingCacheTTL
-            )
-        } else {
-            result = await insightService.generateInsight(
-                key: cacheKey, type: .holdingInsight,
-                systemPrompt: systemPrompt, userPrompt: userPrompt,
-                tier: tier, ttl: Constants.AI.holdingCacheTTL
-            )
+    private func delete(_ tx: Transaction, from h: PortfolioHolding) {
+        if h.transactions.count == 1 {
+            alertText = "This is the only transaction. Remove the holding instead."
+            return
         }
-        if let text = result { holdingInsightText = text }
-    }
-
-    // MARK: - Price Chart Section
-    private var priceChartSection: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.15))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.blue)
-                }
-                Text("Price History")
-                    .font(.headline.weight(.semibold))
-            }
-
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.glassBackground)
-                .frame(height: 120)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.glassBorder, lineWidth: 1)
-                )
-                .overlay(
-                    VStack(spacing: 8) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.title2)
-                            .foregroundColor(.secondary.opacity(0.3))
-                        Text("Tap to load chart")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                )
+        switch marketData.deleteTransaction(holdingID: h.id, transactionID: tx.id) {
+        case .ok: Haptics.success()
+        case .invalid(let message): alertText = message
+        case .limitReached: break
         }
     }
-    
-    // MARK: - Holdings Summary
-    private var holdingsSummarySection: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        return VStack(spacing: 14) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.15))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "list.bullet.clipboard")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.blue)
-                }
-                Text("Holdings Summary")
-                    .font(.title3.bold())
-                Spacer()
-            }
 
-            VStack(spacing: 0) {
-                SummaryRow(
-                    label: "Shares Owned",
-                    value: String(format: "%.2f", holding.shares),
-                    showDivider: true
-                )
-                SummaryRow(
-                    label: "Average Cost",
-                    value: holding.avgCost.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates),
-                    showDivider: true
-                )
-                SummaryRow(
-                    label: "Current Price",
-                    value: holding.asset.price.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates),
-                    showDivider: true
-                )
-                SummaryRow(
-                    label: "Total Cost",
-                    value: holding.costBasis.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates),
-                    showDivider: false
-                )
-            }
-            .padding(16)
-            .background(theme.glassBackground)
-            .cornerRadius(16)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(theme.glassBorder, lineWidth: 1)
-            )
+    private func loadChart(_ asset: Asset, force: Bool = false) async {
+        phase = .loading
+        scrubbed = nil
+        do {
+            let history = try await PriceHistoryService.shared.history(for: asset, range: range, forceRefresh: force)
+            guard !Task.isCancelled else { return }
+            points = PriceHistoryService.appendingLive(history, price: asset.price)
+            phase = .loaded
+        } catch {
+            guard !Task.isCancelled else { return }
+            points = []
+            phase = .failed("Price history for \(asset.symbol) isn't available right now.")
         }
     }
-    
-    // MARK: - Performance Metrics
-    private var performanceMetricsSection: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(Color.purple.opacity(0.15))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.purple)
-                }
-                Text("Performance")
-                    .font(.title3.bold())
-                Spacer()
-            }
 
-            HStack(spacing: 12) {
-                MetricCard(
-                    title: "Day Change",
-                    value: holding.asset.changePercent,
-                    isPercentage: true
-                )
-
-                MetricCard(
-                    title: "Total Return",
-                    value: holding.profitLossPercent,
-                    isPercentage: true
-                )
-            }
-        }
+    private func xMode(for asset: Asset) -> DSChartXMode {
+        guard range == .oneDay, let first = points.first, let last = points.last,
+              let hours = TradingHours.forAsset(asset),
+              hours.session(containing: first.date).contains(last.date) else { return .ordinal }
+        return .time(domain: hours.session(containing: first.date))
     }
-    
-    // MARK: - Transactions Section
-    private var transactionsSection: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(Color.orange.opacity(0.15))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "arrow.left.arrow.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.orange)
-                }
-                Text("Transactions")
-                    .font(.title3.bold())
 
-                Spacer()
-
-                if !holding.transactions.isEmpty {
-                    Text("\(holding.transactions.count)")
-                        .font(.caption.weight(.bold))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(theme.glassBackground)
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(theme.glassBorder, lineWidth: 1))
-                }
-            }
-
-            if holding.transactions.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary.opacity(0.4))
-
-                    Text("No transactions yet")
-                        .font(.body.weight(.medium))
-                        .foregroundColor(.secondary)
-
-                    Text("Add your first transaction to track your history")
-                        .font(.caption)
-                        .foregroundColor(.secondary.opacity(0.7))
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
-                .background(theme.glassBackground)
-                .cornerRadius(16)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.glassBorder, lineWidth: 1)
-                )
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(holding.transactions.sorted(by: { $0.date > $1.date })) { transaction in
-                        TransactionRowCompact(transaction: transaction)
-                    }
-                }
-            }
-        }
-    }
-    
-    // MARK: - Add Transaction Button
-    private var addTransactionButton: some View {
-        Button {
-            showAddTransaction = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.body.weight(.semibold))
-                Text("Add Transaction")
-                    .font(.headline)
-            }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(
-                LinearGradient(
-                    colors: [appTheme.accentColor, appTheme.accentColor.opacity(0.75)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .cornerRadius(16)
-            .shadow(color: appTheme.accentColor.opacity(colorScheme == .dark ? 0.4 : 0.04), radius: 12, y: 6)
-        }
-        .padding(.horizontal)
+    private func loadInsight(_ h: PortfolioHolding, force: Bool = false) async {
+        insightLoading = true
+        defer { insightLoading = false }
+        let tier = subscriptionManager.currentTier
+        let key = "holding_insight_\(h.asset.symbol)"
+        var context = "\(h.asset.name) (\(h.asset.symbol), \(h.asset.marketLabel)): \(h.asset.unitsText(h.shares)), "
+        context += "average cost \(marketData.formatPrice(h.avgCost)), now \(marketData.formatPrice(h.asset.price)). "
+        if h.costBasis > 0 { context += String(format: "Return since bought %+.1f%%. ", h.profitLossPercent) }
+        context += String(format: "Today %+.2f%%.", h.asset.changePercent)
+        let system = "You are a portfolio analyst. Give a brief 2-3 sentence insight about this holding position. Comment on the cost basis vs current price, and whether the position sizing looks reasonable."
+        let result = force
+            ? await insightService.regenerateInsight(key: key, type: .holdingInsight, systemPrompt: system,
+                                                     userPrompt: context, tier: tier, ttl: Constants.AI.holdingCacheTTL)
+            : await insightService.generateInsight(key: key, type: .holdingInsight, systemPrompt: system,
+                                                   userPrompt: context, tier: tier, ttl: Constants.AI.holdingCacheTTL)
+        if let result { insightText = result }
     }
 }
 
-// MARK: - Summary Row
-struct SummaryRow: View {
-    let label: String
-    let value: String
-    let showDivider: Bool
-    @Environment(\.colorScheme) var colorScheme
+// MARK: - Transaction sheet
+
+enum TransactionSheetItem: Identifiable {
+    case add
+    case edit(Transaction)
+
+    var id: String {
+        switch self {
+        case .add: return "add"
+        case .edit(let tx): return tx.id.uuidString
+        }
+    }
+
+    var transaction: Transaction? {
+        if case .edit(let tx) = self { return tx }
+        return nil
+    }
+}
+
+/// Add or edit one buy/sell. Prices are typed in the asset's trading currency
+/// (A$ for ASX, US$ otherwise) and stored in USD.
+struct TransactionFormSheet: View {
+    let holding: PortfolioHolding
+    let editing: Transaction?
+
+    @EnvironmentObject private var marketData: MarketData
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.theme) private var theme
+
+    @State private var type: TransactionType
+    @State private var quantityText: String
+    @State private var priceText: String
+    @State private var feesText: String
+    @State private var date: Date
+    @State private var errorText: String?
+    @State private var didAutofocus = false
+    @FocusState private var focus: Field?
+
+    enum Field { case quantity, price, fees }
+
+    init(holding: PortfolioHolding, editing: Transaction?) {
+        self.holding = holding
+        self.editing = editing
+        let asset = holding.asset
+        _type = State(initialValue: editing?.type ?? .buy)
+        _quantityText = State(initialValue: editing.map { formatQuantity($0.shares) } ?? "")
+        let price = asset.toTradingCurrency(editing?.pricePerShare ?? asset.price)
+        _priceText = State(initialValue: price > 0 ? String(format: price < 1 ? "%.6f" : "%.2f", price) : "")
+        let fees = asset.toTradingCurrency(editing?.fees ?? 0)
+        _feesText = State(initialValue: fees > 0 ? String(format: "%.2f", fees) : "")
+        _date = State(initialValue: editing?.date ?? Date())
+    }
+
+    private var asset: Asset { holding.asset }
+    private var quantity: Double? { parseDecimal(quantityText) }
+    private var price: Double? { parseDecimal(priceText) }
+    /// Blank = no fees.
+    private var fees: Double? { feesText.trimmingCharacters(in: .whitespaces).isEmpty ? 0 : parseDecimal(feesText) }
+    private var usdFactor: Double { FXRates.shared.toUSDFactor(from: asset.tradingCurrency) ?? 1 }
+
+    /// What this sale would bank, in USD: (price − average cost) × quantity − fees.
+    private var estimatedRealized: Double? {
+        guard type == .sell, editing == nil, holding.avgCost > 0,
+              let q = quantity, let p = price, let f = fees, q > 0 else { return nil }
+        return (p * usdFactor - holding.avgCost) * q - f * usdFactor
+    }
+
+    private var validationMessage: String? {
+        guard let q = quantity, q > 0 else { return nil }
+        if type == .sell && editing == nil && q > holding.shares + 1e-9 {
+            return "You hold \(asset.unitsText(holding.shares)) — you can't sell more than that."
+        }
+        return nil
+    }
+
+    private var canSave: Bool {
+        (quantity ?? 0) > 0 && (price ?? -1) >= 0 && (fees ?? -1) >= 0 && validationMessage == nil
+    }
 
     var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        VStack(spacing: 0) {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Space.l) {
+                    HStack(spacing: DS.Space.m) {
+                        TickerLogo(symbol: asset.symbol, kind: asset.kind, exchange: asset.exchange, size: 40)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(asset.symbol).font(.headline)
+                            Text("You hold \(asset.unitsText(holding.shares))")
+                                .font(.subheadline)
+                                .foregroundStyle(theme.secondaryText)
+                        }
+                    }
+
+                    DSSegmentBar(options: [TransactionType.buy, .sell], selection: $type,
+                                 title: { $0 == .buy ? "Buy" : "Sell" },
+                                 identifier: { "tx.type.\($0.rawValue.lowercased())" })
+
+                    FormField(label: asset.kind == .crypto ? "Quantity" : "Number of shares") {
+                        TextField("0.00", text: $quantityText)
+                            .keyboardType(.decimalPad)
+                            .focused($focus, equals: .quantity)
+                    }
+
+                    FormField(label: "Price per \(asset.kind == .crypto ? "coin" : "share") (\(asset.tradingCurrencySymbol))",
+                              trailing: asset.price > 0 ? AnyView(
+                                Button("Use current") {
+                                    let p = asset.toTradingCurrency(asset.price)
+                                    priceText = String(format: p < 1 ? "%.6f" : "%.2f", p)
+                                }
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(DS.accent)) : nil) {
+                        HStack(spacing: 4) {
+                            Text(asset.tradingCurrencySymbol).foregroundStyle(theme.secondaryText)
+                            TextField("0.00", text: $priceText)
+                                .keyboardType(.decimalPad)
+                                .focused($focus, equals: .price)
+                        }
+                    }
+
+                    FormField(label: "Brokerage fees (\(asset.tradingCurrencySymbol), optional)") {
+                        HStack(spacing: 4) {
+                            Text(asset.tradingCurrencySymbol).foregroundStyle(theme.secondaryText)
+                            TextField("0.00", text: $feesText)
+                                .keyboardType(.decimalPad)
+                                .focused($focus, equals: .fees)
+                                .accessibilityIdentifier("tx.fees")
+                        }
+                    }
+
+                    DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: .date)
+                        .font(.subheadline)
+                        .frame(minHeight: 44)
+
+                    if let q = quantity, let p = price, q > 0 {
+                        let f = fees ?? 0
+                        VStack(spacing: 0) {
+                            LedgerLine(label: type == .buy ? "Total cost" : "You receive",
+                                       value: asset.formatTrading(type == .buy ? q * p + f : max(q * p - f, 0)))
+                            if let realized = estimatedRealized {
+                                LedgerLine(label: "Realised profit",
+                                           value: marketData.signedMoney(realized),
+                                           tint: realized >= 0 ? theme.positiveColor : theme.negativeColor,
+                                           detail: "vs your average cost of \(marketData.formatPrice(holding.avgCost))")
+                                    .accessibilityIdentifier("tx.realized")
+                            }
+                        }
+                        .padding(.horizontal, DS.Space.l)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(theme.subtleFill))
+                    }
+
+                    if let message = validationMessage ?? errorText {
+                        Label(message, systemImage: "exclamationmark.circle")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(theme.negativeColor)
+                            .accessibilityIdentifier("tx.error")
+                    }
+
+                    Button(editing == nil ? (type == .buy ? "Add buy" : "Add sell") : "Save changes", action: save)
+                        .buttonStyle(PrimaryPillButtonStyle())
+                        .disabled(!canSave)
+                        .accessibilityIdentifier("tx.save")
+                }
+                .padding(DS.Space.gutter)
+            }
+            .background(theme.background.ignoresSafeArea())
+            .navigationTitle(editing == nil ? "Add transaction" : "Edit transaction")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                // The decimal pad has no return key: a Done in the bar puts the keyboard away.
+                ToolbarItem(placement: .confirmationAction) {
+                    if focus != nil {
+                        Button("Done") { focus = nil }
+                            .accessibilityIdentifier("keyboard.done")
+                    }
+                }
+            }
+            .task {
+                guard editing == nil, !didAutofocus else { return }
+                didAutofocus = true
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                if focus == nil { focus = .quantity }
+            }
+        }
+    }
+
+    private func save() {
+        guard let q = quantity, let p = price, let f = fees else { return }
+        errorText = nil
+        let result: MarketData.HoldingChange
+        if let editing {
+            let updated = Transaction(id: editing.id, date: date, shares: q, pricePerShare: p * usdFactor, type: type,
+                                      fees: f * usdFactor, avgCostAtSale: editing.avgCostAtSale)
+            let list = holding.transactions.map { $0.id == editing.id ? updated : $0 }
+            result = marketData.replaceTransactions(holdingID: holding.id, with: list)
+        } else {
+            result = marketData.recordTransaction(holdingID: holding.id, type: type, shares: q,
+                                                  pricePerUnit: p, priceCurrency: asset.tradingCurrency, fees: f, date: date)
+        }
+        switch result {
+        case .ok:
+            Haptics.success()
+            dismiss()
+        case .invalid(let message):
+            Haptics.warning()
+            errorText = message
+        case .limitReached:
+            errorText = "Your plan's holding limit has been reached."
+        }
+    }
+}
+
+// MARK: - Form field
+
+/// Label above a rounded input, 52pt tall.
+struct FormField<Content: View>: View {
+    let label: String
+    var trailing: AnyView? = nil
+    @ViewBuilder let content: () -> Content
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(label)
-                    .font(.body)
-                    .foregroundColor(theme.secondaryText)
-
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(theme.secondaryText)
                 Spacer()
-
-                Text(value)
-                    .font(.body.bold())
-                    .foregroundColor(theme.primaryText)
+                if let trailing { trailing }
             }
-            .padding(.vertical, 12)
-
-            if showDivider {
-                Divider()
-                    .background(theme.separator)
-            }
+            content()
+                .font(.title3.weight(.medium).monospacedDigit())
+                .padding(.horizontal, DS.Space.l)
+                .frame(minHeight: 52)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(theme.subtleFill))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5))
         }
     }
-}
-
-// MARK: - Metric Card
-struct MetricCard: View {
-    let title: String
-    let value: Double
-    let isPercentage: Bool
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-
-    private var isPositive: Bool { value >= 0 }
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        let valueColor: Color = isPositive ? appTheme.positiveColor : appTheme.negativeColor
-        VStack(spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.secondary)
-
-            Text(isPercentage ? "\(isPositive ? "+" : "")\(String(format: "%.2f", value))%" : String(format: "%.2f", value))
-                .font(.title3.bold())
-                .monospacedDigit()
-                .foregroundColor(valueColor)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(theme.glassBackground)
-        .cornerRadius(16)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(valueColor.opacity(0.25), lineWidth: 1)
-        )
-    }
-}
-
-// MARK: - Compact Transaction Row
-struct TransactionRowCompact: View {
-    let transaction: Transaction
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        let isBuy = transaction.type == .buy
-        let badgeColor: Color = isBuy ? appTheme.positiveColor : appTheme.negativeColor
-        HStack(spacing: 12) {
-            // Type Badge
-            HStack(spacing: 4) {
-                Image(systemName: isBuy ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
-                    .font(.caption)
-                Text(transaction.type.rawValue.capitalized)
-                    .font(.caption.weight(.bold))
-            }
-            .foregroundColor(badgeColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(badgeColor.opacity(0.12))
-            .clipShape(Capsule())
-
-            // Details
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(String(format: "%.4g", transaction.shares)) shares")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.primary)
-
-                Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-
-            // Value
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(transaction.pricePerShare.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundColor(.primary)
-
-                Text(transaction.totalValue.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(14)
-        .background(theme.glassBackground)
-        .cornerRadius(14)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(theme.glassBorder, lineWidth: 1)
-        )
-    }
-}
-
-// MARK: - Add Transaction Sheet
-struct AddTransactionSheet: View {
-    let holding: PortfolioHolding
-    @EnvironmentObject var marketData: MarketData
-    @Environment(\.dismiss) var dismiss
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
-
-    @State private var transactionType: TransactionType = .buy
-    @State private var sharesText = ""
-    @State private var priceText = ""
-    @State private var transactionDate = Date()
-    @FocusState private var focusedField: TxField?
-
-    enum TxField { case shares, price }
-
-    private var shares: Double? {
-        Double(sharesText.replacingOccurrences(of: ",", with: "."))
-    }
-    private var price: Double? {
-        Double(priceText.replacingOccurrences(of: ",", with: "."))
-    }
-    private var totalValue: Double? {
-        guard let s = shares, let p = price else { return nil }
-        return s * p
-    }
-    private var isValid: Bool {
-        (shares ?? 0) > 0 && (price ?? 0) > 0
-    }
-    private var isBuy: Bool { transactionType == .buy }
-    private var accentColor: Color { isBuy ? appTheme.positiveColor : appTheme.negativeColor }
-
-    var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
-        NavigationStack {
-            ZStack {
-                theme.background.ignoresSafeArea()
-
-                ScrollView {
-                    VStack(spacing: 20) {
-                        txAssetHeader(theme: theme)
-                        txTypePicker(theme: theme)
-                        txInputFields(theme: theme)
-                        txDateRow(theme: theme)
-                        if totalValue != nil {
-                            txSummary(theme: theme)
-                        }
-                        txAddButton
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 48)
-                }
-            }
-            .navigationTitle("Add Transaction")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundColor(.secondary)
-                }
-            }
-            .onAppear {
-                priceText = String(format: "%.2f", holding.asset.price)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    focusedField = .shares
-                }
-            }
-        }
-    }
-
-    // MARK: - Asset Header
-
-    private func txAssetHeader(theme: Theme) -> some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [accentColor, accentColor.opacity(0.5)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 48, height: 48)
-                Image(systemName: isBuy ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(.white)
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(holding.asset.symbol)
-                    .font(.title3.bold())
-                    .foregroundColor(.primary)
-                Text(holding.asset.name)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(String(format: "%.4g", holding.shares))
-                    .font(.title3.bold())
-                    .foregroundColor(.primary)
-                Text("shares held")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(16)
-        .background(accentColor.opacity(0.08))
-        .cornerRadius(16)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(accentColor.opacity(0.15), lineWidth: 1))
-        .animation(.easeInOut(duration: 0.2), value: isBuy)
-    }
-
-    // MARK: - Buy/Sell Picker
-
-    private func txTypePicker(theme: Theme) -> some View {
-        HStack(spacing: 0) {
-            txTypeButton(.buy, label: "Buy", icon: "arrow.down.circle.fill", theme: theme)
-            txTypeButton(.sell, label: "Sell", icon: "arrow.up.circle.fill", theme: theme)
-        }
-        .padding(4)
-        .background(theme.glassBackground)
-        .cornerRadius(14)
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.separator, lineWidth: 1))
-    }
-
-    private func txTypeButton(_ type: TransactionType, label: String, icon: String, theme: Theme) -> some View {
-        let isSelected = transactionType == type
-        let color: Color = type == .buy ? appTheme.positiveColor : appTheme.negativeColor
-        return Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                transactionType = type
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.subheadline.weight(.semibold))
-                Text(label)
-                    .font(.subheadline.weight(.bold))
-            }
-            .foregroundColor(isSelected ? .white : color)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(isSelected ? color : Color.clear)
-            .cornerRadius(10)
-        }
-    }
-
-    // MARK: - Input Fields
-
-    private func txInputFields(theme: Theme) -> some View {
-        VStack(spacing: 14) {
-            txInputRow(
-                label: "Number of Shares",
-                icon: "number",
-                placeholder: "0.00",
-                text: $sharesText,
-                field: .shares,
-                theme: theme
-            )
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Price per Share")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 2)
-
-                    Spacer()
-
-                    Button {
-                        priceText = String(format: "%.2f", holding.asset.price)
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    } label: {
-                        Text("Use Market Price")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundColor(accentColor)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(accentColor.opacity(0.1))
-                            .clipShape(Capsule())
-                    }
-                }
-
-                let isFocused = focusedField == .price
-                HStack(spacing: 10) {
-                    Image(systemName: "dollarsign")
-                        .foregroundColor(isFocused ? accentColor : .secondary)
-                        .frame(width: 20)
-                        .animation(.easeInOut(duration: 0.15), value: isFocused)
-
-                    TextField("0.00", text: $priceText)
-                        .keyboardType(.decimalPad)
-                        .focused($focusedField, equals: .price)
-                        .font(.title3.weight(.medium))
-                }
-                .padding(16)
-                .background(isFocused ? accentColor.opacity(0.06) : theme.glassBackground)
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(isFocused ? accentColor.opacity(0.5) : theme.separator, lineWidth: 1.5)
-                )
-                .animation(.easeInOut(duration: 0.15), value: isFocused)
-            }
-        }
-    }
-
-    private func txInputRow(
-        label: String,
-        icon: String,
-        placeholder: String,
-        text: Binding<String>,
-        field: TxField,
-        theme: Theme
-    ) -> some View {
-        let isFocused = focusedField == field
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
-                .padding(.leading, 2)
-
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .foregroundColor(isFocused ? accentColor : .secondary)
-                    .frame(width: 20)
-                    .animation(.easeInOut(duration: 0.15), value: isFocused)
-
-                TextField(placeholder, text: text)
-                    .keyboardType(.decimalPad)
-                    .focused($focusedField, equals: field)
-                    .font(.title3.weight(.medium))
-            }
-            .padding(16)
-            .background(isFocused ? accentColor.opacity(0.06) : theme.glassBackground)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isFocused ? accentColor.opacity(0.5) : theme.separator, lineWidth: 1.5)
-            )
-            .animation(.easeInOut(duration: 0.15), value: isFocused)
-        }
-    }
-
-    // MARK: - Date Row
-
-    private func txDateRow(theme: Theme) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Transaction Date")
-                .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
-                .padding(.leading, 2)
-
-            HStack(spacing: 10) {
-                Image(systemName: "calendar")
-                    .foregroundColor(accentColor)
-                    .frame(width: 20)
-
-                DatePicker("", selection: $transactionDate, displayedComponents: .date)
-                    .labelsHidden()
-
-                Spacer()
-            }
-            .padding(12)
-            .background(theme.glassBackground)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(theme.separator, lineWidth: 1)
-            )
-        }
-    }
-
-    // MARK: - Summary
-
-    private func txSummary(theme: Theme) -> some View {
-        VStack(spacing: 14) {
-            Label("Transaction Summary", systemImage: "chart.bar.doc.horizontal")
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(spacing: 10) {
-                txSummaryRow("Shares", value: shares.map { String(format: "%.4g", $0) } ?? "-")
-                txSummaryRow("Price per Share", value: price.map {
-                    $0.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates)
-                } ?? "-")
-
-                Divider().opacity(0.6)
-
-                txSummaryRow(
-                    "Total Value",
-                    value: totalValue.map {
-                        $0.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates)
-                    } ?? "-",
-                    bold: true
-                )
-
-                // Show impact on position
-                if let s = shares, let p = price {
-                    let newShares = isBuy ? holding.shares + s : holding.shares - s
-                    let newAvgCost: Double = {
-                        if isBuy {
-                            let totalCost = (holding.shares * holding.avgCost) + (s * p)
-                            return newShares > 0 ? totalCost / newShares : 0
-                        }
-                        return holding.avgCost
-                    }()
-
-                    Divider().opacity(0.6)
-
-                    HStack {
-                        Text("New Position")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                    txSummaryRow("Shares After", value: String(format: "%.4g", newShares))
-                    if isBuy {
-                        txSummaryRow("Avg Cost After", value: newAvgCost.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates))
-                    }
-                }
-            }
-            .padding(16)
-            .background(theme.glassBackground)
-            .cornerRadius(14)
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.separator, lineWidth: 0.5))
-        }
-    }
-
-    private func txSummaryRow(
-        _ label: String,
-        value: String,
-        bold: Bool = false
-    ) -> some View {
-        HStack {
-            Text(label)
-                .font(bold ? .subheadline.weight(.semibold) : .subheadline)
-                .foregroundColor(bold ? .primary : .secondary)
-            Spacer()
-            Text(value)
-                .font(bold ? .subheadline.weight(.bold) : .subheadline.weight(.medium))
-                .foregroundColor(bold ? .primary : .secondary)
-                .monospacedDigit()
-        }
-    }
-
-    // MARK: - Add Button
-
-    private var txAddButton: some View {
-        Button {
-            guard let s = shares, let p = price, s > 0, p > 0 else { return }
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            addTransaction()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: isBuy ? "plus.circle.fill" : "minus.circle.fill")
-                    .font(.title3)
-                Text(isBuy ? "Add Buy Transaction" : "Add Sell Transaction")
-                    .font(.headline)
-            }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
-            .background(
-                isValid
-                    ? LinearGradient(colors: [accentColor, accentColor.opacity(0.7)],
-                                     startPoint: .leading, endPoint: .trailing)
-                    : LinearGradient(colors: [Color.gray.opacity(0.35), Color.gray.opacity(0.25)],
-                                     startPoint: .leading, endPoint: .trailing)
-            )
-            .cornerRadius(16)
-            .shadow(color: isValid ? accentColor.opacity(colorScheme == .dark ? 0.35 : 0.10) : .clear, radius: 12, y: 6)
-        }
-        .disabled(!isValid)
-        .animation(.easeInOut(duration: 0.2), value: isValid)
-        .animation(.easeInOut(duration: 0.2), value: isBuy)
-    }
-
-    // MARK: - Add Transaction Logic
-
-    private func addTransaction() {
-        guard let shares = shares, let price = price else { return }
-
-        let transaction = Transaction(
-            date: transactionDate,
-            shares: shares,
-            pricePerShare: price,
-            type: transactionType
-        )
-
-        if let index = marketData.portfolio.firstIndex(where: { $0.id == holding.id }) {
-            var updatedHolding = marketData.portfolio[index]
-            updatedHolding.transactions.append(transaction)
-
-            if transactionType == .buy {
-                let totalCost = (updatedHolding.shares * updatedHolding.avgCost) + (shares * price)
-                updatedHolding.shares += shares
-                updatedHolding.avgCost = totalCost / updatedHolding.shares
-            } else {
-                updatedHolding.shares -= shares
-            }
-
-            marketData.portfolio[index] = updatedHolding
-            marketData.saveToDisk()
-            if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
-        }
-
-        dismiss()
-    }
-}
-
-#Preview {
-    HoldingDetailView(holding: PortfolioHolding(
-        asset: Asset(symbol: "AAPL", name: "Apple Inc.", price: 178.50, change: 2.30, changePercent: 1.30, volume: 50000000, kind: .stock, exchange: "NASDAQ"),
-        shares: 10.0,
-        avgCost: 170.00,
-        transactions: []
-    ))
-    .environmentObject(MarketData())
 }

@@ -36,6 +36,14 @@ extension Double {
         formatter.numberStyle = .currency
         formatter.currencyCode = currency
         formatter.locale = Locale.current
+        // The app shows US and ASX listings side by side, so a bare "$" is ambiguous:
+        // say A$ / US$ / C$ explicitly (as Stake and the onboarding toggle do).
+        switch currency {
+        case "AUD": formatter.currencySymbol = "A$"
+        case "USD": formatter.currencySymbol = "US$"
+        case "CAD": formatter.currencySymbol = "C$"
+        default: break
+        }
         formatter.maximumFractionDigits = currency == "JPY" ? 0 : 2
         formatter.minimumFractionDigits = currency == "JPY" ? 0 : 2
 

@@ -23,7 +23,6 @@ final class MarketData: ObservableObject {
     @Published var watchlist: [Asset] = []
     @Published var newsArticles: [NewsArticle] = []
     @Published var portfolioHistory: [PortfolioSnapshot] = []
-    @Published var searchResults: [Asset] = []
     @Published var showAddSheet = false
     @Published var preferredCurrency: String = "USD"
     @Published var exchangeRates: [String: Double] = [
@@ -32,13 +31,17 @@ final class MarketData: ObservableObject {
         "GBP": 0.792,
         "JPY": 149.50,
         "CAD": 1.362
-    ]
+    ] {
+        // Mirror for the network layer, which converts non-USD quotes on the way in.
+        didSet { FXRates.shared.update(exchangeRates) }
+    }
+    /// Live S&P 500 level (^GSPC). Zero until the first refresh — never a placeholder level.
     @Published var sp500Index: MarketIndex = MarketIndex(
         name: "S&P 500",
-        symbol: "SPY",
-        price: 4783.45,
-        change: 0.0,
-        changePercent: 0.0
+        symbol: "^GSPC",
+        price: 0,
+        change: 0,
+        changePercent: 0
     )
     @Published var sp500History: [PricePoint] = []
     @Published var marketSentiment: MarketSentiment = .bearish
@@ -46,6 +49,9 @@ final class MarketData: ObservableObject {
     /// Cached 1D mini-chart data keyed by symbol — persists across navigation so
     /// thumbnails never regenerate randomly when the user switches tabs and returns.
     var miniChartCache: [String: [PricePoint]] = [:]
+    /// Real portfolio series for widgets (rebuilt from price history; empty = widget shows "no chart yet").
+    private var widgetDaySeries: [Double] = []
+    private var widgetWeekDaily: [Double] = []
 
     // News pagination state
     @Published var newsCurrentPage: Int = 1
@@ -57,6 +63,42 @@ final class MarketData: ObservableObject {
     @Published var activePortfolioIndex: Int = 0
     @Published var watchlistGroups: [WatchlistGroup] = []
     @Published var activeWatchlistIndex: Int = 0
+
+    // MARK: - Price Direction Tracking
+
+    /// Not @Published: no view reads it, and publishing it set-then-cleared re-rendered
+    /// every MarketData observer twice per refresh.
+    var priceDirections: [String: PriceDirection] = [:]
+    /// Symbols whose latest quote failed — UI shows "No live price" instead of a stale number.
+    @Published private(set) var quoteFailures: Set<String> = []
+    private var previousPrices: [String: Double] = [:]
+
+    // MARK: - External Managers (wired by Stock_TrackerApp)
+
+    var alertManager: PriceAlertManager? {
+        didSet {
+            // The launch refresh starts in init and can finish before the app wires
+            // this up in onAppear — free plans have no auto-refresh, so those fresh
+            // prices would otherwise never be checked against alerts this session.
+            if hasFreshQuotes, let alertManager, oldValue !== alertManager, !Self.backgroundChecksOnly {
+                alertManager.checkAlerts(for: watchlist + portfolio.map(\.asset) + alertOnlyAssets)
+            }
+        }
+    }
+    /// Set once a refresh has finished this session (prices aren't just last session's).
+    private var hasFreshQuotes = false
+    /// Live quotes for alert symbols that aren't on the watchlist or in the portfolio
+    /// (alerts set from Search or a stock page). Without these, such alerts never fired.
+    @Published private(set) var alertOnlyAssets: [Asset] = []
+
+    #if DEBUG
+    /// UI tests: `-UITestBackgroundOnly` turns off in-app alert checks so a test proves
+    /// the background-refresh path (`BackgroundRefresh.run`) fires alerts on its own.
+    static let backgroundChecksOnly = ProcessInfo.processInfo.arguments.contains("-UITestBackgroundOnly")
+    #else
+    static let backgroundChecksOnly = false
+    #endif
+    var notificationScheduler: NotificationScheduler?
 
     // MARK: - Domain Services (injectable for testing)
 
@@ -85,6 +127,34 @@ final class MarketData: ObservableObject {
     var totalProfitLossPercent: Double {
         guard totalCostBasis != 0 else { return 0 }
         return (totalProfitLoss / totalCostBasis) * 100.0
+    }
+
+    /// Holdings in the active portfolio that were sold down to zero.
+    var closedPositions: [ClosedPosition] {
+        portfolioGroups.indices.contains(activePortfolioIndex) ? portfolioGroups[activePortfolioIndex].closedPositions : []
+    }
+
+    /// Profit banked from sales (USD): open holdings' partial sales + closed positions.
+    var totalRealizedGain: Double {
+        portfolio.reduce(0) { $0 + $1.realizedGain } + closedPositions.reduce(0) { $0 + $1.realizedGain }
+    }
+
+    /// Unrealised (holdings with a known cost) + realised, USD.
+    var totalReturn: Double {
+        let priced = portfolio.filter { $0.costBasis > 0 }
+        return priced.reduce(0) { $0 + $1.profitLoss } + totalRealizedGain
+    }
+
+    /// Everything paid for what's held (with a known cost) plus what was sold, USD.
+    var totalInvestedAllTime: Double {
+        portfolio.filter { $0.costBasis > 0 }.reduce(0) { $0 + $1.costBasis }
+            + portfolio.reduce(0) { $0 + $1.ledger.costOfSold }
+            + closedPositions.reduce(0) { $0 + $1.ledger.costOfSold }
+    }
+
+    var totalReturnPercent: Double {
+        let base = totalInvestedAllTime
+        return base > 0 ? totalReturn / base * 100 : 0
     }
 
     /// Real daily P&L — sum of (shares × asset.change) for every holding.
@@ -153,6 +223,7 @@ final class MarketData: ObservableObject {
     // MARK: - Startup
 
     private func loadInitialData() {
+        FXRates.shared.update(exchangeRates)
         let saved = portfolioService.load()
         preferredCurrency = saved.currency
 
@@ -167,35 +238,34 @@ final class MarketData: ObservableObject {
             stocks = mockStocks
             crypto = mockCrypto
         } else {
-            // First launch — populate with mock data
+            // First launch — start empty. A finance app must never show someone
+            // holdings they don't own; onboarding fills the watchlist with their
+            // picks and the portfolio with what they add or connect.
             stocks = mockStocks
             crypto = mockCrypto
-            let (mockPortfolio, mockWatchlist) = portfolioService.mockPortfolio(
-                stocks: mockStocks,
-                crypto: mockCrypto
-            )
-            portfolio = mockPortfolio
-            watchlist = mockWatchlist
+            portfolio = []
+            watchlist = []
         }
+
+        mergeTrackedAssetsIntoCanonicalCollections()
 
         deduplicatePortfolio()
+        migrateASXValuesToUSDIfNeeded()
 
-        // Ensure chart always has enough data points to render (need > 1)
-        if portfolioHistory.count < 2 {
-            portfolioHistory = portfolioService.seedInitialHistory(
-                currentValue: totalPortfolioValue,
-                costBasis: totalCostBasis
-            )
+        // No seeded history and no placeholder headlines: charts are rebuilt from
+        // real prices (PriceHistoryService) and News shows a loading state until
+        // real articles arrive.
+        newsArticles = []
+
+        // Restore every portfolio (only the active one used to survive a relaunch).
+        let savedGroups = DataPersistenceManager.shared.loadPortfolioGroups()
+        if !savedGroups.groups.isEmpty {
+            portfolioGroups = savedGroups.groups
+            activePortfolioIndex = min(max(savedGroups.activeIndex, 0), portfolioGroups.count - 1)
+            // The active portfolio's own store is authoritative for its holdings.
+            portfolioGroups[activePortfolioIndex].holdings = portfolio
+            portfolioGroups[activePortfolioIndex].history = portfolioHistory
         }
-
-        // Ensure portfolio is never empty (edge-case guard)
-        if portfolio.isEmpty {
-            portfolio = stocks.map {
-                PortfolioHolding(asset: $0, shares: 10, avgCost: $0.price * 0.85)
-            }
-        }
-
-        newsArticles = newsService.mockArticles()
 
         // Initialize portfolio groups if empty
         if portfolioGroups.isEmpty {
@@ -214,6 +284,7 @@ final class MarketData: ObservableObject {
             // First launch or migration: wrap existing watchlist into default group
             watchlistGroups = [WatchlistGroup(name: "My Watchlist", assets: watchlist)]
             activeWatchlistIndex = 0
+            saveToDisk()
         } else {
             watchlistGroups = savedWatchlistGroups
             let savedIndex = portfolioService.loadActiveWatchlistIndex()
@@ -223,7 +294,11 @@ final class MarketData: ObservableObject {
 
         // Refresh live prices and S&P 500 in the background immediately on launch
         Task { await fetchSP500History() }
-        Task { await refreshFromAPI() }
+        Task {
+            await refreshFromAPI()
+            await refreshDividendYieldsIfNeeded()
+            await refreshWidgetSeries()
+        }
         fetchMarketSentiment()
 
         // Start subscription-aware auto-refresh loop
@@ -235,16 +310,63 @@ final class MarketData: ObservableObject {
     // MARK: - Public Refresh API
 
     func refreshFromAPI() async {
+        // Snapshot prices before refresh for direction tracking
+        let allBeforeRefresh = watchlist + portfolio.map(\.asset)
+        for asset in allBeforeRefresh {
+            previousPrices[asset.symbol] = asset.price
+        }
+
         await refreshAssetsFromAPI()
-        await fetchSP500History()
-        await refreshNewsFromAPI()
+
+        // Compute price directions after refresh
+        let allAfterRefresh = watchlist + portfolio.map(\.asset)
+        var newDirections: [String: PriceDirection] = [:]
+        for asset in allAfterRefresh {
+            if let oldPrice = previousPrices[asset.symbol] {
+                if asset.price > oldPrice {
+                    newDirections[asset.symbol] = .up
+                } else if asset.price < oldPrice {
+                    newDirections[asset.symbol] = .down
+                }
+            }
+        }
+        if !newDirections.isEmpty {
+            priceDirections = newDirections
+            Task {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                priceDirections = [:]
+            }
+        }
+
+        // Check price alerts and significant movements against freshly updated prices
+        let allAssets = watchlist + portfolio.map(\.asset)
+        hasFreshQuotes = true
+        await refreshAlertOnlyQuotes()
+        if !Self.backgroundChecksOnly {
+            alertManager?.checkAlerts(for: allAssets + alertOnlyAssets)
+        }
+        notificationScheduler?.checkSignificantMovements(for: allAssets)
+
+        // Independent of each other — no reason to wait for one before the next.
+        async let index: Void = refreshSP500Index()
+        async let history: Void = fetchSP500History()
+        async let news: Void = refreshNewsFromAPI()
+        _ = await (index, history, news)
         portfolioHistory = portfolioService.appendCurrentSnapshot(
             to: portfolioHistory, currentValue: totalPortfolioValue
         )
         fetchMarketSentiment()
         saveToDisk()
         updateWidgetData()
+        Task { await refreshWidgetSeries() }
         await LiveActivityManager.shared.updateAll(assets: stocks + crypto)
+
+        // Update daily summary notification with latest portfolio data
+        notificationScheduler?.scheduleDailySummary(
+            portfolioValue: totalPortfolioValue,
+            dailyPL: totalProfitLoss,
+            dailyPLPercent: totalProfitLossPercent
+        )
     }
 
     func refreshNews() async {
@@ -263,6 +385,7 @@ final class MarketData: ObservableObject {
         if watchlistGroups.indices.contains(activeWatchlistIndex) {
             watchlistGroups[activeWatchlistIndex].assets = watchlist
         }
+        DataPersistenceManager.shared.savePortfolioGroups(portfolioGroups, activeIndex: activePortfolioIndex)
         portfolioService.save(
             watchlist: watchlist,
             portfolio: portfolio,
@@ -271,6 +394,36 @@ final class MarketData: ObservableObject {
             watchlistGroups: watchlistGroups,
             activeWatchlistIndex: activeWatchlistIndex
         )
+    }
+
+    /// Reloads all in-memory state from local Keychain/UserDefaults.
+    /// Called after sign-out to revert from cloud-merged data to local-only data.
+    func reloadFromDisk() {
+        let saved = portfolioService.load()
+        preferredCurrency = saved.currency
+
+        if !saved.portfolio.isEmpty || !saved.watchlist.isEmpty {
+            watchlist = saved.watchlist
+            portfolio = saved.portfolio
+            if !saved.history.isEmpty { portfolioHistory = saved.history }
+        }
+
+        // Reload watchlist groups
+        let savedWatchlistGroups = portfolioService.loadWatchlistGroups()
+        if savedWatchlistGroups.isEmpty {
+            watchlistGroups = [WatchlistGroup(name: "My Watchlist", assets: watchlist)]
+            activeWatchlistIndex = 0
+        } else {
+            watchlistGroups = savedWatchlistGroups
+            let savedIndex = portfolioService.loadActiveWatchlistIndex()
+            activeWatchlistIndex = min(savedIndex, watchlistGroups.count - 1)
+            watchlist = watchlistGroups[activeWatchlistIndex].assets
+        }
+
+        deduplicatePortfolio()
+        mergeTrackedAssetsIntoCanonicalCollections()
+        updateWidgetData()
+        AppLogger.persist.info("Reloaded local data from disk after sign-out")
     }
 
     // MARK: - Multi-Portfolio
@@ -285,9 +438,15 @@ final class MarketData: ObservableObject {
         activePortfolioIndex = index
         portfolio = portfolioGroups[index].holdings
         portfolioHistory = portfolioGroups[index].history
+        saveToDisk()
+        // Inactive portfolios aren't priced in the background; price this one now.
+        Task { await refreshFromAPI() }
     }
 
-    func createPortfolio(name: String, emoji: String = "💼") {
+    /// Creates and switches to a new portfolio. Returns false when the plan's limit is reached.
+    @discardableResult
+    func createPortfolio(name: String, emoji: String = "💼") -> Bool {
+        guard SubscriptionManager.shared.canAddPortfolio(currentCount: portfolioGroups.count) else { return false }
         // Save current holdings/history back to active group before switching
         if portfolioGroups.indices.contains(activePortfolioIndex) {
             portfolioGroups[activePortfolioIndex].holdings = portfolio
@@ -298,6 +457,11 @@ final class MarketData: ObservableObject {
         activePortfolioIndex = portfolioGroups.count - 1
         portfolio = []
         portfolioHistory = []
+        saveToDisk()
+
+        // Referral qualification: portfolio created
+        Task { await ReferralManager.shared.reportQualificationEvent(.portfolioCreated) }
+        return true
     }
 
     func deletePortfolio(at index: Int) {
@@ -320,8 +484,11 @@ final class MarketData: ObservableObject {
 
     private func refreshAssetsFromAPI() async {
         isRefreshingQuotes = true
-        stocks = await quoteService.refreshStockQuotes(for: stocks)
-        crypto = await quoteService.refreshCryptoPrices(for: crypto)
+        mergeTrackedAssetsIntoCanonicalCollections()
+        // Stocks and crypto from different providers, at the same time.
+        async let freshStocks = quoteService.refreshStockQuotes(for: stocks)
+        async let freshCrypto = quoteService.refreshCryptoPrices(for: crypto)
+        (stocks, crypto) = await (freshStocks, freshCrypto)
         let synced = quoteService.syncCollections(
             portfolio: portfolio,
             watchlist: watchlist,
@@ -330,6 +497,7 @@ final class MarketData: ObservableObject {
         )
         portfolio = synced.portfolio
         watchlist = synced.watchlist
+        quoteFailures = quoteService.lastFailedSymbols
 
         // Sync prices for all non-active watchlist groups
         let allAssets = stocks + crypto
@@ -343,6 +511,60 @@ final class MarketData: ObservableObject {
         lastQuoteRefreshDate = Date()
     }
 
+    /// Ensures portfolio/watchlist assets participate in the shared refresh pipeline.
+    /// Without this, synced/imported holdings can be left at a stale or zero price.
+    /// Fetches one asset's live quote and applies it everywhere that symbol appears.
+    func refreshQuote(for asset: Asset) async {
+        let refreshed: Asset? = asset.kind == .crypto
+            ? (await quoteService.refreshCryptoPrices(for: [asset])).first
+            : (await quoteService.refreshStockQuotes(for: [asset])).first
+        guard let fresh = refreshed, fresh.price > 0, !quoteService.lastFailedSymbols.contains(asset.symbol) else {
+            quoteFailures.insert(asset.symbol)   // shown as "No live price", not a silent stale value
+            return
+        }
+        quoteFailures.remove(asset.symbol)
+        func apply(_ old: Asset) -> Asset { quoteService.mergedAsset(old: old, api: fresh) }
+        for i in portfolio.indices where portfolio[i].asset.symbol == asset.symbol {
+            portfolio[i].asset = apply(portfolio[i].asset)
+        }
+        for i in watchlist.indices where watchlist[i].symbol == asset.symbol {
+            watchlist[i] = apply(watchlist[i])
+        }
+        if asset.kind == .crypto {
+            for i in crypto.indices where crypto[i].symbol == asset.symbol { crypto[i] = apply(crypto[i]) }
+        } else {
+            for i in stocks.indices where stocks[i].symbol == asset.symbol { stocks[i] = apply(stocks[i]) }
+        }
+        saveToDisk()
+        updateWidgetData()
+    }
+
+    private func mergeTrackedAssetsIntoCanonicalCollections() {
+        for asset in portfolio.map(\.asset) + watchlist {
+            upsertTrackedAsset(asset)
+        }
+    }
+
+    private func upsertTrackedAsset(_ asset: Asset) {
+        switch asset.kind {
+        case .stock:
+            upsert(asset, into: &stocks)
+        case .crypto:
+            upsert(asset, into: &crypto)
+        }
+    }
+
+    private func upsert(_ asset: Asset, into collection: inout [Asset]) {
+        if let index = collection.firstIndex(where: { $0.symbol == asset.symbol }) {
+            // Prefer a non-zero price when reconciling local/synced/imported copies.
+            if collection[index].price <= 0 && asset.price > 0 {
+                collection[index] = asset
+            }
+        } else {
+            collection.append(asset)
+        }
+    }
+
     // MARK: - Watchlist Group Management
 
     func switchToWatchlist(index: Int) {
@@ -350,6 +572,7 @@ final class MarketData: ObservableObject {
         watchlistGroups[activeWatchlistIndex].assets = watchlist
         activeWatchlistIndex = index
         watchlist = watchlistGroups[index].assets
+        saveToDisk()
     }
 
     func createWatchlist(name: String) {
@@ -392,6 +615,102 @@ final class MarketData: ObservableObject {
         await updateExchangeRate()
     }
 
+    /// Rebuilds the widgets' portfolio charts from real price history.
+    func refreshWidgetSeries() async {
+        guard !portfolio.isEmpty else {
+            widgetDaySeries = []
+            widgetWeekDaily = []
+            updateWidgetData()
+            return
+        }
+        let live = totalPortfolioValue
+        let prevClose = live - dailyProfitLoss
+        if let day = try? await PriceHistoryService.shared.portfolioSeries(
+            holdings: portfolio, range: .oneDay, liveValue: live, previousCloseValue: prevClose) {
+            widgetDaySeries = ChartShaper.downsample(day.points, to: 40).map(\.price)
+        }
+        if let month = try? await PriceHistoryService.shared.portfolioSeries(
+            holdings: portfolio, range: .oneMonth, liveValue: live, previousCloseValue: prevClose) {
+            // Last value of each calendar day, newest 7 days.
+            let calendar = Calendar.current
+            var perDay: [(Date, Double)] = []
+            for p in month.points {
+                let day = calendar.startOfDay(for: p.date)
+                if let last = perDay.last, last.0 == day { perDay[perDay.count - 1] = (day, p.price) }
+                else { perDay.append((day, p.price)) }
+            }
+            widgetWeekDaily = perDay.suffix(7).map(\.1)
+        }
+        updateWidgetData()
+    }
+
+    /// Light refresh for background runs: only symbols with an active alert, then check them.
+    func refreshForAlertCheck() async {
+        let symbols = Set(alertManager?.alerts.filter(\.isActive).map(\.symbol) ?? [])
+        guard !symbols.isEmpty else { return }
+        var seen = Set<String>()
+        let targets = (portfolio.map(\.asset) + watchlist).filter { symbols.contains($0.symbol) && seen.insert($0.symbol).inserted }
+        for asset in targets { await refreshQuote(for: asset) }
+        await refreshAlertOnlyQuotes()
+        alertManager?.checkAlerts(for: watchlist + portfolio.map(\.asset) + alertOnlyAssets)
+    }
+
+    /// Prices the alert symbols nothing else is tracking.
+    func refreshAlertOnlyQuotes() async {
+        let tracked = Set((watchlist + portfolio.map(\.asset)).map(\.symbol))
+        var seen = Set<String>()
+        let wanted = (alertManager?.alerts ?? [])
+            .filter { $0.isActive && !tracked.contains($0.symbol) && seen.insert($0.symbol).inserted }
+            .map(\.quoteAsset)
+        guard !wanted.isEmpty else {
+            if !alertOnlyAssets.isEmpty { alertOnlyAssets = [] }
+            return
+        }
+        let service = QuoteService()
+        let stocks = wanted.filter { $0.kind == .stock }
+        let coins = wanted.filter { $0.kind == .crypto }
+        var fresh: [Asset] = []
+        if !stocks.isEmpty { fresh += await service.refreshStockQuotes(for: stocks) }
+        if !coins.isEmpty { fresh += await service.refreshCryptoPrices(for: coins) }
+        // Keep the last good price for any symbol whose quote failed this time.
+        let previous = Dictionary(alertOnlyAssets.map { ($0.symbol, $0) }, uniquingKeysWith: { a, _ in a })
+        alertOnlyAssets = wanted.map { want in
+            if let got = fresh.first(where: { $0.symbol == want.symbol }), got.price > 0 { return got }
+            return previous[want.symbol] ?? want
+        }
+    }
+
+    /// Real S&P 500 level and day change from Yahoo (^GSPC).
+    func refreshSP500Index() async {
+        guard let quote = try? await APIService.shared.fetchYahooQuote(symbol: "^GSPC", name: "S&P 500") else { return }
+        sp500Index = MarketIndex(name: "S&P 500", symbol: "^GSPC", price: quote.price,
+                                 change: quote.change, changePercent: quote.changePercent)
+    }
+
+    /// Converts an amount typed in the person's display currency into USD for storage.
+    func usd(fromDisplay amount: Double) -> Double {
+        amount * (FXRates.shared.toUSDFactor(from: preferredCurrency) ?? 1)
+    }
+
+    /// Converts a stored USD amount into the display currency (e.g. to prefill a field).
+    func display(fromUSD amount: Double) -> Double {
+        preferredCurrency == "USD" ? amount : amount * (exchangeRates[preferredCurrency] ?? 1)
+    }
+
+    /// Unambiguous symbol for the display currency ("A$", "US$", "€") for input fields.
+    var displayCurrencySymbol: String {
+        switch preferredCurrency {
+        case "USD": return "US$"
+        case "AUD": return "A$"
+        case "CAD": return "C$"
+        default:
+            let f = NumberFormatter()
+            f.numberStyle = .currency
+            f.currencyCode = preferredCurrency
+            return f.currencySymbol ?? preferredCurrency
+        }
+    }
+
     func formatPrice(_ value: Double) -> String {
         value.formattedPrice(in: preferredCurrency, rates: exchangeRates)
     }
@@ -405,7 +724,7 @@ final class MarketData: ObservableObject {
     // MARK: - Dividend Backfill
 
     /// Updates `Asset.dividend` (yield %) for a symbol across stocks, portfolio, and watchlist.
-    /// Called after FMP enrichment so PortfolioIntelligenceView's DividendsSection has data.
+    /// Called after FMP enrichment so the Portfolio tab's Income section has data.
     func updateAssetDividend(symbol: String, yieldPercent: Double) {
         for i in stocks.indices where stocks[i].symbol == symbol {
             stocks[i].dividend = yieldPercent
@@ -424,22 +743,15 @@ final class MarketData: ObservableObject {
         await quoteService.fetchPriceHistory(for: asset, range: range)
     }
 
-    /// Fetch 1D price history for a watchlist thumbnail.
-    /// Returns the cached result immediately on repeat calls so thumbnails
-    /// show stable data when the user navigates away and returns.
+    /// Latest-session (1D) history for a row sparkline. Shaped and cached by
+    /// `PriceHistoryService` (60s TTL); empty when unavailable — rows then show
+    /// no sparkline rather than an invented one.
     func fetchMiniChartHistory(for asset: Asset) async -> [PricePoint] {
-        if let cached = miniChartCache[asset.symbol], !cached.isEmpty {
-            return cached
-        }
-        let points = await quoteService.fetchPriceHistory(for: asset, range: .oneDay)
-        if !points.isEmpty {
+        if let points = try? await PriceHistoryService.shared.history(for: asset, range: .oneDay) {
             miniChartCache[asset.symbol] = points
+            return points
         }
-        return points
-    }
-
-    func generatePriceHistoryFallback(for asset: Asset, range: TimeRange) -> [PricePoint] {
-        quoteService.generatePriceHistoryFallback(for: asset, range: range)
+        return miniChartCache[asset.symbol] ?? []
     }
 
     func fetchHistoricalData(for asset: Asset, range: TimeRange) async throws -> [Candle] {
@@ -463,11 +775,7 @@ final class MarketData: ObservableObject {
             newsHasMore = articles.count >= Constants.Pagination.newsPageSize
         } catch {
             AppLogger.news.error("News fetch failed: \(error)")
-            // Keep existing articles (mock or previously fetched) on failure.
-            // 426 means the plan requires a server-side proxy for device requests.
-            if newsArticles.isEmpty {
-                newsArticles = newsService.mockArticles()
-            }
+            // Keep previously fetched articles on failure; never fall back to placeholders.
             newsHasMore = false
         }
     }
@@ -547,49 +855,46 @@ final class MarketData: ObservableObject {
             .sink { [weak self] _ in self?.scheduleAutoRefresh() }
     }
 
-    // MARK: - Search (debounced)
-
-    private var searchTask: Task<Void, Never>?
-
-    func searchAssets(query: String, kind: AssetKind) {
-        searchTask?.cancel()
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { searchResults = []; return }
-        searchTask = Task {
-            try? await Task.sleep(for: .milliseconds(Constants.Network.searchDebouncems))
-            guard !Task.isCancelled else { return }
-            await performSearch(query: trimmed, kind: kind)
-        }
-    }
-
-    private func performSearch(query: String, kind: AssetKind) async {
-        do {
-            let results = try await APIService.shared.fetchSymbolSearch(query: query, kind: kind)
-            let assets = await withTaskGroup(of: Asset?.self) { group in
-                for result in results.prefix(Constants.Network.searchDetailPrefetch) {
-                    group.addTask {
-                        try? await APIService.shared.fetchAssetDetails(
-                            identifier: result.id,
-                            kind: kind,
-                            name: result.name,
-                            exchange: result.exchange
-                        )
-                    }
-                }
-                var collected: [Asset] = []
-                for await asset in group { if let asset { collected.append(asset) } }
-                return collected
-            }
-            guard !Task.isCancelled else { return }
-            searchResults = assets
-        } catch {
-            guard !Task.isCancelled else { return }
-            AppLogger.search.error("Search error: \(error)")
-            searchResults = []
-        }
-    }
-
     // MARK: - Portfolio Deduplication
+
+    /// One-time fix for data saved before ASX quotes were converted to USD on the
+    /// way in: ASX costs were stored as AUD numbers next to USD prices. Converting
+    /// them keeps each holding's return correct now that its price is USD.
+    private func migrateASXValuesToUSDIfNeeded() {
+        let key = "fx_usd_normalised_v1"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: key) else { return }
+        defaults.set(true, forKey: key)
+        guard let aud = exchangeRates["AUD"], aud > 0 else { return }
+        var changed = false
+        for i in portfolio.indices where portfolio[i].asset.exchange == "ASX" {
+            portfolio[i].avgCost /= aud
+            portfolio[i].transactions = portfolio[i].transactions.map {
+                Transaction(id: $0.id, date: $0.date, shares: $0.shares, pricePerShare: $0.pricePerShare / aud, type: $0.type,
+                            fees: $0.fees / aud, avgCostAtSale: $0.avgCostAtSale.map { $0 / aud })
+            }
+            changed = true
+        }
+        if changed {
+            AppLogger.persist.info("Converted saved ASX cost bases from AUD to USD")
+            saveToDisk()
+        }
+
+        // Price-alert targets for ASX symbols were AUD numbers too. (MarketData is
+        // created before PriceAlertManager, so the manager loads the converted list.)
+        let asxSymbols = Set((portfolio.map(\.asset) + watchlist).filter { $0.exchange == "ASX" }.map(\.symbol))
+        let alerts = DataPersistenceManager.shared.loadPriceAlerts()
+        if alerts.contains(where: { asxSymbols.contains($0.symbol) }) {
+            let converted = alerts.map { a -> PriceAlert in
+                guard asxSymbols.contains(a.symbol) else { return a }
+                return PriceAlert(id: a.id, symbol: a.symbol, assetName: a.assetName, targetPrice: a.targetPrice / aud,
+                                  condition: a.condition, isActive: a.isActive, createdAt: a.createdAt,
+                                  repeats: a.repeats, isArmed: a.isArmed, lastTriggeredAt: a.lastTriggeredAt,
+                                  kind: a.kind, exchange: a.exchange)
+            }
+            DataPersistenceManager.shared.savePriceAlerts(converted)
+        }
+    }
 
     private func deduplicatePortfolio() {
         let grouped = Dictionary(grouping: portfolio, by: { $0.asset.symbol })
@@ -667,9 +972,10 @@ final class MarketData: ObservableObject {
 
     // MARK: - Portfolio Mutations
 
-    func addToPortfolio(asset: Asset, shares: Double, avgCost: Double) {
+    func addToPortfolio(asset: Asset, shares: Double, avgCost: Double, date: Date = Date()) {
+        upsertTrackedAsset(asset)
         let transaction = Transaction(
-            date: Date(),
+            date: date,
             shares: shares,
             pricePerShare: avgCost,
             type: .buy
@@ -697,14 +1003,193 @@ final class MarketData: ObservableObject {
         saveToDisk()
         updateWidgetData()
         if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
+        // Price it now, not on the next refresh cycle — until then a manually added
+        // holding is valued at its cost and every total/chart is wrong.
+        Task { await refreshQuote(for: asset) }
+
+        // Referral qualification: first holding (only fires for the very first holding)
+        if portfolio.count == 1 {
+            Task { await ReferralManager.shared.reportQualificationEvent(.firstHolding) }
+        }
+    }
+
+    // MARK: - Validated holdings API
+    //
+    // Use these from UI: they enforce plan limits, store costs in USD (the app's
+    // money invariant — see FXRates) and never let a position go negative.
+
+    enum HoldingChange: Equatable {
+        case ok
+        case limitReached(Int)
+        case invalid(String)
+    }
+
+    /// Whether another *new* holding (not a top-up of an existing one) fits the plan.
+    func canAddHolding(symbol: String, kind: AssetKind) -> Bool {
+        if portfolio.contains(where: { $0.asset.symbol == symbol && $0.asset.kind == kind }) { return true }
+        return SubscriptionManager.shared.canAddPortfolioHolding(currentCount: portfolio.count)
+    }
+
+    /// Adds a buy. `costPerUnit` is in `costCurrency` — normally the asset's own
+    /// trading currency (AUD for ASX, USD for US/crypto), as on a broker statement.
+    @discardableResult
+    func addHolding(asset: Asset, shares: Double, costPerUnit: Double,
+                    costCurrency: String = "USD", date: Date = Date()) -> HoldingChange {
+        guard shares > 0, shares.isFinite else { return .invalid("Enter how many you own.") }
+        guard costPerUnit >= 0, costPerUnit.isFinite else { return .invalid("Enter what you paid per unit.") }
+        guard canAddHolding(symbol: asset.symbol, kind: asset.kind) else {
+            return .limitReached(SubscriptionManager.shared.currentTier.maxPortfolioHoldings ?? portfolio.count)
+        }
+        let usd = costPerUnit * (FXRates.shared.toUSDFactor(from: costCurrency) ?? 1)
+        addToPortfolio(asset: asset, shares: shares, avgCost: usd, date: date)
+        return .ok
+    }
+
+    /// Records a buy or sell on an existing holding. A sell can't exceed what's
+    /// held; selling everything removes the holding.
+    @discardableResult
+    func recordTransaction(holdingID: UUID, type: TransactionType, shares: Double,
+                           pricePerUnit: Double, priceCurrency: String = "USD", fees: Double = 0,
+                           date: Date = Date()) -> HoldingChange {
+        guard let i = portfolio.firstIndex(where: { $0.id == holdingID }) else { return .invalid("That holding no longer exists.") }
+        guard shares > 0, shares.isFinite else { return .invalid("Enter a quantity above zero.") }
+        guard pricePerUnit >= 0, pricePerUnit.isFinite else { return .invalid("Enter a valid price.") }
+        guard fees >= 0, fees.isFinite else { return .invalid("Enter valid fees, or leave them blank.") }
+        let held = portfolio[i].shares
+        if type == .sell, shares > held + 1e-9 {
+            return .invalid("You can sell at most \(held.formatted(.number.precision(.fractionLength(0...8)))).")
+        }
+        let factor = FXRates.shared.toUSDFactor(from: priceCurrency) ?? 1
+        let usd = pricePerUnit * factor
+        let feesUSD = fees * factor
+        // A sale remembers the average cost it was made at, so its realised profit is
+        // known even when the list doesn't show how the shares were bought.
+        let tx = Transaction(date: date, shares: shares, pricePerShare: usd, type: type, fees: feesUSD,
+                             avgCostAtSale: type == .sell ? portfolio[i].avgCost : nil)
+        switch type {
+        case .buy:
+            let total = held * portfolio[i].avgCost + shares * usd + feesUSD
+            portfolio[i].shares = held + shares
+            portfolio[i].avgCost = portfolio[i].shares > 0 ? total / portfolio[i].shares : 0
+        case .sell:
+            portfolio[i].shares = max(held - shares, 0)   // average cost is unchanged by a sale
+        }
+        portfolio[i].transactions.append(tx)
+        if portfolio[i].shares <= 1e-9 {
+            closePosition(portfolio[i])
+        } else {
+            saveToDisk()
+            updateWidgetData()
+            if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
+        }
+        return .ok
+    }
+
+    /// Deletes one transaction and rebuilds the position from those that remain.
+    @discardableResult
+    func deleteTransaction(holdingID: UUID, transactionID: UUID) -> HoldingChange {
+        guard let i = portfolio.firstIndex(where: { $0.id == holdingID }) else { return .invalid("That holding no longer exists.") }
+        let remaining = portfolio[i].transactions.filter { $0.id != transactionID }
+        guard !remaining.isEmpty else { return .invalid("A holding needs at least one transaction — remove the holding instead.") }
+        let rebuilt = Self.position(from: remaining)
+        guard rebuilt.shares > 1e-9 else { return .invalid("Removing this would leave a negative position.") }
+        portfolio[i].transactions = remaining
+        portfolio[i].shares = rebuilt.shares
+        portfolio[i].avgCost = rebuilt.avgCost
+        saveToDisk()
+        updateWidgetData()
+        return .ok
+    }
+
+    /// Shares held and average cost (USD, buy fees included) from a transaction list, in date order.
+    static func position(from transactions: [Transaction]) -> (shares: Double, avgCost: Double) {
+        let ledger = PositionLedger(transactions)
+        return (ledger.shares, ledger.avgCost)
+    }
+
+    /// A holding sold down to zero leaves the list but keeps its trades, so its
+    /// realised profit still counts in total return ("Closed positions").
+    private func closePosition(_ holding: PortfolioHolding) {
+        if portfolioGroups.indices.contains(activePortfolioIndex) {
+            let closed = ClosedPosition(
+                id: holding.id,
+                asset: holding.asset,
+                transactions: holding.transactions,
+                openedAt: holding.transactions.map(\.date).min() ?? holding.dateAdded,
+                closedAt: holding.transactions.map(\.date).max() ?? Date()
+            )
+            portfolioGroups[activePortfolioIndex].closedPositions.removeAll { $0.id == closed.id }
+            portfolioGroups[activePortfolioIndex].closedPositions.insert(closed, at: 0)
+        }
+        removeFromPortfolio(holding)
+    }
+
+    /// Forgets a closed position — its realised profit leaves the totals.
+    func removeClosedPosition(id: UUID) {
+        guard portfolioGroups.indices.contains(activePortfolioIndex) else { return }
+        portfolioGroups[activePortfolioIndex].closedPositions.removeAll { $0.id == id }
+        saveToDisk()
+    }
+
+    /// Fills in dividend yields for stock holdings that don't have one yet.
+    /// US: FMP TTM ratios. ASX (not on FMP's free plan): the last 12 months of
+    /// dividends from Yahoo's chart events ÷ today's price — cash dividends only,
+    /// franking credits aren't included.
+    func refreshDividendYieldsIfNeeded() async {
+        let targets: [Asset] = portfolio.map(\.asset).filter { (a: Asset) -> Bool in
+            a.kind == .stock && a.dividend == nil
+        }
+        // In parallel and applied as each lands: a slow or rate-limited FMP lookup
+        // must not hold ASX yields (a different provider) behind it.
+        await withTaskGroup(of: (String, Double?).self) { group in
+            for asset in targets {
+                group.addTask { (asset.symbol, await self.dividendYieldPercent(for: asset)) }
+            }
+            for await (symbol, yield) in group {
+                if let yield { updateAssetDividend(symbol: symbol, yieldPercent: yield) }
+            }
+        }
+    }
+
+    /// Trailing dividend yield in percent, or nil if it couldn't be found.
+    private func dividendYieldPercent(for asset: Asset) async -> Double? {
+        if QuoteService.isASX(asset) {
+            guard asset.price > 0, let perShareUSD = await asxTrailingDividendUSD(asset.symbol) else { return nil }
+            return perShareUSD / asset.price * 100
+        }
+        guard let ratios = await FMPService.shared.fetchRatios(symbol: asset.symbol),
+              let yield = ratios.dividendYield else { return nil }
+        // FMP reports a fraction (0.0045); Asset stores percent.
+        return yield < 1 ? yield * 100 : yield
+    }
+
+    /// Trailing-12-month dividend per share (USD) for an ASX listing, 0 if it paid
+    /// none, nil if Yahoo couldn't be reached. Cached for 6 hours per symbol — quote
+    /// refreshes reset `Asset.dividend`, and Yahoo shares one rate bucket.
+    private func asxTrailingDividendUSD(_ symbol: String) async -> Double? {
+        let key = "asx_dividend_ttm_v1"
+        let now = Date().timeIntervalSince1970
+        var cache = UserDefaults.standard.dictionary(forKey: key) as? [String: [Double]] ?? [:]
+        if let hit = cache[symbol], hit.count == 2, now - hit[1] < 6 * 3600 { return hit[0] }
+        guard let facts = try? await APIService.shared.fetchYahooListingFacts(
+            symbol: QuoteService.finnhubASXSymbol(for: symbol)) else { return nil }
+        let perShare = facts.trailing12MonthDividendUSD ?? 0
+        cache[symbol] = [perShare, now]
+        UserDefaults.standard.set(cache, forKey: key)
+        return perShare
     }
 
     func removeFromPortfolio(_ holding: PortfolioHolding) {
         portfolio.removeAll { $0.id == holding.id }
-        // Record the new (lower) total so the chart reflects the deletion
-        portfolioHistory = portfolioService.appendCurrentSnapshot(
-            to: portfolioHistory, currentValue: totalPortfolioValue
-        )
+        if portfolio.isEmpty {
+            // Reset chart and history when all holdings removed
+            portfolioHistory = []
+        } else {
+            // Record the new (lower) total so the chart reflects the deletion
+            portfolioHistory = portfolioService.appendCurrentSnapshot(
+                to: portfolioHistory, currentValue: totalPortfolioValue
+            )
+        }
         saveToDisk()
         updateWidgetData()
         if SyncManager.shared.isSignedIn {
@@ -725,25 +1210,33 @@ final class MarketData: ObservableObject {
 
     func addToWatchlist(_ asset: Asset) {
         guard !watchlist.contains(where: { $0.symbol == asset.symbol }) else { return }
+        upsertTrackedAsset(asset)
         watchlist.append(asset)
         saveToDisk()
         updateWidgetData()
         if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
-        Task { await refreshFromAPI() }
+        // Price just this one. A full refresh per add re-quoted everything and reloaded
+        // Home's index cards: six onboarding picks = six refreshes at once (~60 requests).
+        Task { await refreshQuote(for: asset) }
     }
 
     func removeFromWatchlist(_ asset: Asset) {
         watchlist.removeAll { $0.id == asset.id }
         saveToDisk()
         updateWidgetData()
-        if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
+        if SyncManager.shared.isSignedIn {
+            Task { await SyncManager.shared.softDeleteWatchlistAsset(symbol: asset.symbol) }
+        }
     }
 
     func removeMultipleFromWatchlist(_ ids: Set<UUID>) {
+        let removedSymbols = watchlist.filter { ids.contains($0.id) }.map(\.symbol)
         watchlist.removeAll { ids.contains($0.id) }
         saveToDisk()
         updateWidgetData()
-        if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
+        if SyncManager.shared.isSignedIn {
+            Task { await SyncManager.shared.softDeleteWatchlistAssets(symbols: removedSymbols) }
+        }
     }
 
     func moveWatchlistItem(from source: IndexSet, to destination: Int) {
@@ -760,14 +1253,12 @@ final class MarketData: ObservableObject {
     /// Call once on launch and whenever a full refresh occurs.
     ///
     /// Derives market sentiment from real S&P 500 daily change and portfolio performance.
+    /// Describes today's market from the S&P 500's real day change only. (It used
+    /// to blend in the person's *all-time* return and a never-updated index value,
+    /// and was labelled like a fear-and-greed index.)
     func fetchMarketSentiment() {
-        let spChange = sp500Index.changePercent
-
-        // Blend portfolio momentum if we have holdings
-        let portfolioChange = totalProfitLossPercent
-        let hasPortfolio = !portfolio.isEmpty
-        // Weight: 70% S&P 500 + 30% portfolio (if available)
-        let blended = hasPortfolio ? (spChange * 0.7 + portfolioChange * 0.3) : spChange
+        guard sp500Index.price > 0 else { return }
+        let blended = sp500Index.changePercent
 
         let newSentiment: MarketSentiment
         switch blended {
@@ -823,16 +1314,17 @@ final class MarketData: ObservableObject {
             kind: kind,
             exchange: exchange
         )
-        switch kind {
-        case .stock: stocks.append(asset)
-        case .crypto: crypto.append(asset)
-        }
+        upsertTrackedAsset(asset)
     }
 
     // MARK: - Widget
 
     func updateWidgetData() {
         guard let shared = UserDefaults(suiteName: Constants.Widget.appGroup) else { return }
+
+        // Widgets show the same currency as the app (all stored values are USD).
+        shared.set(preferredCurrency, forKey: "displayCurrency")
+        shared.set(preferredCurrency == "USD" ? 1.0 : (exchangeRates[preferredCurrency] ?? 1.0), forKey: "displayRate")
 
         // Legacy keys (kept for backward compat with old widget builds)
         shared.set(totalPortfolioValue,      forKey: "portfolioValue")
@@ -852,15 +1344,8 @@ final class MarketData: ObservableObject {
                 "profitLossPercent": h.profitLossPercent
             ] as [String: Any]
         }
-        // Sparkline: last 20 portfolio history points (or current value repeated if insufficient).
-        let historyValues: [Double] = {
-            let pts = portfolioHistory.suffix(20).map(\.totalValue)
-            guard pts.count >= 2 else {
-                // Synthesise a flat baseline so the chart always renders.
-                return Array(repeating: totalPortfolioValue, count: 20)
-            }
-            return Array(pts)
-        }()
+        // Sparkline: today's real portfolio series (see refreshWidgetSeries); never synthesised.
+        let historyValues: [Double] = widgetDaySeries
         let portfolioDict: [String: Any] = [
             "totalValue": totalPortfolioValue,
             "totalChange": totalProfitLoss,
@@ -940,17 +1425,12 @@ final class MarketData: ObservableObject {
 
         // --- Top performer ---
         if let top = portfolio.max(by: { $0.asset.changePercent < $1.asset.changePercent }) {
-            // Attempt to pull cached mini chart for this symbol; fall back to synthetic walk.
+            // Real cached mini chart only; the widget hides the sparkline when empty.
             let sparkPts: [Double] = {
                 if let cached = miniChartCache[top.asset.symbol], cached.count >= 2 {
-                    return Array(cached.suffix(8).map(\.price))
+                    return Array(cached.suffix(24).map(\.price))
                 }
-                // Synthetic 8-point walk from avgCost → current price.
-                let start = max(top.avgCost, 0.01)
-                let end = top.asset.price
-                return (0..<8).map { i in
-                    start + (end - start) * (Double(i) / 7.0) + Double.random(in: -start * 0.005...start * 0.005)
-                }
+                return []
             }()
             let topDict: [String: Any] = [
                 "symbol": top.asset.symbol,
@@ -983,8 +1463,8 @@ final class MarketData: ObservableObject {
         }
         // Risk score: simple concentration-weighted metric (placeholder; replace with beta model later).
         let riskScore = widgetRiskScore(holdings: Array(sortedHoldings.prefix(5)), totalValue: totalVal)
-        // Weekly values (last 7 portfolio snapshots).
-        let weeklyVals = portfolioHistory.suffix(7).map(\.totalValue)
+        // Weekly values: one real value per trading day, last 7 (see refreshWidgetSeries).
+        let weeklyVals = widgetWeekDaily
         let weeklyChangePct: Double = {
             guard let first = weeklyVals.first, first > 0, let last = weeklyVals.last else { return 0 }
             return ((last - first) / first) * 100

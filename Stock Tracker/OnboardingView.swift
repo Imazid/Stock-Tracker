@@ -2,249 +2,311 @@
 //  OnboardingView.swift
 //  Stock Tracker
 //
-//  8-phase guided onboarding flow (Variant B).
-//  Steps are conditionally skipped based on user actions:
-//    - OTP skipped if user used Apple Sign In or skipped account
-//    - Biometrics skipped if device has no Face ID / Touch ID
-//    - Portfolio Add skipped only if user explicitly skips
+//  Container for the redesigned onboarding (see OnboardingModel.swift for the
+//  flow). Patterns follow Mobbin references for finance apps: Public's dark
+//  welcome with serif headline and icon-tile bullets, Stake's ASX + Wall St
+//  logo field, Cash App's "Select stocks" picker, Quicken/Monarch's
+//  "add accounts" options, Atoms/Tempo notification pre-prompts, and
+//  Finimize's "finish your setup" account step placed last.
 //
 
 import SwiftUI
-import Combine
-import LocalAuthentication
-
-// MARK: - Steps
-
-enum OnboardingStep: Int, CaseIterable {
-    case welcome        = 0   // OB-020
-    case features       = 1   // OB-025
-    case account        = 2   // OB-030
-    case otp            = 3   // OB-040
-    case market         = 4   // OB-050
-    case watchlist      = 5   // OB-060
-    case portfolio      = 6   // OB-070
-    case notifications  = 7   // OB-080
-    case biometrics     = 8   // OB-090
-    case complete       = 9   // OB-100
-}
-
-// MARK: - ViewModel
-
-@MainActor
-class OnboardingViewModel: ObservableObject {
-    @Published var currentStep: OnboardingStep = .welcome
-    @Published var accountMethod: String? = nil   // "apple", "email", or nil (skipped)
-    @Published var accountEmail: String = ""
-
-    var skippedAccount: Bool { accountMethod == nil }
-
-    func goTo(_ step: OnboardingStep) {
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
-            currentStep = step
-        }
-    }
-
-    func advanceFrom(_ step: OnboardingStep) {
-        switch step {
-        case .welcome:
-            goTo(.features)
-
-        case .features:
-            goTo(.account)
-
-        case .account:
-            if accountMethod == "apple" {
-                // SSO — skip OTP
-                goTo(.market)
-            } else if accountMethod == "email" {
-                goTo(.otp)
-            } else {
-                // Skipped account — skip OTP
-                goTo(.market)
-            }
-
-        case .otp:
-            goTo(.market)
-
-        case .market:
-            goTo(.watchlist)
-
-        case .watchlist:
-            goTo(.portfolio)
-
-        case .portfolio:
-            goTo(.notifications)
-
-        case .notifications:
-            // Check if biometrics available
-            let context = LAContext()
-            var error: NSError?
-            if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
-                goTo(.biometrics)
-            } else {
-                goTo(.complete)
-            }
-
-        case .biometrics:
-            goTo(.complete)
-
-        case .complete:
-            break // Handled by onComplete callback
-        }
-    }
-
-    func completeOnboarding() {
-        UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
-    }
-}
-
-// MARK: - Container View
 
 struct OnboardingView: View {
     var onComplete: (() -> Void)? = nil
-    @StateObject private var viewModel = OnboardingViewModel()
-    @Environment(\.dismiss) var dismiss
 
-    // Accent color shifts per step
-    private var stepAccent: Color {
-        switch viewModel.currentStep {
-        case .welcome:       return .blue
-        case .features:      return Color(red: 0.25, green: 0.88, blue: 0.50)
-        case .account:       return .blue
-        case .otp:           return .purple
-        case .market:        return .cyan
-        case .watchlist:     return .blue
-        case .portfolio:     return Color(red: 0.25, green: 0.88, blue: 0.50)
-        case .notifications: return .purple
-        case .biometrics:    return .green
-        case .complete:      return .green
-        }
-    }
+    @StateObject private var viewModel = OnboardingViewModel()
+    @EnvironmentObject private var marketData: MarketData
+    @EnvironmentObject private var supabaseAuth: SupabaseAuthManager
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
 
     var body: some View {
         ZStack {
-            // Pure black base
-            Color.black.ignoresSafeArea()
+            OnboardingBackground()
 
-            // Per-step accent radial glow
-            RadialGradient(
-                colors: [stepAccent.opacity(0.12), Color.clear],
-                center: UnitPoint(x: 0.5, y: 0.20),
-                startRadius: 10,
-                endRadius: 340
-            )
-            .ignoresSafeArea()
-            .animation(.easeInOut(duration: 0.6), value: viewModel.currentStep)
+            VStack(spacing: 0) {
+                if viewModel.step != .welcome && viewModel.step != .done {
+                    OnboardingTopBar()
+                        .transition(.opacity)
+                }
 
-            // Screen content
-            TabView(selection: $viewModel.currentStep) {
-
-                // 1 — Welcome Hero (OB-020)
-                WelcomeScreen(onContinue: { viewModel.advanceFrom(.welcome) })
-                    .tag(OnboardingStep.welcome)
-
-                // 2 — Feature Value Tour (OB-025)
-                CoreValueScreen(
-                    onContinue: { viewModel.advanceFrom(.features) },
-                    onSkip:     { viewModel.advanceFrom(.features) }
-                )
-                .tag(OnboardingStep.features)
-
-                // 3 — Account Creation (OB-030)
-                AccountCreationScreen(
-                    onAccountCreated: { method, email in
-                        viewModel.accountMethod = method
-                        viewModel.accountEmail = email
-                        viewModel.advanceFrom(.account)
-                    },
-                    onSkip: {
-                        viewModel.accountMethod = nil
-                        viewModel.advanceFrom(.account)
-                    }
-                )
-                .tag(OnboardingStep.account)
-
-                // 4 — OTP Verification (OB-040)
-                OTPVerificationScreen(
-                    email: viewModel.accountEmail,
-                    onVerified: { viewModel.advanceFrom(.otp) },
-                    onBack: { viewModel.goTo(.account) }
-                )
-                .tag(OnboardingStep.otp)
-
-                // 5 — Market Selection (OB-050)
-                MarketSelectionScreen(onContinue: { viewModel.advanceFrom(.market) })
-                    .tag(OnboardingStep.market)
-
-                // 6 — Watchlist Builder (OB-060)
-                PortfolioSetupScreen(
-                    onComplete: {
-                        viewModel.advanceFrom(.watchlist)
-                    },
-                    onSkip: {
-                        viewModel.advanceFrom(.watchlist)
-                    }
-                )
-                .tag(OnboardingStep.watchlist)
-
-                // 7 — Portfolio Add (OB-070)
-                PortfolioAddScreen(
-                    onComplete: { viewModel.advanceFrom(.portfolio) },
-                    onSkip:     { viewModel.advanceFrom(.portfolio) }
-                )
-                .tag(OnboardingStep.portfolio)
-
-                // 8 — Notifications (OB-080)
-                PermissionsScreen(onComplete: { viewModel.advanceFrom(.notifications) })
-                    .tag(OnboardingStep.notifications)
-
-                // 9 — Biometrics (OB-090)
-                BiometricsScreen(onComplete: { viewModel.advanceFrom(.biometrics) })
-                    .tag(OnboardingStep.biometrics)
-
-                // 10 — Complete (OB-100)
-                OnboardingCompleteScreen(
-                    onFinish: {
-                        viewModel.completeOnboarding()
-                        onComplete?()
-                    }
-                )
-                .tag(OnboardingStep.complete)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            // Swipe disabled — buttons drive the flow
-            .gesture(DragGesture())
-
-            // Page dots — anchored just above the home indicator
-            VStack {
-                Spacer()
-                OnboardingPageIndicator(
-                    currentPage: viewModel.currentStep.rawValue,
-                    pageCount: OnboardingStep.allCases.count,
-                    accentColor: stepAccent
-                )
-                .padding(.bottom, 16)
+                ZStack {
+                    stepView
+                        .id(viewModel.step)
+                        .transition(stepTransition)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .environmentObject(viewModel)
+        .environment(\.onboardingFinish, finish)
         .preferredColorScheme(.dark)
+        .onAppear {
+            let auth = supabaseAuth
+            viewModel.isSignedIn = { [weak auth] in auth?.isSignedIn ?? false }
+            viewModel.watchlistLimit = subscriptionManager.currentTier.maxWatchlistAssets
+        }
+    }
+
+    @ViewBuilder
+    private var stepView: some View {
+        switch viewModel.step {
+        case .welcome:   OnboardingWelcomeStep()
+        case .markets:   OnboardingMarketsStep()
+        case .follow:    OnboardingFollowStep()
+        case .portfolio: OnboardingPortfolioStep()
+        case .alerts:    OnboardingAlertsStep()
+        case .security:  OnboardingSecurityStep()
+        case .account:   OnboardingAccountStep()
+        case .done:      OnboardingDoneStep()
+        }
+    }
+
+    private var stepTransition: AnyTransition {
+        let forward = AnyTransition.asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .move(edge: .leading).combined(with: .opacity)
+        )
+        let backward = AnyTransition.asymmetric(
+            insertion: .move(edge: .leading).combined(with: .opacity),
+            removal: .move(edge: .trailing).combined(with: .opacity)
+        )
+        return viewModel.movingBack ? backward : forward
+    }
+
+    private func finish() {
+        viewModel.commit(marketData: marketData)
+        Haptics.success()
+        onComplete?()
     }
 }
 
-// MARK: - Page Dots
+// MARK: - Finish action
 
-struct OnboardingPageIndicator: View {
-    let currentPage: Int
-    let pageCount:   Int
-    let accentColor: Color
+private struct OnboardingFinishKey: EnvironmentKey {
+    static let defaultValue: () -> Void = {}
+}
+
+extension EnvironmentValues {
+    /// Commits every onboarding choice and hands over to the app.
+    var onboardingFinish: () -> Void {
+        get { self[OnboardingFinishKey.self] }
+        set { self[OnboardingFinishKey.self] = newValue }
+    }
+}
+
+// MARK: - Background
+
+struct OnboardingBackground: View {
+    static let base = Color(red: 0.035, green: 0.035, blue: 0.045)
 
     var body: some View {
-        HStack(spacing: 7) {
-            ForEach(0..<pageCount, id: \.self) { index in
+        ZStack {
+            Self.base
+            RadialGradient(
+                colors: [DS.accent.opacity(0.16), .clear],
+                center: UnitPoint(x: 0.5, y: -0.05),
+                startRadius: 0,
+                endRadius: 420
+            )
+        }
+        .ignoresSafeArea()
+    }
+}
+
+// MARK: - Top bar
+
+struct OnboardingTopBar: View {
+    @EnvironmentObject private var viewModel: OnboardingViewModel
+
+    var body: some View {
+        HStack(spacing: DS.Space.l) {
+            Button {
+                Haptics.tap()
+                viewModel.back()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(PressableButtonStyle())
+            .accessibilityLabel("Back")
+
+            SegmentedProgress(count: viewModel.progressSteps.count, index: viewModel.progressIndex)
+                .padding(.trailing, 44 + DS.Space.l) // optically centre against the back button
+        }
+        .padding(.horizontal, DS.Space.gutter)
+        .padding(.top, DS.Space.s)
+    }
+}
+
+struct SegmentedProgress: View {
+    let count: Int
+    let index: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<max(count, 1), id: \.self) { i in
                 Capsule()
-                    .fill(index == currentPage ? accentColor : Color.white.opacity(0.22))
-                    .frame(width: index == currentPage ? 22 : 7, height: 7)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: currentPage)
+                    .fill(i <= index ? Color.white : Color.white.opacity(0.16))
+                    .frame(height: 4)
             }
         }
+        .animation(DS.spring, value: index)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(index + 1) of \(count)")
+    }
+}
+
+// MARK: - Page scaffold
+
+/// Title + subtitle header, scrolling body, and a footer pinned above the home indicator.
+struct OnboardingPage<Content: View, Footer: View>: View {
+    var eyebrow: LocalizedStringKey? = nil
+    let title: LocalizedStringKey
+    var subtitle: LocalizedStringKey? = nil
+    @ViewBuilder var content: Content
+    @ViewBuilder var footer: Footer
+    /// The footer rides up with the keyboard; on the account step it covered the
+    /// password field and "Create account", so a tap there hit "Not now" and skipped
+    /// sign-up. While typing, the form's own button is the action.
+    @State private var keyboardUp = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.xl) {
+                VStack(alignment: .leading, spacing: DS.Space.m) {
+                    if let eyebrow {
+                        Text(eyebrow)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(DS.accent)
+                            .textCase(.uppercase)
+                            .tracking(0.6)
+                    }
+                    Text(title)
+                        .font(DS.display(.largeTitle))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.body)
+                            .foregroundStyle(.white.opacity(0.64))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                content
+            }
+            .padding(.horizontal, DS.Space.gutter)
+            .padding(.top, DS.Space.xl)
+            .padding(.bottom, DS.Space.xl)
+        }
+        .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardUp = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardUp = false
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !keyboardUp {
+                pinnedFooter
+            }
+        }
+    }
+
+    private var pinnedFooter: some View {
+        VStack(spacing: DS.Space.s) { footer }
+            .padding(.horizontal, DS.Space.gutter)
+            .padding(.top, DS.Space.m)
+            .padding(.bottom, DS.Space.s)
+            .background {
+                // Solid behind the footer, with a short fade above it so
+                // scrolling content never sits under text.
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [OnboardingBackground.base.opacity(0), OnboardingBackground.base],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 28)
+                    OnboardingBackground.base
+                }
+                .padding(.top, -28)
+                .ignoresSafeArea()
+            }
+    }
+}
+
+// MARK: - Choice row
+
+/// Tappable option row used for markets and portfolio sources.
+struct OnboardingChoiceRow<Leading: View>: View {
+    let title: LocalizedStringKey
+    var subtitle: LocalizedStringKey? = nil
+    var badge: LocalizedStringKey? = nil
+    var isSelected: Bool = false
+    var showsCheck: Bool = true
+    var trailingChevron: Bool = false
+    @ViewBuilder var leading: Leading
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.Space.l) {
+                leading
+                    .frame(width: 44, height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: DS.Space.s) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        if let badge {
+                            Text(badge)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(DS.accent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(DS.accent.opacity(0.16)))
+                        }
+                    }
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.6))
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                Spacer(minLength: 0)
+
+                if showsCheck {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 22))
+                        .foregroundStyle(isSelected ? DS.accent : Color.white.opacity(0.28))
+                        .contentTransition(.symbolEffect(.replace))
+                } else if trailingChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            .padding(DS.Space.l)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                    .fill(isSelected ? DS.accent.opacity(0.12) : Color.white.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                    .strokeBorder(isSelected ? DS.accent.opacity(0.8) : Color.white.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

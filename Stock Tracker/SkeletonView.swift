@@ -18,7 +18,8 @@ struct ShimmerEffect: ViewModifier {
                 LinearGradient(
                     stops: [
                         .init(color: .clear,                         location: max(0, phase - 0.25)),
-                        .init(color: highlightColor.opacity(0.55),   location: phase),
+                        // Clamped so stops stay ordered while phase runs from -1.
+                        .init(color: highlightColor.opacity(0.55),   location: min(max(phase, 0), 1)),
                         .init(color: .clear,                         location: min(1, phase + 0.25)),
                     ],
                     startPoint: .leading,

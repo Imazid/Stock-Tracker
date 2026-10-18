@@ -2,25 +2,26 @@
 //  CSVImportSheet.swift
 //  Stock Tracker
 //
-//  CSV import for bulk-adding portfolio holdings.
+//  Bulk-add holdings from a spreadsheet (Black). Costs are read in each
+//  holding's own trading currency (A$ for ASX tickers ending ".AX", US$
+//  otherwise) and saved through MarketData.addHolding, which stores USD and
+//  prices every new holding straight away.
 //
 
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - CSV Import Sheet
-
 struct CSVImportSheet: View {
     @EnvironmentObject var marketData: MarketData
     @Environment(\.dismiss) var dismiss
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(\.theme) var appTheme
+    @Environment(\.theme) private var theme
 
     @State private var showFilePicker = false
     @State private var parsedRows: [CSVRow] = []
     @State private var parseError: String?
     @State private var importComplete = false
     @State private var selectedRows: Set<UUID> = []
+    @State private var resultText = ""
 
     struct CSVRow: Identifiable {
         let id = UUID()
@@ -29,383 +30,161 @@ struct CSVImportSheet: View {
         let shares: Double
         let avgCost: Double
         let isCrypto: Bool
+
+        var isASX: Bool { !isCrypto && symbol.hasSuffix(".AX") }
+        var displaySymbol: String { isASX ? String(symbol.dropLast(3)) : symbol }
+        var currencySymbol: String { isASX ? "A$" : "US$" }
     }
 
     var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
         NavigationStack {
-            ZStack {
-                theme.background.ignoresSafeArea()
-
-                ScrollView {
-                    VStack(spacing: 20) {
-                        headerSection(theme: theme)
-
-                        if parsedRows.isEmpty && !importComplete {
-                            formatGuide(theme: theme)
-                            selectFileButton
-                        } else if importComplete {
-                            successView(theme: theme)
-                        } else {
-                            previewSection(theme: theme)
-                            importButton
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Space.l) {
+                    if importComplete {
+                        successView
+                    } else if parsedRows.isEmpty {
+                        formatGuide
+                        if let parseError { errorLabel(parseError) }
+                        Button("Choose a CSV file") { showFilePicker = true }
+                            .buttonStyle(PrimaryPillButtonStyle())
+                            .accessibilityIdentifier("csv.choose")
+                    } else {
+                        previewSection
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 48)
+                }
+                .padding(DS.Space.gutter)
+            }
+            .background(theme.background.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom) {
+                if !parsedRows.isEmpty && !importComplete {
+                    Button("Import \(selectedRows.count) holding\(selectedRows.count == 1 ? "" : "s")", action: importSelected)
+                        .buttonStyle(PrimaryPillButtonStyle())
+                        .disabled(selectedRows.isEmpty)
+                        .padding(.horizontal, DS.Space.gutter)
+                        .padding(.vertical, DS.Space.s)
+                        .background(theme.background.opacity(0.96).ignoresSafeArea(edges: .bottom))
+                        .accessibilityIdentifier("csv.import")
                 }
             }
             .navigationTitle("Import CSV")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundColor(.secondary)
+                    Button(importComplete ? "Done" : "Cancel") { dismiss() }
                 }
             }
-            .fileImporter(
-                isPresented: $showFilePicker,
-                allowedContentTypes: [.commaSeparatedText, .plainText],
-                allowsMultipleSelection: false
-            ) { result in
-                handleFileImport(result)
-            }
+            .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.commaSeparatedText, .plainText],
+                          allowsMultipleSelection: false) { handleFileImport($0) }
         }
     }
 
-    // MARK: - Header
+    // MARK: - Format guide
 
-    private func headerSection(theme: Theme) -> some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [Color(red: 0.42, green: 0.35, blue: 0.65), Color(red: 0.32, green: 0.25, blue: 0.55)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 48, height: 48)
-                Image(systemName: "doc.text.fill")
-                    .font(.title2)
-                    .foregroundColor(.white)
+    private var formatGuide: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            Text("Add many holdings at once from a spreadsheet exported from your broker or a tracker.")
+                .font(.subheadline)
+                .foregroundStyle(theme.secondaryText)
+            VStack(spacing: 0) {
+                LedgerLine(label: "symbol", value: "Required — AAPL, BHP.AX, BTC")
+                LedgerLine(label: "shares", value: "Required — quantity held")
+                LedgerLine(label: "avg_cost", value: "Optional — per unit, in its own currency")
+                LedgerLine(label: "name", value: "Optional")
+                LedgerLine(label: "type", value: "Optional — stock or crypto")
             }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("CSV Import")
-                    .font(.title3.bold())
-                    .foregroundColor(.primary)
-                Text(parsedRows.isEmpty ? "Import holdings from a spreadsheet" : "\(parsedRows.count) holdings found")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-        }
-        .padding(16)
-        .background(Color(red: 0.42, green: 0.35, blue: 0.65).opacity(0.08))
-        .cornerRadius(16)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(red: 0.42, green: 0.35, blue: 0.65).opacity(0.15), lineWidth: 1))
-    }
-
-    // MARK: - Format Guide
-
-    private func formatGuide(theme: Theme) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Expected CSV Format", systemImage: "info.circle")
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.secondary)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Your CSV should have these columns:")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    formatRow("Symbol", example: "AAPL", required: true)
-                    formatRow("Name", example: "Apple Inc.", required: false)
-                    formatRow("Shares", example: "10", required: true)
-                    formatRow("Average Cost", example: "150.00", required: false)
-                    formatRow("Type", example: "stock or crypto", required: false)
-                }
-
-                Divider().opacity(0.4)
-
-                Text("Example:")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-
-                Text("symbol,name,shares,avg_cost,type\nAAPL,Apple Inc.,10,150.00,stock\nBTC,Bitcoin,0.5,42000.00,crypto")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.primary.opacity(0.8))
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.glassBackground)
-                    .cornerRadius(8)
-            }
-            .padding(16)
-            .background(theme.glassBackground)
-            .cornerRadius(14)
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.separator, lineWidth: 0.5))
-
-            if let error = parseError {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.red)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.red)
-                }
-                .padding(12)
-                .background(Color.red.opacity(0.08))
-                .cornerRadius(10)
-            }
+            .dsCard()
+            Text("Example")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(theme.secondaryText)
+            Text("symbol,name,shares,avg_cost,type\nAAPL,Apple Inc.,10,150.00,stock\nBHP.AX,BHP Group,50,42.10,stock\nBTC,Bitcoin,0.5,42000,crypto")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(theme.primaryText)
+                .padding(DS.Space.m)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.subtleFill))
+                .textSelection(.enabled)
         }
     }
 
-    private func formatRow(_ name: String, example: String, required: Bool) -> some View {
-        HStack(spacing: 8) {
-            Text(name)
-                .font(.caption.weight(.semibold))
-                .foregroundColor(.primary)
-                .frame(width: 90, alignment: .leading)
-            Text(example)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer()
-            if required {
-                Text("Required")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.blue)
-                    .cornerRadius(4)
-            } else {
-                Text("Optional")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.15))
-                    .cornerRadius(4)
-            }
-        }
+    private func errorLabel(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.circle")
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(theme.negativeColor)
+            .accessibilityIdentifier("csv.error")
     }
 
-    // MARK: - Select File Button
+    // MARK: - Preview
 
-    private var selectFileButton: some View {
-        Button {
-            showFilePicker = true
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "folder.fill").font(.title3)
-                Text("Select CSV File").font(.headline)
-            }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
-            .background(
-                LinearGradient(
-                    colors: [Color(red: 0.42, green: 0.35, blue: 0.65), Color(red: 0.32, green: 0.25, blue: 0.55)],
-                    startPoint: .leading, endPoint: .trailing
-                )
-            )
-            .cornerRadius(16)
-            .shadow(color: Color(red: 0.42, green: 0.35, blue: 0.65).opacity(colorScheme == .dark ? 0.35 : 0.10), radius: 12, y: 6)
-        }
-    }
-
-    // MARK: - Preview Section
-
-    private func previewSection(theme: Theme) -> some View {
-        VStack(spacing: 14) {
+    private var previewSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             HStack {
-                Label("Preview", systemImage: "eye")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.secondary)
+                Text("\(parsedRows.count) rows found")
+                    .font(.headline)
                 Spacer()
-                Button {
-                    if selectedRows.count == parsedRows.count {
-                        selectedRows.removeAll()
-                    } else {
-                        selectedRows = Set(parsedRows.map(\.id))
-                    }
-                } label: {
-                    Text(selectedRows.count == parsedRows.count ? "Deselect All" : "Select All")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.blue)
+                Button(selectedRows.count == parsedRows.count ? "Select none" : "Select all") {
+                    selectedRows = selectedRows.count == parsedRows.count ? [] : Set(parsedRows.map(\.id))
                 }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(DS.accent)
+                .frame(minHeight: 44)
             }
-
-            VStack(spacing: 8) {
+            if let parseError { errorLabel(parseError) }
+            VStack(spacing: 0) {
                 ForEach(parsedRows) { row in
-                    csvRowView(row, theme: theme)
+                    rowView(row)
+                    if row.id != parsedRows.last?.id { Divider().overlay(theme.cardBorder.opacity(0.4)) }
                 }
             }
-
-            if let error = parseError {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-                .padding(10)
-                .background(Color.orange.opacity(0.08))
-                .cornerRadius(8)
+            .dsCard(padding: DS.Space.m)
+            Button("Choose a different file") {
+                parsedRows = []; selectedRows = []; parseError = nil; showFilePicker = true
             }
-
-            Button {
-                parsedRows = []
-                selectedRows = []
-                parseError = nil
-                showFilePicker = true
-            } label: {
-                Text("Choose Different File")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-            }
+            .buttonStyle(QuietTextButtonStyle())
         }
     }
 
-    private func csvRowView(_ row: CSVRow, theme: Theme) -> some View {
-        let isSelected = selectedRows.contains(row.id)
+    private func rowView(_ row: CSVRow) -> some View {
+        let isOn = selectedRows.contains(row.id)
         return Button {
-            if isSelected {
-                selectedRows.remove(row.id)
-            } else {
-                selectedRows.insert(row.id)
-            }
+            if isOn { selectedRows.remove(row.id) } else { selectedRows.insert(row.id) }
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            HStack(spacing: DS.Space.m) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundColor(isSelected ? .blue : .secondary.opacity(0.4))
-
-                ZStack {
-                    Circle()
-                        .fill(row.isCrypto
-                            ? LinearGradient(colors: [.orange, .orange.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            : LinearGradient(colors: [.blue, .blue.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                        )
-                        .frame(width: 36, height: 36)
-                    Text(String(row.symbol.prefix(2)))
-                        .font(.caption.bold())
-                        .foregroundColor(.white)
-                }
-
+                    .foregroundStyle(isOn ? DS.accent : theme.secondaryText.opacity(0.5))
+                TickerLogo(symbol: row.displaySymbol, kind: row.isCrypto ? .crypto : .stock,
+                           exchange: row.isASX ? "ASX" : "", size: 32)
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
-                        Text(row.symbol)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.primary)
-                        if row.isCrypto {
-                            Text("Crypto")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.orange)
-                                .cornerRadius(3)
-                        }
+                    HStack(spacing: 6) {
+                        Text(row.displaySymbol).font(.subheadline.weight(.semibold))
+                        MarketBadge(text: row.isCrypto ? "Crypto" : (row.isASX ? "ASX" : "US"))
                     }
                     if !row.name.isEmpty && row.name != row.symbol {
-                        Text(row.name)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        Text(row.name).font(.caption).foregroundStyle(theme.secondaryText).lineLimit(1)
                     }
                 }
-
                 Spacer()
-
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(String(format: "%.4g", row.shares))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.primary)
-                    if row.avgCost > 0 {
-                        Text(String(format: "$%.2f", row.avgCost))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    Text(formatQuantity(row.shares)).font(.subheadline.weight(.semibold).monospacedDigit())
+                    Text(row.avgCost > 0 ? "\(row.currencySymbol)\(row.avgCost.formatted(.number.precision(.fractionLength(2...6))))" : "No cost")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(theme.secondaryText)
                 }
             }
-            .padding(12)
-            .background(isSelected ? Color.blue.opacity(0.06) : theme.glassBackground)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Color.blue.opacity(0.3) : theme.separator, lineWidth: 1)
-            )
+            .padding(.vertical, DS.Space.s)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
-    // MARK: - Import Button
+    // MARK: - Done
 
-    private var importButton: some View {
-        let count = selectedRows.count
-        return Button {
-            guard count > 0 else { return }
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            importSelected()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "square.and.arrow.down.fill").font(.title3)
-                Text("Import \(count) Holding\(count == 1 ? "" : "s")").font(.headline)
-            }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
-            .background(
-                count > 0
-                    ? LinearGradient(colors: [.blue, .blue.opacity(0.7)], startPoint: .leading, endPoint: .trailing)
-                    : LinearGradient(colors: [Color.gray.opacity(0.35), Color.gray.opacity(0.25)], startPoint: .leading, endPoint: .trailing)
-            )
-            .cornerRadius(16)
-            .shadow(color: count > 0 ? Color.blue.opacity(colorScheme == .dark ? 0.35 : 0.10) : .clear, radius: 12, y: 6)
-        }
-        .disabled(count == 0)
-        .animation(.easeInOut(duration: 0.2), value: count)
-    }
-
-    // MARK: - Success View
-
-    private func successView(theme: Theme) -> some View {
-        VStack(spacing: 20) {
-            ZStack {
-                Circle()
-                    .fill(appTheme.positiveColor.opacity(0.12))
-                    .frame(width: 80, height: 80)
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 44))
-                    .foregroundColor(appTheme.positiveColor)
-            }
-
-            VStack(spacing: 6) {
-                Text("Import Complete")
-                    .font(.title2.bold())
-                Text("Holdings have been added to your portfolio")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-
-            Button {
-                dismiss()
-            } label: {
-                Text("Done")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(appTheme.positiveColor)
-                    .cornerRadius(14)
-            }
-        }
-        .padding(.top, 40)
+    private var successView: some View {
+        EmptyStateCard(systemImage: "checkmark", title: "Import finished", message: LocalizedStringKey(resultText),
+                       primaryTitle: "Done", primaryAction: { dismiss() })
+            .accessibilityIdentifier("csv.done")
     }
 
     // MARK: - File Handling
@@ -569,24 +348,27 @@ struct CSVImportSheet: View {
     // MARK: - Import
 
     private func importSelected() {
-        let toImport = parsedRows.filter { selectedRows.contains($0.id) }
-
-        for row in toImport {
-            let asset = Asset(
-                symbol: row.symbol,
-                name: row.name.isEmpty ? row.symbol : row.name,
-                price: row.avgCost,
-                change: 0,
-                changePercent: 0,
-                volume: 0,
-                kind: row.isCrypto ? .crypto : .stock,
-                exchange: row.isCrypto ? "Crypto" : "CSV Import"
-            )
-            marketData.addToPortfolio(asset: asset, shares: row.shares, avgCost: row.avgCost)
+        var added = 0, limited = 0
+        var failed: [String] = []
+        for row in parsedRows where selectedRows.contains(row.id) {
+            let currency = row.isASX ? "AUD" : "USD"
+            let usdCost = row.avgCost * (FXRates.shared.toUSDFactor(from: currency) ?? 1)
+            let asset = Asset(symbol: row.displaySymbol,
+                              name: row.name.isEmpty ? row.displaySymbol : row.name,
+                              price: usdCost, change: 0, changePercent: 0, volume: 0,
+                              kind: row.isCrypto ? .crypto : .stock,
+                              exchange: row.isCrypto ? "Crypto" : (row.isASX ? "ASX" : "US"))
+            switch marketData.addHolding(asset: asset, shares: row.shares, costPerUnit: row.avgCost, costCurrency: currency) {
+            case .ok: added += 1
+            case .limitReached: limited += 1
+            case .invalid: failed.append(row.displaySymbol)
+            }
         }
-
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            importComplete = true
-        }
+        var text = "\(added) holding\(added == 1 ? "" : "s") added to your portfolio."
+        if limited > 0 { text += " \(limited) skipped — your plan's holding limit was reached." }
+        if !failed.isEmpty { text += " Couldn't add \(failed.joined(separator: ", ")) (missing quantity)." }
+        resultText = text
+        Haptics.success()
+        dsAnimate { importComplete = true }
     }
 }

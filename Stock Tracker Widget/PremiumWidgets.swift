@@ -368,15 +368,12 @@ struct WeeklyPerformanceContentView: View {
                 WeeklyBarChart(values: data.weeklyValues, cbMode: cbMode, weeklyPositive: weeklyPositive)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                HStack(alignment: .bottom, spacing: 6) {
-                    ForEach(0..<7, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(WidgetColor.textTertiary.opacity(0.2))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: CGFloat.random(in: 15...50))
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // No real daily values yet — say so rather than drawing placeholder bars.
+                Text("Weekly chart appears after a few trading days")
+                    .font(.caption2)
+                    .foregroundStyle(WidgetColor.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             let (bestIdx, worstIdx) = bestWorstIndices(in: data.weeklyValues)

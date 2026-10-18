@@ -111,7 +111,7 @@ struct WatchlistSmallView: View {
                     .font(WidgetFont.primaryLarge(.bold))
                     .foregroundColor(WidgetColor.textPrimary)
 
-                Text(item.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                Text(WidgetMoney.format(item.price, digits: 2))
                     .font(WidgetFont.microLarge(.semibold))
                     .foregroundColor(WidgetColor.textSecondary)
 
@@ -163,7 +163,7 @@ struct WatchlistMediumView: View {
 
             Spacer()
 
-            Text(item.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+            Text(WidgetMoney.format(item.price, digits: 2))
                 .font(WidgetFont.microSmall(.semibold))
                 .foregroundColor(WidgetColor.textSecondary)
 
@@ -218,7 +218,7 @@ struct WatchlistLargeView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 0) {
-                Text(item.price, format: .currency(code: "USD").precision(.fractionLength(2)))
+                Text(WidgetMoney.format(item.price, digits: 2))
                     .font(WidgetFont.microLarge(.semibold))
                     .foregroundColor(WidgetColor.textPrimary)
                 Text("\(item.isPositive ? "+" : "")\(String(format: "%.2f", item.changePercent))%")

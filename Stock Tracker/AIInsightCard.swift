@@ -37,11 +37,12 @@ struct AIInsightCard: View {
         Color(red: 0.65, green: 0.30, blue: 0.95),
     ]
 
-    // Static teaser shown to free-tier users
+    // Teaser shown (blurred) to free-tier users. It describes the feature rather
+    // than making up claims about the market or the person's holdings.
     private static let teaserTexts = [
-        "Markets showed broad momentum today with tech leading gains. Your portfolio's top mover outpaced the S&P 500 by 2.1%...",
-        "Volatility picked up across small-caps while large-cap defensives held steady. Keep an eye on upcoming earnings...",
-        "Sector rotation continues from growth to value names. Your watchlist has three stocks near 52-week highs..."
+        "A short summary of today's market and the biggest moves in your watchlist and portfolio, written fresh each day from live prices.",
+        "Each morning: what moved, by how much, and which of the companies you follow made the biggest moves.",
+        "A plain-English recap of today's session for the stocks and crypto you track — facts only, no recommendations."
     ]
 
     private var teaserText: String {

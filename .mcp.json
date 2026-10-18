@@ -4,7 +4,7 @@
       "type": "sse",
       "url": "https://api.fiscal.ai/mcp/sse",
       "headers": {
-        "x-api-key": "4aa396c4-10fd-47ea-8446-4b0ae3a4fd74"
+        "x-api-key": "${FISCAL_AI_API_KEY}"
       }
     }
   }

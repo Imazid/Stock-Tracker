@@ -76,8 +76,9 @@ final class ThemeManager: ObservableObject {
     }
 
     init() {
-        let saved = UserDefaults.standard.string(forKey: "app_theme_mode") ?? ThemeMode.dark.rawValue
-        self.themeMode = ThemeMode(rawValue: saved) ?? .dark
+        // New installs follow the system appearance (HIG); a saved choice wins.
+        let saved = UserDefaults.standard.string(forKey: "app_theme_mode") ?? ThemeMode.system.rawValue
+        self.themeMode = ThemeMode(rawValue: saved) ?? .system
 
         let savedCB = UserDefaults.standard.string(forKey: "app_colorblind_mode") ?? ColorblindMode.standard.rawValue
         self.colorblindMode = ColorblindMode(rawValue: savedCB) ?? .standard
@@ -258,6 +259,25 @@ struct Theme {
 
     var progressTint: Color {
         isDark ? .white : .gray
+    }
+}
+
+// MARK: - Theme injection
+
+/// Puts `\.theme` in the environment from the view tree's *actual* colour scheme.
+/// The App struct used its own `@Environment(\.colorScheme)`, which doesn't follow the
+/// device, so System mode (the default) on a dark iPhone got the light cream palette
+/// with white text. Apply this to every root and every sheet presented from the App.
+struct ThemeEnvironment: ViewModifier {
+    @ObservedObject var themeManager: ThemeManager
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content.environment(\.theme, Theme(
+            colorScheme: themeManager.resolvedColorScheme ?? colorScheme,
+            colorblindMode: themeManager.colorblindMode,
+            highContrast: themeManager.highContrastEnabled
+        ))
     }
 }
 

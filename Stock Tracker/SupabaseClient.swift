@@ -13,6 +13,7 @@
 //
 
 import Supabase
+import Auth
 import OSLog
 import Foundation
 
