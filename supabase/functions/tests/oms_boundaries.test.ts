@@ -20,7 +20,7 @@ async function sources(dir: URL, out: { path: string; text: string }[] = []): Pr
   return out;
 }
 const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((l) => l.replace(/^\s*\/\/.*$/, "").replace(/\s\/\/ .*$/, "")).join("\n");
-const PROVIDER = /^(broker-orders|broker-connections|_shared\/(brokers|oms|vault))\//;
+const PROVIDER = /^(broker-orders|broker-connections|provider-maintenance|_shared\/(brokers|oms|vault))\//;
 
 Deno.test("provider path: addresses, money-moving calls, imports, models, keys", async () => {
   const files = await sources(new URL("../", import.meta.url));
@@ -40,6 +40,8 @@ Deno.test("provider path: addresses, money-moving calls, imports, models, keys",
   // Only execute.ts sends, replaces or cancels through an adapter.
   const movers = provider.filter((f) => /\.(submit|replace|cancel)\(\s*(ctx|actx|this|adapterContext)/.test(code(f.text)) && !f.path.startsWith("_shared/brokers/")).map((f) => f.path);
   assertEquals(movers, ["_shared/oms/execute.ts"]);
+  const worker = files.find((file) => file.path === "provider-maintenance/worker.ts");
+  assert(worker && !/\b(submitIntent|cancelIntent|replaceIntent)\b/.test(code(worker.text)), "the worker only reads provider state");
 
   // The practice path never imports the provider path.
   for (const f of practice) {

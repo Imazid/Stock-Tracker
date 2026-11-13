@@ -69,6 +69,8 @@ export interface AdapterContext {
   now?: () => number;
   /** Request timeout in ms (default 10s). */
   timeoutMs?: number;
+  /** Bound retries for an operation that already has a durable retry schedule. */
+  readAttempts?: number;
   /**
    * Defence in depth. In the `live` environment every call that can move money (submit,
    * replace, cancel) is refused with `environment_refused` unless this is exactly `true`.
@@ -256,7 +258,7 @@ export interface BrokerAdapter {
   balances(ctx: AdapterContext): Promise<BrokerBalance[]>;
   positions(ctx: AdapterContext): Promise<BrokerPosition[]>;
   /** Fills newest-first or oldest-first per provider; callers dedupe on providerFillID. */
-  fills(ctx: AdapterContext, options: { since?: string; cursor?: string; limit?: number }): Promise<Page<BrokerFill>>;
+  fills(ctx: AdapterContext, options: { since?: string; until?: string; cursor?: string; limit?: number }): Promise<Page<BrokerFill>>;
   orders(ctx: AdapterContext, options: { status?: "open" | "closed" | "all"; since?: string; cursor?: string; limit?: number }): Promise<Page<BrokerOrder>>;
 
   preview?(ctx: AdapterContext, request: BrokerOrderRequest): Promise<OrderPreview>;

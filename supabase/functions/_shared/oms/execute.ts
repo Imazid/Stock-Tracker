@@ -26,7 +26,7 @@ import { checkSubmit } from "./approval.ts";
 import type { GateRow } from "./gates.ts";
 import { GateClosedError, gateForEnvironment, requireGates } from "./gates.ts";
 import { canonicalIntent, intentHash } from "./intent.ts";
-import { AT_PROVIDER, canTransition, nextFromBroker } from "./lifecycle.ts";
+import { AT_PROVIDER, canTransition } from "./lifecycle.ts";
 import type { ProviderID, TradingEnvironment } from "../brokers/types.ts";
 
 export interface IntentRecord {
@@ -39,6 +39,8 @@ export interface IntentRecord {
   intentHash: string;
   status: IntentStatus;
   createdAt: number;
+  /** When the order entered submitting, independent of polling or audit writes. */
+  submittingAt?: number;
   expiresAt: number;
   estimatedNotional?: string;
   providerOrderID?: string;
@@ -62,19 +64,24 @@ export interface OmsStore {
   loadApproval(intentID: string): Promise<ApprovalRecord | undefined>;
   /** Marks the approval used iff it is unused and unexpired at `now`. Returns false otherwise. */
   consumeApproval(intentID: string, now: number): Promise<boolean>;
-  recordBrokerOrder(intentID: string, order: BrokerOrder): Promise<void>;
+  /** Record a provider observation and the matching legal intent transition atomically. */
+  recordBrokerOrder(intentID: string, from: IntentStatus, order: BrokerOrder): Promise<IntentStatus>;
   recordRisk(intentID: string, risk: RiskEvaluationView): Promise<void>;
   audit(event: { userID: string; intentID: string; kind: string; detail: Record<string, unknown> }): Promise<void>;
 }
 
-export interface ExecutionDeps {
+export interface ReconciliationDeps {
   store: OmsStore;
-  gates: Record<GateID, GateRow>;
-  killSwitchEngaged: boolean;
-  connection: ConnectionState;
   adapter: BrokerAdapter;
   /** Credentials already decrypted for this call. `allowLive` is set here, from the gate, nowhere else. */
   adapterContext: Omit<AdapterContext, "allowLive">;
+  now(): number;
+}
+
+export interface ExecutionDeps extends ReconciliationDeps {
+  gates: Record<GateID, GateRow>;
+  killSwitchEngaged: boolean;
+  connection: ConnectionState;
   /** Re-runs the deterministic risk engine with a freshly fetched quote. */
   evaluateRisk(intent: IntentRecord): Promise<RiskEvaluationView>;
   /** Oldest acceptable quote for submission (ms). */
@@ -82,7 +89,6 @@ export interface ExecutionDeps {
   approvalPolicy?: ApprovalPolicy;
   /** Runs `fn` holding the person's trading lock (a Postgres advisory lock in production). */
   serialize?<T>(fn: () => Promise<T>): Promise<T>;
-  now(): number;
 }
 
 export interface Caller {
@@ -115,14 +121,6 @@ function brokerRequest(intent: IntentRecord) {
     limitPrice: i.limitPrice,
     stopPrice: i.stopPrice,
   };
-}
-
-/** Walks the intent towards the provider's reported state, one legal step at a time. */
-async function follow(deps: ExecutionDeps, intent: IntentRecord, from: IntentStatus, order: BrokerOrder): Promise<IntentStatus> {
-  await deps.store.recordBrokerOrder(intent.id, order);
-  const to = nextFromBroker(from, order.status);
-  if (!to) return from;
-  return (await deps.store.transition(intent.id, from, to, `provider: ${order.providerStatus}`)) ? to : from;
 }
 
 export async function submitIntent(deps: ExecutionDeps, intent: IntentRecord, caller: Caller): Promise<ExecutionOutcome> {
@@ -233,7 +231,7 @@ export async function submitIntent(deps: ExecutionDeps, intent: IntentRecord, ca
 
   // 10. Record what happened.
   if (result.outcome === "accepted") {
-    const status = await follow(deps, intent, "submitting", result.order);
+    const status = await deps.store.recordBrokerOrder(intent.id, "submitting", result.order);
     await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.submitted", detail: { providerOrderID: result.order.providerOrderID, status: result.order.status } });
     return { ok: true, status, brokerOrder: result.order, risk };
   }
@@ -254,9 +252,9 @@ export async function submitIntent(deps: ExecutionDeps, intent: IntentRecord, ca
 export const RECONCILE_GIVE_UP_MS = 10 * 60_000;
 
 /** Brings one intent in line with the provider. Safe to call repeatedly (scheduler, manual refresh). */
-export async function reconcileIntent(deps: ExecutionDeps, intent: IntentRecord): Promise<ExecutionOutcome> {
+export async function reconcileIntent(deps: ReconciliationDeps, intent: IntentRecord): Promise<ExecutionOutcome> {
   if (!AT_PROVIDER.includes(intent.status)) return { ok: true, status: intent.status };
-  const ctx: AdapterContext = { ...deps.adapterContext, allowLive: intent.environment === "live" && deps.gates.live_execution.enabled };
+  const ctx: AdapterContext = { ...deps.adapterContext, allowLive: false };
   let order: BrokerOrder | undefined;
   try {
     order = intent.providerOrderID
@@ -267,20 +265,30 @@ export async function reconcileIntent(deps: ExecutionDeps, intent: IntentRecord)
     else return refuse("provider_error", "The provider couldn't be reached. We'll try again.", intent.status, brokerDetails(error));
   }
   if (order) {
-    const status = await follow(deps, intent, intent.status, order);
+    if ((intent.providerOrderID && intent.providerOrderID !== order.providerOrderID) ||
+      (order.clientOrderID && order.clientOrderID !== intent.clientOrderID)) {
+      return refuse("provider_error", "The provider returned a different order. We’ll check again.", intent.status);
+    }
+    const status = await deps.store.recordBrokerOrder(intent.id, intent.status, order);
     return { ok: true, status, brokerOrder: order };
   }
-  // The provider has no order with our clientOrderID.
-  if (intent.status === "submitting" || intent.status === "reconciliation_required") {
-    const since = intent.reconcilingSince ?? intent.createdAt;
-    if (deps.now() - since >= RECONCILE_GIVE_UP_MS) {
+  // An in-flight send may not be visible yet. A stranded send enters reconciliation
+  // before its not-found grace period starts.
+  if (intent.status === "submitting" && deps.now() - (intent.submittingAt ?? intent.createdAt) < 120_000) {
+    return { ok: true, status: intent.status };
+  }
+  if (intent.status === "reconciliation_required") {
+    // Alpaca has an exact client-ID lookup. An absent result from a bounded order list,
+    // or a missing order that already has a provider ID, does not establish non-submission.
+    if (intent.provider === "alpaca" && !intent.providerOrderID && intent.reconcilingSince !== undefined &&
+      deps.now() - intent.reconcilingSince >= RECONCILE_GIVE_UP_MS) {
       const moved = await deps.store.transition(intent.id, intent.status, "failed", "provider has no record of this order");
-      await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.reconciled_not_found", detail: {} });
+      if (moved) await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.reconciled_not_found", detail: {} });
       return { ok: true, status: moved ? "failed" : intent.status };
     }
     return { ok: true, status: intent.status };
   }
-  // We had a provider order and it's gone: that's not something to guess about.
+  // A known order disappeared, or the provider never confirmed a stranded send.
   if (await deps.store.transition(intent.id, intent.status, "reconciliation_required", "provider order not found")) {
     return { ok: true, status: "reconciliation_required" };
   }

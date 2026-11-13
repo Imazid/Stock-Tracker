@@ -9,12 +9,15 @@
 
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import postgres from "npm:postgres@3.4.5";
-import type { AdapterContext, BrokerAdapter, BrokerOrder, BrokerOrderRequest, SubmitResult } from "../_shared/brokers/types.ts";
+import type { AdapterContext, BrokerAdapter, BrokerFill, BrokerOrder, BrokerOrderRequest, SubmitResult } from "../_shared/brokers/types.ts";
 import type { OrderIntentInput, RiskEvaluationView } from "../_shared/oms/api.ts";
 import { type ExecutionDeps, reconcileIntent, submitIntent } from "../_shared/oms/execute.ts";
+import { syncProviderFills } from "../_shared/oms/fill_sync.ts";
 import { resolveGates } from "../_shared/oms/gates.ts";
 import { canonicalIntent, intentHash, newClientOrderID } from "../_shared/oms/intent.ts";
 import { insertIntent, intentView, loadIntent, PgOmsStore, serializeFor, type Sql } from "../_shared/oms/store_pg.ts";
+import { keyRingFromRaw, seal } from "../_shared/vault/envelope.ts";
+import { providerMaintenance } from "../provider-maintenance/worker.ts";
 
 const URL = Deno.env.get("OMS_TEST_DB_URL");
 const USER = crypto.randomUUID();
@@ -144,6 +147,119 @@ Deno.test({ name: "pg: unknown outcome is stored as reconciliation_required and 
     assertEquals(settled.status, "submitted");
     assertEquals((await loadIntent(sql, USER, intent.id))!.providerOrderID, adapter.lookup.providerOrderID);
   } finally {
+    await sql.end();
+  }
+});
+
+Deno.test({ name: "pg: overlapping provider responses cannot roll back a fill", ignore: !URL, sanitizeResources: false, sanitizeOps: false }, async () => {
+  const sql = postgres(URL!, { max: 6, prepare: false, onnotice: () => {} });
+  try {
+    const intent = await approvedIntent(sql);
+    const adapter = new FakeAdapter();
+    const first = { ...adapter.order("accepted"), updatedAt: "2026-11-13T10:00:00Z" };
+    adapter.result = { outcome: "accepted", order: first };
+    const d = deps(sql, adapter);
+    assertEquals((await submitIntent(d, intent, { userID: USER, aal: "aal1" })).status, "submitted");
+    const submitted = (await loadIntent(sql, USER, intent.id))!;
+    adapter.lookup = { ...first, status: "partially_filled", filledQuantity: "5", updatedAt: "2026-11-13T10:01:00Z" };
+    assertEquals((await reconcileIntent(d, submitted)).status, "partially_filled");
+    const partial = (await loadIntent(sql, USER, intent.id))!;
+    const older = { ...adapter.lookup, filledQuantity: "2", updatedAt: "2026-11-13T10:00:30Z" };
+    const latest = { ...adapter.lookup, status: "filled" as const, filledQuantity: "10", updatedAt: "2026-11-13T10:02:00Z" };
+    await Promise.all([
+      d.store.recordBrokerOrder(intent.id, partial.status, latest),
+      d.store.recordBrokerOrder(intent.id, partial.status, older),
+    ]);
+    const view = await intentView(sql, (await loadIntent(sql, USER, intent.id))!);
+    assertEquals(view.status, "filled");
+    assertEquals(view.brokerOrder?.filledQuantity, "10");
+    assertEquals(view.transitions.filter((item) => item.to === "filled").length, 1);
+  } finally {
+    await sql.end();
+  }
+});
+
+Deno.test({ name: "pg: fill pages are deduplicated and commit the checkpoint under the lease", ignore: !URL, sanitizeResources: false, sanitizeOps: false }, async () => {
+  const sql = postgres(URL!, { max: 6, prepare: false, onnotice: () => {} });
+  try {
+    const d = deps(sql, new FakeAdapter());
+    const now = Date.now();
+    const fill: BrokerFill = { providerFillID: "fill-1", providerOrderID: "order-1", symbol: "AAPL",
+      side: "buy", quantity: "0.25", price: "190.42", executedAt: new Date(now - 1000).toISOString() };
+    let reads = 0;
+    const adapter = { fills() { reads++; return Promise.resolve({ items: [fill] }); } };
+    await Promise.all(Array.from({ length: 3 }, () => syncProviderFills(sql, d.connection, adapter, d.adapterContext, now)));
+    assertEquals(reads, 1);
+    await sql`update public.broker_connections set fill_sync_due_at = '-infinity', fill_sync_lease_until = null,
+      status = 'active' where id = ${CONN}`;
+    assertEquals((await syncProviderFills(sql, d.connection, adapter, d.adapterContext, Date.now() + 1000)).fills, 0);
+    const [row] = await sql`select count(*)::int as count from public.broker_fills where connection_id = ${CONN}`;
+    assertEquals(row.count, 1);
+    const [checkpoint] = await sql`select cursor, window_start, window_end from public.provider_sync_cursors where connection_id = ${CONN}`;
+    assert(checkpoint.window_start);
+    assertEquals(checkpoint.window_end, null);
+    assertEquals(checkpoint.cursor, null);
+  } finally {
+    await sql.end();
+  }
+});
+
+Deno.test({ name: "pg: authenticated scheduler reconciles an order and imports a provider fill without writing to Alpaca", ignore: !URL, sanitizeResources: false, sanitizeOps: false }, async () => {
+  const sql = postgres(URL!, { max: 6, prepare: false, onnotice: () => {} });
+  const env = {
+    SUPABASE_DB_URL: URL!,
+    PROVIDER_MAINTENANCE_SECRET: crypto.randomUUID(),
+    BROKER_CREDENTIALS_KEKS: JSON.stringify({ active: "k1", keys: { k1: btoa("\x01".repeat(32)) } }),
+  };
+  const previous = Object.fromEntries(Object.keys(env).map((name) => [name, Deno.env.get(name)]));
+  for (const [name, value] of Object.entries(env)) Deno.env.set(name, value);
+  const originalFetch = globalThis.fetch;
+  try {
+    const intent = await approvedIntent(sql);
+    const d = deps(sql, new FakeAdapter());
+    await d.store.transition(intent.id, "approved", "submitting");
+    await d.store.transition(intent.id, "submitting", "reconciliation_required");
+    const ring = await keyRingFromRaw("k1", { k1: new Uint8Array(32).fill(1) });
+    const key = await seal(ring, { userID: USER, connectionID: CONN, provider: "alpaca" }, { keyID: "test-key", secretKey: "test-secret" });
+    await sql`insert into public.broker_credentials (connection_id, user_id, sealed, kek_id)
+      values (${CONN}, ${USER}, ${sql.json(key as never)}, 'k1')`;
+    await sql`update public.broker_connections set fill_sync_due_at = '-infinity', fill_sync_lease_until = null,
+      status = 'active' where id = ${CONN}`;
+    await sql`update public.order_intents set provider_check_due_at = '-infinity' where id = ${intent.id}`;
+    await sql`update public.order_intents set provider_check_due_at = now() + interval '1 day' where id <> ${intent.id}`;
+    await sql`update public.broker_connections set fill_sync_due_at = now() + interval '1 day' where id <> ${CONN}`;
+    const requests: string[] = [];
+    globalThis.fetch = (input, init) => {
+      const url = new globalThis.URL(String(input));
+      assertEquals(url.hostname, "paper-api.alpaca.markets");
+      assertEquals(init?.method, "GET");
+      requests.push(url.pathname);
+      const order = { id: "worker-order", client_order_id: intent.clientOrderID, symbol: "AAPL", side: "buy", type: "limit",
+        status: "filled", filled_qty: "10", filled_avg_price: "190.42", updated_at: "2026-11-13T10:00:00Z" };
+      if (url.pathname === "/v2/orders:by_client_order_id") return Promise.resolve(Response.json(order));
+      assertEquals(url.pathname, "/v2/account/activities/FILL");
+      assert(url.searchParams.get("until"));
+      return Promise.resolve(Response.json([{ id: "worker-fill", order_id: order.id, symbol: "AAPL", side: "buy",
+        qty: "10", price: "190.42", transaction_time: new Date(Date.now() - 1000).toISOString() }]));
+    };
+    const request = (secret?: string) => new Request("http://localhost", {
+      method: "POST", headers: secret ? { "x-scheduler-secret": secret } : undefined,
+    });
+    assertEquals((await providerMaintenance(request())).status, 401);
+    assertEquals(requests.length, 0);
+    const runs = await Promise.all([providerMaintenance(request(env.PROVIDER_MAINTENANCE_SECRET)), providerMaintenance(request(env.PROVIDER_MAINTENANCE_SECRET))]);
+    const reports = await Promise.all(runs.map((r) => r.json()));
+    assertEquals(reports.reduce((total, row) => total + row.data.errors, 0), 0);
+    assertEquals(reports.reduce((total, row) => total + row.data.checked, 0), 1);
+    assertEquals(reports.reduce((total, row) => total + row.data.imported, 0), 1);
+    assertEquals(requests.sort(), ["/v2/account/activities/FILL", "/v2/orders:by_client_order_id"]);
+    assertEquals((await loadIntent(sql, USER, intent.id))?.status, "filled");
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of Object.keys(env)) {
+      if (previous[name] === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, previous[name]);
+    }
     await sql.end();
   }
 });

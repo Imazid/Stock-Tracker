@@ -10,7 +10,7 @@ import type { ApprovalRecord } from "./approval.ts";
 import * as D from "./decimal.ts";
 import type { ConnectionState, IntentRecord, OmsStore } from "./execute.ts";
 import { type GateRow, resolveGates } from "./gates.ts";
-import { RESERVING } from "./lifecycle.ts";
+import { nextFromBroker, RESERVING } from "./lifecycle.ts";
 import { DEFAULT_ACCOUNT_LIMITS, type ProviderPolicy, type ReservingOrder } from "./risk.ts";
 import { type KeyRing, open as openSealed, type SealedSecret } from "../vault/envelope.ts";
 
@@ -132,6 +132,7 @@ function intentFrom(r: Record<string, unknown>): IntentRecord {
     intentHash: String(r.intent_hash),
     status: r.status as IntentStatus,
     createdAt: ms(r.created_at),
+    submittingAt: r.provider_submitting_at ? ms(r.provider_submitting_at) : undefined,
     expiresAt: ms(r.expires_at),
     estimatedNotional: estimate.notional,
     providerOrderID: (r.provider_order_id as string | null) ?? undefined,
@@ -285,10 +286,21 @@ export class PgOmsStore implements OmsStore {
     return r?.used === true;
   }
 
-  async recordBrokerOrder(intentID: string, order: BrokerOrder): Promise<void> {
-    const [intent] = await this.sql`select connection_id from public.order_intents where id = ${intentID} and user_id = ${this.userID}`;
-    if (!intent) return;
-    await this.sql`
+  async recordBrokerOrder(intentID: string, from: IntentStatus, order: BrokerOrder): Promise<IntentStatus> {
+    return await this.sql.begin(async (tx) => {
+      const [intent] = await tx`select connection_id, status, provider_order_id, client_order_id from public.order_intents
+                               where id = ${intentID} and user_id = ${this.userID} for update`;
+      if (!intent || intent.status !== from) return (intent?.status as IntentStatus | undefined) ?? from;
+      if ((intent.provider_order_id && intent.provider_order_id !== order.providerOrderID) ||
+          (order.clientOrderID && order.clientOrderID !== intent.client_order_id)) return from;
+      const [previous] = from === "partially_filled" && order.status === "partially_filled"
+        ? await tx`select filled_quantity from public.broker_orders where connection_id = ${intent.connection_id}
+                    and provider_order_id = ${order.providerOrderID}`
+        : [];
+      const to = previous && dec(previous.filled_quantity) === D.normalise(order.filledQuantity)
+        ? undefined : nextFromBroker(from, order.status);
+      if (!to && from === "partially_filled" && ["pending_new", "accepted", "pending_cancel", "pending_replace"].includes(order.status)) return from;
+      const [saved] = await tx`
       insert into public.broker_orders (user_id, connection_id, intent_id, provider_order_id, client_order_id, symbol, side, order_type, status,
         provider_status, quantity, notional, filled_quantity, average_fill_price, limit_price, stop_price, submitted_at, provider_updated_at)
       values (${this.userID}, ${intent.connection_id}, ${intentID}, ${order.providerOrderID}, ${order.clientOrderID ?? null}, ${order.symbol},
@@ -297,10 +309,22 @@ export class PgOmsStore implements OmsStore {
         ${order.submittedAt ? new Date(order.submittedAt) : null}, ${order.updatedAt ? new Date(order.updatedAt) : null})
       on conflict (connection_id, provider_order_id) do update set
         status = excluded.status, provider_status = excluded.provider_status, filled_quantity = excluded.filled_quantity,
-        average_fill_price = excluded.average_fill_price, provider_updated_at = excluded.provider_updated_at, updated_at = now(),
-        intent_id = coalesce(public.broker_orders.intent_id, excluded.intent_id)`;
-    await this.sql`update public.order_intents set provider_order_id = ${order.providerOrderID}
-                   where id = ${intentID} and user_id = ${this.userID} and provider_order_id is null`;
+        average_fill_price = coalesce(excluded.average_fill_price, broker_orders.average_fill_price),
+        provider_updated_at = coalesce(excluded.provider_updated_at, broker_orders.provider_updated_at), updated_at = now(),
+        intent_id = coalesce(public.broker_orders.intent_id, excluded.intent_id)
+      where (broker_orders.intent_id is null or broker_orders.intent_id = excluded.intent_id)
+        and (broker_orders.provider_updated_at is null or excluded.provider_updated_at >= broker_orders.provider_updated_at
+          or excluded.provider_updated_at is null and excluded.status in ('filled', 'canceled', 'expired', 'rejected'))
+        and excluded.filled_quantity >= broker_orders.filled_quantity
+      returning id`;
+      if (!saved) return from;
+      if (to) await tx`select set_config('oms.transition_note', ${("provider: " + order.providerStatus).slice(0, 500)}, true)`;
+      if (to || !intent.provider_order_id) {
+        await tx`update public.order_intents set status = ${to ?? from}, provider_order_id = ${order.providerOrderID}
+                 where id = ${intentID} and user_id = ${this.userID}`;
+      }
+      return to ?? from;
+    }) as IntentStatus;
   }
 
   async recordRisk(intentID: string, risk: RiskEvaluationView): Promise<void> {

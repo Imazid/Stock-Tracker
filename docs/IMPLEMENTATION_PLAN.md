@@ -109,7 +109,7 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 | 2 Providers + data | Alpaca/Coinbase adapters; `broker-connections`; web markets/charts/watchlists | Adapter tests with mocked HTTP; web routes return labelled real data | Done (needs credentials / hosted project to run for real) |
 | 3 Agents (web) | AI workspace with read-only tools, source-backed answers, prompt-injection tests | Safety tests in repo; agents can't reach order submission; live-model eval suite still to write and run (billed) | Built; live run blocked on an API key |
 | 4 Strategies + simulation | TS parser/backtester port; web Strategy Studio + backtests | Port tests mirror Swift cases; identical inputs → identical results | Web Strategy Studio starts review-required practice agents through the hosted trading API |
-| 5 Trading + risk | `broker-orders` function; risk mapping for provider accounts; reconciliation scheduler | End-to-end against mocked Alpaca paper: draft → risk → approve → submit → fill; all failure journeys of brief §18 | Pipeline + store done and tested; HTTP end to end and the scheduler not yet |
+| 5 Trading + risk | `broker-orders` function; risk mapping for provider accounts; reconciliation scheduler | Mocked provider pipeline and scheduled reconciliation with Postgres; actual provider execution still needs an eligible test account | Provider maintenance reads orders and imports fills. Execution remains gated |
 | 6 Release readiness | Hosted backend, monitoring, deployment docs, accessibility pass | Owner sign-off; `REGULATORY_REVIEW.md` items answered before any live gate | Blocked on owner/legal |
 
 ## 7. Known gaps and follow-ups (found while integrating, 2026-11-13)
@@ -122,7 +122,7 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 - **"Today" on the provider path** is the trailing 24 hours (conservative), not the exchange day.
 - **Coinbase reconciliation** can only search the 500 most recent orders by client order id (the API
   has no lookup by client id).
-- **No scheduler yet** for provider reconciliation or fill sync; both run on request.
+- **Provider maintenance** checks pending orders and imports fills using leased, bounded jobs. Manual sync shares the fill checkpoint. Provider event streaming remains pending.
 - **Web market-data adapters** (`web/src/server/market`) duplicate part of `_shared/market`; merge into one.
 - **Assistant runs aren't persisted** (no AgentRun/AgentToolEvent tables for the web assistant); turns are logged only in the browser.
 - **The ported strategy parser** maps "buy ETH when RSI drops below 30" to the crypto trend template rather than RSI rules (Swift behaviour, carried over; the screen lists the assumption).
@@ -156,4 +156,4 @@ CI runs Edge Function lint, typechecking and tests, throwaway Postgres migration
 - Hosted project `opruuwczvrwklmwdtsaw` contains the provider OMS, credential custody and market-data quota migrations. Its functions serve authenticated Alpaca data, the SnapTrade directory, provider account and order lists, and native AI chat.
 - Provider keys are configured server-side. The tested Finnhub news and Alpha Vantage quote routes returned data. FMP reported its upstream rate limit. The previously exposed fiscal.ai credential requires rotation before configuration.
 - Public distribution requires confirmed market-data display rights, an App Store release with working legal and support URLs, and the decisions in [Regulatory review](REGULATORY_REVIEW.md). Real-money execution, automated live execution and custody are disabled.
-- Portfolio returns use reconciled opening and closing values, including cash, and dated external transfers. All inputs use USD. Returns use end-of-day Modified Dietz weights. The web Portfolio exports synced transaction records. Remaining engineering work includes automatic broker cash-flow and corporate-action imports, exact TWR and MWR, tax lots and reports, scheduled provider reconciliation and production monitoring. The web assistant can use Anthropic or OpenAI. Account data is shared with the model only after explicit opt-in.
+- Portfolio returns use reconciled opening and closing values, including cash, and dated external transfers. All inputs use USD. Returns use end-of-day Modified Dietz weights. The web Portfolio exports synced transaction records. Remaining engineering work includes automatic broker cash-flow and corporate-action imports, exact TWR and MWR, tax lots and reports, and production monitoring. The web assistant can use Anthropic or OpenAI. Account data is shared with the model only after explicit opt-in.

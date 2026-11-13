@@ -15,6 +15,7 @@ import { adapterFor, capabilitiesFor, isProviderID } from "../_shared/brokers/re
 import type { AdapterContext, ConnectionPermission, ProviderCredentials, ProviderID, TradingEnvironment } from "../_shared/brokers/types.ts";
 import { BrokerError } from "../_shared/brokers/types.ts";
 import type { ConnectionsRequest, ConnectionView } from "../_shared/oms/api.ts";
+import { syncProviderFills } from "../_shared/oms/fill_sync.ts";
 import { authenticate, type Caller, errorResponse, HttpError, json, logEvent, preflight, readJSONObject } from "../_shared/oms/http.ts";
 import { type ConnectionRow, database, listConnections, loadConnection, openCredentials, type Sql } from "../_shared/oms/store_pg.ts";
 import { keyHint, keyRingFromEnv, seal, VaultError } from "../_shared/vault/envelope.ts";
@@ -72,7 +73,9 @@ async function ring() {
 /** Reads the provider and stores snapshots; idempotent on provider ids. */
 async function sync(ctx: Ctx, connection: ConnectionRow): Promise<{ accounts: number; positions: number; fills: number; orders: number }> {
   const sql = ctx.sql;
-  await sql`update public.broker_connections set sync_state = 'running', updated_at = now() where id = ${connection.id} and user_id = ${ctx.caller.userID}`;
+  const [active] = await sql`update public.broker_connections set sync_state = 'running', updated_at = now()
+    where id = ${connection.id} and user_id = ${ctx.caller.userID} and status <> 'revoked' returning id`;
+  if (!active) throw new HttpError(404, "not_found", "That account isn't connected.");
   try {
     const credentials = await openCredentials(sql, await ring(), connection);
     const actx: AdapterContext = { environment: connection.environment, credentials, allowLive: false };
@@ -88,37 +91,19 @@ async function sync(ctx: Ctx, connection: ConnectionRow): Promise<{ accounts: nu
                 values (${ctx.caller.userID}, ${connection.id}, ${p.symbol}, ${p.assetClass}, ${p.quantity}, ${p.averageEntryPrice ?? null},
                         ${p.costBasis ?? null}, ${p.marketValue ?? null}, ${p.currency}, ${observed})`;
     }
-    // Fills: page from the stored cursor; the unique key makes re-reads harmless.
-    const [cursorRow] = await sql`select cursor from public.provider_sync_cursors where connection_id = ${connection.id} and stream = 'fills'`;
-    let cursor: string | undefined = cursorRow?.cursor ?? undefined;
-    let fills = 0;
-    for (let page = 0; page < 10; page++) {
-      const result = await adapter.fills(actx, { cursor, limit: 100 });
-      for (const f of result.items) {
-        const inserted = await sql`
-          insert into public.broker_fills (user_id, connection_id, provider_fill_id, provider_order_id, symbol, side, quantity, price, fee, fee_currency, executed_at)
-          values (${ctx.caller.userID}, ${connection.id}, ${f.providerFillID}, ${f.providerOrderID}, ${f.symbol}, ${f.side}, ${f.quantity}, ${f.price},
-                  ${f.fee ?? null}, ${f.feeCurrency ?? null}, ${new Date(f.executedAt)})
-          on conflict (connection_id, provider_fill_id) do nothing returning id`;
-        fills += inserted.length;
-      }
-      if (!result.cursor || result.cursor === cursor) break;
-      cursor = result.cursor;
-      await sql`insert into public.provider_sync_cursors (connection_id, stream, cursor) values (${connection.id}, 'fills', ${cursor})
-                on conflict (connection_id, stream) do update set cursor = excluded.cursor, updated_at = now()`;
-    }
+    const { fills } = await syncProviderFills(sql, connection, adapter, { ...actx, readAttempts: 1 }, Date.now(), 3, undefined, true);
     const open = await adapter.orders(actx, { status: "open", limit: 100 });
     const account = accounts[0];
     await sql`update public.broker_connections set sync_state = 'ok', last_synced_at = now(), sync_error = null, status = 'active',
               provider_account_id = coalesce(provider_account_id, ${account?.providerAccountID ?? null}), updated_at = now()
-              where id = ${connection.id} and user_id = ${ctx.caller.userID}`;
+              where id = ${connection.id} and user_id = ${ctx.caller.userID} and status <> 'revoked'`;
     return { accounts: accounts.length, positions: positions.length, fills, orders: open.items.length };
   } catch (error) {
     const message = error instanceof BrokerError ? error.message : "The sync didn't finish.";
     const needsAttention = error instanceof BrokerError && (error.code === "unauthorized" || error.code === "forbidden");
     await sql`update public.broker_connections set sync_state = 'failed', sync_error = ${message.slice(0, 500)},
               status = case when ${needsAttention} then 'needs_attention' else status end, updated_at = now()
-              where id = ${connection.id} and user_id = ${ctx.caller.userID}`;
+              where id = ${connection.id} and user_id = ${ctx.caller.userID} and status <> 'revoked'`;
     throw error instanceof BrokerError ? new HttpError(502, "provider_error", message, { providerCode: error.code }) : error;
   }
 }

@@ -11,6 +11,7 @@ The provisioning steps below apply when setting up a separate environment.
 | Database, auth | Supabase (Postgres 17) | `supabase/migrations/` |
 | `trading-api`, `agent-scheduler` | Supabase Edge Functions (Deno 2) | practice trading |
 | `broker-connections`, `broker-orders` | Supabase Edge Functions | provider connections and orders |
+| `provider-maintenance` | Supabase Edge Functions and Cron | provider order reconciliation and fill imports |
 | `market-data-proxy`, `snaptrade-proxy`, `ai-proxy` | Supabase Edge Functions | signed-in iOS data, broker aggregation and model access |
 | `market-workspace` | Supabase Edge Functions | workspace market data, fundamentals and shared backtesting |
 | Web app | Vercel (Sydney functions) | `web/` |
@@ -38,7 +39,7 @@ The provisioning steps below apply when setting up a separate environment.
    key unreadable** — people would have to reconnect.
 5. Deploy the functions:
    ```
-   supabase functions deploy trading-api agent-scheduler broker-orders broker-connections snaptrade-proxy ai-proxy market-data-proxy market-workspace
+   supabase functions deploy trading-api agent-scheduler broker-orders broker-connections snaptrade-proxy ai-proxy market-data-proxy market-workspace provider-maintenance
    ```
 
 ## 2. Gates (what is switched on)
@@ -115,3 +116,11 @@ email limits apply until a custom SMTP sender is configured.
 Copy `Stock Tracker/SecretsConfig.swift.template` to `Stock Tracker/SecretsConfig.swift` and copy the plist example to `Stock Tracker/Config/Secrets.plist`. Set `SupabaseURL` and `SupabaseAnonKey` to the target project's URL and public client key. The build copies only those two values into release bundles. A clean checkout can build with no plist. Debug builds can use local keys for development with no backend.
 
 Set the SnapTrade partner credentials, AI credentials and optional market provider keys in Supabase. The complete names are in `supabase/functions/.env.example`. Use distinct encryption key rings for the SnapTrade and provider-order vaults. The hosted project has Keychain recovery copies in `stock-tracker-credential-kek` and `stock-tracker-broker-credential-kek`.
+
+## 8. Provider maintenance
+
+Enable `pg_cron` and `pg_net` before applying the provider maintenance migration. If the extensions are enabled later, register the job using `select cron.schedule('provider-maintenance', '* * * * *', 'select public.invoke_provider_maintenance()');`. The job checks up to four due order intents and syncs fills for up to two connections on each run. The worker has no execution or cancellation path.
+
+Store a dedicated random scheduler secret of at least 32 characters as `PROVIDER_MAINTENANCE_SECRET` for the Edge Function and `provider_maintenance_secret` in Supabase Vault. Store the full HTTPS Edge Function endpoint in Vault as `provider_maintenance_url`. Deploy the function with gateway JWT verification off. The worker authenticates the Vault secret using the `x-scheduler-secret` header.
+
+Verify that the unauthenticated endpoint returns 401. Confirm scheduled requests in the `provider_maintenance` Edge Function logs, which report counts for claimed orders, connections, imported fills and errors. A cron run reports delivery to pg_net. Check the HTTP response or function logs for the worker result.
