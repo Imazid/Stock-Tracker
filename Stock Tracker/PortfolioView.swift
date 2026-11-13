@@ -161,7 +161,7 @@ struct PortfolioView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground(style: .portfolio)
             .refreshable { await marketData.refreshFromAPI() }
             .onChange(of: segmentRaw) { _, _ in
                 // The segment's content starts below the hero — bring it into view.
@@ -662,7 +662,7 @@ struct CreatePortfolioSheet: View {
                     .disabled(trimmed.isEmpty)
             }
             .padding(DS.Space.gutter)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("New portfolio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

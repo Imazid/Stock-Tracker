@@ -386,11 +386,12 @@ public enum StrategyValidator {
             guard let rebalance = spec.rebalance else { error("A rebalancing strategy needs target weights."); break }
             let ids = Set(spec.universe.map(\.id))
             if rebalance.targets.isEmpty { error("Add at least one target weight.") }
-            for (id, weight) in rebalance.targets {
+            for (id, weight) in rebalance.targets.sorted(by: { $0.key < $1.key }) {
                 if !ids.contains(id) { error("Target \(id) isn't in the asset list.") }
                 if !(weight.isFinite && weight > 0 && weight <= 100) { error("Each target weight must be between 0 and 100%.") }
             }
-            let total = rebalance.targets.values.reduce(0, +)
+            // Summed in key order so the total never depends on dictionary order.
+            let total = rebalance.targets.sorted(by: { $0.key < $1.key }).reduce(0) { $0 + $1.value }
             if total > 100.0001 { error("Target weights add up to \(Operand.trim(total))% — they can't exceed 100%.") }
             if !(rebalance.driftThresholdPct.isFinite && rebalance.driftThresholdPct >= 0.5 && rebalance.driftThresholdPct <= 50) {
                 error("The drift threshold must be between 0.5 and 50 points.")

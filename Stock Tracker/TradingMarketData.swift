@@ -236,17 +236,22 @@ nonisolated struct LiveMarketData: MarketDataProviding {
 
     // MARK: Exchanges outside the US (Yahoo Finance, delayed, local currency)
 
-    /// How far behind each exchange Yahoo's free data runs. Overstating it only lets an older
-    /// quote count as fresh; the source label always says "delayed".
+    /// How far behind each exchange Yahoo's free data runs, as Yahoo states it
+    /// (docs/trading/international-markets.md). Overstating it only lets an older quote count
+    /// as fresh; understating it would refuse good quotes as stale.
     private static func delay(_ venue: Venue) -> Int {
         switch venue {
+        case .nse: return 0
+        case .six: return 30 * 60
         case .asx, .tse, .krx: return 20 * 60
         default: return 15 * 60
         }
     }
 
     private static func provenance(_ venue: Venue) -> DataProvenance {
-        .market("Yahoo Finance (\(venue.shortName), delayed)", delaySeconds: delay(venue))
+        let delay = delay(venue)
+        let label = delay > 0 ? "Yahoo Finance (\(venue.shortName), \(delay / 60) min delayed)" : "Yahoo Finance (\(venue.shortName))"
+        return .market(label, delaySeconds: delay)
     }
 
     /// Yahoo reports London prices in pence ("GBp"/"GBX") and a few others in minor units.

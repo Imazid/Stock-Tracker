@@ -1,0 +1,1147 @@
+{
+ "ok": true,
+ "data": {
+  "state": {
+   "schemaVersion": 1,
+   "accountPolicy": {
+    "killSwitchEngaged": false,
+    "maxSymbolExposurePct": 35,
+    "maxTotalDailyNotional": 250000,
+    "live": {
+     "manualOrdersEnabled": false,
+     "approvalAgentsEnabled": false,
+     "autonomousAgentsEnabled": false
+    },
+    "allowFixtureData": true
+   },
+   "paperConfig": {
+    "equityFeePerOrder": 0,
+    "equityFeeBps": 0,
+    "cryptoFeeBps": 25,
+    "modelledHalfSpreadBpsEquity": 2,
+    "modelledHalfSpreadBpsCrypto": 5,
+    "maxParticipation": 0.01,
+    "maxMatchQuoteAgeSeconds": 1200
+   },
+   "connections": [],
+   "ledgers": [
+    {
+     "id": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+     "name": "Practice",
+     "kind": "manualPaper",
+     "mode": "paper",
+     "currency": "USD",
+     "startingCash": 10000,
+     "cash": 9498.75,
+     "positions": [
+      {
+       "instrument": {
+        "name": "Bitcoin",
+        "venue": "crypto",
+        "symbol": "BTC",
+        "currency": "USD",
+        "assetClass": "crypto"
+       },
+       "quantity": 4.06463418,
+       "costBasis": 501.25,
+       "openedAt": 1794559091714,
+       "lastPrice": 123,
+       "lastPriceTime": 1794559092477
+      }
+     ],
+     "realizedPnL": 0,
+     "feesPaid": 1.25,
+     "createdAt": 1794559091593,
+     "equityHistory": [
+      {
+       "time": 1794559091593,
+       "equity": 10000,
+       "cash": 10000
+      },
+      {
+       "time": 1794559092498,
+       "equity": 9998.7,
+       "cash": 9498.75
+      }
+     ],
+     "peakEquity": 10000,
+     "dayKey": "2026-11-13",
+     "dayStartEquity": 10000,
+     "realizedToday": 0,
+     "notionalToday": 500,
+     "lastFillAt": {
+      "crypto:BTC": 1794559091714
+     },
+     "lastBuyAt": {
+      "crypto:BTC": 1794559091714
+     },
+     "lastExitAt": {}
+    },
+    {
+     "id": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+     "name": "Trend",
+     "kind": "agentPaper",
+     "mode": "paper",
+     "currency": "USD",
+     "startingCash": 5000,
+     "cash": 4498.75,
+     "positions": [
+      {
+       "instrument": {
+        "name": "Bitcoin",
+        "venue": "crypto",
+        "symbol": "BTC",
+        "currency": "USD",
+        "assetClass": "crypto"
+       },
+       "quantity": 4.06463418,
+       "costBasis": 501.25,
+       "openedAt": 1794559092498,
+       "lastPrice": 123.0123,
+       "lastPriceTime": 1794559092498
+      }
+     ],
+     "realizedPnL": 0,
+     "feesPaid": 1.25,
+     "createdAt": 1794559092226,
+     "equityHistory": [
+      {
+       "time": 1794559092226,
+       "equity": 5000,
+       "cash": 5000
+      },
+      {
+       "time": 1794559092498,
+       "equity": 5000,
+       "cash": 5000
+      }
+     ],
+     "peakEquity": 5000,
+     "dayKey": "2026-11-13",
+     "dayStartEquity": 5000,
+     "realizedToday": 0,
+     "notionalToday": 500,
+     "lastFillAt": {
+      "crypto:BTC": 1794559092498
+     },
+     "lastBuyAt": {
+      "crypto:BTC": 1794559092498
+     },
+     "lastExitAt": {},
+     "agentID": "df480526-7a4f-4741-b903-2b900715d1ab"
+    }
+   ],
+   "agents": [
+    {
+     "id": "df480526-7a4f-4741-b903-2b900715d1ab",
+     "name": "Trend",
+     "mode": "paper",
+     "status": "active",
+     "versions": [
+      {
+       "version": 1,
+       "spec": {
+        "exit": {
+         "op": "below",
+         "left": {
+          "kind": "price",
+          "field": "close"
+         },
+         "right": {
+          "kind": "sma",
+          "period": 20
+         }
+        },
+        "kind": "rules",
+        "entry": {
+         "op": "above",
+         "left": {
+          "kind": "price",
+          "field": "close"
+         },
+         "right": {
+          "kind": "sma",
+          "period": 20
+         }
+        },
+        "title": "Above average",
+        "sizing": {
+         "mode": "percentOfEquity",
+         "value": 10
+        },
+        "summary": "Test strategy",
+        "universe": [
+         {
+          "name": "Bitcoin",
+          "venue": "crypto",
+          "symbol": "BTC",
+          "currency": "USD",
+          "assetClass": "crypto"
+         },
+         {
+          "name": "Ethereum",
+          "venue": "crypto",
+          "symbol": "ETH",
+          "currency": "USD",
+          "assetClass": "crypto"
+         }
+        ],
+        "timeframe": "day",
+        "protections": {
+         "stopLossPct": 8
+        },
+        "reentryCooldownBars": 0,
+        "followsLedgerPositions": false
+       },
+       "createdAt": 1794559092226,
+       "note": "Created",
+       "author": "user"
+      }
+     ],
+     "riskPolicy": {
+      "maxSpreadBps": 100,
+      "maxDrawdownPct": 15,
+      "maxPositionPct": 10,
+      "maxPriceGapPct": 8,
+      "cooldownSeconds": 300,
+      "maxDailyLossPct": 3,
+      "maxDailyNotional": 2500,
+      "maxOpenPositions": 10,
+      "maxOrderNotional": 500,
+      "maxQuoteAgeSeconds": 300,
+      "maxDailyVolatilityPct": 15,
+      "allowQueueOutsideHours": true,
+      "minAverageDollarVolume": 1000000
+     },
+     "budget": 5000,
+     "reviewEachPaperTrade": true,
+     "schedule": {
+      "intervalMinutes": 60
+     },
+     "createdAt": 1794559092226,
+     "consecutiveErrors": 0,
+     "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+     "lastRunAt": 1794559092313,
+     "nextRunAt": 1794562692313
+    }
+   ],
+   "signals": [
+    {
+     "id": "1b9b904b-0578-406c-99eb-d57b1b8b82c9",
+     "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+     "strategyVersion": 1,
+     "instrument": {
+      "name": "Bitcoin",
+      "venue": "crypto",
+      "symbol": "BTC",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "action": "buy",
+     "headline": "Buy rule met: Close is above 20-day average.",
+     "evidence": [
+      {
+       "label": "Close is above 20-day average",
+       "value": "122.50 vs 109.00",
+       "passed": true
+      }
+     ],
+     "barTime": 1794441600000,
+     "close": 122.5,
+     "createdAt": 1794559092313,
+     "provenance": {
+      "kind": "fixture",
+      "source": "fixture",
+      "delaySeconds": 0
+     },
+     "ruleMargin": 1
+    },
+    {
+     "id": "7e3bc0b5-a0ac-4d6a-a44c-e907bc311cf9",
+     "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+     "strategyVersion": 1,
+     "instrument": {
+      "name": "Ethereum",
+      "venue": "crypto",
+      "symbol": "ETH",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "action": "buy",
+     "headline": "Buy rule met: Close is above 20-day average.",
+     "evidence": [
+      {
+       "label": "Close is above 20-day average",
+       "value": "122.50 vs 109.00",
+       "passed": true
+      }
+     ],
+     "barTime": 1794441600000,
+     "close": 122.5,
+     "createdAt": 1794559092313,
+     "provenance": {
+      "kind": "fixture",
+      "source": "fixture",
+      "delaySeconds": 0
+     },
+     "ruleMargin": 1
+    }
+   ],
+   "proposals": [
+    {
+     "id": "ce21e290-39ed-4d9c-8ddb-089c2aa42964",
+     "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+     "signalID": "1b9b904b-0578-406c-99eb-d57b1b8b82c9",
+     "strategyVersion": 1,
+     "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+     "instrument": {
+      "name": "Bitcoin",
+      "venue": "crypto",
+      "symbol": "BTC",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "side": "buy",
+     "quantity": 4.06463418,
+     "referencePrice": 123.0123,
+     "notional": 500,
+     "estimatedFee": 1.25,
+     "mode": "paper",
+     "status": "submitted",
+     "risk": {
+      "checks": [
+       {
+        "id": "killSwitch",
+        "detail": "The kill switch is off.",
+        "status": "passed"
+       },
+       {
+        "id": "authorization",
+        "detail": "Paper order. No real money is involved.",
+        "status": "passed"
+       },
+       {
+        "id": "agentStatus",
+        "detail": "Trend is running.",
+        "status": "passed"
+       },
+       {
+        "id": "brokerPermission",
+        "detail": "Paper trading can trade this order.",
+        "status": "passed"
+       },
+       {
+        "id": "universe",
+        "detail": "BTC is on this agent's approved list.",
+        "status": "passed"
+       },
+       {
+        "id": "currency",
+        "detail": "BTC trades in USD, the same as this portfolio.",
+        "status": "passed"
+       },
+       {
+        "id": "marketData",
+        "detail": "Test fixture quote.",
+        "status": "passed"
+       },
+       {
+        "id": "marketHours",
+        "detail": "Crypto trades around the clock.",
+        "status": "passed"
+       },
+       {
+        "id": "quoteFreshness",
+        "detail": "Quote is 0s old (limit 5 min).",
+        "status": "passed"
+       },
+       {
+        "id": "exchangeRules",
+        "detail": "Quantity and price fit the exchange's rules.",
+        "status": "passed"
+       },
+       {
+        "id": "orderValue",
+        "detail": "$500.00 is within the $500.00 order limit.",
+        "status": "passed"
+       },
+       {
+        "id": "buyingPower",
+        "detail": "Needs $501.25; $5000.00 is available.",
+        "status": "passed"
+       },
+       {
+        "id": "holdings",
+        "detail": "Not a sell.",
+        "status": "notApplicable"
+       },
+       {
+        "id": "positionLimit",
+        "detail": "BTC would be 10.0% of this portfolio (limit 10.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "concentration",
+        "detail": "Across all portfolios BTC would be 6.7% (limit 35.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "openPositions",
+        "detail": "0 of 10 positions are open.",
+        "status": "passed"
+       },
+       {
+        "id": "dailyNotional",
+        "detail": "Today's trading would be $500.00 of $2500.00.",
+        "status": "passed"
+       },
+       {
+        "id": "dailyLoss",
+        "detail": "Today's realised loss is 0.0% (limit 3.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "drawdown",
+        "detail": "The portfolio is 0.0% below its peak (limit 15.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "spread",
+        "detail": "The spread is 2 bps (limit 100).",
+        "status": "passed"
+       },
+       {
+        "id": "liquidity",
+        "detail": "About $545.0M trades a day.",
+        "status": "passed"
+       },
+       {
+        "id": "volatility",
+        "detail": "Daily volatility is 0.6% (limit 15.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "duplicate",
+        "detail": "No duplicate or conflicting order.",
+        "status": "passed"
+       },
+       {
+        "id": "cooldown",
+        "detail": "No recent trade in this asset.",
+        "status": "notApplicable"
+       }
+      ],
+      "evaluatedAt": 1794559092498
+     },
+     "headline": "Buy rule met: Close is above 20-day average.",
+     "signalBarTime": 1794441600000,
+     "createdAt": 1794559092313,
+     "expiresAt": 1794645492313,
+     "clientOrderID": "proposal-CE21E290-39ED-4D9C-8DDB-089C2AA42964",
+     "resolvedAt": 1794559092498,
+     "resolutionNote": "Filled at $123.01.",
+     "orderID": "7ce4bfb1-7032-4591-a98e-40ced93ba62c"
+    },
+    {
+     "id": "fa3c101f-9464-4120-ac76-bd1b30e85171",
+     "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+     "signalID": "7e3bc0b5-a0ac-4d6a-a44c-e907bc311cf9",
+     "strategyVersion": 1,
+     "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+     "instrument": {
+      "name": "Ethereum",
+      "venue": "crypto",
+      "symbol": "ETH",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "side": "buy",
+     "quantity": 4.06463418,
+     "referencePrice": 123.0123,
+     "notional": 500,
+     "estimatedFee": 1.25,
+     "mode": "paper",
+     "status": "pending",
+     "risk": {
+      "checks": [
+       {
+        "id": "killSwitch",
+        "detail": "The kill switch is off.",
+        "status": "passed"
+       },
+       {
+        "id": "authorization",
+        "detail": "Paper order. No real money is involved.",
+        "status": "passed"
+       },
+       {
+        "id": "agentStatus",
+        "detail": "Trend is running.",
+        "status": "passed"
+       },
+       {
+        "id": "brokerPermission",
+        "detail": "Paper trading can trade this order.",
+        "status": "passed"
+       },
+       {
+        "id": "universe",
+        "detail": "ETH is on this agent's approved list.",
+        "status": "passed"
+       },
+       {
+        "id": "currency",
+        "detail": "ETH trades in USD, the same as this portfolio.",
+        "status": "passed"
+       },
+       {
+        "id": "marketData",
+        "detail": "Test fixture quote.",
+        "status": "passed"
+       },
+       {
+        "id": "marketHours",
+        "detail": "Crypto trades around the clock.",
+        "status": "passed"
+       },
+       {
+        "id": "quoteFreshness",
+        "detail": "Quote is 0s old (limit 5 min).",
+        "status": "passed"
+       },
+       {
+        "id": "exchangeRules",
+        "detail": "Quantity and price fit the exchange's rules.",
+        "status": "passed"
+       },
+       {
+        "id": "orderValue",
+        "detail": "$500.00 is within the $500.00 order limit.",
+        "status": "passed"
+       },
+       {
+        "id": "buyingPower",
+        "detail": "Needs $501.25; $5000.00 is available.",
+        "status": "passed"
+       },
+       {
+        "id": "holdings",
+        "detail": "Not a sell.",
+        "status": "notApplicable"
+       },
+       {
+        "id": "positionLimit",
+        "detail": "ETH would be 10.0% of this portfolio (limit 10.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "concentration",
+        "detail": "Across all portfolios ETH would be 3.3% (limit 35.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "openPositions",
+        "detail": "0 of 10 positions are open.",
+        "status": "passed"
+       },
+       {
+        "id": "dailyNotional",
+        "detail": "Today's trading would be $500.00 of $2500.00.",
+        "status": "passed"
+       },
+       {
+        "id": "dailyLoss",
+        "detail": "Today's realised loss is 0.0% (limit 3.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "drawdown",
+        "detail": "The portfolio is 0.0% below its peak (limit 15.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "spread",
+        "detail": "The spread is 2 bps (limit 100).",
+        "status": "passed"
+       },
+       {
+        "id": "liquidity",
+        "detail": "About $545.0M trades a day.",
+        "status": "passed"
+       },
+       {
+        "id": "volatility",
+        "detail": "Daily volatility is 0.6% (limit 15.0%).",
+        "status": "passed"
+       },
+       {
+        "id": "duplicate",
+        "detail": "No duplicate or conflicting order.",
+        "status": "passed"
+       },
+       {
+        "id": "cooldown",
+        "detail": "No recent trade in this asset.",
+        "status": "notApplicable"
+       }
+      ],
+      "evaluatedAt": 1794559092313
+     },
+     "headline": "Buy rule met: Close is above 20-day average.",
+     "signalBarTime": 1794441600000,
+     "createdAt": 1794559092313,
+     "expiresAt": 1794645492313,
+     "clientOrderID": "proposal-FA3C101F-9464-4120-AC76-BD1B30E85171"
+    }
+   ],
+   "orders": [
+    {
+     "id": "12e1fe63-b758-408e-810d-5b4be07e9af5",
+     "clientOrderID": "buy-3881c2e8-c2b0-4f0c-b3b8-51262f16986c",
+     "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+     "instrument": {
+      "name": "Bitcoin",
+      "venue": "crypto",
+      "symbol": "BTC",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "side": "buy",
+     "type": "market",
+     "quantity": 4.06463418,
+     "timeInForce": "day",
+     "source": {
+      "kind": "manual"
+     },
+     "mode": "paper",
+     "status": "filled",
+     "filledQuantity": 4.06463418,
+     "averageFillPrice": 123.0123,
+     "fees": 1.25,
+     "referencePrice": 123.0123,
+     "createdAt": 1794559091714,
+     "updatedAt": 1794559091714,
+     "expiresAt": 1794645491714
+    },
+    {
+     "id": "17b1f380-7203-4617-b14f-7696fb17bbbd",
+     "clientOrderID": "limit-9dc30dac-43eb-40ea-8e88-f34b35240e60",
+     "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+     "instrument": {
+      "name": "Bitcoin",
+      "venue": "crypto",
+      "symbol": "BTC",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "side": "buy",
+     "type": "limit",
+     "quantity": 1,
+     "timeInForce": "gtc",
+     "source": {
+      "kind": "manual"
+     },
+     "mode": "paper",
+     "status": "canceled",
+     "filledQuantity": 0,
+     "averageFillPrice": 0,
+     "fees": 0,
+     "referencePrice": 100,
+     "createdAt": 1794559091869,
+     "updatedAt": 1794559091976,
+     "limitPrice": 100,
+     "expiresAt": 1802335091869,
+     "statusNote": "Cancelled by you."
+    },
+    {
+     "id": "7ce4bfb1-7032-4591-a98e-40ced93ba62c",
+     "clientOrderID": "proposal-CE21E290-39ED-4D9C-8DDB-089C2AA42964",
+     "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+     "instrument": {
+      "name": "Bitcoin",
+      "venue": "crypto",
+      "symbol": "BTC",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "side": "buy",
+     "type": "market",
+     "quantity": 4.06463418,
+     "timeInForce": "day",
+     "source": {
+      "kind": "agent",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "proposalID": "ce21e290-39ed-4d9c-8ddb-089c2aa42964"
+     },
+     "mode": "paper",
+     "status": "filled",
+     "filledQuantity": 4.06463418,
+     "averageFillPrice": 123.0123,
+     "fees": 1.25,
+     "referencePrice": 123.0123,
+     "createdAt": 1794559092498,
+     "updatedAt": 1794559092498,
+     "expiresAt": 1794645492498,
+     "signalBarTime": 1794441600000
+    }
+   ],
+   "fills": [
+    {
+     "id": "ab912d27-9509-49d4-bc33-213159759294",
+     "orderID": "12e1fe63-b758-408e-810d-5b4be07e9af5",
+     "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+     "instrument": {
+      "name": "Bitcoin",
+      "venue": "crypto",
+      "symbol": "BTC",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "side": "buy",
+     "quantity": 4.06463418,
+     "price": 123.0123,
+     "fee": 1.25,
+     "time": 1794559091714,
+     "source": {
+      "kind": "manual"
+     },
+     "mode": "paper"
+    },
+    {
+     "id": "d9cb79ea-755b-4a81-bb57-050a4419c5d9",
+     "orderID": "7ce4bfb1-7032-4591-a98e-40ced93ba62c",
+     "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+     "instrument": {
+      "name": "Bitcoin",
+      "venue": "crypto",
+      "symbol": "BTC",
+      "currency": "USD",
+      "assetClass": "crypto"
+     },
+     "side": "buy",
+     "quantity": 4.06463418,
+     "price": 123.0123,
+     "fee": 1.25,
+     "time": 1794559092498,
+     "source": {
+      "kind": "agent",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "proposalID": "ce21e290-39ed-4d9c-8ddb-089c2aa42964"
+     },
+     "mode": "paper",
+     "signalBarTime": 1794441600000
+    }
+   ],
+   "runs": [
+    {
+     "id": "b5de14d5-1b5c-4320-8301-f8b2f51d786d",
+     "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+     "strategyVersion": 1,
+     "trigger": "manual",
+     "startedAt": 1794559092313,
+     "finishedAt": 1794559092313,
+     "status": "completed",
+     "summary": "Checked 2 assets · 2 signals · 2 waiting for approval",
+     "steps": [
+      {
+       "id": "4109fd5a-7580-4c2d-8b52-fae48be9ba7a",
+       "kind": "signal",
+       "title": "BTC: Buy",
+       "detail": "Buy rule met: Close is above 20-day average.",
+       "outcome": "ok",
+       "evidence": [
+        {
+         "label": "Close is above 20-day average",
+         "value": "122.50 vs 109.00",
+         "passed": true
+        }
+       ],
+       "instrumentID": "crypto:BTC"
+      },
+      {
+       "id": "fbbe15d6-fd0c-4c63-a007-d392c02cbff6",
+       "kind": "sizing",
+       "title": "BTC: sized buy of 4.06463418",
+       "detail": "About $500.00 at $123.01. ",
+       "outcome": "ok",
+       "evidence": [],
+       "instrumentID": "crypto:BTC"
+      },
+      {
+       "id": "67433979-ab45-4191-ab20-0a805a1e193a",
+       "kind": "risk",
+       "title": "BTC: passed 22 risk checks",
+       "detail": "All 22 checks passed.",
+       "outcome": "ok",
+       "evidence": [],
+       "instrumentID": "crypto:BTC"
+      },
+      {
+       "id": "3bf9d860-167a-4be1-8cb2-a9fce456fc63",
+       "kind": "proposal",
+       "title": "BTC: waiting for your approval",
+       "detail": "Buy 4.06463418 BTC (about $500.00).",
+       "outcome": "info",
+       "evidence": [],
+       "instrumentID": "crypto:BTC"
+      },
+      {
+       "id": "e7a913a9-a9cc-41eb-9e8f-9ec7d542496f",
+       "kind": "signal",
+       "title": "ETH: Buy",
+       "detail": "Buy rule met: Close is above 20-day average.",
+       "outcome": "ok",
+       "evidence": [
+        {
+         "label": "Close is above 20-day average",
+         "value": "122.50 vs 109.00",
+         "passed": true
+        }
+       ],
+       "instrumentID": "crypto:ETH"
+      },
+      {
+       "id": "fd92fb12-31df-43cf-be7f-8da6220830ff",
+       "kind": "sizing",
+       "title": "ETH: sized buy of 4.06463418",
+       "detail": "About $500.00 at $123.01. ",
+       "outcome": "ok",
+       "evidence": [],
+       "instrumentID": "crypto:ETH"
+      },
+      {
+       "id": "3173c518-e32b-424e-8200-1bd9c092d147",
+       "kind": "risk",
+       "title": "ETH: passed 22 risk checks",
+       "detail": "All 22 checks passed.",
+       "outcome": "ok",
+       "evidence": [],
+       "instrumentID": "crypto:ETH"
+      },
+      {
+       "id": "4847c8e4-2c43-49e2-90d0-6f18d210c3a2",
+       "kind": "proposal",
+       "title": "ETH: waiting for your approval",
+       "detail": "Buy 4.06463418 ETH (about $500.00).",
+       "outcome": "info",
+       "evidence": [],
+       "instrumentID": "crypto:ETH"
+      }
+     ],
+     "signalIDs": [
+      "1b9b904b-0578-406c-99eb-d57b1b8b82c9",
+      "7e3bc0b5-a0ac-4d6a-a44c-e907bc311cf9"
+     ],
+     "proposalIDs": [
+      "ce21e290-39ed-4d9c-8ddb-089c2aa42964",
+      "fa3c101f-9464-4120-ac76-bd1b30e85171"
+     ],
+     "orderIDs": []
+    }
+   ],
+   "audit": {
+    "events": [
+     {
+      "id": "3bf2c6fe-403d-4f8b-9a1b-b68f483b7e53",
+      "sequence": 1,
+      "time": 1794559091593,
+      "actor": "user",
+      "kind": "portfolioCreated",
+      "summary": "Paper portfolio \"Practice\" created with $10000.00.",
+      "details": {
+       "currency": "USD",
+       "startingCash": "10000.0"
+      },
+      "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "abef90f171f81c742d985aa162d42e5841b1b94c3f16f7fd860ff19895cdb7da",
+      "mode": "paper",
+      "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473"
+     },
+     {
+      "id": "5278a107-3603-4d5c-a57a-e8ffb1fdcf49",
+      "sequence": 2,
+      "time": 1794559091714,
+      "actor": "user",
+      "kind": "orderSubmitted",
+      "summary": "Paper market order: buy 4.06463418 BTC.",
+      "details": {
+       "type": "market",
+       "quantity": "4.06463418",
+       "timeInForce": "day",
+       "clientOrderID": "buy-3881c2e8-c2b0-4f0c-b3b8-51262f16986c",
+       "referencePrice": "123.0123"
+      },
+      "previousHash": "abef90f171f81c742d985aa162d42e5841b1b94c3f16f7fd860ff19895cdb7da",
+      "hash": "7927398c297b98cabed453c601736f2cab6a36022d933084f5c7867167537e40",
+      "mode": "paper",
+      "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+      "orderID": "12e1fe63-b758-408e-810d-5b4be07e9af5",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "c646298b-5571-4021-8ec3-49df5381111b",
+      "sequence": 3,
+      "time": 1794559091714,
+      "actor": "system",
+      "kind": "orderFilled",
+      "summary": "Paper fill: Bought 4.06463418 BTC at $123.01.",
+      "details": {
+       "fee": "1.25",
+       "price": "123.0123",
+       "quantity": "4.06463418",
+       "orderStatus": "filled",
+       "quoteSource": "fixture"
+      },
+      "previousHash": "7927398c297b98cabed453c601736f2cab6a36022d933084f5c7867167537e40",
+      "hash": "410390c39129036a18d3ae2471f961398f2cc1484c998ea6944da3b82342e2b2",
+      "mode": "paper",
+      "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+      "orderID": "12e1fe63-b758-408e-810d-5b4be07e9af5",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "e9ce353b-27a7-4b16-b255-b6d8d3671dfc",
+      "sequence": 4,
+      "time": 1794559091869,
+      "actor": "user",
+      "kind": "orderSubmitted",
+      "summary": "Paper limit order: buy 1 BTC.",
+      "details": {
+       "type": "limit",
+       "quantity": "1.0",
+       "timeInForce": "gtc",
+       "clientOrderID": "limit-9dc30dac-43eb-40ea-8e88-f34b35240e60",
+       "referencePrice": "100.0"
+      },
+      "previousHash": "410390c39129036a18d3ae2471f961398f2cc1484c998ea6944da3b82342e2b2",
+      "hash": "b27302a78e737733aa62592df52a8a75dfcf8f48e0733af3fcb217f2d7513f86",
+      "mode": "paper",
+      "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+      "orderID": "17b1f380-7203-4617-b14f-7696fb17bbbd",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "81307707-750a-4850-b071-f068c06b7235",
+      "sequence": 5,
+      "time": 1794559091976,
+      "actor": "user",
+      "kind": "orderCanceled",
+      "summary": "Buy BTC order cancelled. Cancelled by you.",
+      "details": {
+       "filledQuantity": "0.0"
+      },
+      "previousHash": "b27302a78e737733aa62592df52a8a75dfcf8f48e0733af3fcb217f2d7513f86",
+      "hash": "6deb199093d074d8451311feaf446a3787771d821abb9a993f8e55b9d536ca35",
+      "mode": "paper",
+      "ledgerID": "c0fbb6b2-3b4c-4864-9627-0934c4af0473",
+      "orderID": "17b1f380-7203-4617-b14f-7696fb17bbbd",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "4a029617-dd2c-45e7-8d97-e662bb2b255d",
+      "sequence": 6,
+      "time": 1794559092056,
+      "actor": "user",
+      "kind": "killSwitchEngaged",
+      "summary": "Kill switch turned on: 0 agents paused, 0 orders cancelled.",
+      "details": {
+       "agentsPaused": "0",
+       "ordersCancelled": "0"
+      },
+      "previousHash": "6deb199093d074d8451311feaf446a3787771d821abb9a993f8e55b9d536ca35",
+      "hash": "fd31e2dbeeb852b40e6af93b78c3ccfdab8235a496ff9a57b7db863a20b49e0e"
+     },
+     {
+      "id": "d9fba3f0-c1f0-4b63-b5a5-7e943e611614",
+      "sequence": 7,
+      "time": 1794559092140,
+      "actor": "user",
+      "kind": "killSwitchReleased",
+      "summary": "Kill switch turned off. Agents stay paused until you resume them.",
+      "details": {},
+      "previousHash": "fd31e2dbeeb852b40e6af93b78c3ccfdab8235a496ff9a57b7db863a20b49e0e",
+      "hash": "4fd089c4d5d225ba85f6297893d36d7a80973fb370206af22a71dfcd7be376ce"
+     },
+     {
+      "id": "00a56df5-6a8a-4830-8448-7c36219f8268",
+      "sequence": 8,
+      "time": 1794559092226,
+      "actor": "user",
+      "kind": "agentCreated",
+      "summary": "Trend created in Paper trading mode: Above average.",
+      "details": {
+       "mode": "paper",
+       "assets": "BTC,ETH",
+       "budget": "5000.0",
+       "strategyVersion": "1"
+      },
+      "previousHash": "4fd089c4d5d225ba85f6297893d36d7a80973fb370206af22a71dfcd7be376ce",
+      "hash": "8f4b976c3ab47ed0471fee4617d5bac21c1f4f70a28d1d0df7659efbf7d8ed0b",
+      "mode": "paper",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36"
+     },
+     {
+      "id": "62f72328-4571-49a6-8741-038bebf71273",
+      "sequence": 9,
+      "time": 1794559092313,
+      "actor": "agent",
+      "kind": "signalGenerated",
+      "summary": "Trend: buy signal for BTC. Buy rule met: Close is above 20-day average.",
+      "details": {
+       "close": "122.5",
+       "barTime": "1794441600",
+       "dataSource": "fixture",
+       "strategyVersion": "1"
+      },
+      "previousHash": "8f4b976c3ab47ed0471fee4617d5bac21c1f4f70a28d1d0df7659efbf7d8ed0b",
+      "hash": "8a1058f214dc1325136d4b00b2e08314a33ec6c1ad8110fb81a5a041d61e4736",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "885644f4-1feb-4824-8820-ebcbc5e2fc19",
+      "sequence": 10,
+      "time": 1794559092313,
+      "actor": "agent",
+      "kind": "proposalCreated",
+      "summary": "Trend proposed: Buy 4.06463418 BTC (about $500.00).",
+      "details": {
+       "quantity": "4.06463418",
+       "signalID": "1B9B904B-0578-406C-99EB-D57B1B8B82C9",
+       "referencePrice": "123.0123",
+       "strategyVersion": "1"
+      },
+      "previousHash": "8a1058f214dc1325136d4b00b2e08314a33ec6c1ad8110fb81a5a041d61e4736",
+      "hash": "0af72ec9cb4e4975cfe0e84eedfc910c81be9c2d36b3979efc3e12ea32e390a4",
+      "mode": "paper",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+      "proposalID": "ce21e290-39ed-4d9c-8ddb-089c2aa42964",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "8f7e6584-1025-466d-991f-7c479d999b06",
+      "sequence": 11,
+      "time": 1794559092313,
+      "actor": "agent",
+      "kind": "signalGenerated",
+      "summary": "Trend: buy signal for ETH. Buy rule met: Close is above 20-day average.",
+      "details": {
+       "close": "122.5",
+       "barTime": "1794441600",
+       "dataSource": "fixture",
+       "strategyVersion": "1"
+      },
+      "previousHash": "0af72ec9cb4e4975cfe0e84eedfc910c81be9c2d36b3979efc3e12ea32e390a4",
+      "hash": "ea96fb1b9cdccf5d322cb6990fb0496616410ed2b65aaf5622aa8b94f4b76edc",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "instrumentID": "crypto:ETH"
+     },
+     {
+      "id": "57877a86-ab51-466c-8b41-54e207f242cd",
+      "sequence": 12,
+      "time": 1794559092313,
+      "actor": "agent",
+      "kind": "proposalCreated",
+      "summary": "Trend proposed: Buy 4.06463418 ETH (about $500.00).",
+      "details": {
+       "quantity": "4.06463418",
+       "signalID": "7E3BC0B5-A0AC-4D6A-A44C-E907BC311CF9",
+       "referencePrice": "123.0123",
+       "strategyVersion": "1"
+      },
+      "previousHash": "ea96fb1b9cdccf5d322cb6990fb0496616410ed2b65aaf5622aa8b94f4b76edc",
+      "hash": "a76bb7ca372124f5e8b4e90caab72a201299f3ce85fd2a9c1733716ef0972213",
+      "mode": "paper",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+      "proposalID": "fa3c101f-9464-4120-ac76-bd1b30e85171",
+      "instrumentID": "crypto:ETH"
+     },
+     {
+      "id": "6542adc7-a3e7-437a-99e4-66c50c075d17",
+      "sequence": 13,
+      "time": 1794559092498,
+      "actor": "user",
+      "kind": "proposalApproved",
+      "summary": "You approved: buy BTC for Trend.",
+      "details": {},
+      "previousHash": "a76bb7ca372124f5e8b4e90caab72a201299f3ce85fd2a9c1733716ef0972213",
+      "hash": "516dd6567386622118ae7596a1f4a73a14cd23728594542484d5d93df817686e",
+      "mode": "paper",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+      "proposalID": "ce21e290-39ed-4d9c-8ddb-089c2aa42964",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "b5dc710a-0140-4e0a-9f5a-4f0a494a180f",
+      "sequence": 14,
+      "time": 1794559092498,
+      "actor": "agent",
+      "kind": "orderSubmitted",
+      "summary": "Paper market order: buy 4.06463418 BTC.",
+      "details": {
+       "type": "market",
+       "quantity": "4.06463418",
+       "timeInForce": "day",
+       "clientOrderID": "proposal-CE21E290-39ED-4D9C-8DDB-089C2AA42964",
+       "referencePrice": "123.0123"
+      },
+      "previousHash": "516dd6567386622118ae7596a1f4a73a14cd23728594542484d5d93df817686e",
+      "hash": "59464ba0fefc4e0f2c5b310392f47c792b31532dd8cf1d89ebf25fa590029706",
+      "mode": "paper",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+      "orderID": "7ce4bfb1-7032-4591-a98e-40ced93ba62c",
+      "proposalID": "ce21e290-39ed-4d9c-8ddb-089c2aa42964",
+      "instrumentID": "crypto:BTC"
+     },
+     {
+      "id": "db4d507e-97e7-4d85-9453-f57da13b7605",
+      "sequence": 15,
+      "time": 1794559092498,
+      "actor": "system",
+      "kind": "orderFilled",
+      "summary": "Paper fill: Bought 4.06463418 BTC at $123.01.",
+      "details": {
+       "fee": "1.25",
+       "price": "123.0123",
+       "quantity": "4.06463418",
+       "orderStatus": "filled",
+       "quoteSource": "fixture"
+      },
+      "previousHash": "59464ba0fefc4e0f2c5b310392f47c792b31532dd8cf1d89ebf25fa590029706",
+      "hash": "fc0cb3cf570e8ce18bd3aa385be666a36832cca143f51db4069fda5f0175dec0",
+      "mode": "paper",
+      "agentID": "df480526-7a4f-4741-b903-2b900715d1ab",
+      "ledgerID": "edd495f3-27d3-4cf2-bcdb-fc9c2e7c3a36",
+      "orderID": "7ce4bfb1-7032-4591-a98e-40ced93ba62c",
+      "proposalID": "ce21e290-39ed-4d9c-8ddb-089c2aa42964",
+      "instrumentID": "crypto:BTC"
+     }
+    ],
+    "baseHash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "baseSequence": 0
+   },
+   "knownClientOrderIDs": [
+    "buy-3881c2e8-c2b0-4f0c-b3b8-51262f16986c",
+    "limit-9dc30dac-43eb-40ea-8e88-f34b35240e60",
+    "proposal-CE21E290-39ED-4D9C-8DDB-089C2AA42964"
+   ],
+   "quotes": {},
+   "stats": {},
+   "dailyLossNotified": {}
+  },
+  "asOf": 1794559092715,
+  "truncated": {
+   "runs": false,
+   "signals": false,
+   "proposals": false,
+   "orders": false,
+   "fills": false,
+   "audit": false
+  }
+ }
+}

@@ -51,7 +51,7 @@ struct HoldingDetailView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
             }
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle(holding?.asset.symbol ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -567,7 +567,7 @@ struct TransactionFormSheet: View {
                 }
                 .padding(DS.Space.gutter)
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle(editing == nil ? "Add transaction" : "Edit transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

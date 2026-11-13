@@ -15,6 +15,7 @@ import OSLog
 struct HomeHeader: View {
     let onSettings: () -> Void
     @Environment(\.theme) private var theme
+    @Environment(\.selectTab) private var selectTab
 
     private var greeting: LocalizedStringKey {
         switch Calendar.current.component(.hour, from: Date()) {
@@ -25,7 +26,46 @@ struct HomeHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .center) {
+        // Revolut's top bar: a round profile button, a search capsule, all in Liquid Glass.
+        VStack(alignment: .leading, spacing: DS.Space.l) {
+            GlassEffectContainer(spacing: DS.Space.m) {
+                HStack(spacing: DS.Space.m) {
+                    Button {
+                        Haptics.tap()
+                        onSettings()
+                    } label: {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(theme.primaryText)
+                            .frame(width: 44, height: 44)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Settings")
+
+                    Button {
+                        Haptics.tap()
+                        selectTab(.search)
+                    } label: {
+                        HStack(spacing: DS.Space.s) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("Search stocks, ETFs, crypto")
+                                .font(.subheadline)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(theme.secondaryText)
+                        .padding(.horizontal, DS.Space.l)
+                        .frame(height: 44)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Search")
+                    .accessibilityIdentifier("home.search")
+                }
+            }
+
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 Text(greeting)
                     .font(DS.display(.title))
@@ -33,20 +73,6 @@ struct HomeHeader: View {
                     .accessibilityAddTraits(.isHeader)
                 MarketStatusView()
             }
-            Spacer()
-            Button {
-                Haptics.tap()
-                onSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(theme.primaryText)
-                    .frame(width: 44, height: 44)
-                    .background(Circle().fill(theme.subtleFill))
-                    .overlay(Circle().strokeBorder(theme.cardBorder.opacity(0.5), lineWidth: 0.5))
-            }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel("Settings")
         }
     }
 }
@@ -75,15 +101,7 @@ struct PortfolioSummaryHero: View {
     var body: some View {
         Group {
             if marketData.portfolio.isEmpty {
-                EmptyStateCard(
-                    systemImage: "briefcase",
-                    title: "See everything you own in one place",
-                    message: "Connect a broker or add holdings to track your total value, today's move and all-time return.",
-                    primaryTitle: "Connect a broker",
-                    primaryAction: { sheet = .broker },
-                    secondaryTitle: "Enter holdings yourself",
-                    secondaryAction: { sheet = .manual }
-                )
+                emptyHero
             } else {
                 summary
             }
@@ -92,6 +110,49 @@ struct PortfolioSummaryHero: View {
             switch source {
             case .broker: SnapTradeConnectionView()
             case .manual: ManualPositionSheet()
+            }
+        }
+    }
+
+    /// No holdings yet: what Home will show, and three round glass actions to get there
+    /// (Revolut's Add / Move / More row). No made-up balance: an empty portfolio isn't $0.
+    private var emptyHero: some View {
+        VStack(spacing: DS.Space.xl) {
+            VStack(spacing: DS.Space.s) {
+                Text("Your portfolio")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(theme.secondaryText)
+                Text("See everything you own in one place")
+                    .font(.title.weight(.bold))
+                    .foregroundStyle(theme.primaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Connect a broker or add holdings to track your total value, today's move and all-time return.")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, DS.Space.l)
+            actionRow
+        }
+        .padding(.vertical, DS.Space.l)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Revolut's four round frosted actions under the balance.
+    private var actionRow: some View {
+        GlassEffectContainer(spacing: DS.Space.l) {
+            HStack(alignment: .top, spacing: 0) {
+                GlassActionButton(title: "Connect", systemImage: "link",
+                                  accessibilityName: "Connect a broker") { sheet = .broker }
+                Spacer(minLength: 0)
+                GlassActionButton(title: "Add", systemImage: "plus",
+                                  accessibilityName: "Enter holdings yourself") { sheet = .manual }
+                Spacer(minLength: 0)
+                GlassActionButton(title: "Practice", systemImage: "graduationcap") { selectTab(.portfolio) }
+                Spacer(minLength: 0)
+                GlassActionButton(title: "Agents", systemImage: "sparkles") { selectTab(.agents) }
             }
         }
     }
@@ -111,7 +172,8 @@ struct PortfolioSummaryHero: View {
                 range: rangeBinding,
                 chartHeight: 150,
                 showsTodayLine: false,
-                accessibilityID: "chart.price"
+                accessibilityID: "chart.price",
+                centered: true
             )
             .overlay(alignment: .topTrailing) {
                 Button {
@@ -140,7 +202,8 @@ struct PortfolioSummaryHero: View {
                 HeroStat(label: "Holdings", value: "\(marketData.portfolio.count)", alignment: .trailing)
             }
         }
-        .dsCard(padding: DS.Space.xl - 4)
+        // On the section gradient, not in a card (Revolut's balance hero).
+        .padding(.vertical, DS.Space.s)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.portfolio")
     }

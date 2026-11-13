@@ -13,6 +13,7 @@ import TradingCore
 
 enum MarketsSection: String, CaseIterable, Identifiable {
     case watchlist = "Watchlist"
+    case search = "Search"
     case news = "News"
     var id: String { rawValue }
 }
@@ -46,6 +47,10 @@ final class TradingRouter: ObservableObject {
     @Published var agent: Ref?
     @Published var proposal: Ref?
     @Published var order: Ref?
+    /// A practice portfolio's page. Presented from the root: a sheet owned by a row of the
+    /// Portfolio tab's lazy list closed itself (and the order ticket on top of it) whenever
+    /// the list redrew after a trade.
+    @Published var practicePortfolio: Ref?
     @Published var showCopilot = false
     @Published var showPauseAll = false
 
@@ -95,6 +100,9 @@ struct TradingRootSheets: ViewModifier {
             .sheet(item: $router.order) { ref in
                 NavigationStack { OrderDetailView(orderID: ref.id) }
             }
+            .sheet(item: $router.practicePortfolio) { ref in
+                NavigationStack { PracticePortfolioDetailView(ledgerID: ref.id) }
+            }
             .sheet(isPresented: $router.showPauseAll) {
                 PauseAllSheet()
             }
@@ -106,7 +114,7 @@ struct TradingRootSheets: ViewModifier {
 
 // MARK: - Markets tab
 
-/// Watchlist and news under one tab. Search is the system search tab beside the tab bar.
+/// Watchlist, search and news under one tab.
 struct MarketsTabView: View {
     @EnvironmentObject private var router: TradingRouter
     @Environment(\.theme) private var theme
@@ -126,10 +134,11 @@ struct MarketsTabView: View {
 
             switch router.marketsSection {
             case .watchlist: AppleStocksWatchlistView()
+            case .search: StockSearchView()
             case .news: NewsView()
             }
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
     }
 }
 
@@ -143,7 +152,15 @@ struct TradingToolbar: ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             PracticeChip()
         }
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                router.marketsSection = .search
+                router.requestedTab = .markets
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .accessibilityLabel("Search stocks and crypto")
+            .accessibilityIdentifier("trading.search")
             Button {
                 Haptics.tap()
                 router.showCopilot = true

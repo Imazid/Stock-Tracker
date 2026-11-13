@@ -91,7 +91,7 @@ struct SubscriptionSettingsView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .listRowBackground(theme.subtleFill)
         .navigationTitle("Subscription")
         .navigationBarTitleDisplayMode(.inline)

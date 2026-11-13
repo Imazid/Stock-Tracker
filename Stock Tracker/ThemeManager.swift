@@ -26,7 +26,10 @@ enum ColorblindMode: String, CaseIterable, Identifiable {
 
     var positiveColor: Color {
         switch self {
-        case .standard: return .green
+        // Coinbase-like greens: deep enough for 4.5:1 on the light page, brighter on black.
+        case .standard: return Color(UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(red: 0.20, green: 0.80, blue: 0.53, alpha: 1)     // #33CC87
+            : UIColor(red: 0.02, green: 0.52, blue: 0.32, alpha: 1) })  // #058552
         case .deuteranopia: return Color(red: 0.0, green: 0.45, blue: 0.85) // Blue
         case .protanopia: return Color(red: 0.0, green: 0.45, blue: 0.85) // Blue
         }
@@ -34,7 +37,9 @@ enum ColorblindMode: String, CaseIterable, Identifiable {
 
     var negativeColor: Color {
         switch self {
-        case .standard: return .red
+        case .standard: return Color(UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(red: 1.00, green: 0.42, blue: 0.45, alpha: 1)     // #FF6B73
+            : UIColor(red: 0.80, green: 0.13, blue: 0.20, alpha: 1) })  // #CC2133
         case .deuteranopia: return Color(red: 0.9, green: 0.5, blue: 0.0) // Orange
         case .protanopia: return Color(red: 0.85, green: 0.75, blue: 0.0) // Yellow
         }
@@ -76,9 +81,10 @@ final class ThemeManager: ObservableObject {
     }
 
     init() {
-        // New installs follow the system appearance (HIG); a saved choice wins.
-        let saved = UserDefaults.standard.string(forKey: "app_theme_mode") ?? ThemeMode.system.rawValue
-        self.themeMode = ThemeMode(rawValue: saved) ?? .system
+        // Black is the app's look (owner, 2026-11-13, after Revolut): new installs start in
+        // Dark. A saved choice wins, and System / Light stay available in Settings.
+        let saved = UserDefaults.standard.string(forKey: "app_theme_mode") ?? ThemeMode.dark.rawValue
+        self.themeMode = ThemeMode(rawValue: saved) ?? .dark
 
         let savedCB = UserDefaults.standard.string(forKey: "app_colorblind_mode") ?? ColorblindMode.standard.rawValue
         self.colorblindMode = ColorblindMode(rawValue: savedCB) ?? .standard
@@ -103,7 +109,38 @@ struct Theme {
         self.highContrast = highContrast
     }
 
-    private var isDark: Bool { colorScheme == .dark }
+    var isDark: Bool { colorScheme == .dark }
+
+    // MARK: - Glass layer (DSGlass.swift)
+
+    /// The backdrop's main glow, top left: the brand blue.
+    var glowPrimary: Color {
+        isDark ? Color(red: 0.20, green: 0.38, blue: 1.00) : Color(red: 0.00, green: 0.32, blue: 1.00)
+    }
+
+    /// The second glow, top right: a violet that keeps the blue from looking flat.
+    var glowSecondary: Color {
+        isDark ? Color(red: 0.55, green: 0.32, blue: 0.95) : Color(red: 0.45, green: 0.35, blue: 0.95)
+    }
+
+    /// Frosted card fill, laid over an ultra-thin material.
+    var cardFill: Color {
+        isDark ? Color(red: 0.55, green: 0.62, blue: 1.0).opacity(0.075) : Color.white.opacity(0.62)
+    }
+
+    /// The card's lit top edge.
+    var cardHighlight: Color {
+        isDark ? Color.white.opacity(0.10) : Color.white.opacity(0.95)
+    }
+
+    /// The card's lower edge.
+    var cardEdge: Color {
+        isDark ? Color.white.opacity(0.05) : Color.black.opacity(0.06)
+    }
+
+    var cardShadow: Color {
+        isDark ? Color.black.opacity(0.35) : Color(red: 0.10, green: 0.14, blue: 0.30).opacity(0.07)
+    }
 
     // MARK: - Semantic Colors (Accessibility)
 
@@ -132,30 +169,31 @@ struct Theme {
     var positiveIcon: String { colorblindMode.positiveIcon }
     var negativeIcon: String { colorblindMode.negativeIcon }
 
-    // Warm antique-white palette for light mode; standard system colours for dark mode.
-    // Light values approximate Dulux "Antique White" / Manus AI warm-cream aesthetic.
+    // Cool neutrals after Coinbase / Revolut in light mode; a deep blue-black after Fey in
+    // dark mode. The backdrop's glows (DSGlass.swift) sit on top of `background`.
 
-    /// #FAF8F5 — warm white main background (light) / systemBackground (dark)
+    /// #F4F5F8 light / #030408 dark — the page (Revolut's near-black).
     var background: Color {
-        isDark ? Color(UIColor.systemBackground)
-               : Color(red: 0.980, green: 0.973, blue: 0.961)
+        isDark ? Color(red: 0.012, green: 0.016, blue: 0.031)
+               : Color(red: 0.957, green: 0.961, blue: 0.973)
     }
 
-    /// #F3EFE8 — warm cream secondary background (light) / secondarySystemBackground (dark)
+    /// #EBEDF2 light / #0D0F17 dark.
     var secondaryBackground: Color {
-        isDark ? Color(UIColor.secondarySystemBackground)
-               : Color(red: 0.953, green: 0.937, blue: 0.910)
+        isDark ? Color(red: 0.051, green: 0.059, blue: 0.090)
+               : Color(red: 0.922, green: 0.929, blue: 0.949)
     }
 
-    /// #EDE8E0 — warm cream card surface (light)
+    /// Solid card surface where translucency would hurt (lists, inputs): white / #171A26,
+    /// Revolut's navy-grey.
     var cardBackground: Color {
-        isDark ? Color(UIColor.secondarySystemGroupedBackground)
-               : Color(red: 0.929, green: 0.910, blue: 0.878)
+        isDark ? Color(red: 0.090, green: 0.102, blue: 0.149)
+               : Color.white
     }
 
     var cardBorder: Color {
-        isDark ? Color(UIColor.separator)
-               : Color(red: 0.78, green: 0.74, blue: 0.69).opacity(0.5)
+        isDark ? Color.white.opacity(0.10)
+               : Color(red: 0.10, green: 0.14, blue: 0.30).opacity(0.10)
     }
 
     var primaryText: Color {

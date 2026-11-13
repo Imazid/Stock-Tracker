@@ -72,7 +72,7 @@ struct HomeView: View {
                 }
                 .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
-                .background(theme.background.ignoresSafeArea())
+                .dsScreenBackground(style: .home)
             }
 
             .sheet(isPresented: $showSettings) {

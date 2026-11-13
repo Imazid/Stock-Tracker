@@ -150,11 +150,7 @@ struct DetailHeaderChart: View {
     private var priceBlock: some View {
         let shown = scrubbedCandle?.close ?? scrubbed?.value ?? live.price
         HStack(alignment: .center) {
-            Text(live.price > 0 ? format.money(shown) : "—")
-                .font(DS.money(40, weight: .bold))
-                .foregroundStyle(theme.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
+            MoneyText(text: live.price > 0 ? format.money(shown) : "—", size: 44)
                 .contentTransition(.numericText(value: shown))
                 .animation(scrubbed == nil && scrubbedCandle == nil ? DS.quick : nil, value: shown)
                 .accessibilityIdentifier("detail.price")

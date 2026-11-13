@@ -282,6 +282,17 @@ struct DSPriceChart: View {
                     }
             }
 
+            // The latest price: a dot with a soft halo (Fey / Revolut), hidden while scrubbing.
+            if activeIndex == nil, let lastIndex = points.indices.last {
+                let p = points[lastIndex]
+                PointMark(x: xValue(index: lastIndex, point: p), y: .value("Price", p.value))
+                    .symbolSize(260)
+                    .foregroundStyle(tint.opacity(0.18))
+                PointMark(x: xValue(index: lastIndex, point: p), y: .value("Price", p.value))
+                    .symbolSize(44)
+                    .foregroundStyle(tint)
+            }
+
             if let i = activeIndex {
                 let p = points[i]
                 RuleMark(x: xValue(index: i, point: p))
@@ -314,8 +325,8 @@ struct DSPriceChart: View {
         }
         .chartYAxis {
             if showsYAxis {
+                // Labels only, no grid lines: the line and its baseline carry the chart.
                 AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(theme.cardBorder.opacity(0.35))
                     AxisValueLabel {
                         if let v = value.as(Double.self) {
                             Text(valueText(v)).font(.caption2.monospacedDigit()).foregroundStyle(theme.secondaryText)
@@ -418,20 +429,30 @@ struct DSRangePicker: View {
 
     static let standard: [TimeRange] = [.oneDay, .oneWeek, .oneMonth, .threeMonths, .ytd, .oneYear, .fiveYears]
 
+    @Namespace private var chip
+
     var body: some View {
-        HStack(spacing: 2) {
+        // A capsule track with a raised chip that slides to the selection (Revolut / Coinbase).
+        HStack(spacing: 0) {
             ForEach(options, id: \.self) { option in
                 let isOn = option == selection
                 Button {
                     guard !isOn else { return }
                     Haptics.select()
-                    dsAnimate(DS.quick) { selection = option }
+                    dsAnimate(DS.spring) { selection = option }
                 } label: {
                     Text(option.rawValue)
-                        .font(.footnote.weight(isOn ? .bold : .semibold))
-                        .foregroundStyle(isOn ? tint : theme.secondaryText)
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                        .background(Capsule().fill(isOn ? tint.opacity(0.15) : .clear))
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(isOn ? theme.primaryText : theme.secondaryText)
+                        .frame(maxWidth: .infinity, minHeight: 32)
+                        .background {
+                            if isOn {
+                                Capsule()
+                                    .fill(theme.isDark ? Color.white.opacity(0.14) : Color.white)
+                                    .shadow(color: .black.opacity(theme.isDark ? 0 : 0.08), radius: 4, y: 1)
+                                    .matchedGeometryEffect(id: "chip", in: chip)
+                            }
+                        }
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -439,6 +460,8 @@ struct DSRangePicker: View {
                 .accessibilityAddTraits(isOn ? .isSelected : [])
             }
         }
+        .padding(3)
+        .background(Capsule().fill(theme.isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.05)))
     }
 }
 

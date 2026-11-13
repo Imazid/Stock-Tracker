@@ -54,7 +54,8 @@ final class InternationalMarketTests: XCTestCase {
 
     func testLotsAndWholeShares() {
         XCTAssertEqual(PaperBroker.rules(for: .listed("7203", on: .tse)).quantityIncrement, 100)
-        XCTAssertEqual(PaperBroker.rules(for: .listed("D05", on: .sgx)).minQuantity, 100)
+        XCTAssertEqual(PaperBroker.rules(for: .listed("D05", on: .sgx)).minQuantity, 1)          // price-tiered since Oct 2026
+        XCTAssertEqual(PaperBroker.rules(for: .listed("1306", on: .tse, etf: true)).quantityIncrement, 1)   // funds set their own units
         XCTAssertFalse(PaperBroker.rules(for: .listed("VOD", on: .lse)).fractionable)
         XCTAssertTrue(PaperBroker.capabilities.venues.contains(.nse))
     }
@@ -162,5 +163,83 @@ final class InternationalMarketTests: XCTestCase {
             XCTAssertTrue(StrategyValidator.isValid(draft.spec))
             XCTAssertTrue(Currencies.budgetRange(draft.currency).contains(draft.budget), draft.currency)
         }
+    }
+}
+
+final class TransactionTaxTests: XCTestCase {
+    let config = PaperBrokerConfig()
+
+    func testDefiniteTaxesByVenueAndSide() {
+        let shell = Instrument.listed("SHEL", on: .lse)
+        XCTAssertEqual(PaperBroker.fee(for: shell, side: .buy, notional: 1_000, isFirstFillOfOrder: true, config: config), 5)
+        XCTAssertEqual(PaperBroker.fee(for: shell, side: .sell, notional: 1_000, isFirstFillOfOrder: true, config: config), 0)
+        XCTAssertEqual(PaperBroker.fee(for: .listed("ISF", on: .lse, etf: true), side: .buy, notional: 1_000, isFirstFillOfOrder: true, config: config), 0)
+        XCTAssertEqual(PaperBroker.tax(for: .listed("MC", on: .euronextParis), side: .buy, notional: 10_000), 40)
+        XCTAssertEqual(PaperBroker.tax(for: .listed("ASML", on: .euronextAmsterdam), side: .buy, notional: 10_000), 0)
+        // Hong Kong: 0.1% each side, rounded up to the next dollar.
+        XCTAssertEqual(PaperBroker.tax(for: .listed("0700", on: .hkex), side: .buy, notional: 39_040), 40)
+        XCTAssertEqual(PaperBroker.tax(for: .listed("0700", on: .hkex), side: .sell, notional: 39_000), 39)
+        XCTAssertEqual(PaperBroker.tax(for: .listed("005930", on: .krx), side: .sell, notional: 1_000_000), 2_000)
+        XCTAssertEqual(PaperBroker.tax(for: .listed("005930", on: .krx), side: .buy, notional: 1_000_000), 0)
+        XCTAssertEqual(PaperBroker.tax(for: .listed("TCS", on: .nse), side: .buy, notional: 100_000), 100)
+        // US, ASX and crypto are unchanged: no tax.
+        XCTAssertEqual(PaperBroker.tax(for: Fx.aapl, side: .buy, notional: 1_000), 0)
+        XCTAssertEqual(PaperBroker.tax(for: Fx.bhp, side: .buy, notional: 1_000), 0)
+        XCTAssertNotNil(PaperBroker.taxNote(for: shell, side: .buy))
+        XCTAssertNil(PaperBroker.taxNote(for: shell, side: .sell))
+    }
+
+    func testStampDutyReachesTheLedgerAndBuyingPower() throws {
+        let shell = Instrument.listed("SHEL", name: "Shell", on: .lse)
+        let londonNow = Fx.date("2026-11-10T11:00:00Z")
+        var engine = Fx.engine()
+        let ledger = try engine.createPaperPortfolio(name: "UK", startingCash: 1_000, currency: "GBP", now: londonNow)
+        engine.ingest(quotes: [Fx.quote(shell, last: 25, spreadBps: nil, time: londonNow)], now: londonNow)
+        // 40 shares cost about £1,000.20 plus £5.00 duty: more than the cash.
+        XCTAssertEqual(engine.submit(OrderRequest(ledgerID: ledger.id, instrument: shell, side: .buy, quantity: 40), now: londonNow).risk.failures.map(\.id),
+                       [.buyingPower])
+        let result = engine.submit(OrderRequest(ledgerID: ledger.id, instrument: shell, side: .buy, quantity: 39), now: londonNow)
+        XCTAssertEqual(result.order?.status, .filled)
+        let fill = try XCTUnwrap(engine.state.fills.first)
+        XCTAssertEqual(fill.fee, Rounding.money(fill.gross * 0.005))
+        XCTAssertEqual(engine.state.ledger(ledger.id)?.cash, Rounding.money(1_000 - fill.gross - fill.fee))
+    }
+}
+
+/// Issues found while porting the engine to the server.
+final class PortingFindingsTests: XCTestCase {
+    func testARejectedOrdersKeyCannotBeReused() throws {
+        var engine = Fx.engine()
+        let ledger = try engine.createPaperPortfolio(name: "P", startingCash: 1_000, now: Fx.now)
+        engine.ingest(quotes: [Fx.quote(Fx.aapl, last: 100)], now: Fx.now)
+        let first = engine.submit(OrderRequest(clientOrderID: "k1", ledgerID: ledger.id, instrument: Fx.aapl, side: .buy, quantity: 50), now: Fx.now)
+        XCTAssertEqual(first.order?.status, .rejected)               // not enough cash
+        let retry = engine.submit(OrderRequest(clientOrderID: "k1", ledgerID: ledger.id, instrument: Fx.aapl, side: .buy, quantity: 1), now: Fx.now)
+        XCTAssertFalse(retry.isAccepted)
+        XCTAssertEqual(retry.risk.failures.map(\.id), [.duplicate])
+        XCTAssertEqual(engine.state.orders.count, 1)
+    }
+
+    func testNoNegativeZeroInRiskText() {
+        XCTAssertEqual(RiskEngine.percentText(max(0, -0.0)), "0.0%")
+    }
+
+    func testAnOversellIsCutToTheHolding() {
+        var ledger = Ledger(name: "L", kind: .manualPaper, startingCash: 1_000, createdAt: Fx.now)
+        ledger.apply(Fill(orderID: UUID(), ledgerID: ledger.id, instrument: Fx.aapl, side: .buy, quantity: 2, price: 100,
+                          fee: 0, time: Fx.now, source: .manual, mode: .paper))
+        let sold = ledger.apply(Fill(orderID: UUID(), ledgerID: ledger.id, instrument: Fx.aapl, side: .sell, quantity: 5, price: 110,
+                                     fee: 0, time: Fx.now, source: .manual, mode: .paper))
+        XCTAssertEqual(sold.quantity, 2)
+        XCTAssertEqual(ledger.cash, 1_020)                           // 800 + 2 × 110, not 5 × 110
+        XCTAssertEqual(sold.realizedPnL, 20)
+        XCTAssertNil(ledger.position(Fx.aapl.id))
+    }
+
+    func testRebalanceErrorsComeInAFixedOrder() {
+        var spec = AgentTemplates.etfRebalancing(UniverseCatalog.balancedETFs)
+        spec.rebalance?.targets = ["us:ZZZ": 50, "us:AAA": 50, "us:MMM": 150]
+        let first = StrategyValidator.validate(spec).map(\.message)
+        for _ in 0..<5 { XCTAssertEqual(StrategyValidator.validate(spec).map(\.message), first) }
     }
 }

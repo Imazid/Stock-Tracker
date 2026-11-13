@@ -79,8 +79,7 @@ final class LargeTextTests: XCTestCase {
     // MARK: - Helpers
 
     private func tab(_ name: String) {
-        let button = app.tabBars.buttons[name].exists ? app.tabBars.buttons[name] : app.buttons[name].firstMatch
-        if button.waitForExistence(timeout: 5) { button.tap() }
+        app.open(name, timeout: 5)
     }
 
     private func waitForStep(_ title: String) {

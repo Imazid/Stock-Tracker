@@ -87,7 +87,7 @@ struct TierKeeperSheet: View {
                     Color.clear.onAppear { finishSelection() }
                 }
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled()
             .sheet(isPresented: $showPaywall) {

@@ -299,8 +299,11 @@ max_enrolled_factors = 10
 
 # Control MFA via App Authenticator (TOTP)
 [auth.mfa.totp]
-enroll_enabled = false
-verify_enabled = false
+# On so the trading API's step-up check (releasing the kill switch, loosening limits and
+# live requests need an MFA-verified session once a person has a factor) can be tested
+# against a real aal2 session locally.
+enroll_enabled = true
+verify_enabled = true
 
 # Configure MFA via Phone Messaging
 [auth.mfa.phone]
@@ -371,7 +374,8 @@ authorization_url_path = "/oauth/consent"
 allow_dynamic_registration = false
 
 [edge_runtime]
-enabled = false
+# On for the trading functions (supabase/functions/trading-api, agent-scheduler).
+enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
 # `per_worker` (default) — enables hot reload during local development.
 # `oneshot` — fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).
@@ -383,6 +387,16 @@ deno_version = 2
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
+
+# The trading API takes a signed-in person's token; the function checks it again itself
+# and takes the user id from it, never from the request body.
+[functions.trading-api]
+verify_jwt = true
+
+# The scheduler is called by pg_cron with a secret header (TRADING_SCHEDULER_SECRET), not
+# a user token. Without the header it refuses.
+[functions.agent-scheduler]
+verify_jwt = false
 
 [analytics]
 enabled = false

@@ -84,7 +84,7 @@ private struct CopilotScreen: View {
                     if let last = engine.messages.last { dsAnimate { proxy.scrollTo(last.id, anchor: .top) } }
                 }
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .safeAreaInset(edge: .bottom) { inputBar }
             .navigationTitle("Copilot")
             .navigationBarTitleDisplayMode(.inline)
@@ -255,7 +255,7 @@ private struct CopilotScreen: View {
                             .accessibilityIdentifier("copilot.limit.cancel")
                         Button("Confirm") {
                             Haptics.tap()
-                            engine.confirmLimitChange(card: id, agentID: agentID, policy: policy)
+                            Task { await engine.confirmLimitChange(card: id, agentID: agentID, policy: policy) }
                         }
                         .buttonStyle(PrimaryPillButtonStyle())
                         .accessibilityIdentifier("copilot.limit.confirm")

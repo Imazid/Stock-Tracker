@@ -500,7 +500,7 @@ struct AddPriceAlertSheet: View {
                 .padding(.bottom, DS.Space.xl)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .safeAreaInset(edge: .bottom) { createButton }
             .navigationTitle("Price alert")
             .navigationBarTitleDisplayMode(.inline)
@@ -786,7 +786,7 @@ struct PriceAlertsView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("Price alerts")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -934,7 +934,7 @@ private struct AlertSymbolPicker: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("New alert")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

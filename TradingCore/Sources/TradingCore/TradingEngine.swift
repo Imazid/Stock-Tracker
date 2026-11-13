@@ -419,7 +419,7 @@ public struct TradingEngine: Sendable {
         if request.quantity == nil, let notional = request.notional, price > 0 {
             quantity = Rounding.floor(notional / price, increment: rules.quantityIncrement)
         }
-        let fee = PaperBroker.fee(for: request.instrument, notional: Rounding.money(quantity * price),
+        let fee = PaperBroker.fee(for: request.instrument, side: request.side, notional: Rounding.money(quantity * price),
                                   isFirstFillOfOrder: true, config: state.paperConfig)
         return Sized(quantity: quantity, price: price, fee: fee, modelledSpread: modelled)
     }
@@ -520,6 +520,8 @@ public struct TradingEngine: Sendable {
                 return .rejected(order: nil, risk: risk)
             }
             let order = makeOrder(status: .rejected, note: risk.summary)
+            // A key is used once, whatever happened to it: a retry must come with a new one.
+            state.knownClientOrderIDs.insert(request.clientOrderID)
             state.orders.append(order)
             state.audit.append(time: now, actor: actor, kind: .orderRejected,
                                summary: "\(request.side.rawValue.capitalized) \(symbol) rejected: \(risk.summary)",

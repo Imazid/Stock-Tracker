@@ -91,9 +91,12 @@ struct ContentView: View {
             Tab("Activity", systemImage: MainTab.activity.icon, value: MainTab.activity) {
                 ActivityTabView()
             }
-
-            Tab("Search", systemImage: "magnifyingglass", value: MainTab.search, role: .search) {
-                StockSearchView()
+        }
+        // Search lives in Markets (a sixth tab would push Activity into a "More" menu).
+        .onChange(of: selectedTab) { _, tab in
+            if tab == .search {
+                router.marketsSection = .search
+                selectedTab = .markets
             }
         }
         .tint(DS.accent)
