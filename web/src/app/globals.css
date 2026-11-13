@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+/* Theme: refined dark by default, light on request. Colours are tokens; components only
+   use the Tailwind names mapped below, never raw hex. Contrast pairs are checked for
+   WCAG 2.2 AA (text-3 on surface ≥ 4.5:1 in both themes). */
+:root {
+  color-scheme: dark;
+  --bg: #0a0b0d;
+  --surface: #111317;
+  --surface-2: #171a1f;
+  --surface-3: #1f232a;
+  --border: #262a31;
+  --border-strong: #363b46;
+  --text: #e7e9ec;
+  --text-2: #a8aeb8;
+  --text-3: #858c97;
+  --primary: #5867f2;
+  --primary-hover: #6876ff;
+  --primary-text: #ffffff;
+  --primary-soft: rgba(104, 118, 255, 0.14);
+  --primary-fg: #9aa5ff;
+  --up: #34c77b;
+  --up-soft: rgba(52, 199, 123, 0.13);
+  --down: #f2646f;
+  --down-soft: rgba(242, 100, 111, 0.13);
+  --warn: #f2b448;
+  --warn-soft: rgba(242, 180, 72, 0.14);
+  --live: #ff5a5a;
+  --live-soft: rgba(255, 90, 90, 0.16);
+  --focus: #9aa5ff;
+  --chart-grid: rgba(255, 255, 255, 0.05);
+  --chart-text: #a8aeb8;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --surface-3: #e8ebf0;
+  --border: #e1e5eb;
+  --border-strong: #cdd3dc;
+  --text: #0f1115;
+  --text-2: #464d58;
+  --text-3: #5f6672;
+  --primary: #4353e0;
+  --primary-hover: #3545d0;
+  --primary-text: #ffffff;
+  --primary-soft: rgba(67, 83, 224, 0.1);
+  --primary-fg: #3443c9;
+  --up: #0d8048;
+  --up-soft: rgba(13, 128, 72, 0.1);
+  --down: #c52f3d;
+  --down-soft: rgba(197, 47, 61, 0.09);
+  --warn: #935700;
+  --warn-soft: rgba(196, 122, 0, 0.12);
+  --live: #c81e1e;
+  --live-soft: rgba(200, 30, 30, 0.1);
+  --focus: #4353e0;
+  --chart-grid: rgba(15, 17, 21, 0.06);
+  --chart-text: #464d58;
+  --shadow: 0 1px 2px rgba(15, 17, 21, 0.06), 0 8px 24px rgba(15, 17, 21, 0.06);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-text: var(--primary-text);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-fg: var(--primary-fg);
+  --color-up: var(--up);
+  --color-up-soft: var(--up-soft);
+  --color-down: var(--down);
+  --color-down-soft: var(--down-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-live: var(--live);
+  --color-live-soft: var(--live-soft);
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --shadow-card: var(--shadow);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--primary-soft);
+}
+
+@keyframes shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 0px, var(--surface-3) 60px, var(--surface-2) 120px);
+  background-size: 200px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+}
+
+/* Thin scrollbars that follow the theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
