@@ -85,7 +85,7 @@ select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a00
   '23505','conflicting duplicate handoff is refused');
 select public.record_private_provider_event('birchal','fixture-account',
   (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
-  'test-receipt','application_received',now()-interval '1 minute',now()+interval '5 days');
+  'test-receipt','application_received',now()-interval '1 minute',now()-interval '30 seconds');
 select pg_temp.expect_error($q$select public.record_private_provider_event('birchal','different-account',
   (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
   'test-receipt','confirmed',now(),null,25,9500)$q$,'42501','provider events require matching connected account');

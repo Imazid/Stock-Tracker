@@ -219,6 +219,38 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(ready.waitForExistence(timeout: 20), app.debugDescription)
     }
 
+    @MainActor
+    func testProviderWithdrawalTimelineShowsSourceAndStatus() async throws {
+        // Optional disposable fixture seeded by the application lifecycle integration.
+        let login = ProcessInfo.processInfo.environment["PRIVATE_LIFECYCLE_TEST_LOGIN"]
+        try XCTSkipUnless(login != nil, "Set PRIVATE_LIFECYCLE_TEST_LOGIN to a seeded disposable account.")
+        let credentials = try XCTUnwrap(login)
+        let host = "http://127.0.0.1:58533"
+        let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+        app.terminate()
+        app.launchArguments += ["-SupabaseURLOverride", host, "-SupabaseAnonKeyOverride", key, "-UITestSignIn", credentials]
+        app.launch()
+        openPrivateMarkets()
+        let investor = app.buttons["Investor profile & applications"]
+        if !investor.isHittable { app.swipeUp() }
+        XCTAssertTrue(investor.waitForExistence(timeout: 10))
+        investor.tap()
+        let row = app.buttons["private.application.row"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 45), app.debugDescription)
+        for _ in 0..<4 where !row.isHittable { app.swipeUp() }
+        XCTAssertTrue(row.isHittable, app.debugDescription)
+        row.tap()
+        let status = app.staticTexts["private.application.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertEqual(status.label, "Provider recorded a withdrawal request")
+        let timeline = app.staticTexts["Withdrawal requested"]
+        if !timeline.isHittable { app.swipeUp() }
+        XCTAssertTrue(timeline.waitForExistence(timeout: 8))
+        let help = app.links["Open provider withdrawal instructions"]
+        if !help.isHittable { app.swipeUp() }
+        XCTAssertTrue(help.waitForExistence(timeout: 8))
+    }
+
     private func openPrivateMarkets() {
         let tabs = app.tabBars.firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 12))

@@ -7,6 +7,7 @@ struct PrivateInvestorView: View {
     @State private var country = "AU"
     @State private var declaredClass = "unknown"
     @State private var records: [PrivateApplication] = []
+    @State private var recordsOwner: UUID?
     @State private var busy = false
     @State private var feedback: String?
 
@@ -40,24 +41,22 @@ struct PrivateInvestorView: View {
                         }
                         .privateLoadingLabel("Loading applications")
                     }
-                    if records.isEmpty && !busy { Text("No tracked applications").foregroundStyle(.secondary) }
-                    ForEach(records) { record in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(PrivateInput.money(record.requestedAmount, currency: record.currency)).font(.headline)
-                            Text(PrivateProvider.directory.first { $0.id == record.provider }?.name ?? record.provider)
-                            Text(label(record.status)).font(.subheadline)
-                            if let ref = record.providerReference { LabeledContent("Provider reference", value: ref) }
-                            if let deadline = record.coolingOffEndsAt {
-                                LabeledContent("Provider withdrawal deadline",
-                                               value: deadline.formatted(date: .abbreviated, time: .shortened))
-                                if let provider = PrivateProvider.directory.first(where: { $0.id == record.provider }) {
-                                    Link("Manage or withdraw at \(provider.name)", destination: provider.url)
-                                }
+                    let visibleRecords = recordsOwner == auth.userId ? records : []
+                    if visibleRecords.isEmpty && !busy { Text("No tracked applications").foregroundStyle(.secondary) }
+                    ForEach(visibleRecords) { record in
+                        NavigationLink {
+                            if let owner = auth.userId {
+                                PrivateApplicationDetail(record: record, owner: owner)
                             }
-                            if let date = record.confirmedAt {
-                                LabeledContent("Ownership confirmed", value: date.formatted(date: .abbreviated, time: .omitted))
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(record.companyName).font(.headline)
+                                Text(record.displayStatus).font(.subheadline)
+                                Text(PrivateInput.money(record.requestedAmount, currency: record.currency))
+                                    .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
                             }
                         }
+                        .accessibilityIdentifier("private.application.row")
                     }
                 }
             }
@@ -65,14 +64,65 @@ struct PrivateInvestorView: View {
         }
         .navigationTitle("Investor Profile & Applications")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
+        .onChange(of: auth.userId, initial: true) { _, _ in
+            records = []
+            recordsOwner = nil
+            country = "AU"
+            declaredClass = "unknown"
+            feedback = nil
+            busy = false
+        }
+        .task(id: auth.userId) { await load() }
         .refreshable { await load() }
     }
 
-    private func label(_ status: String) -> String {
+    private func load() async {
+        guard let owner = auth.userId else { return }
+        busy = true
+        defer { if auth.userId == owner { busy = false } }
+        do {
+            struct Response: Decodable { let profile: PrivateInvestorProfile? }
+            async let profile: Response = PrivateMarketsAPI.request("profile", expectedUserID: owner)
+            async let applications: PrivateMarketsAPI.Applications = PrivateMarketsAPI.request("applications", expectedUserID: owner)
+            let (saved, tracking) = try await (profile, applications)
+            try Task.checkCancellation()
+            guard auth.userId == owner else { return }
+            if let saved = saved.profile {
+                country = saved.country
+                declaredClass = saved.declaredClass
+            }
+            records = tracking.applications
+            recordsOwner = owner
+        } catch is CancellationError {
+        } catch { if auth.userId == owner { feedback = error.localizedDescription } }
+    }
+
+    private func save() {
+        guard let owner = auth.userId else { return }
+        let fields = ["country": country.uppercased(), "declared_class": declaredClass]
+        busy = true
+        feedback = nil
+        Task {
+            defer { if auth.userId == owner { busy = false } }
+            do {
+                try await PrivateMarketsAPI.send("save_profile", fields, expectedUserID: owner)
+                if auth.userId == owner { feedback = "Investor profile saved." }
+            } catch is CancellationError {
+            } catch { if auth.userId == owner { feedback = error.localizedDescription } }
+        }
+    }
+}
+
+private extension PrivateApplication {
+    var companyName: String {
+        offer?.round?.company?.name ?? PrivateProvider.directory.first { $0.id == provider }?.name ?? "Provider application"
+    }
+
+    var displayStatus: String {
         switch status {
         case "handoff": "Handoff prepared · awaiting provider"
         case "application_received": "Provider received application"
+        case "withdrawal_requested": "Provider recorded a withdrawal request"
         case "confirmed": "Provider confirmed ownership"
         case "withdrawn": "Provider confirmed withdrawal"
         case "rejected": "Provider declined application"
@@ -80,39 +130,90 @@ struct PrivateInvestorView: View {
         }
     }
 
-    private func load() async {
-        guard auth.userId != nil else { return }
-        busy = true
-        defer { busy = false }
-        do {
-            struct Response: Decodable { let profile: PrivateInvestorProfile? }
-            let saved: Response = try await PrivateMarketsAPI.request("profile")
-            let tracking: PrivateMarketsAPI.Applications = try await PrivateMarketsAPI.request("applications")
-            try Task.checkCancellation()
-            if let saved = saved.profile {
-                country = saved.country
-                declaredClass = saved.declaredClass
+    var withdrawalHelp: URL? {
+        switch provider {
+        case "birchal":
+            URL(string: "https://help.birchal.com/en/articles/1709077-how-do-i-cancel-my-investment")
+        case "onmarket":
+            URL(string: "https://www.onmarket.com.au/help-faq/equity-crowdfunding-investing-and-allocations/how-do-i-cancel-my-application/")
+        default: nil
+        }
+    }
+}
+
+private struct PrivateApplicationDetail: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    let record: PrivateApplication
+    let owner: UUID
+    @State private var refreshed: PrivateApplication?
+    @State private var feedback: String?
+
+    var body: some View {
+        if auth.userId == owner {
+            let record = refreshed ?? self.record
+            List {
+                Section("Application") {
+                    Text(record.displayStatus).font(.headline).accessibilityIdentifier("private.application.status")
+                    if let stage = record.offer?.round?.stage { LabeledContent("Funding round", value: stage) }
+                    LabeledContent("Requested amount", value: PrivateInput.money(record.requestedAmount, currency: record.currency))
+                    if let reference = record.providerReference { LabeledContent("Provider reference", value: reference) }
+                    if let date = record.providerEventAt { dated("Latest provider update", date) }
+                }
+                Section("Timeline") {
+                    dated("Handoff prepared", record.acknowledgedAt)
+                    if let date = record.providerReceivedAt { dated("Application received", date) }
+                    if let date = record.withdrawalRequestedAt { dated("Withdrawal requested", date) }
+                    if let date = record.withdrawalDeclinedAt { dated("Withdrawal declined by provider", date) }
+                    if let date = record.withdrawnAt { dated("Withdrawal confirmed", date) }
+                    if let date = record.confirmedAt { dated("Ownership confirmed", date) }
+                }
+                if record.status == "application_received" || record.status == "withdrawal_requested" {
+                    Section("Withdrawal") {
+                        if let deadline = record.coolingOffEndsAt {
+                            dated("Deadline reported by provider", deadline)
+                            if deadline <= .now {
+                                Text("The recorded deadline has passed. Check your provider for any other withdrawal options.")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("Check your provider account for any deadline and the steps to withdraw.")
+                                .foregroundStyle(.secondary)
+                        }
+                        if record.status == "withdrawal_requested" {
+                            Text("Awaiting the provider’s decision on your request. Check the provider account for refund information.")
+                                .foregroundStyle(.secondary)
+                        }
+                        if let help = record.withdrawalHelp { Link("Open provider withdrawal instructions", destination: help) }
+                    }
+                }
+                if let feedback { Text(feedback).foregroundStyle(.secondary) }
             }
-            records = tracking.applications
-        } catch is CancellationError {
-        } catch { feedback = error.localizedDescription }
+            .navigationTitle(record.companyName)
+            .navigationBarTitleDisplayMode(.inline)
+            .refreshable { await refresh() }
+        } else {
+            ContentUnavailableView("Application unavailable", systemImage: "doc.text")
+        }
     }
 
-    private func save() {
-        busy = true
+    private func dated(_ label: String, _ date: Date) -> some View {
+        LabeledContent(label, value: date.formatted(date: .abbreviated, time: .shortened))
+    }
+
+    private func refresh() async {
         feedback = nil
-        Task {
-            defer { busy = false }
-            do {
-                try await PrivateMarketsAPI.send("save_profile", ["country": country.uppercased(), "declared_class": declaredClass])
-                feedback = "Investor profile saved."
-            } catch { feedback = error.localizedDescription }
-        }
+        do {
+            let reply: PrivateMarketsAPI.Applications = try await PrivateMarketsAPI.request("applications", expectedUserID: owner)
+            guard auth.userId == owner else { return }
+            if let latest = reply.applications.first(where: { $0.id == record.id }) { refreshed = latest }
+        } catch is CancellationError {
+        } catch { if auth.userId == owner { feedback = error.localizedDescription } }
     }
 }
 
 struct PrivateProviderHandoff: View {
     let deal: PrivateDeal
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.openURL) private var openURL
     @State private var amount = ""
     @State private var reviewed = false
@@ -149,10 +250,14 @@ struct PrivateProviderHandoff: View {
         .onChange(of: amount) { _, _ in ready = nil }
         .onChange(of: reviewed) { _, _ in ready = nil }
         .onChange(of: acknowledged) { _, _ in ready = nil }
+        .onChange(of: auth.userId) { _, _ in
+            ready = nil
+            error = nil
+        }
     }
 
     private func prepare() {
-        guard let value = PrivateInput.amount(amount), let document = deal.offerDocumentUrl else { return }
+        guard let owner = auth.userId, let value = PrivateInput.amount(amount), let document = deal.offerDocumentUrl else { return }
         busy = true
         error = nil
         ready = nil
@@ -162,7 +267,8 @@ struct PrivateProviderHandoff: View {
                 let result: PrivateMarketsAPI.Handoff = try await PrivateMarketsAPI.request("handoff", [
                     "opportunity_id": deal.id.uuidString, "amount": NSDecimalNumber(decimal: value).stringValue,
                     "document_url": document.absoluteString, "acknowledged": reviewed && acknowledged
-                ])
+                ], expectedUserID: owner)
+                guard auth.userId == owner else { return }
                 guard result.handoffUrl.privateSourceIsSafe else {
                     error = "The provider link could not be verified."
                     return
@@ -170,7 +276,8 @@ struct PrivateProviderHandoff: View {
                 if reviewed, acknowledged, PrivateInput.amount(amount) == value {
                     ready = result.handoffUrl
                 }
-            } catch { self.error = error.localizedDescription }
+            } catch is CancellationError {
+            } catch { if auth.userId == owner { self.error = error.localizedDescription } }
         }
     }
 }

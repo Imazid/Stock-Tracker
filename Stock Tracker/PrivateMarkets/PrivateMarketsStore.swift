@@ -155,6 +155,14 @@ struct PrivateMarketAlert: Decodable, Identifiable {
 }
 
 struct PrivateApplication: Decodable, Identifiable {
+    struct Offer: Decodable {
+        struct Round: Decodable {
+            struct Company: Decodable { let name: String }
+            let stage: String
+            let company: Company?
+        }
+        let round: Round?
+    }
     let id: UUID
     let status: String
     let requestedAmount: Decimal
@@ -164,6 +172,12 @@ struct PrivateApplication: Decodable, Identifiable {
     let confirmedAt: Date?
     let coolingOffEndsAt: Date?
     let acknowledgedAt: Date
+    let providerReceivedAt: Date?
+    let withdrawalRequestedAt: Date?
+    let withdrawalDeclinedAt: Date?
+    let withdrawnAt: Date?
+    let providerEventAt: Date?
+    let offer: Offer?
 }
 
 
