@@ -56,7 +56,7 @@ that applies with or without the practice migration.
 |---|---|---|
 | §3 Unified dashboard (stocks + crypto, AUD default, FX explicit) | iPhone: **Done** (USD stored, display currency). Web: in progress | `MarketData`, `FXRates`; `web/` |
 | §3 Portfolio analytics (TWR/MWR, benchmarks, cost basis) | Cost basis, realised/unrealised, benchmark on iPhone **Done**; TWR/MWR **Not started** | `PortfolioTabViews`, `PriceHistoryService` |
-| §4 Provider-agnostic connections | Contract + capability registry **Done**; Alpaca + Coinbase adapters **Built, needs credentials** | `_shared/brokers/` |
+| §4 Provider-agnostic connections | Contract + capability registry **Done**; Alpaca + Coinbase adapters **Built, needs credentials** (66 mocked-HTTP tests; never run against a real account); `broker-connections` function (connect/sync/revoke) **Built, needs credentials** | `_shared/brokers/`, `broker-connections/`, `docs/trading/provider-adapters.md` |
 | §4 Encrypted credentials | **Done** (AES-256-GCM envelope, key ring, binding, rotation; no client can read the table) | `_shared/vault/`, migration `20261113180000` |
 | §4 Reliability (retry, backoff, idempotent ingest, reconcile) | Adapters: retries on reads only, unknown submits never retried; idempotent fill keys **Done**; WebSocket streams **Not started** | `_shared/brokers/http.ts`, `broker_fills` unique key |
 | §5 Markets, search, charts, indicators | iPhone **Done**. Web: in progress (lightweight-charts; indicators from the shared engine) | `web/` |
@@ -67,14 +67,14 @@ that applies with or without the practice migration.
 | §8 Paper trading | **Simulation only, Done** (iPhone; server in the other effort). Provider-hosted paper (Alpaca paper) via OMS: **Gated** (`provider_paper_execution`) | `PaperBroker`; `_shared/oms/` |
 | §9 Backtesting | Swift **Done**; TS port in progress | `Backtester.swift`, `_shared/studio/backtester.ts` |
 | §10 Controlled live execution | OMS lifecycle, immutable intent hash, approvals, step-up, idempotency, reconciliation **Done**; live: **Gated** (DB CHECK constraints + gate + adapter refusal) | `_shared/oms/`, migration |
-| §11 Risk engine + kill switch | Practice: 24-check engine + kill switch **Done**. Provider orders: risk re-run under a per-user lock at submit **Done** in the pipeline; mapping provider snapshots into the engine's `RiskContext` — in progress | `risk.ts`, `execute.ts` |
+| §11 Risk engine + kill switch | Practice: 24-check engine + kill switch **Done**. Provider orders: the same engine on a provider-built ledger plus restricted symbols, crypto cap, cash reserve, price-deviation guard; reserving orders counted; re-run under a per-user lock at submit; kill switch blocks manual provider orders too **Done** | `_shared/trading/risk.ts`, `_shared/oms/risk.ts`, `execute.ts` |
 | §12 Data model | Practice tables (other effort); provider tables **Done** (see §5 below) | migrations |
-| §13 API | `broker-connections` / `broker-orders` contracts **Done** (`_shared/oms/api.ts`); functions in progress | |
+| §13 API | `broker-connections` / `broker-orders` **Built, needs a hosted project** (type-checked; PgOmsStore proven on a throwaway Postgres; HTTP layer not yet run end to end) | `_shared/oms/api.ts`, `broker-orders/`, `broker-connections/` |
 | §14 Premium UI | iPhone redesign **Done**; web in progress | |
 | §15 Security / threat model | `THREAT_MODEL.md` | |
 | §16 Australian regulation | `REGULATORY_REVIEW.md` (decisions) + `docs/trading/regulatory-au.md` (research, other effort) | |
 | §17 Observability | Structured logs in functions; OMS events append-only; metrics/alerting **Not started** | |
-| §18 Testing | Swift 140+, TS parity vectors, OMS 21 + vault 5 Deno tests, SQL behaviour checks; web e2e **Not started** | |
+| §18 Testing | Swift 140+, TS parity vectors; provider path: OMS 21, risk 9, vault 5, brokers 66, boundaries 1, Postgres integration 3, SQL behaviour checks; studio port 31; web e2e **Not started** | `supabase/functions/tests/`, `supabase/tests/` |
 
 ## 4. Architecture decisions
 
@@ -122,7 +122,22 @@ that applies with or without the practice migration.
 | 5 Trading + risk | `broker-orders` function; risk mapping for provider accounts; reconciliation scheduler | End-to-end against mocked Alpaca paper: draft → risk → approve → submit → fill; all failure journeys of brief §18 | In progress |
 | 6 Release readiness | Hosted backend, monitoring, deployment docs, accessibility pass | Owner sign-off; `REGULATORY_REVIEW.md` items answered before any live gate | Blocked on owner/legal |
 
-## 7. Externally blocked
+## 7. Known gaps and follow-ups (found while integrating, 2026-11-13)
+
+- **Engine port lag.** Commit `b0d2f19` changed the Swift core (exchange calendars, lots, transaction
+  taxes); 6 parity tests in `parity.test.ts` / `engine.test.ts` fail on that commit by itself until
+  the TypeScript port follows. Owned by the practice-trading effort.
+- **Studio backtester vs Swift taxes.** `Backtester.swift` now adds UK/FR/HK/KR/IN transaction taxes
+  via `PaperBroker.tax`; the TS port (`_shared/studio/backtester.ts`) predates that and has no tax
+  until the TS `PaperBroker` gains `tax`/`taxBps`. US and crypto backtests are unaffected.
+- **Two decimal helpers** (`_shared/brokers/decimal.ts`, `_shared/oms/decimal.ts`) and **two HTTP/auth
+  helpers** (`_shared/server`, `_shared/oms/http.ts`) were written in parallel; fold each pair into one.
+- **"Today" on the provider path** is the trailing 24 hours (conservative), not the exchange day.
+- **Coinbase reconciliation** can only search the 500 most recent orders by client order id (the API
+  has no lookup by client id).
+- **No scheduler yet** for provider reconciliation or fill sync; both run on request.
+
+## 8. Externally blocked
 
 - Hosted Supabase project (owner; paid infra decision).
 - Provider keys: Alpaca paper key for end-to-end runs; Coinbase CDP key for read tests.
