@@ -15,6 +15,7 @@ export const TOOL_NAMES = [
   "get_price_history",
   "get_watchlist",
   "get_portfolio",
+  "explain_portfolio_movement",
   "draft_strategy",
   "run_backtest",
   "prepare_order_ticket",
@@ -53,6 +54,11 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: obj({}, []),
   },
   {
+    name: "explain_portfolio_movement",
+    description: "Calculate how market price moves contributed to synced open holdings, with per-currency totals, quote times and data coverage. Use this when asked what moved the portfolio.",
+    input_schema: obj({}, []),
+  },
+  {
     name: "draft_strategy",
     description: "Turn a plain-English strategy description into the app's structured strategy (rules on completed bars, sizing, protections), listing what was understood, what was assumed and any unrecognised symbols. The result is a draft for the person to edit in Strategy Studio.",
     input_schema: obj({ description: { type: "string" } }, ["description"]),
@@ -83,11 +89,19 @@ export const TOOLS: Anthropic.Tool[] = [
 ];
 
 /** What a tool sends back to the UI besides the model: sources to list, and cards to render. */
+export interface AgentSource {
+  label: string;
+  source: string;
+  observedAt?: string;
+  status?: string;
+  instrumentId?: string;
+}
+
 export interface ToolOutcome {
   /** JSON-serialisable data for the model. */
   data: unknown;
   isError?: boolean;
-  sources?: { label: string; source: string; observedAt?: string; status?: string }[];
+  sources?: AgentSource[];
   card?: { kind: "strategy" | "order_ticket" | "backtest"; title: string; href: string; payload: unknown };
 }
 

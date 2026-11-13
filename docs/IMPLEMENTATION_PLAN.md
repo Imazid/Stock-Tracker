@@ -22,6 +22,8 @@ Stock Tracker ships a native iOS app and a Next.js web app.
 | `supabase/` | Postgres schema + Deno edge functions | `20261017000000` (watchlists, holdings, transactions, alerts, referrals, RLS). The practice-trading server (`trading-api`, `agent-scheduler`, migration `20261113120000`) is included, along with the provider OMS and server-side credential custody. |
 | `web/` | Next.js web app | Uses the same Supabase backend and imports the shared TypeScript engine rather than re-implementing it. |
 
+See [Design system](DESIGN_SYSTEM.md) for the shared component and token references.
+
 Data providers in use: Alpaca market data (IEX feed on the free plan — not consolidated), Yahoo
 v8 (ASX and international venues; unofficial), CoinGecko, FMP, Finnhub, Frankfurter FX,
 SnapTrade (read-only aggregation). The replacement Supabase project is `opruuwczvrwklmwdtsaw` (Sydney). The local stack uses port 58321.
@@ -140,8 +142,8 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 | 1 | Secrets committed to git: a fiscal.ai key in `.mcp.json`, plus SnapTrade consumer key, user id and user secret in `Stock Tracker/Info.txt` | Removed from the current tree. **They are still in Git history: rotate them** (fiscal.ai dashboard, SnapTrade dashboard: regenerate the consumer key, delete the hard-coded test user). Rewriting history is optional once they're rotated |
 | 2 | SnapTrade consumer key and per-user `userSecret` shipped in the app | **Done**: `snaptrade-proxy` signs server-side, user secrets are sealed with envelope encryption, and release builds use only the proxy. Existing Keychain identities move to the server once (`importLegacyUser`, proven against SnapTrade first) and are then deleted from the device |
 | 3 | OpenAI and Gemini keys shipped in the app | **Done**: `ai-proxy` with a per-user daily ceiling. Direct calls exist only in Debug builds with no server configured |
-| 4 | Alpaca key pair shipped in the app (market data). Alpaca keys also authorise trading on the account they belong to | **Gap**. Until a market-data proxy exists, use keys from a **dedicated, unfunded paper account used for nothing else**. The in-flight server `_shared/market/alpaca.ts` is the natural home for that proxy |
-| 5 | `Config/Secrets.plist` is bundled into the app, so every value in it ships | **Action for you**: once the proxies are deployed, delete `SnapTradeConsumerKey`, `OpenAIAPIKey` and `GeminiAPIKey` from your local `Secrets.plist`. `Secrets.plist.example` documents this |
+| 4 | Alpaca market data previously needed a key pair on the device | **Done**. Release requests use the authenticated market-data proxy. An unsigned session can use public fallback data where available |
+| 5 | The source `Config/Secrets.plist` previously shipped with provider keys | **Done**. The release build writes a new resource containing the public Supabase URL and client key |
 | 6 | Debug tools that read keys were compiled into release (link already DEBUG-only) | **Done**: `DebugView` and `SnapTradeClient` compile in Debug builds only. Dead `SnapTradeAuthManager` removed |
 | 7 | Receipt validation endpoint is a placeholder (`Constants.URLs.receiptValidation`), so the server can't verify subscription tiers | **Gap**. Until it's fixed, the server's AI ceiling is an abuse limit, not the entitlement |
 

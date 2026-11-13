@@ -11,7 +11,9 @@ import { StrategyParser } from "@studio/parser.ts";
 import { BadInstrumentError, parseInstrumentID } from "@/server/market/instruments";
 import { getCandles, getQuote, NoDataError, search } from "@/server/market/service";
 import { BacktestRequestError, decodeInputs, runBacktest } from "@/server/strategy/backtest";
-import { CHART_RANGES, type ChartRange } from "@/lib/market-types";
+import { CHART_RANGES, type ChartRange, type QuoteView } from "@/lib/market-types";
+import { rowToInstrument, toView } from "@/lib/instrument-view";
+import { portfolioMovement } from "@/lib/portfolio-movement";
 import { clean, type ToolContext, type ToolName, TOOL_NAMES, type ToolOutcome } from "./tools-schema.ts";
 
 export { asToolResult, TOOLS, type ToolContext, type ToolName } from "./tools-schema.ts";
@@ -42,8 +44,8 @@ function instrumentFrom(input: Record<string, unknown>) {
 
 // MARK: - Executors
 
-function quoteSource(q: { source: string; observedAt: string; status: string; stale: boolean }, label: string) {
-  return { label, source: q.source, observedAt: q.observedAt, status: q.stale ? `${q.status}, stale` : q.status };
+function quoteSource(q: { instrumentId: string; source: string; observedAt: string; status: string; stale: boolean }, label: string) {
+  return { label, instrumentId: q.instrumentId, source: q.source, observedAt: q.observedAt, status: q.stale ? `${q.status}, stale` : q.status };
 }
 
 const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolContext) => Promise<ToolOutcome>> = {
@@ -95,7 +97,7 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
   },
 
   async get_watchlist(_input, ctx) {
-    if (!ctx.signedIn || !ctx.supabase) return { data: { error: "Not signed in, so there's no watchlist to read." }, isError: true };
+    if (!ctx.signedIn || !ctx.supabase) return { data: { error: "Sign in and enable account sharing for this conversation to read the watchlist." }, isError: true };
     const { data, error } = await ctx.supabase.from("watchlist_assets").select("symbol, name, kind, exchange").is("deleted_at", null).limit(50);
     if (error) return { data: { error: "The watchlist couldn't be read." }, isError: true };
     const rows = (data ?? []) as { symbol: string; name: string; kind: string; exchange: string | null }[];
@@ -112,7 +114,7 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
   },
 
   async get_portfolio(_input, ctx) {
-    if (!ctx.signedIn || !ctx.supabase) return { data: { error: "Not signed in, so there's no portfolio to read." }, isError: true };
+    if (!ctx.signedIn || !ctx.supabase) return { data: { error: "Sign in and enable account sharing for this conversation to read holdings." }, isError: true };
     const [holdings, positions] = await Promise.all([
       ctx.supabase.from("portfolio_holdings").select("asset_symbol, asset_name, asset_kind, asset_exchange, shares, avg_cost").is("deleted_at", null).limit(200),
       ctx.supabase.from("broker_position_snapshots").select("connection_id, symbol, asset_class, quantity, average_entry_price, market_value, currency, observed_at").order("observed_at", { ascending: false }).limit(200),
@@ -127,6 +129,44 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
         appHoldings: { note: "From the Stock Tracker app. avg_cost is in US$ (the app stores every value in USD).", rows: holdings.error ? "unavailable" : holdings.data },
         providerPositions: { note: "Last synced positions from connected provider accounts (provider currency).", rows: positions.error ? "unavailable" : [...latest.values()] },
       },
+    };
+  },
+
+  async explain_portfolio_movement(_input, ctx) {
+    if (!ctx.signedIn || !ctx.supabase) {
+      return { data: { error: "Sign in and enable account sharing for this conversation to read holdings." }, isError: true };
+    }
+    const limit = 25;
+    const { data, error } = await ctx.supabase.from("portfolio_holdings")
+      .select("asset_symbol,asset_name,asset_kind,asset_exchange,shares")
+      .is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(limit + 1);
+    if (error) return { data: { error: "Synced holdings are unavailable." }, isError: true };
+    const holdings = data.slice(0, limit).map((row) => {
+      const instrument = rowToInstrument({
+        symbol: row.asset_symbol, name: row.asset_name, kind: row.asset_kind, exchange: row.asset_exchange,
+      });
+      return { shares: row.shares as number, instrument: toView(instrument), asset: instrument };
+    });
+    const assets = new Map(holdings.map(({ asset, instrument }) => [instrument.id, asset]));
+    const quotes = new Map<string, QuoteView>();
+    const results = await Promise.allSettled([...assets.values()].map(getQuote));
+    for (const result of results) {
+      if (result.status === "fulfilled") quotes.set(result.value.quote.instrumentId, result.value.quote);
+    }
+    const movement = portfolioMovement(holdings, (id) => quotes.get(id));
+    const contributions = movement.contributions.slice(0, 5).map(({ id, value, currency, quote }) => ({
+      ...quoteSource(quote, `${id.slice(id.indexOf(":") + 1)} quote`), contribution: value, currency,
+    }));
+    return {
+      data: {
+        holdingsChecked: holdings.length,
+        holdingsWithUsableQuotes: movement.covered,
+        truncated: data.length > limit,
+        totals: movement.totals.map(([currency, contribution]) => ({ currency, contribution })),
+        largestContributions: contributions,
+        method: "Current quantity × (latest price − equity previous close or crypto reference price). Stale quotes are excluded. Cash flows, currency conversion, and changes in quantities are excluded.",
+      },
+      sources: contributions,
     };
   },
 

@@ -28,6 +28,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_price_history: "Reading price history",
   get_watchlist: "Reading your watchlist",
   get_portfolio: "Reading your portfolio",
+  explain_portfolio_movement: "Calculating portfolio movement",
   draft_strategy: "Drafting a strategy",
   run_backtest: "Running a backtest",
   prepare_order_ticket: "Preparing an order ticket",

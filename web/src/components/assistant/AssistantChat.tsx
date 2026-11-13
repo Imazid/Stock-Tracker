@@ -58,7 +58,10 @@ function Turn({ turn }: { turn: AssistantTurn }) {
           <summary className="cursor-pointer select-none">Sources ({turn.sources.length})</summary>
           <ul className="mt-1 space-y-0.5">
             {turn.sources.map((s, i) => (
-              <li key={i}>{s.label}: {s.source}{s.observedAt ? ` · ${new Date(s.observedAt).toLocaleString()}` : ""}{s.status ? ` · ${s.status.replace("_", "-")}` : ""}</li>
+              <li key={i}>
+                {s.instrumentId ? <Link className="underline" href={`/markets/${encodeURIComponent(s.instrumentId)}`}>{s.label}</Link> : s.label}
+                {": "}{s.source}{s.observedAt ? ` · ${new Date(s.observedAt).toLocaleString()}` : ""}{s.status ? ` · ${s.status.replace("_", "-")}` : ""}
+              </li>
             ))}
           </ul>
         </details>

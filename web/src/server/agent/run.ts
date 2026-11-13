@@ -5,6 +5,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { asToolResult, runTool, type ToolContext, type ToolName, TOOLS } from "./tools.ts";
+import type { AgentSource } from "./tools-schema.ts";
 
 export const MODEL = "claude-opus-5-5";
 const MAX_TOOL_ROUNDS = 8;
@@ -12,7 +13,7 @@ const MAX_TOOL_ROUNDS = 8;
 export type AgentEvent =
   | { type: "text"; delta: string }
   | { type: "tool"; id: string; name: string; status: "running" | "done" | "error"; summary?: string }
-  | { type: "sources"; items: { label: string; source: string; observedAt?: string; status?: string }[] }
+  | { type: "sources"; items: AgentSource[] }
   | { type: "card"; card: { kind: string; title: string; href: string; payload: unknown } }
   | { type: "done"; stopReason: string; usage: { input: number; output: number; cacheRead: number; cacheWrite: number } }
   | { type: "error"; code: string; message: string };
