@@ -80,6 +80,8 @@ export interface ExecutionDeps {
   /** Oldest acceptable quote for submission (ms). */
   maxQuoteAgeMs: number;
   approvalPolicy?: ApprovalPolicy;
+  /** Runs `fn` holding the person's trading lock (a Postgres advisory lock in production). */
+  serialize?<T>(fn: () => Promise<T>): Promise<T>;
   now(): number;
 }
 
@@ -187,22 +189,31 @@ export async function submitIntent(deps: ExecutionDeps, intent: IntentRecord, ca
     return refuse("provider_error", `The provider isn't accepting orders on this account: ${account.tradingBlockers.join("; ") || "no reason given"}. Nothing was sent.`, s);
   }
 
-  // 6. Risk again, now, on a fresh quote.
-  const risk = await deps.evaluateRisk(intent);
-  await deps.store.recordRisk(intent.id, risk);
-  const quoteAge = now - Date.parse(risk.price.observedAt);
-  if (!Number.isFinite(quoteAge) || quoteAge > deps.maxQuoteAgeMs) {
-    return refuse("stale_price", "The latest price is too old to send this order safely. Try again in a moment.", s, { observedAt: risk.price.observedAt });
-  }
-  if (risk.result !== "pass") {
-    await deps.store.transition(intent.id, s, "rejected", `risk: ${risk.reasonCodes.join(",")}`);
-    await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.risk_rejected_at_submit", detail: { reasonCodes: risk.reasonCodes, policyVersion: risk.policyVersion } });
-    return refuse("risk_rejected", "The order no longer passes your risk limits, so it wasn't sent.", "rejected", { reasonCodes: risk.reasonCodes });
-  }
-
-  // 7–8. Single use, single submitter.
-  if (!(await deps.store.consumeApproval(intent.id, now))) return refuse("approval_used", "This approval has already been used or has expired.", s);
-  if (!(await deps.store.transition(intent.id, "approved", "submitting"))) return refuse("conflict", "This order is already being sent.", s);
+  // 6–8 run under the person's lock: the risk verdict sees every other order already
+  // reserving exposure (risk_checked … submitting), and this order starts reserving before
+  // the lock is released. So two orders that each pass alone can't both go through when
+  // together they'd break a limit.
+  const serialize = deps.serialize ?? (<T>(fn: () => Promise<T>) => fn());
+  const gate = await serialize(async (): Promise<ExecutionOutcome | { risk: RiskEvaluationView }> => {
+    // 6. Risk again, now, on a fresh quote.
+    const risk = await deps.evaluateRisk(intent);
+    await deps.store.recordRisk(intent.id, risk);
+    const quoteAge = now - Date.parse(risk.price.observedAt);
+    if (!Number.isFinite(quoteAge) || quoteAge > deps.maxQuoteAgeMs) {
+      return refuse("stale_price", "The latest price is too old to send this order safely. Try again in a moment.", s, { observedAt: risk.price.observedAt });
+    }
+    if (risk.result !== "pass") {
+      await deps.store.transition(intent.id, s, "rejected", `risk: ${risk.reasonCodes.join(",")}`);
+      await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.risk_rejected_at_submit", detail: { reasonCodes: risk.reasonCodes, policyVersion: risk.policyVersion } });
+      return refuse("risk_rejected", "The order no longer passes your risk limits, so it wasn't sent.", "rejected", { reasonCodes: risk.reasonCodes });
+    }
+    // 7–8. Single use, single submitter.
+    if (!(await deps.store.consumeApproval(intent.id, now))) return refuse("approval_used", "This approval has already been used or has expired.", s);
+    if (!(await deps.store.transition(intent.id, "approved", "submitting"))) return refuse("conflict", "This order is already being sent.", s);
+    return { risk };
+  });
+  if ("ok" in gate) return gate;
+  const risk = gate.risk;
   await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.submitting", detail: { provider: intent.provider, environment: intent.environment, clientOrderID: intent.clientOrderID } });
 
   // 9. Submit. Never retried here or in the adapter.

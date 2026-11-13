@@ -419,3 +419,45 @@ Deno.test("cancel: before submission is local; after, only the provider's word c
     }, Error, "forbidden");
   }
 });
+
+Deno.test("submit: under the lock, two orders that only pass alone can't both go through", async () => {
+  // Shared exposure: risk fails once another order is reserving (submitting).
+  let reserving = 0;
+  let chain: Promise<unknown> = Promise.resolve();
+  const mutex = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = chain.then(fn);
+    chain = run.catch(() => undefined);
+    return run;
+  };
+  const make = async (useLock: boolean) => {
+    const a = await setup();
+    const b = await setup();
+    for (const x of [a, b]) {
+      const transition = x.store.transition.bind(x.store);
+      x.store.transition = async (id, from, to, note) => {
+        const moved = await transition(id, from, to, note);
+        if (moved && to === "submitting") reserving++;
+        return moved;
+      };
+      x.deps.evaluateRisk = async () => {
+        await Promise.resolve(); // a real risk check awaits a quote
+        return reserving > 0 ? { ...passRisk(), result: "fail", reasonCodes: ["dailyNotional"] } : passRisk();
+      };
+      if (useLock) x.deps.serialize = mutex;
+    }
+    return [a, b] as const;
+  };
+  {
+    reserving = 0;
+    const [a, b] = await make(false);
+    const outs = await Promise.all([submitIntent(a.deps, a.intent, caller), submitIntent(b.deps, b.intent, caller)]);
+    assertEquals(outs.filter((o) => o.ok).length, 2, "without the lock both slip through (this is the race)");
+  }
+  {
+    reserving = 0;
+    const [a, b] = await make(true);
+    const outs = await Promise.all([submitIntent(a.deps, a.intent, caller), submitIntent(b.deps, b.intent, caller)]);
+    assertEquals(outs.filter((o) => o.ok).length, 1);
+    assertEquals(outs.find((o) => !o.ok && o.code === "risk_rejected") !== undefined, true);
+  }
+});
