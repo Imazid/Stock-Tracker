@@ -382,7 +382,7 @@ export const alpacaAdapter: BrokerAdapter = {
   async fills(ctx, options): Promise<Page<BrokerFill>> {
     const pageSize = Math.min(Math.max(options.limit ?? 100, 1), 100);
     const raw = asArray(
-      await getJSON(ctx, `/v2/account/activities/FILL${query({ direction: "desc", page_size: pageSize, page_token: options.cursor, after: options.since })}`),
+      await getJSON(ctx, `/v2/account/activities/FILL${query({ direction: "desc", page_size: pageSize, page_token: options.cursor, after: options.since, until: options.until })}`),
       "fills",
     );
     const sinceMs = options.since ? Date.parse(options.since) : undefined;

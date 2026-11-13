@@ -142,9 +142,10 @@ class FakeStore implements OmsStore {
     this.approval.consumedAt = now;
     return Promise.resolve(true);
   }
-  recordBrokerOrder(_id: string, order: BrokerOrder) {
+  async recordBrokerOrder(id: string, from: IntentStatus, order: BrokerOrder) {
     this.orders.push(order);
-    return Promise.resolve();
+    const to = nextFromBroker(from, order.status);
+    return to && await this.transition(id, from, to, `provider: ${order.providerStatus}`) ? to : from;
   }
   recordRisk() {
     return Promise.resolve();
@@ -389,6 +390,25 @@ Deno.test("reconcile: partial fill then fill", async () => {
   adapter.lookup = brokerOrder("filled");
   assertEquals((await reconcileIntent(deps, { ...at, status: "partially_filled" })).status, "filled");
   assertEquals(store.orders.map((o) => o.filledQuantity), ["4", "7", "10"]);
+});
+
+Deno.test("reconcile: a stranded submission gets its own grace period", async () => {
+  const { intent, deps, store, adapter } = await setup({ status: "submitting" });
+  const submitting = { ...intent, submittingAt: T0 - 15_000 };
+  assertEquals((await reconcileIntent(deps, submitting)).status, "submitting");
+  assertEquals((await reconcileIntent({ ...deps, now: () => T0 + 120_000 }, submitting)).status, "reconciliation_required");
+  assertEquals(store.status, "reconciliation_required");
+  assertEquals(adapter.submits.length, 0);
+  assertEquals(adapter.cancels, 0);
+});
+
+Deno.test("reconcile: missing known orders and bounded lookups remain unresolved", async () => {
+  const { intent, deps, adapter } = await setup({ status: "reconciliation_required" });
+  const later = { ...deps, now: () => T0 + RECONCILE_GIVE_UP_MS };
+  const pending = { ...intent, reconcilingSince: T0 };
+  assertEquals((await reconcileIntent(later, { ...pending, providerOrderID: "known-id" })).status, "reconciliation_required");
+  assertEquals((await reconcileIntent(later, { ...pending, provider: "coinbase" })).status, "reconciliation_required");
+  assertEquals(adapter.submits.length, 0);
 });
 
 Deno.test("cancel: before submission is local; after, only the provider's word cancels it", async () => {

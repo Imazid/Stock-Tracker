@@ -108,7 +108,7 @@ export async function read(
   provider: string,
   options: RetryOptions = {},
 ): Promise<HttpResponse> {
-  const attempts = Math.max(1, options.maxAttempts ?? 3);
+  const attempts = Math.max(1, options.maxAttempts ?? ctx.readAttempts ?? 3);
   const sleep = options.sleep ?? defaultSleep;
   const maxRetryAfter = options.maxRetryAfterMs ?? 30_000;
   for (let attempt = 1; ; attempt++) {
