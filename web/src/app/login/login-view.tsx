@@ -17,12 +17,13 @@ export function LoginView() {
   const router = useRouter();
   const params = useSearchParams();
   const next = safeReturnPath(params.get("next"));
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(params.get("mode") === "signup" ? "signup" : "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(params.get("error") === "confirm" ? "That confirmation link didn't work. It may have expired — sign in or request a new one." : null);
   const [info, setInfo] = useState<string | null>(null);
+  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (session.status === "signedIn") router.replace(next);
@@ -31,6 +32,8 @@ export function LoginView() {
   if (session.status === "unconfigured") {
     return <div className="mx-auto max-w-md pt-10"><Card><EmptyState title="Accounts aren't configured" body="This deployment has no Supabase project. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then reload. Market data works without an account." /></Card></div>;
   }
+
+  const confirmationURL = () => `${window.location.origin}/auth/confirm?next=${encodeURIComponent(next)}`;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,13 +48,32 @@ export function LoginView() {
         if (err) throw err;
         router.replace(next);
       } else {
-        const { data, error: err } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent(next)}` } });
+        const { data, error: err } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: confirmationURL() } });
         if (err) throw err;
         if (data.session) router.replace(next);
-        else setInfo("Check your email to confirm your account, then sign in.");
+        else {
+          setConfirmationEmail(email);
+          setInfo("Open the confirmation link in this browser to finish creating your account.");
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resend = async () => {
+    const supabase = browserSupabase();
+    if (!supabase || !confirmationEmail || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { error } = await supabase.auth.resend({ type: "signup", email: confirmationEmail, options: { emailRedirectTo: confirmationURL() } });
+      if (error) throw error;
+      setInfo("If the account still needs confirmation, you’ll receive another email.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t resend the confirmation email.");
     } finally {
       setBusy(false);
     }
@@ -62,7 +84,7 @@ export function LoginView() {
       <h1 className="mb-1 text-xl font-semibold tracking-tight">{mode === "signin" ? "Sign in" : "Create your account"}</h1>
       <p className="mb-5 text-[13px] text-text-2">The same account as the Stock Tracker iPhone app.</p>
       <Card className="p-4">
-        <Segmented label="Sign in or create an account" value={mode} onChange={(m) => { setMode(m); setError(null); setInfo(null); }} className="mb-4 w-full [&>button]:flex-1"
+        <Segmented label="Sign in or create an account" value={mode} onChange={(m) => { setMode(m); setError(null); setInfo(null); setConfirmationEmail(null); }} className="mb-4 w-full [&>button]:flex-1"
           options={[{ value: "signin", label: "Sign in" }, { value: "signup", label: "Create account" }]} />
         <form onSubmit={submit} className="flex flex-col gap-3">
           <Field label="Email" htmlFor="email"><Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
@@ -71,6 +93,7 @@ export function LoginView() {
           </Field>
           {error ? <Notice tone="down">{error}</Notice> : null}
           {info ? <Notice>{info}</Notice> : null}
+          {confirmationEmail && <Button disabled={busy} onClick={() => void resend()}>Resend confirmation email</Button>}
           <Button type="submit" variant="primary" disabled={busy} className="mt-1">{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</Button>
         </form>
       </Card>

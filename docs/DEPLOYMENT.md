@@ -60,14 +60,15 @@ constraints and can't be switched on by an UPDATE.
 ```
 cd web
 cp .env.example .env.local     # fill NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY,
-                               # market-data keys, ANTHROPIC_API_KEY for the AI workspace
+                               # market-data keys, ANTHROPIC_API_KEY or OPENAI_API_KEY for the AI workspace
 npm ci && npm run build && npm start
 ```
 On Vercel, use `web/` as the project root and include its shared Supabase source files from
 the repository. Run `vercel deploy --prod` from the repository root. The Stock Tracker release
 project uses Vercel Authentication on every deployment. Keep production and previews private
 while using the existing market-data account. The Stock Tracker sign-in separately controls
-access to each person's portfolios, watchlist and paper orders.
+access to each person's portfolios, watchlist and paper orders. Keep `ALPACA_*`,
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` server-side.
 
 Set `WORKSPACE_OVERVIEW_SECRET` to the same randomly generated value in Vercel and the Supabase
 function secrets. Set `FINNHUB_API_KEY` in Supabase for US fundamentals and news. Set

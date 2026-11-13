@@ -7,7 +7,7 @@ export async function GET() {
     alpacaData: alpacaConfigured(),
     coingeckoKey: Boolean(process.env.COINGECKO_API_KEY),
     // The assistant is built; it runs when the server has a key (and accounts, outside local dev).
-    assistant: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+    assistant: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.OPENAI_API_KEY),
     liveTrading: false,
   }, { headers: { "Cache-Control": "no-store" } });
 }

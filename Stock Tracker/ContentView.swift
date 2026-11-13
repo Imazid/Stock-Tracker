@@ -190,7 +190,7 @@ struct AIAgentLockedView: View {
                         .foregroundColor(theme.primaryText)
                         .multilineTextAlignment(.center)
 
-                    Text("Get instant insights, stock analysis, and portfolio advice powered by AI")
+                    Text("Get market summaries, stock research and portfolio insights.")
                         .font(.body)
                         .foregroundColor(theme.secondaryText)
                         .multilineTextAlignment(.center)
@@ -202,7 +202,7 @@ struct AIAgentLockedView: View {
                     AIFeatureHighlight(icon: "lightbulb.fill", text: "Smart investment insights", color: .yellow)
                     AIFeatureHighlight(icon: "chart.bar.fill", text: "Real-time market analysis", color: .blue)
                     AIFeatureHighlight(icon: "message.fill", text: "24/7 AI assistant", color: .purple)
-                    AIFeatureHighlight(icon: "sparkles", text: "Personalized recommendations", color: .pink)
+                    AIFeatureHighlight(icon: "sparkles", text: "Portfolio summaries", color: .pink)
                 }
                 .padding(.horizontal, 40)
 

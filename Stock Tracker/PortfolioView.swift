@@ -57,6 +57,7 @@ private enum PortfolioSheet: Identifiable, Equatable {
 // MARK: - PortfolioView
 
 struct PortfolioView: View {
+    @EnvironmentObject private var cloudAuth: SupabaseAuthManager
     @EnvironmentObject private var marketData: MarketData
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var insightService: AIInsightService
@@ -128,6 +129,11 @@ struct PortfolioView: View {
                 if marketData.portfolio.isEmpty {
                     emptyState
                     closedSection
+                    if cloudAuth.authState == .signedIn, let userId = cloudAuth.userId {
+                        PortfolioPerformanceLedger(userId: userId)
+                            .id(userId)
+                            .portfolioRow(bottom: DS.Space.l)
+                    }
                 } else {
                     PortfolioPerformanceChart(
                         range: rangeBinding,

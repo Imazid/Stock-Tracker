@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { KeyRound } from "lucide-react";
 import { backend } from "../lib/backend";
@@ -33,7 +34,9 @@ export default function Auth({ mode, onDone }: { mode: "login" | "mfa"; onDone: 
         const result = await backend.auth.verifyOtp({ email, token: code, type: "email" });
         if (result.error) throw result.error;
       } else {
-        const result = await backend.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin } });
+        const next = `/${window.location.hash}`;
+        const emailRedirectTo = `${window.location.origin}/auth/confirm?${new URLSearchParams({ next })}`;
+        const result = await backend.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo } });
         if (result.error) throw result.error;
         setSent(true);
         return;
@@ -53,5 +56,6 @@ export default function Auth({ mode, onDone }: { mode: "login" | "mfa"; onDone: 
     {!backend && <p className="error">Account services are awaiting configuration.</p>}
     <button className="button primary" disabled={busy || !backend}>{busy ? "Please wait…" : mode === "mfa" ? "Verify" : flow === "password" ? "Sign in" : sent ? "Verify code" : "Email me a sign-in link"}</button>
     {mode === "login" && <button type="button" disabled={busy} className="text-button" onClick={() => { setFlow(flow === "password" ? "email" : "password"); setError(""); setSent(false); setCode(""); }}>{flow === "password" ? "Use an email sign-in link" : "Use my password"}</button>}
+    {mode === "login" && <Link className="text-button" href="/login?mode=signup">Create a Stock Tracker account</Link>}
   </form>;
 }
