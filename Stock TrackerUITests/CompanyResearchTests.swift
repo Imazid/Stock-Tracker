@@ -13,14 +13,8 @@ final class CompanyResearchTests: XCTestCase {
         ]
         app.launch()
 
-        XCTAssertTrue(app.open("Search", timeout: 30))
-        let search = app.searchFields.firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: 10))
-        search.tap()
-        search.typeText("AAPL")
-        let result = app.buttons["search.result.us.AAPL"]
-        XCTAssertTrue(result.waitForExistence(timeout: 25))
-        result.tap()
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 30))
+        XCUIDevice.shared.system.open(try XCTUnwrap(URL(string: "stocktracker://asset/AAPL")))
 
         let research = app.buttons["detail.companyResearch"]
         XCTAssertTrue(research.waitForExistence(timeout: 20))

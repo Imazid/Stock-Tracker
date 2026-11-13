@@ -87,8 +87,8 @@ enum ChartShaper {
         guard let hours = TradingHours.forAsset(asset) else {
             // 24/7 markets: 1D is simply the trailing 24 hours.
             if range == .oneDay {
-                let cutoff = last.date.addingTimeInterval(-24 * 3600)
-                return points.filter { $0.date >= cutoff }
+                let cutoff = last.date.timeIntervalSinceReferenceDate - 24 * 3600
+                return points.filter { $0.date.timeIntervalSinceReferenceDate >= cutoff }
             }
             return points
         }
