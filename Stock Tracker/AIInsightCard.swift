@@ -19,8 +19,9 @@ struct AIInsightCard: View {
     var onRegenerate: (() async -> Void)?
 
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("aiPortfolioContextEnabled") private var includePortfolioContext = false
     private var showsBorder: Bool {
-        !isLocked && (isLoading || insightText?.isEmpty == false)
+        !isLocked && includePortfolioContext && (isLoading || insightText?.isEmpty == false)
     }
 
     // Teaser shown (blurred) to free-tier users. It describes the feature rather
@@ -68,6 +69,12 @@ struct AIInsightCard: View {
                 Group {
                     if isLocked {
                         lockedContent(theme: theme)
+                    } else if !includePortfolioContext {
+                        Toggle("Share portfolio summary with AI", isOn: $includePortfolioContext)
+                            .font(.subheadline)
+                        Text("Enables insights using your tracked assets and relevant portfolio data.")
+                            .font(.caption)
+                            .foregroundStyle(theme.secondaryText)
                     } else if isLoading {
                         skeletonContent
                     } else if let text = insightText, !text.isEmpty {

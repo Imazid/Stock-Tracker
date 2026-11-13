@@ -130,7 +130,7 @@ class AIInsightService: ObservableObject {
         // Check cache first
         if let hit = cached(key) { return hit.text }
 
-        // Tier check
+        guard UserDefaults.standard.bool(forKey: "aiPortfolioContextEnabled") else { return nil }
         guard canQuery(tier: tier) else { return nil }
 
         // Mark loading

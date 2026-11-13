@@ -76,6 +76,7 @@ interface Status { assistant: boolean; accounts: boolean }
 export function AssistantChat({ compact = false }: { compact?: boolean }) {
   const { turns, busy, send, stop, reset } = useAssistant();
   const [draft, setDraft] = useState("");
+  const [shareAccountContext, setShareAccountContext] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const status = useQuery({ queryKey: ["status"], queryFn: () => getJSON<Status>("/api/status"), staleTime: 60_000 });
 
@@ -86,7 +87,7 @@ export function AssistantChat({ compact = false }: { compact?: boolean }) {
   const submit = (text: string) => {
     if (!text.trim()) return;
     setDraft("");
-    void send(text);
+    void send(text, shareAccountContext);
   };
 
   const unavailable = status.data && !status.data.assistant;
@@ -125,6 +126,11 @@ export function AssistantChat({ compact = false }: { compact?: boolean }) {
           submit(draft);
         }}
       >
+        <label className="mb-2 flex items-start gap-2 text-xs text-text-2">
+          <input type="checkbox" className="mt-0.5 accent-primary" checked={shareAccountContext} disabled={busy || unavailable}
+            onChange={(event) => { setShareAccountContext(event.target.checked); reset(); }} />
+          <span>Share holdings and watchlist with the AI provider for this conversation</span>
+        </label>
         <label htmlFor={compact ? "assistant-input-panel" : "assistant-input"} className="sr-only">Message the assistant</label>
         <div className="flex items-end gap-2">
           <textarea

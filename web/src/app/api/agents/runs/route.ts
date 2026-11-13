@@ -46,8 +46,11 @@ export async function POST(request: Request) {
   }
 
   let history: ChatTurn[];
+  let shareAccountContext = false;
   try {
-    history = decodeHistory(await request.json());
+    const body: unknown = await request.json();
+    history = decodeHistory(body);
+    shareAccountContext = (body as { shareAccountContext?: unknown }).shareAccountContext === true;
   } catch (error) {
     return jsonError(400, "invalid", error instanceof Error ? error.message : "Bad request.");
   }
@@ -65,7 +68,7 @@ export async function POST(request: Request) {
         }
       };
       try {
-        await runTurn(history, { supabase: supabase ?? undefined, signedIn, now: Date.now() }, emit, abort.signal);
+        await runTurn(history, { supabase: shareAccountContext ? supabase ?? undefined : undefined, signedIn: shareAccountContext && signedIn, now: Date.now() }, emit, abort.signal);
       } catch (error) {
         if (error instanceof Anthropic.RateLimitError) emit({ type: "error", code: "rate_limited", message: "The assistant is busy. Try again in a minute." });
         else if (error instanceof Anthropic.AuthenticationError) emit({ type: "error", code: "feature_disabled", message: "The assistant's API key was refused." });
