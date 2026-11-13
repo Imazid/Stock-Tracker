@@ -97,7 +97,7 @@ export function PortfolioView() {
       ) : (
         <>
           {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={prices.some((price) => price.isPending)} />}
-          {userId && <><PerformanceLedger key={userId} userId={userId} /><LotReport /></>}
+          {userId && <><PerformanceLedger key={userId} userId={userId} /><LotReport key={userId + "-lots"} userId={userId} /></>}
           <Card>
             <CardHeader title="Holdings" subtitle="Position values use the trading currency. Average costs are recorded in USD." />
             {portfolio.data?.truncated && <p role="status" className="px-4 pb-3 text-xs text-warn">Showing the first 200 holdings.</p>}
