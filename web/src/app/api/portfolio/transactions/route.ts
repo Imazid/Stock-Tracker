@@ -1,11 +1,13 @@
 import { csvField } from "@/lib/csv";
 import { serverSupabase } from "@/lib/supabase/server";
 import { jsonError } from "@/server/http/respond";
-import { transactionPages } from "@/server/portfolio/transactions";
+import { tradeConversion, tradeSource, transactionPages } from "@/server/portfolio/transactions";
 
 const columns = [
   "Transaction ID", "Holding ID", "Transaction time (UTC)", "Ticker", "Exchange", "Asset type",
   "Side", "Quantity", "Price per share (USD)", "Fees (USD)",
+  "Record source", "Input currency", "Input unit price", "Input fees",
+  "Bookkeeping FX (USD per input currency unit)", "Bookkeeping FX method", "Bookkeeping FX saved at (UTC)",
 ];
 
 export async function GET(request: Request) {
@@ -19,10 +21,12 @@ export async function GET(request: Request) {
     for await (const page of transactionPages(db, user.id, request.signal)) {
       for (const row of page) {
         const holding = row.portfolio_holdings;
-        const time = new Date(row.transaction_date);
+        const source = row.trade_provenance;
         records.push([
-          row.id, row.holding_id, Number.isFinite(time.getTime()) ? time.toISOString() : row.transaction_date, holding?.asset_symbol ?? null,
+          row.id, row.holding_id, row.transaction_date, holding?.asset_symbol ?? null,
           holding?.asset_exchange ?? null, holding?.asset_kind ?? null, row.type, row.shares, row.price_per_share, row.fees,
+          tradeSource(source), source?.currency ?? null, source?.unitPrice ?? null, source?.fees ?? null,
+          source?.usdPerUnit ?? null, tradeConversion(source), source?.conversionRecordedAt ?? null,
         ].map(csvField).join(","));
       }
     }

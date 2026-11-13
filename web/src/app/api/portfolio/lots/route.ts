@@ -2,14 +2,15 @@ import { csvField } from "@/lib/csv";
 import { serverSupabase } from "@/lib/supabase/server";
 import { jsonError } from "@/server/http/respond";
 import { calculateLots, lotNumber, sydneyDate, UNIT_DECIMALS } from "@/server/portfolio/lots";
-import { transactionPages, type TransactionRow } from "@/server/portfolio/transactions";
+import { tradeSource, transactionPages, type TransactionRow } from "@/server/portfolio/transactions";
 
-const disclaimer = "Preliminary USD FIFO records for review. This report does not calculate tax. Verify actual lots, transaction-date AUD values, transfers, corporate actions and missing transactions. Trades with identical timestamps use sales before purchases. Open lots are based on recorded transactions.";
+const disclaimer = "Preliminary USD FIFO records for review. This report does not calculate tax. Verify actual lots, transaction-date AUD values, transfers, corporate actions and missing transactions. Trades with identical timestamps use sales before purchases. Use the transaction CSV for source amounts and bookkeeping FX.";
 const columns = [
   "Record type", "Holding ID", "Ticker", "Exchange", "Asset type", "Transaction ID", "Transaction time (UTC)", "Transaction date (Sydney)",
   "Purchase ID", "Purchase time (UTC)", "Quantity", "Purchase cost (USD)", "Purchase fees (USD)",
-  "Sale proceeds (USD)", "Sale fees (USD)", "Estimated FIFO result (USD)", "Report note",
+  "Sale proceeds (USD)", "Sale fees (USD)", "Estimated FIFO result (USD)", "Report note", "Transaction record source", "Purchase record source",
 ];
+const noteColumn = columns.indexOf("Report note");
 
 function day(value: string | null) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < "1900-01-01" || value > "9998-12-31") return null;
@@ -43,7 +44,8 @@ export async function GET(request: Request) {
   const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
   const records = [
     columns.map(csvField).join(","),
-    [csvField("Report information"), ...Array(columns.length - 2).fill(""), csvField(`${disclaimer} ${period}`)].join(","),
+    columns.map((_, index) => index === 0 ? csvField("Report information")
+      : index === noteColumn ? csvField(`${disclaimer} ${period}`) : "").join(","),
   ];
   for (const row of calculateLots(transactions, start ?? undefined, end ?? undefined)) {
     const transaction = row.transaction;
@@ -57,7 +59,10 @@ export async function GET(request: Request) {
       lotNumber(row.units, UNIT_DECIMALS), lotNumber(row.purchaseCost, 2), lotNumber(row.purchaseFee, 2),
       lotNumber(row.saleProceeds, 2), lotNumber(row.saleFee, 2), lotNumber(row.result, 2),
     ];
-    records.push([...text, ...numbers, csvField(row.note ?? null)].join(","));
+    records.push([...text, ...numbers, csvField(row.note ?? null),
+      csvField(tradeSource(transaction.trade_provenance)),
+      csvField(row.purchase ? tradeSource(row.purchase.trade_provenance) : null),
+    ].join(","));
   }
   return new Response(records.join("\r\n") + "\r\n", {
     headers: {

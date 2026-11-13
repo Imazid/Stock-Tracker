@@ -122,12 +122,15 @@ final class AccountSyncTests: XCTestCase {
         let schema = try request("GET", "/rest/v1/portfolio_holdings?select=closed_at&limit=1", token: token)
         try XCTSkipIf(schema.status == 400, "Apply the portfolio ledger sync migration to the local stack first.")
         XCTAssertEqual(schema.status, 200)
+        let provenanceSchema = try request("GET", "/rest/v1/transactions?select=trade_provenance&limit=1", token: token)
+        try XCTSkipIf(provenanceSchema.status == 400, "Apply the trade provenance migration to the local stack first.")
+        XCTAssertEqual(provenanceSchema.status, 200)
         let holding = UUID().uuidString
         let first = UUID()
         let extra = UUID()
         let position: [String: Any] = [
-            "id": holding, "user_id": userId, "asset_symbol": "MSFT", "asset_name": "Microsoft",
-            "asset_kind": "Stock", "asset_exchange": "NASDAQ", "shares": 3, "avg_cost": 100
+            "id": holding, "user_id": userId, "asset_symbol": "BHP", "asset_name": "BHP",
+            "asset_kind": "Stock", "asset_exchange": "ASX", "shares": 3, "avg_cost": 100
         ]
         XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings", body: JSONSerialization.data(withJSONObject: position), token: token).status, 201)
         let trades: [[String: Any]] = [(first, 2), (extra, 1)].map { id, shares in
@@ -148,7 +151,7 @@ final class AccountSyncTests: XCTestCase {
             XCTAssertTrue(element.isHittable)
         }
         launchAccount()
-        let positionRow = app.buttons["portfolio.holding.MSFT"].firstMatch
+        let positionRow = app.buttons["portfolio.holding.BHP"].firstMatch
         // Holdings are a lazy list below the portfolio summary.
         for _ in 0..<10 where !positionRow.exists {
             app.swipeUp(velocity: .slow)
@@ -176,18 +179,31 @@ final class AccountSyncTests: XCTestCase {
         price.tap()
         if original != "0.00" { price.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: original.count)) }
         price.typeText("150")
+        let fee = app.textFields["tx.fees"].firstMatch
+        fee.tap()
+        fee.typeText("2.35")
         app.buttons["keyboard.done"].firstMatch.tap()
         app.buttons["tx.save"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["holding.closed"].firstMatch.waitForExistence(timeout: 8))
 
         var saved: [[String: Any]] = []
         for _ in 0..<15 {
-            saved = try rows("transactions", select: "id,shares,type,deleted_at", token: token)
+            saved = try rows("transactions", select: "id,shares,type,price_per_share,fees,trade_provenance,deleted_at", token: token)
             if saved.contains(where: { $0["type"] as? String == "Sell" }) { break }
             Thread.sleep(forTimeInterval: 1)
         }
         XCTAssertEqual(saved.filter { $0["type"] as? String == "Sell" }.count, 1)
-        XCTAssertEqual(saved.first { $0["type"] as? String == "Sell" }?["shares"] as? Double, 2)
+        let sale = try XCTUnwrap(saved.first { $0["type"] as? String == "Sell" })
+        XCTAssertEqual(sale["shares"] as? Double, 2)
+        let provenance = try XCTUnwrap(sale["trade_provenance"] as? [String: Any])
+        XCTAssertEqual(provenance["currency"] as? String, "AUD")
+        XCTAssertEqual(provenance["source"] as? String, "manual_trade")
+        XCTAssertEqual(provenance["unitPrice"] as? Double, 150)
+        XCTAssertEqual(provenance["fees"] as? Double, 2.35)
+        let factor = try XCTUnwrap(provenance["usdPerUnit"] as? Double)
+        XCTAssertEqual(try XCTUnwrap(sale["price_per_share"] as? Double), 150 * factor, accuracy: 0.000001)
+        XCTAssertEqual(try XCTUnwrap(sale["fees"] as? Double), 2.35 * factor, accuracy: 0.000001)
+        XCTAssertTrue(saved.first { ($0["id"] as? String)?.lowercased() == first.uuidString.lowercased() }?["trade_provenance"] is NSNull)
         XCTAssertTrue(saved.first { ($0["id"] as? String)?.lowercased() == extra.uuidString.lowercased() }?["deleted_at"] is String)
         let archived = try rows("portfolio_holdings", select: "shares,closed_at,deleted_at", token: token)
         XCTAssertEqual(archived.first?["shares"] as? Double, 0)
@@ -196,7 +212,7 @@ final class AccountSyncTests: XCTestCase {
 
         app.terminate()
         launchAccount()
-        let closed = app.buttons["portfolio.closed.MSFT"].firstMatch
+        let closed = app.buttons["portfolio.closed.BHP"].firstMatch
         reveal(closed)
         closed.tap()
         XCTAssertTrue(app.descendants(matching: .any)["closed.realised"].firstMatch.waitForExistence(timeout: 8))

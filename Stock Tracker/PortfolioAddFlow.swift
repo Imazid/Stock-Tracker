@@ -431,6 +431,7 @@ struct HoldingFormView: View {
     @State private var name: String
     @State private var quantityText = ""
     @State private var costText: String
+    @State private var feesText = ""
     @State private var date = Date()
     @State private var errorText: String?
     @State private var showPaywall = false
@@ -438,7 +439,7 @@ struct HoldingFormView: View {
     @FocusState private var focus: Field?
 
     enum Market: String, CaseIterable { case us, asx }
-    enum Field { case symbol, name, quantity, cost }
+    enum Field { case symbol, name, quantity, cost, fees }
 
     init(initialAsset: Asset?, initialKind: AssetKind = .stock, onAdded: @escaping (String) -> Void) {
         self.initialAsset = initialAsset
@@ -473,13 +474,14 @@ struct HoldingFormView: View {
     private var currency: String { draftIsASX ? "AUD" : "USD" }
     private var quantity: Double? { parseDecimal(quantityText) }
     private var cost: Double? { parseDecimal(costText) }
+    private var fees: Double? { feesText.trimmingCharacters(in: .whitespaces).isEmpty ? 0 : parseDecimal(feesText) }
     private var livePrice: Double? { (initialAsset?.price ?? 0) > 0 ? initialAsset!.price : nil }
     private var unit: String { draftKind == .crypto ? "coin" : "share" }
 
     private var canAddMore: Bool { marketData.canAddHolding(symbol: draftSymbol, kind: draftKind) }
 
     private var canSubmit: Bool {
-        !draftSymbol.isEmpty && (quantity ?? 0) > 0 && (costText.isEmpty || (cost ?? -1) >= 0)
+        !draftSymbol.isEmpty && (quantity ?? 0) > 0 && (costText.isEmpty || (cost ?? -1) >= 0) && (fees ?? -1) >= 0
     }
 
     private var nextTier: SubscriptionTier { subscriptionManager.currentTier == .free ? .pro : .black }
@@ -530,6 +532,13 @@ struct HoldingFormView: View {
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                FormField(label: "Brokerage fees (\(currencySymbol), optional)") {
+                    TextField("0.00", text: $feesText)
+                        .keyboardType(.decimalPad)
+                        .focused($focus, equals: .fees)
+                        .accessibilityIdentifier("holding.form.fees")
                 }
 
                 DatePicker("Purchase date", selection: $date, in: ...Date(), displayedComponents: .date)
@@ -652,7 +661,7 @@ struct HoldingFormView: View {
     private var summary: some View {
         if let q = quantity, q > 0 {
             let tradingLive = livePrice.map { initialAsset!.toTradingCurrency($0) }
-            let paid = cost.map { $0 * q }
+            let paid = cost.map { $0 * q + (fees ?? 0) }
             VStack(spacing: 0) {
                 if let tradingLive {
                     LedgerLine(label: "Worth today", value: formatTradingAmount(tradingLive * q))
@@ -694,7 +703,9 @@ struct HoldingFormView: View {
                           price: usdCost, change: 0, changePercent: 0, volume: 0, kind: draftKind,
                           exchange: draftKind == .crypto ? "Crypto" : (draftIsASX ? "ASX" : "US"))
         }
-        switch marketData.addHolding(asset: asset, shares: q, costPerUnit: costPerUnit, costCurrency: currency, date: date) {
+        let enteredFees = feesText.trimmingCharacters(in: .whitespaces).isEmpty ? nil : fees
+        switch marketData.addHolding(asset: asset, shares: q, costPerUnit: costPerUnit, costCurrency: currency, date: date,
+                                     sourceCostKnown: cost != nil, fees: enteredFees) {
         case .ok:
             Haptics.success()
             onAdded(asset.symbol)

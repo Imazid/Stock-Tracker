@@ -7,6 +7,23 @@ function trade(id: string, date: string, type: string, shares: number, price: nu
   return { id, holding_id: holding, transaction_date: date, type, shares, price_per_share: price, fees, portfolio_holdings: null };
 }
 
+test("snapshot and unknown-cost units stay in FIFO order without producing a basis", () => {
+  const snapshot = { ...trade("snapshot", "2026-06-29T00:00:00Z", "Buy", 2, 12),
+    trade_provenance: { source: "broker_position" as const, currency: "AUD", unitPrice: 18 } };
+  const missing = { ...trade("missing", "2026-06-30T00:00:00Z", "Buy", 1, 0),
+    trade_provenance: { source: "opening_position" as const } };
+  const manual = { ...trade("buy", "2026-07-01T00:00:00Z", "Buy", 1, 15),
+    trade_provenance: { source: "manual_trade" as const, currency: "AUD", unitPrice: 22.5 } };
+  const sale = trade("sell", "2026-07-03T00:00:00Z", "Sell", 4, 25, 2);
+  const rows = calculateLots([sale, manual, snapshot, missing]);
+  assert.deepEqual(rows.map(row => [row.kind, row.purchase?.id, row.purchaseCost, row.saleFee, row.result]), [
+    ["Unmatched sale", "snapshot", undefined, 100n, undefined],
+    ["Unmatched sale", "missing", undefined, 50n, undefined],
+    ["Sale match", "buy", 1500n, 50n, 950n],
+  ]);
+  assert.deepEqual(calculateLots([snapshot]).map(row => [row.kind, row.purchaseCost]), [["Position record", undefined]]);
+});
+
 test("FIFO retains acquisition IDs and allocates each cent exactly across sales and remaining units", () => {
   const result = calculateLots([
     trade("sale", "2026-07-04T00:00:00Z", "Sell", 4, 20, 0.05),

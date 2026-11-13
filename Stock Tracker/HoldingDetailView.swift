@@ -431,6 +431,9 @@ enum TransactionSheetItem: Identifiable {
 struct TransactionFormSheet: View {
     let holding: PortfolioHolding
     let editing: Transaction?
+    private let priceCurrency: String
+    private let initialPriceText: String
+    private let initialFeesText: String
 
     @EnvironmentObject private var marketData: MarketData
     @Environment(\.dismiss) private var dismiss
@@ -451,12 +454,18 @@ struct TransactionFormSheet: View {
         self.holding = holding
         self.editing = editing
         let asset = holding.asset
+        let currency = editing?.provenance?.currency ?? asset.tradingCurrency
+        priceCurrency = currency
         _type = State(initialValue: editing?.type ?? .buy)
-        _quantityText = State(initialValue: editing.map { formatQuantity($0.shares) } ?? "")
-        let price = asset.toTradingCurrency(editing?.pricePerShare ?? asset.price)
-        _priceText = State(initialValue: price > 0 ? String(format: price < 1 ? "%.6f" : "%.2f", price) : "")
-        let fees = asset.toTradingCurrency(editing?.fees ?? 0)
-        _feesText = State(initialValue: fees > 0 ? String(format: "%.2f", fees) : "")
+        _quantityText = State(initialValue: editing.map { Self.inputAmount($0.shares) } ?? "")
+        let factor = FXRates.shared.toUSDFactor(from: currency) ?? 1
+        let price = editing?.provenance?.unitPrice ?? ((editing?.pricePerShare ?? asset.price) / factor)
+        let fees = editing?.provenance?.fees ?? ((editing?.fees ?? 0) / factor)
+        initialPriceText = editing != nil ? Self.inputAmount(price)
+            : price > 0 ? String(format: price < 1 ? "%.6f" : "%.2f", price) : ""
+        initialFeesText = fees > 0 ? Self.inputAmount(fees) : ""
+        _priceText = State(initialValue: initialPriceText)
+        _feesText = State(initialValue: initialFeesText)
         _date = State(initialValue: editing?.date ?? Date())
     }
 
@@ -465,7 +474,22 @@ struct TransactionFormSheet: View {
     private var price: Double? { parseDecimal(priceText) }
     /// Blank = no fees.
     private var fees: Double? { feesText.trimmingCharacters(in: .whitespaces).isEmpty ? 0 : parseDecimal(feesText) }
-    private var usdFactor: Double { FXRates.shared.toUSDFactor(from: asset.tradingCurrency) ?? 1 }
+    private var usdFactor: Double {
+        editing?.provenance?.usdPerUnit ?? FXRates.shared.toUSDFactor(from: priceCurrency) ?? 1
+    }
+    private var currencySymbol: String {
+        priceCurrency == asset.tradingCurrency ? asset.tradingCurrencySymbol : priceCurrency
+    }
+
+    private static func inputAmount(_ amount: Double) -> String {
+        amount.formatted(.number.locale(Locale(identifier: "en_US_POSIX"))
+            .grouping(.never).precision(.fractionLength(0...18)))
+    }
+
+    private func totalAmount(_ amount: Double) -> String {
+        if priceCurrency == asset.tradingCurrency { return asset.formatTrading(amount) }
+        return priceCurrency + " " + amount.formatted(.number.precision(.fractionLength(2)))
+    }
 
     /// What this sale would bank, in USD: (price − average cost) × quantity − fees.
     private var estimatedRealized: Double? {
@@ -510,26 +534,26 @@ struct TransactionFormSheet: View {
                             .focused($focus, equals: .quantity)
                     }
 
-                    FormField(label: "Price per \(asset.kind == .crypto ? "coin" : "share") (\(asset.tradingCurrencySymbol))",
+                    FormField(label: "Price per \(asset.kind == .crypto ? "coin" : "share") (\(currencySymbol))",
                               trailing: asset.price > 0 ? AnyView(
                                 Button("Use current") {
-                                    let p = asset.toTradingCurrency(asset.price)
+                                    let p = asset.price / usdFactor
                                     priceText = String(format: p < 1 ? "%.6f" : "%.2f", p)
                                 }
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(DS.accent)) : nil) {
                         HStack(spacing: 4) {
-                            Text(asset.tradingCurrencySymbol).foregroundStyle(theme.secondaryText)
+                            Text(currencySymbol).foregroundStyle(theme.secondaryText)
                             TextField("0.00", text: $priceText)
                                 .keyboardType(.decimalPad)
                                 .focused($focus, equals: .price)
-                            .accessibilityIdentifier("tx.price")
+                                .accessibilityIdentifier("tx.price")
                         }
                     }
 
-                    FormField(label: "Brokerage fees (\(asset.tradingCurrencySymbol), optional)") {
+                    FormField(label: "Brokerage fees (\(currencySymbol), optional)") {
                         HStack(spacing: 4) {
-                            Text(asset.tradingCurrencySymbol).foregroundStyle(theme.secondaryText)
+                            Text(currencySymbol).foregroundStyle(theme.secondaryText)
                             TextField("0.00", text: $feesText)
                                 .keyboardType(.decimalPad)
                                 .focused($focus, equals: .fees)
@@ -545,7 +569,7 @@ struct TransactionFormSheet: View {
                         let f = fees ?? 0
                         VStack(spacing: 0) {
                             LedgerLine(label: type == .buy ? "Total cost" : "You receive",
-                                       value: asset.formatTrading(type == .buy ? q * p + f : max(q * p - f, 0)))
+                                       value: totalAmount(type == .buy ? q * p + f : max(q * p - f, 0)))
                             if let realized = estimatedRealized {
                                 LedgerLine(label: "Realised profit",
                                            value: marketData.signedMoney(realized),
@@ -599,13 +623,30 @@ struct TransactionFormSheet: View {
         errorText = nil
         let result: MarketData.HoldingChange
         if let editing {
-            let updated = Transaction(id: editing.id, date: date, shares: q, pricePerShare: p * usdFactor, type: type,
-                                      fees: f * usdFactor, avgCostAtSale: editing.avgCostAtSale)
+            let priceChanged = priceText != initialPriceText
+            let feesChanged = feesText != initialFeesText
+            let priceUSD = priceChanged ? p * usdFactor : editing.pricePerShare
+            let feesUSD = feesChanged ? f * usdFactor : editing.fees
+            let provenance: TradeProvenance?
+            if let original = editing.provenance, original.currency != nil {
+                provenance = (priceChanged || feesChanged) ? original.withAmounts(
+                    unitPrice: priceChanged ? p : original.unitPrice,
+                    fees: feesChanged ? f : original.fees
+                ) : original
+            } else if priceChanged || feesChanged {
+                provenance = marketData.tradeProvenance(source: editing.provenance?.source ?? .manualTrade,
+                                                        currency: priceCurrency, unitPrice: priceChanged ? p : nil,
+                                                        fees: feesChanged ? f : nil, factor: usdFactor)
+            } else {
+                provenance = editing.provenance
+            }
+            let updated = Transaction(id: editing.id, date: date, shares: q, pricePerShare: priceUSD, type: type,
+                                      fees: feesUSD, avgCostAtSale: editing.avgCostAtSale, provenance: provenance)
             let list = holding.transactions.map { $0.id == editing.id ? updated : $0 }
             result = marketData.replaceTransactions(holdingID: holding.id, with: list)
         } else {
             result = marketData.recordTransaction(holdingID: holding.id, type: type, shares: q,
-                                                  pricePerUnit: p, priceCurrency: asset.tradingCurrency, fees: f, date: date)
+                                                  pricePerUnit: p, priceCurrency: priceCurrency, fees: f, date: date)
         }
         switch result {
         case .ok:
