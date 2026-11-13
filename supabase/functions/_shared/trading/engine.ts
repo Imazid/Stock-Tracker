@@ -525,7 +525,7 @@ export class TradingEngine {
     if (request.quantity === undefined && request.notional !== undefined && price > 0) {
       quantity = Rounding.floor(request.notional / price, rules.quantityIncrement);
     }
-    const fee = PaperBroker.fee(request.instrument, Rounding.money(quantity * price), true, this.state.paperConfig);
+    const fee = PaperBroker.fee(request.instrument, request.side, Rounding.money(quantity * price), true, this.state.paperConfig);
     return { quantity, price, fee, modelledSpread: modelled };
   }
 
@@ -670,6 +670,8 @@ export class TradingEngine {
       if (this.state.knownClientOrderIDs.has(request.clientOrderID)) return { accepted: false, risk };
       const summary = reportSummary(risk);
       const order = makeOrder("rejected", summary);
+      // A key is used once, whatever happened to it: a retry must come with a new one.
+      this.state.knownClientOrderIDs.add(request.clientOrderID);
       this.state.orders.push(order);
       this.audit(event({
         kind: "orderRejected", summary: `${capitalized(request.side)} ${symbol} rejected: ${summary}`, orderID: order.id,
@@ -960,7 +962,10 @@ export class TradingEngine {
       if (this.isUsable(series.provenance)) usable.series[instrumentKey] = series;
     }
     // An instrument whose liquidity can't be measured this time loses its old figure too.
-    for (const instrumentKey of Object.keys(usable.series)) delete state.stats[instrumentKey];
+    // (Only daily bars measure liquidity, so an hourly series leaves the last daily figure alone.)
+    for (const [instrumentKey, series] of Object.entries(usable.series)) {
+      if (series.timeframe === "day") delete state.stats[instrumentKey];
+    }
     this.ingest(Object.values(snapshot.quotes), Calendar.snapshotStats(usable, now), now);
 
     const spec = agentSpec(agent);
@@ -1149,7 +1154,9 @@ export class TradingEngine {
         if (o.ledgerID === ledger.id && isOpenStatus(o.status) && o.side === "buy") reserved += remainingQuantity(o) * (o.limitPrice ?? o.referencePrice);
       }
       const isCrypto = instrument.assetClass === "crypto";
-      const feeRate = isCrypto ? state.paperConfig.cryptoFeeBps / 10_000 : state.paperConfig.equityFeeBps / 10_000;
+      // The buy-side transaction tax counts too, so a taxed buy never overspends the cash.
+      const feeRate = (isCrypto ? state.paperConfig.cryptoFeeBps : state.paperConfig.equityFeeBps) / 10_000
+        + PaperBroker.taxBps(instrument, "buy") / 10_000;
       const flatFee = isCrypto ? 0 : state.paperConfig.equityFeePerOrder;
       const spendable = Math.max((ledger.cash - reserved - flatFee) / (1 + feeRate), 0);
       if (notional > spendable) {
@@ -1279,7 +1286,7 @@ export class TradingEngine {
       const order = result.order;
       const lastFill = result.fills[result.fills.length - 1];
       let detail: string;
-      if (order.status === "filled" && lastFill) detail = `Filled at ${NumberText.money(lastFill.price)}.`;
+      if (order.status === "filled" && lastFill) detail = `Filled at ${NumberText.money(lastFill.price, proposal.instrument.currency)}.`;
       else if (order.status === "partiallyFilled") detail = "Partly filled; the rest is still working.";
       else detail = order.statusNote ?? "The order is working.";
       proposal.resolutionNote = detail;

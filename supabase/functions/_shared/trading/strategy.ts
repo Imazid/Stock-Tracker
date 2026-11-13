@@ -373,7 +373,8 @@ export function validate(spec: StrategySpec): StrategyIssue[] {
       const rebalance = spec.rebalance;
       if (!rebalance) { error("A rebalancing strategy needs target weights."); break; }
       const ids = new Set(spec.universe.map(instrumentID));
-      // Swift walks a dictionary here, so with several bad targets its order isn't fixed; this goes by id.
+      // Targets are checked in id order, as Swift's validator does. (Swift still sums the total in
+      // dictionary order; for weights that add up exactly, the order makes no difference.)
       const targets = sortedStrings(Object.keys(rebalance.targets));
       if (targets.length === 0) error("Add at least one target weight.");
       let total = 0;
