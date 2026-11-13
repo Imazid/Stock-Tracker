@@ -1,6 +1,6 @@
 import SwiftUI
 
-private enum PrivateDestination: String, CaseIterable, Identifiable {
+enum PrivateDestination: String, CaseIterable, Identifiable {
     case discovery = "Discover Deals"
     case explorer = "Startup Explorer"
     case research = "AI Investment Research"
@@ -8,6 +8,7 @@ private enum PrivateDestination: String, CaseIterable, Identifiable {
     case portfolio = "My Private Portfolio"
     case rounds = "Funding Rounds"
     case capital = "Capital Calls & Distributions"
+    case updates = "Company Updates"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -18,6 +19,7 @@ private enum PrivateDestination: String, CaseIterable, Identifiable {
         case .portfolio: "briefcase"
         case .rounds: "clock.arrow.circlepath"
         case .capital: "arrow.left.arrow.right"
+        case .updates: "bell"
         }
     }
 }
@@ -26,12 +28,14 @@ struct PrivateMarketsView: View {
     @Environment(\.theme) private var theme
     @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
+    @EnvironmentObject private var router: TradingRouter
+    @State private var path: [PrivateDestination] = []
     @State private var deals: [PrivateDeal] = []
     @State private var catalogError: String?
     @State private var loading = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header
@@ -43,7 +47,7 @@ struct PrivateMarketsView: View {
                         .privatePanel()
                     }
                     VStack(spacing: 2) {
-                        ForEach(PrivateDestination.allCases) { destination in
+                        ForEach(PrivateDestination.allCases.filter { $0 != .updates }) { destination in
                             NavigationLink(value: destination) {
                                 HStack(spacing: 14) {
                                     Image(systemName: destination.icon)
@@ -89,7 +93,7 @@ struct PrivateMarketsView: View {
             .navigationTitle("Private Markets")
             .toolbarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink { PrivateUpdatesView() } label: { Image(systemName: "bell") }
+                NavigationLink(value: PrivateDestination.updates) { Image(systemName: "bell") }
                     .accessibilityLabel("Company updates")
             } }
             .navigationDestination(for: PrivateDestination.self) { destination in
@@ -106,11 +110,20 @@ struct PrivateMarketsView: View {
                     PrivateHoldingsView()
                 case .capital:
                     PrivateCapitalView()
+                case .updates:
+                    PrivateUpdatesView()
                 }
             }
             .refreshable { await load() }
         }
         .id(auth.userId)
+        .onChange(of: auth.userId) { _, _ in path.removeAll() }
+        .onChange(of: router.requestedPrivateDestination, initial: true) { _, destination in
+            if let destination {
+                path = [destination]
+                router.requestedPrivateDestination = nil
+            }
+        }
         .task(id: auth.userId) { await load() }
     }
 

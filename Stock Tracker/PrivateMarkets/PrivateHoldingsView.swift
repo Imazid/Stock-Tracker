@@ -20,15 +20,13 @@ struct PrivateHoldingsView: View {
     @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
     @State private var add = false
-    @State private var confirmed: [ProviderPrivateHolding] = []
-    @State private var providerError: String?
 
     var body: some View {
         List {
             UnifiedPrivateAllocation()
-            Section("Private holdings") {
+            Section("Self-reported holdings") {
                 if store.state.holdings.isEmpty {
-                    ContentUnavailableView("No private holdings", systemImage: "briefcase",
+                    ContentUnavailableView("No self-reported holdings", systemImage: "briefcase",
                                            description: Text("Add a holding from your ownership records."))
                 }
                 ForEach(store.state.holdings) { holding in
@@ -53,41 +51,41 @@ struct PrivateHoldingsView: View {
                 Button { add = true } label: { Label("Add private holding", systemImage: "plus") }
                     .accessibilityIdentifier("private.holding.add")
             }
-            if !confirmed.isEmpty || providerError != nil {
+            if !store.providerHoldings.isEmpty || store.providerError != nil || store.loadingProviderHoldings {
                 Section("Provider-confirmed ownership") {
-                    ForEach(confirmed) { holding in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(holding.name).font(.headline)
-                            Text("\(holding.assetClass.rawValue) · \(holding.confirmedAt.formatted(date: .abbreviated, time: .omitted))")
-                                .font(.footnote).foregroundStyle(.secondary)
-                            LabeledContent("Units issued", value: holding.units.formatted())
-                            LabeledContent("Provider reference", value: holding.commitment.providerReference)
-                            LabeledContent("Settled capital", value: PrivateInput.money(holding.settledAmount, currency: holding.currency))
-                            Text("Carrying value unavailable").font(.footnote).foregroundStyle(.secondary)
+                    ForEach(store.providerHoldings) { position in
+                        let holding = position.holding
+                        NavigationLink {
+                            PrivateHoldingDetail(id: position.id, providerRecord: true)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(holding.name).font(.headline)
+                                Text(holding.assetClass.rawValue).font(.footnote).foregroundStyle(.secondary)
+                                if let mark = holding.valuation() {
+                                    Text(PrivateInput.money(mark.value, currency: holding.currency) +
+                                         (mark.isStale() ? " · Stale valuation" : " · Dated valuation"))
+                                        .font(.subheadline.monospacedDigit())
+                                        .foregroundStyle(mark.isStale() ? Color.orange : Color.primary)
+                                } else {
+                                    Text("Carrying value unavailable").font(.footnote).foregroundStyle(.secondary)
+                                }
+                            }
                         }
                     }
-                    if let providerError { Text(providerError).foregroundStyle(.secondary) }
+                    if store.loadingProviderHoldings { ProgressView("Checking provider records") }
+                    if let error = store.providerError { Text(error).foregroundStyle(.secondary) }
                 }
             }
         }
         .navigationTitle("My Private Portfolio")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $add) { PrivateHoldingEditor() }
-        .task(id: auth.userId) { await loadConfirmed() }
-        .refreshable { await loadConfirmed() }
+        .task(id: auth.userId) { await refresh() }
+        .refreshable { await refresh() }
     }
 
-    private func loadConfirmed() async {
-        guard auth.userId != nil else { confirmed = []; return }
-        providerError = nil
-        do {
-            let response: PrivateMarketsAPI.ConfirmedHoldings = try await PrivateMarketsAPI.request("confirmed_holdings")
-            try Task.checkCancellation()
-            confirmed = response.holdings
-        } catch is CancellationError {
-        } catch {
-            providerError = error.localizedDescription
-        }
+    private func refresh() async {
+        if let owner = auth.userId { await store.refreshProviderHoldings(for: owner) }
     }
 }
 
@@ -107,13 +105,17 @@ struct UnifiedPrivateAllocation: View {
         }
     }
 
+    private var privateHoldings: [PrivateHolding] {
+        store.state.holdings + store.providerHoldings.map(\.holding)
+    }
+
     private var slices: [Slice] {
         var values: [String: Double] = [:]
         for holding in publicHoldings {
             let key = holding.asset.kind == .crypto ? "Crypto" : "Listed equities & ETFs"
             values[key, default: 0] += holding.currentValue
         }
-        for holding in store.state.holdings {
+        for holding in privateHoldings {
             guard let mark = holding.valuation(), let rate = market.verifiedFXRates[holding.currency] else { continue }
             values[holding.assetClass.rawValue, default: 0] += NSDecimalNumber(decimal: mark.value).doubleValue / rate
         }
@@ -122,7 +124,7 @@ struct UnifiedPrivateAllocation: View {
     }
 
     private var excluded: Int {
-        store.state.holdings.filter { $0.valuation() == nil || market.verifiedFXRates[$0.currency] == nil }.count
+        privateHoldings.filter { $0.valuation() == nil || market.verifiedFXRates[$0.currency] == nil }.count
     }
 
     var body: some View {
@@ -159,7 +161,7 @@ struct UnifiedPrivateAllocation: View {
                 Text("\(excluded) private holdings excluded because a valuation or verified FX rate is unavailable.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if store.state.holdings.contains(where: { $0.valuation()?.isStale() == true }) {
+            if privateHoldings.contains(where: { $0.valuation()?.isStale() == true && market.verifiedFXRates[$0.currency] != nil }) {
                 Label("Includes stale valuations where a conversion is available.", systemImage: "clock.badge.exclamationmark")
                     .font(.footnote).foregroundStyle(Color.orange)
             }
@@ -259,6 +261,7 @@ struct PrivateHoldingDetail: View {
     @EnvironmentObject private var store: PrivateMarketsStore
     @Environment(\.dismiss) private var dismiss
     let id: UUID
+    var providerRecord = false
     @State private var editor: Editor?
     @State private var showDelete = false
     @State private var error: String?
@@ -268,11 +271,23 @@ struct PrivateHoldingDetail: View {
         var id: String { rawValue }
     }
 
+    private var providerPosition: ProviderPrivateHolding? {
+        guard providerRecord else { return nil }
+        return store.providerHoldings.first { $0.id == id }
+    }
+
     var body: some View {
-        if let holding = store.state.holdings.first(where: { $0.id == id }) {
+        if let holding = providerRecord ? providerPosition?.holding : store.state.holdings.first(where: { $0.id == id }) {
             List {
                 overview(holding)
-                performance(holding)
+                if providerPosition?.canCalculatePerformance != false {
+                    performance(holding)
+                } else {
+                    Section("Performance") {
+                        Text("Full return metrics require the provider’s dated opening settlement and complete cash-flow records.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Section("Valuation history") {
                     ForEach(holding.valuations.sorted(by: { $0.date > $1.date }), id: \.date) { mark in
                         VStack(alignment: .leading, spacing: 4) {
@@ -284,18 +299,24 @@ struct PrivateHoldingDetail: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("private.valuation.record")
                     }
-                    Button("Record valuation") { editor = .valuation }.accessibilityIdentifier("private.valuation.add")
+                    if !providerRecord {
+                        Button("Record valuation") { editor = .valuation }.accessibilityIdentifier("private.valuation.add")
+                    }
                 }
                 Section("Cash flows") {
                     ForEach(holding.cashFlows.sorted(by: { $0.date > $1.date }), id: \.id) { flow in
-                        PrivateCashFlowRow(holding: holding, flow: flow)
+                        PrivateCashFlowRow(holding: holding, flow: flow, isEditable: !providerRecord)
                     }
-                    Button("Record cash flow") { editor = .cashFlow }
+                    if !providerRecord { Button("Record cash flow") { editor = .cashFlow } }
                 }
-                Button("Remove holding", role: .destructive) { showDelete = true }
+                if !providerRecord {
+                    Button("Remove holding", role: .destructive) { showDelete = true }
+                }
             }
             .navigationTitle(holding.name)
-            .toolbar { Button("Edit") { editor = .holding } }
+            .toolbar {
+                if !providerRecord { Button("Edit") { editor = .holding } }
+            }
             .sheet(item: $editor) { item in
                 switch item {
                 case .holding: PrivateHoldingEditor(holding: holding)
@@ -319,8 +340,17 @@ struct PrivateHoldingDetail: View {
 
     private func overview(_ holding: PrivateHolding) -> some View {
         Section("Ownership") {
-            Text("Self-reported holding · Illiquid").font(.footnote).foregroundStyle(.secondary)
+            Text(providerRecord ? "Provider-confirmed ownership · Illiquid" : "Self-reported holding · Illiquid")
+                .font(.footnote).foregroundStyle(.secondary)
             LabeledContent("Asset class", value: holding.assetClass.rawValue)
+            if let position = providerPosition {
+                LabeledContent("Provider reference", value: position.commitment.providerReference)
+                LabeledContent("Ownership confirmed", value: position.confirmedAt.formatted(date: .abbreviated, time: .omitted))
+                LabeledContent("Opening settled capital", value: PrivateInput.money(position.settledAmount, currency: holding.currency))
+                if !position.hasCompleteActivity {
+                    Text("Only recent provider activity is available.").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             if let units = holding.units { LabeledContent("Shares or units", value: units.formatted()) }
             if let percent = holding.ownershipPercent { LabeledContent("Ownership", value: (percent / 100).formatted(.percent)) }
             if !holding.shareClass.isEmpty { LabeledContent("Share class", value: holding.shareClass) }
@@ -432,10 +462,28 @@ private struct PrivateLedgerEditor: View {
 }
 
 struct PrivateCapitalView: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
+
+    @State private var reminderError: String?
+
+    private var providerHoldings: [PrivateHolding] { store.providerHoldings.map(\.holding) }
 
     var body: some View {
         List {
+            Section("Reminders") {
+                Toggle("Capital call reminders", isOn: Binding(
+                    get: { store.state.capitalReminders == true },
+                    set: { enabled in
+                        Task {
+                            do { try await store.setCapitalReminders(enabled); reminderError = nil }
+                            catch { reminderError = error.localizedDescription }
+                        }
+                    }))
+                Text("Reminders are scheduled on this device for recorded upcoming calls.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let reminderError { Text(reminderError).foregroundStyle(.secondary) }
+            }
             ForEach(store.state.holdings) { holding in
                 let flows = holding.cashFlows.filter { $0.kind == .capitalCall || $0.kind == .distribution }
                 if !flows.isEmpty {
@@ -446,13 +494,31 @@ struct PrivateCapitalView: View {
                     }
                 }
             }
-            if !store.state.holdings.contains(where: { $0.cashFlows.contains { $0.kind == .capitalCall || $0.kind == .distribution } }) {
+            ForEach(providerHoldings) { holding in
+                let flows = holding.cashFlows.filter { $0.kind == .capitalCall || $0.kind == .distribution }
+                if !flows.isEmpty {
+                    Section("\(holding.name) · Provider records") {
+                        ForEach(flows.sorted(by: { $0.date < $1.date }), id: \.id) { flow in
+                            PrivateCashFlowRow(holding: holding, flow: flow, isEditable: false)
+                        }
+                    }
+                }
+            }
+            if let error = store.providerError { Text(error).foregroundStyle(.secondary) }
+            if store.loadingProviderHoldings { ProgressView("Checking provider records") }
+            if !(store.state.holdings + providerHoldings).contains(where: { $0.cashFlows.contains { $0.kind == .capitalCall || $0.kind == .distribution } }) {
                 ContentUnavailableView("No capital calls or distributions", systemImage: "arrow.left.arrow.right",
                                        description: Text("Record cash flows on a holding to track payments and proceeds."))
             }
         }
         .navigationTitle("Capital Calls & Distributions")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: auth.userId) { await refresh() }
+        .refreshable { await refresh() }
+    }
+
+    private func refresh() async {
+        if let owner = auth.userId { await store.refreshProviderHoldings(for: owner) }
     }
 }
 
@@ -460,6 +526,7 @@ private struct PrivateCashFlowRow: View {
     @EnvironmentObject private var store: PrivateMarketsStore
     let holding: PrivateHolding
     let flow: PrivateCashFlow
+    var isEditable = true
     @State private var error: String?
     @State private var confirmPayment = false
     @State private var paymentDate = Date.now
@@ -473,7 +540,7 @@ private struct PrivateCashFlowRow: View {
                 Text("Originally due \(due.formatted(date: .abbreviated, time: .omitted))")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if !flow.settled { Button("Record as paid") { confirmPayment = true }.buttonStyle(.borderless) }
+            if isEditable && !flow.settled { Button("Record as paid") { confirmPayment = true }.buttonStyle(.borderless) }
             if let error { Text(error).font(.footnote).foregroundStyle(Color.orange) }
         }
         .sheet(isPresented: $confirmPayment) {

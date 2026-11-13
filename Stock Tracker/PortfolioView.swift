@@ -62,6 +62,7 @@ struct PortfolioView: View {
     @EnvironmentObject private var insightService: AIInsightService
     @Environment(\.theme) private var theme
     @EnvironmentObject private var privateMarkets: PrivateMarketsStore
+    @EnvironmentObject private var cloudAuth: SupabaseAuthManager
     @Environment(\.selectTab) private var selectTab
     @ObservedObject private var broker = SnapTradeViewModel.shared
 
@@ -157,7 +158,7 @@ struct PortfolioView: View {
                     case .income:      PortfolioIncomeTab().portfolioRow(bottom: DS.Space.xxl)
                     }
                 }
-                if !privateMarkets.state.holdings.isEmpty {
+                if !privateMarkets.state.holdings.isEmpty || !privateMarkets.providerHoldings.isEmpty {
                     UnifiedPrivateAllocation()
                         .portfolioRow(bottom: DS.Space.m)
                     Button("Open Private Markets") { selectTab(.privateMarkets) }
@@ -170,7 +171,11 @@ struct PortfolioView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .dsScreenBackground(style: .portfolio)
-            .refreshable { await marketData.refreshFromAPI() }
+            .task(id: cloudAuth.userId) { await refreshPrivatePositions() }
+            .refreshable {
+                await marketData.refreshFromAPI()
+                await refreshPrivatePositions()
+            }
             .onChange(of: segmentRaw) { _, _ in
                 // The segment's content starts below the hero — bring it into view.
                 dsAnimate { proxy.scrollTo("portfolio.segments", anchor: .top) }
@@ -232,6 +237,10 @@ struct PortfolioView: View {
         } message: {
             Text("Its holdings and transactions are deleted from this iPhone. This can't be undone.")
         }
+    }
+
+    private func refreshPrivatePositions() async {
+        if let owner = cloudAuth.userId { await privateMarkets.refreshProviderHoldings(for: owner) }
     }
 
     private var deleteTitle: String {

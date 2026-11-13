@@ -591,7 +591,12 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     ) {
         let info = response.notification.request.content.userInfo
         if info["privateMarkets"] as? Bool == true {
-            Task { @MainActor in TradingRouter.shared.requestedTab = .privateMarkets }
+            let capitalCall = info["capitalCalls"] as? Bool == true
+            Task { @MainActor in
+                let router = TradingRouter.shared
+                router.requestedPrivateDestination = capitalCall ? .capital : .updates
+                router.requestedTab = .privateMarkets
+            }
             handler()
             return
         }

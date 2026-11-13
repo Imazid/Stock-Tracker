@@ -93,7 +93,30 @@ Deno.serve(async (req) => {
           .eq("published", true).eq("company.published", true).lte("published_at", new Date().toISOString())
           .in("company_id", ids).order("published_at", { ascending: false }).limit(100);
         if (error) throw error;
-        return jsonResponse(200, { updates: data });
+        const now = new Date();
+        const since = new Date(now.getTime() - 86_400_000);
+        const { data: rounds, error: roundsError } = await admin.from("investment_opportunities")
+          .select("id,status,source_url,verified_at,round:funding_rounds!inner(stage,closes_at,company:private_companies!inner(name))")
+          .eq("published", true).eq("round.published", true).eq("round.company.published", true)
+          .in("round.company_id", ids).in("status", ["open", "interest"])
+          .gte("verified_at", since.toISOString()).lte("verified_at", now.toISOString())
+          .gte("round.verified_at", since.toISOString())
+          .lte("round.verified_at", now.toISOString())
+          .gt("round.closes_at", now.toISOString())
+          .order("verified_at", { ascending: false }).limit(100)
+          .returns<{ id: string; status: string; source_url: string; verified_at: string;
+            round: { stage: string; company: { name: string } } }[]>();
+        if (roundsError) throw roundsError;
+        const funding = rounds.map((item) => ({
+          id: item.id, title: item.round.stage, kind: item.status === "open" ? "open_round" : "interest",
+          significance: item.status === "open" ? "The source listed this funding round as open at verification." :
+            "The source published an expression of interest.",
+          source_url: item.source_url, published_at: item.verified_at, company: item.round.company,
+        }));
+        const announcements = data.map((item) => ({ ...item, kind: "announcement" }));
+        return jsonResponse(200, {
+          updates: [...announcements, ...funding].sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at)).slice(0, 100),
+        });
       }
       case "profile": {
         const { data, error } = await admin.from("investor_profiles").select("country,declared_class").eq("user_id", userId).maybeSingle();
@@ -112,12 +135,34 @@ Deno.serve(async (req) => {
         return jsonResponse(200, {});
       }
       case "confirmed_holdings": {
+        const offset = body.offset ?? 0;
+        if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
+          return errorResponse(400, "INVALID_REQUEST", "Invalid portfolio page.");
+        }
+        const pageSize = 20;
         const { data, error } = await admin.from("private_holdings")
-          .select("id,name,asset_class,currency,units,settled_amount,confirmed_at,commitment:investment_commitments!inner(provider,provider_reference,status)")
-          .eq("user_id", userId).eq("commitment.status", "confirmed").not("confirmed_at", "is", null)
-          .order("confirmed_at", { ascending: false }).limit(100);
+          .select("id,name,asset_class,currency,company_id,units,ownership_percent,committed_amount,settled_amount," +
+            "settled_on,settlement_source,confirmed_at,commitment:investment_commitments!inner(provider,provider_reference,status)," +
+            "marks:valuation_history(id,value,valued_on,source,methodology)," +
+            "calls:capital_calls(id,amount,due_on,settled_on,source)," +
+            "distributions(id,amount,received_on,source)")
+          .eq("user_id", userId).eq("commitment.user_id", userId).eq("commitment.status", "confirmed")
+          .not("confirmed_at", "is", null).not("settled_amount", "is", null)
+          .eq("marks.user_id", userId).eq("calls.user_id", userId).eq("distributions.user_id", userId)
+          .order("id").range(offset, offset + pageSize)
+          .order("valued_on", { referencedTable: "marks", ascending: false })
+          .order("provider_event_at", { referencedTable: "marks", ascending: false, nullsFirst: false })
+          .order("id", { referencedTable: "marks" })
+          .order("due_on", { referencedTable: "calls", ascending: false }).order("id", { referencedTable: "calls" })
+          .order("received_on", { referencedTable: "distributions", ascending: false })
+          .order("id", { referencedTable: "distributions" })
+          .limit(101, { referencedTable: "marks" }).limit(101, { referencedTable: "calls" })
+          .limit(101, { referencedTable: "distributions" });
         if (error) throw error;
-        return jsonResponse(200, { holdings: data });
+        return jsonResponse(200, {
+          holdings: data.slice(0, pageSize),
+          next_offset: data.length > pageSize ? offset + pageSize : null,
+        });
       }
       case "applications": {
         const { data, error } = await admin.from("investment_commitments")
@@ -201,10 +246,13 @@ Deno.serve(async (req) => {
           failure_code: data.failure_code, failure_message: data.failure_message });
       }
       case "research": {
-        const { document_ids: ids, opportunity_ids: dealIDs, question, mode } = body;
-        if (!Array.isArray(ids) || !Array.isArray(dealIDs) || ids.length + dealIDs.length < 1 ||
-          ids.length + dealIDs.length > 3 || [...ids, ...dealIDs].some((id) => typeof id !== "string" || !uuid.test(id)) ||
-          new Set(ids).size !== ids.length || new Set(dealIDs).size !== dealIDs.length ||
+        const { document_ids: ids, opportunity_ids: dealIDs, announcement_ids: announcementIDs = [], question, mode } = body;
+        if (!Array.isArray(ids) || !Array.isArray(dealIDs) || !Array.isArray(announcementIDs)) {
+          return errorResponse(400, "INVALID_RESEARCH", "Select one to three sources and enter a research question.");
+        }
+        const sourceIDs = [...ids, ...dealIDs, ...announcementIDs];
+        if (sourceIDs.length < 1 || sourceIDs.length > 3 ||
+          sourceIDs.some((id) => typeof id !== "string" || !uuid.test(id)) || new Set(sourceIDs).size !== sourceIDs.length ||
           typeof question !== "string" || !question.trim() || question.length > 1_000 ||
           (mode !== "question" && mode !== "committee")) {
           return errorResponse(400, "INVALID_RESEARCH", "Select one to three sources and enter a research question.");
@@ -243,6 +291,22 @@ Deno.serve(async (req) => {
             const company = deal.round.company.name;
             evidence.push({ id, title: company, text: dealEvidence(deal) });
             sources.push({ id, title: company, url: deal.source_url });
+          }
+        }
+        if (announcementIDs.length) {
+          const { data, error } = await admin.from("corporate_actions")
+            .select("title,significance,published_at,source_url,company:private_companies!inner(name)")
+            .eq("published", true).eq("company.published", true).lte("published_at", new Date().toISOString())
+            .in("id", announcementIDs).order("published_at", { ascending: false })
+            .returns<{ title: string; significance: string; published_at: string; source_url: string; company: { name: string } }[]>();
+          if (error) throw error;
+          if (data.length !== announcementIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published announcements are unavailable.");
+          for (const item of data) {
+            const id = `O${sources.length + 1}`;
+            const title = `${item.company.name}: ${item.title}`;
+            const summary = `Company: ${item.company.name}\nAnnouncement: ${item.title}\nPublished: ${item.published_at}\n${item.significance}`;
+            evidence.push({ id, title, text: summary.slice(0, 2_800) });
+            sources.push({ id, title, url: item.source_url });
           }
         }
         const runId = crypto.randomUUID();

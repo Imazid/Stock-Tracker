@@ -6,11 +6,13 @@ import UniformTypeIdentifiers
 struct PrivateResearchWorkspace: View {
     let deals: [PrivateDeal]
     var selectedDealID: UUID?
+    var announcements: [PrivateCompanyUpdate] = []
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var documents: [PrivateSavedItem] = []
     @State private var reports: [PrivateSavedItem] = []
     @State private var selectedDeals: Set<UUID> = []
     @State private var selectedDocuments: Set<UUID> = []
+    @State private var selectedAnnouncements: Set<UUID> = []
     @State private var question = ""
     @State private var consent = false
     @State private var busy = false
@@ -41,6 +43,14 @@ struct PrivateResearchWorkspace: View {
                         ForEach(deals) { deal in
                             Toggle("\(deal.company.name) · \(deal.round.stage)",
                                    isOn: selection(deal.id, in: $selectedDeals))
+                        }
+                    }
+                }
+                if !announcements.isEmpty {
+                    Section("Published company announcements") {
+                        ForEach(announcements) { item in
+                            Toggle("\(item.company.name) · \(item.title)",
+                                   isOn: selection(item.id, in: $selectedAnnouncements))
                         }
                     }
                 }
@@ -92,20 +102,25 @@ struct PrivateResearchWorkspace: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             if let selectedDealID, selectedDeals.isEmpty { selectedDeals.insert(selectedDealID) }
+            if !announcements.isEmpty, question.isEmpty {
+                selectedAnnouncements = Set(announcements.prefix(3).map(\.id))
+                question = "Summarise these company announcements. Explain what changed and what the sources leave unanswered."
+            }
             await load()
         }
         .refreshable { await load() }
     }
 
+    private var sourceCount: Int { selectedDeals.count + selectedDocuments.count + selectedAnnouncements.count }
+
     private var canRun: Bool {
-        let count = selectedDeals.count + selectedDocuments.count
-        return !busy && count > 0 && count <= 3 && !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !busy && sourceCount > 0 && sourceCount <= 3 && !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             question.utf16.count <= 1_000 && (selectedDocuments.isEmpty || consent)
     }
 
     private func selection(_ id: UUID, in set: Binding<Set<UUID>>) -> Binding<Bool> {
         Binding(get: { set.wrappedValue.contains(id) }, set: { selected in
-            if selected, selectedDeals.count + selectedDocuments.count < 3 {
+            if selected, sourceCount < 3 {
                 set.wrappedValue.insert(id)
             } else if !selected {
                 set.wrappedValue.remove(id)
@@ -131,7 +146,8 @@ struct PrivateResearchWorkspace: View {
     private func run(_ mode: String) {
         let fields: [String: Any] = [
             "mode": mode, "question": question, "document_ids": selectedDocuments.map(\.uuidString),
-            "opportunity_ids": selectedDeals.map(\.uuidString), "ai_consent": consent
+            "opportunity_ids": selectedDeals.map(\.uuidString), "ai_consent": consent,
+            "announcement_ids": selectedAnnouncements.map(\.uuidString)
         ]
         error = nil
         busy = true

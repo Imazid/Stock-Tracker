@@ -61,7 +61,8 @@ insert into public.private_market_rules values ('AU','TEST-VERSION',now() - inte
   'https://www.asic.gov.au/crowd-sourced-funding',10000,5,true);
 -- Remove any ordering dependency on the date the tests run.
 update public.private_market_rules set effective_at = '-infinity' where version = 'AU-CSF-2026-11';
-insert into public.private_provider_approvals values ('birchal','AU','TEST-VERSION','fixture agreement',now()+interval '1 day',true);
+insert into public.private_provider_approvals (provider,jurisdiction,rule_version,agreement_reference,expires_at,enabled)
+  values ('birchal','AU','TEST-VERSION','fixture agreement',now()+interval '1 day',true);
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer')$q$,
   '42501','self-declared wholesale is insufficient');
 insert into public.provider_connections (id,user_id,provider,external_subject) values
@@ -100,6 +101,50 @@ select public.record_private_provider_event('birchal','fixture-account',
 select case when count(*) = 1 and min(units) = 25 and min(settled_amount) = 9500
   then 'ok   provider confirmation atomically creates one holding' else 'FAIL provider holding' end
   from public.private_holdings where commitment_id is not null;
+select pg_temp.expect_error($q$select public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'valuation','mark-1',now(),11000,'AUD',current_date,
+  'Provider statement','Reported NAV')$q$, '42501','holding data sharing requires an explicit capability');
+update public.private_provider_approvals set holding_activity_enabled = true where provider = 'birchal';
+select pg_temp.expect_error($q$select public.record_private_holding_activity('birchal','different-account',
+  (select id from public.private_holdings where commitment_id is not null),'valuation','mark-1',now(),11000,'AUD',current_date,
+  'Provider statement','Reported NAV')$q$, '42501','holding activity requires the confirmed provider subject');
+select pg_temp.expect_error($q$select public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'valuation','mark-1',now(),11000,'USD',current_date,
+  'Provider statement','Reported NAV')$q$, '22023','provider ledger rejects a different currency');
+select case when public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'valuation','mark-1',now(),11000,'AUD',current_date,
+  'Provider statement','Reported NAV') then 'ok   stores provider mark' else 'FAIL mark not stored' end;
+select case when not public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'valuation','mark-1',now()-interval '1 hour',5,'AUD',current_date,
+  'Older statement','Reported NAV') and (select value = 11000 from public.valuation_history where provider_reference = 'mark-1')
+  then 'ok   older provider update cannot replace a mark' else 'FAIL out-of-order mark was applied' end;
+select public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'capital_call','call-1',now()-interval '1 minute',
+  400,'AUD',current_date+5,'Capital notice');
+select public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'capital_call','call-1',now(),
+  400,'AUD',current_date+5,'Payment record',null,current_date);
+select case when count(*) = 1 and min(settled_on) = current_date and min(due_on) = current_date+5
+  then 'ok   provider settles a capital call without losing the due date' else 'FAIL capital call settlement' end
+  from public.capital_calls where provider_reference='call-1';
+select public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'distribution','dist-1',now(),
+  500,'AUD',current_date,'Distribution notice');
+select public.record_private_holding_activity('birchal','fixture-account',
+  (select id from public.private_holdings where commitment_id is not null),'opening_settlement','initial',now(),
+  9500,'AUD',current_date,'Settlement notice');
+select case when settled_on = current_date and settlement_source = 'Settlement notice'
+  then 'ok   opening settlement stores an evidenced cash-flow date' else 'FAIL opening settlement' end
+  from public.private_holdings where commitment_id is not null;
+reset role;
+set role authenticated;
+select set_config('request.jwt.claim.sub','a0000000-0000-0000-0000-000000000002',true) is not null;
+select case when count(*)=0 then 'ok   another investor cannot see provider marks' else 'FAIL provider marks exposed' end
+  from public.valuation_history;
+select pg_temp.expect_error($q$select public.record_private_holding_activity('birchal','fixture-account',
+  null,'valuation','mark-2',now(),1,'AUD',current_date,'Source','Method')$q$, '42501','client cannot ingest provider activity');
+reset role;
+set role service_role;
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000031',501,'https://example.test/offer')$q$,
   '22023','recorded applications count toward the company and intermediary cap');
 update public.investment_opportunities set verified_at = now() - interval '25 hours' where id = 'a0000000-0000-0000-0000-000000000031';

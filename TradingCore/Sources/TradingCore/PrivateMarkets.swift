@@ -175,3 +175,112 @@ public enum PrivateMath {
         return expm1((low + high) / 2)
     }
 }
+
+/// Position records returned by the authenticated provider-ledger read. The
+/// opening settlement and later capital calls are separate cash-flow entries.
+public struct ProviderPrivateHolding: Decodable, Identifiable, Sendable {
+    public struct Commitment: Decodable, Sendable {
+        public let provider: String
+        public let providerReference: String
+    }
+
+    public struct Mark: Decodable, Sendable {
+        public let id: UUID
+        public let value: Decimal
+        public let valuedOn: Date
+        public let source: String
+        public let methodology: String
+    }
+
+    public struct Call: Decodable, Sendable {
+        public let id: UUID
+        public let amount: Decimal
+        public let dueOn: Date
+        public let settledOn: Date?
+        public let source: String
+    }
+
+    public struct Distribution: Decodable, Sendable {
+        public let id: UUID
+        public let amount: Decimal
+        public let receivedOn: Date
+        public let source: String
+    }
+
+    public let id: UUID
+    public let name: String
+    public let assetClass: PrivateAssetClass
+    public let currency: String
+    public let companyId: UUID?
+    public let units: Decimal?
+    public let ownershipPercent: Decimal?
+    public let committedAmount: Decimal?
+    public let settledAmount: Decimal
+    public let settledOn: Date?
+    public let settlementSource: String?
+    public let confirmedAt: Date
+    public let commitment: Commitment
+    public let marks: [Mark]?
+    public let calls: [Call]?
+    public let distributions: [Distribution]?
+
+    public var hasCompleteActivity: Bool {
+        guard let marks, let calls, let distributions else { return false }
+        return max(marks.count, calls.count, distributions.count) <= 100
+    }
+
+    public var canCalculatePerformance: Bool {
+        hasCompleteActivity && settledOn != nil && settlementSource != nil
+    }
+
+    public var holding: PrivateHolding {
+        var flows = (calls ?? []).prefix(100).map { call in
+            var flow = PrivateCashFlow(id: call.id, kind: .capitalCall, amount: call.amount,
+                                       date: call.settledOn ?? call.dueOn, settled: call.settledOn != nil, source: call.source)
+            flow.originalDueDate = call.dueOn
+            return flow
+        }
+        flows += (distributions ?? []).prefix(100).map {
+            .init(id: $0.id, kind: .distribution, amount: $0.amount, date: $0.receivedOn, settled: true, source: $0.source)
+        }
+        if let settledOn, let settlementSource {
+            flows.append(.init(id: id, kind: .contribution, amount: settledAmount, date: settledOn,
+                               settled: true, source: settlementSource))
+        }
+        // Marks arrive newest first, with provider revision order as the tiebreak.
+        var markedDays = Set<Date>()
+        let valuations = (marks ?? []).prefix(100).compactMap { mark -> PrivateValuation? in
+            guard markedDays.insert(mark.valuedOn).inserted else { return nil }
+            return .init(value: mark.value, date: mark.valuedOn, source: mark.source, method: mark.methodology)
+        }
+        return .init(id: id, name: name, assetClass: assetClass, currency: currency, commitment: committedAmount,
+                     units: units, ownershipPercent: ownershipPercent, valuations: valuations, cashFlows: flows)
+    }
+}
+
+public struct PrivateCapitalCallReminder: Equatable, Sendable {
+    public let holdingID: UUID
+    public let callID: UUID
+    public let date: Date
+
+    public var id: String { holdingID.uuidString + "." + callID.uuidString }
+}
+
+extension PrivateMath {
+    /// Device-local notification time. Due dates are civil dates in the
+    /// investor's calendar, and a reminder never schedules after its deadline.
+    public static func capitalCallReminders(in holdings: [PrivateHolding], now: Date = .now,
+                                           calendar: Calendar = .current) -> [PrivateCapitalCallReminder] {
+        holdings.flatMap { holding in
+            holding.cashFlows.compactMap { flow -> PrivateCapitalCallReminder? in
+                guard flow.kind == .capitalCall, !flow.settled,
+                      let due = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: flow.date),
+                      due > now else { return nil }
+                let earlier = calendar.date(byAdding: .day, value: -1, to: due) ?? due
+                return .init(holdingID: holding.id, callID: flow.id, date: earlier > now ? earlier : due)
+            }
+        }
+        .sorted { ($0.date, $0.id) < ($1.date, $1.id) }
+        .prefix(20).map { $0 }
+    }
+}

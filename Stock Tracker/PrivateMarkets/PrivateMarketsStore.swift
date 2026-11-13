@@ -131,6 +131,7 @@ struct PrivateCompanyUpdate: Decodable, Identifiable {
     let id: UUID
     let title: String
     let significance: String
+    let kind: String?
     let sourceUrl: URL
     let publishedAt: Date
     let company: Company
@@ -148,20 +149,6 @@ struct PrivateApplication: Decodable, Identifiable {
     let acknowledgedAt: Date
 }
 
-struct ProviderPrivateHolding: Decodable, Identifiable {
-    struct Commitment: Decodable {
-        let provider: String
-        let providerReference: String
-    }
-    let id: UUID
-    let name: String
-    let assetClass: PrivateAssetClass
-    let currency: String
-    let units: Decimal
-    let settledAmount: Decimal
-    let confirmedAt: Date
-    let commitment: Commitment
-}
 
 struct PrivateInvestorProfile: Codable {
     var country: String
@@ -173,11 +160,15 @@ enum PrivateMarketsAPI {
     struct Items: Decodable { let items: [PrivateSavedItem] }
     struct Updates: Decodable { let updates: [PrivateCompanyUpdate] }
     struct Applications: Decodable { let applications: [PrivateApplication] }
-    struct ConfirmedHoldings: Decodable { let holdings: [ProviderPrivateHolding] }
+    struct ConfirmedHoldings: Decodable {
+        let holdings: [ProviderPrivateHolding]
+        let nextOffset: Int?
+    }
     struct Handoff: Decodable { let commitmentId: UUID; let handoffUrl: URL }
 
-    static func request<Response: Decodable>(_ action: String, _ fields: [String: Any] = [:]) async throws -> Response {
-        let data = try await send(action, fields)
+    static func request<Response: Decodable>(_ action: String, _ fields: [String: Any] = [:],
+                                              expectedUserID: UUID? = nil) async throws -> Response {
+        let data = try await send(action, fields, expectedUserID: expectedUserID)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .custom { decoder in
@@ -186,6 +177,11 @@ enum PrivateMarketsAPI {
             let standard = ISO8601DateFormatter()
             let fractional = ISO8601DateFormatter()
             fractional.formatOptions.insert(.withFractionalSeconds)
+            let day = value.split(separator: "-", omittingEmptySubsequences: false).compactMap { Int($0) }
+            if value.utf8.count == 10, day.count == 3,
+               let date = Calendar(identifier: .gregorian).date(from: DateComponents(year: day[0], month: day[1], day: day[2])) {
+                return date
+            }
             guard let date = fractional.date(from: value) ?? standard.date(from: value) else {
                 throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid timestamp")
             }
@@ -195,9 +191,10 @@ enum PrivateMarketsAPI {
     }
 
     @discardableResult
-    static func send(_ action: String, _ fields: [String: Any]) async throws -> Data {
+    static func send(_ action: String, _ fields: [String: Any], expectedUserID: UUID? = nil) async throws -> Data {
         let body = fields.merging(["action": action]) { _, action in action }
-        return try await SecureBackend.invoke("private-markets", body: body, requiresSession: action != "catalog")
+        return try await SecureBackend.invoke("private-markets", body: body, requiresSession: action != "catalog",
+                                              expectedUserID: expectedUserID)
     }
 }
 
@@ -216,27 +213,96 @@ final class PrivateMarketsStore: ObservableObject {
         var follows: [Follow] = []
         var notify = false
         var seenUpdates: [UUID] = []
+        var capitalReminders: Bool?
     }
 
     @Published private(set) var state = State()
     @Published private(set) var storageError: String?
+    @Published private(set) var providerHoldings: [ProviderPrivateHolding] = []
+    @Published private(set) var providerError: String?
+    @Published private(set) var loadingProviderHoldings = false
+    private var providerLoadTask: Task<Void, Never>?
+    private var providerRefreshID = UUID()
+    private var hasLoadedProviderHoldings = false
     private var scope: UUID?
     private var didLoad = false
     private var deliveringUpdates = false
 
     func selectAccount(_ id: UUID?) {
         guard !didLoad || scope != id else { return }
+        let previous = scope
         scope = id
         didLoad = true
+        if previous != id {
+            reminderTask?.cancel()
+            cancelCapitalReminders(scope: previous)
+        }
         state = State()
         storageError = nil
+        providerHoldings = []
+        providerError = nil
+        loadingProviderHoldings = false
+        providerLoadTask?.cancel()
+        providerLoadTask = nil
+        providerRefreshID = UUID()
+        hasLoadedProviderHoldings = false
         do {
             let file = try Self.file(for: id)
             if FileManager.default.fileExists(atPath: file.path) {
                 state = try JSONDecoder().decode(State.self, from: Data(contentsOf: file))
             }
+            syncCapitalReminders()
         } catch {
             storageError = "Private records could not be opened. Try again after unlocking your device."
+        }
+    }
+
+    func refreshProviderHoldings(for userID: UUID) async {
+        guard scope == userID, SecureBackend.isConfigured else { return }
+        if let providerLoadTask {
+            await providerLoadTask.value
+            return
+        }
+        loadingProviderHoldings = true
+        providerError = nil
+        let refreshID = UUID()
+        providerRefreshID = refreshID
+        let task = Task { await loadProviderHoldings(for: userID, refreshID: refreshID) }
+        providerLoadTask = task
+        await task.value
+    }
+
+    private func loadProviderHoldings(for userID: UUID, refreshID: UUID) async {
+        defer {
+            if providerRefreshID == refreshID {
+                loadingProviderHoldings = false
+                providerLoadTask = nil
+            }
+        }
+
+        do {
+            var holdings: [ProviderPrivateHolding] = []
+            var offset = 0
+            for _ in 0..<50 {
+                let page: PrivateMarketsAPI.ConfirmedHoldings = try await PrivateMarketsAPI.request(
+                    "confirmed_holdings", ["offset": offset], expectedUserID: userID)
+                try Task.checkCancellation()
+                guard providerRefreshID == refreshID, scope == userID else { return }
+                holdings.append(contentsOf: page.holdings)
+                guard let next = page.nextOffset else {
+                    var ids = Set<UUID>()
+                    hasLoadedProviderHoldings = true
+                    providerHoldings = holdings.filter { ids.insert($0.id).inserted }
+                    syncCapitalReminders()
+                    return
+                }
+                guard next > offset else { break }
+                offset = next
+            }
+            providerError = "The provider returned an incomplete portfolio."
+        } catch is CancellationError {
+        } catch {
+            if providerRefreshID == refreshID, scope == userID { providerError = error.localizedDescription }
         }
     }
 
@@ -252,6 +318,7 @@ final class PrivateMarketsStore: ObservableObject {
         let data = try JSONEncoder().encode(next)
         try data.write(to: Self.file(for: scope), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         state = next
+        syncCapitalReminders()
     }
 
     func save(_ holding: PrivateHolding) throws {
@@ -279,8 +346,12 @@ final class PrivateMarketsStore: ObservableObject {
 
     func checkUpdates(for userID: UUID) async throws -> [PrivateCompanyUpdate] {
         guard scope == userID, storageError == nil else { return [] }
-        let ids = state.follows.map { $0.id.uuidString }
-        let response: PrivateMarketsAPI.Updates = try await PrivateMarketsAPI.request("updates", ["company_ids": ids])
+        let companyIDs = state.follows.map(\.id) + providerHoldings.compactMap(\.companyId)
+        var seen = Set<UUID>()
+        let ids = companyIDs.filter { seen.insert($0).inserted }.prefix(100).map(\.uuidString)
+        guard !ids.isEmpty else { return [] }
+        let response: PrivateMarketsAPI.Updates = try await PrivateMarketsAPI.request(
+            "updates", ["company_ids": ids], expectedUserID: userID)
         try Task.checkCancellation()
         guard scope == userID else { return [] }
         if state.notify, !deliveringUpdates {
@@ -295,7 +366,8 @@ final class PrivateMarketsStore: ObservableObject {
                 guard scope == userID, state.notify, !Task.isCancelled else { break }
                 let content = UNMutableNotificationContent()
                 content.title = "Private Markets update"
-                content.body = "A followed company has published an update."
+                content.body = update.kind == "open_round" || update.kind == "interest" ?
+                    "A company you track has a funding update." : "A company you track has published an update."
                 content.userInfo = ["privateMarkets": true]
                 do {
                     try await UNUserNotificationCenter.current().add(.init(
@@ -313,10 +385,88 @@ final class PrivateMarketsStore: ObservableObject {
     }
 
     func checkUpdatesInBackground() async {
-        guard let id = scope, state.notify, !state.follows.isEmpty else { return }
+        guard let id = scope, state.capitalReminders == true || state.notify else { return }
         // Session restoration can lag a cold background launch. Never load or notify another account.
         guard let sessionID = try? await SupabaseManager.auth.session.user.id, sessionID == id else { return }
-        _ = try? await checkUpdates(for: id)
+        await refreshProviderHoldings(for: id)
+        if state.notify { _ = try? await checkUpdates(for: id) }
+    }
+
+    func setCapitalReminders(_ enabled: Bool) async throws {
+        let owner = scope
+        if enabled {
+            let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            guard allowed else {
+                throw NSError(domain: "PrivateMarkets", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "Allow notifications in iOS Settings to receive capital call reminders."])
+            }
+        }
+        guard scope == owner else { return }
+        try change { $0.capitalReminders = enabled }
+    }
+
+    private var reminderTask: Task<Void, Never>?
+
+    private func syncCapitalReminders() {
+        let previousTask = reminderTask
+        previousTask?.cancel()
+        let owner = scope
+        guard state.capitalReminders == true else {
+            cancelCapitalReminders(scope: owner)
+            return
+        }
+        let positions = state.holdings + providerHoldings.map(\.holding)
+        let reminders = PrivateMath.capitalCallReminders(in: positions)
+        reminderTask = Task {
+            await previousTask?.value
+            guard !Task.isCancelled, scope == owner else { return }
+            let center = UNUserNotificationCenter.current()
+            let prefix = reminderPrefix(owner)
+            let pending = await center.pendingNotificationRequests().filter { $0.identifier.hasPrefix(prefix) }
+            guard !Task.isCancelled, scope == owner else { return }
+            // Preserve previously scheduled provider reminders when a new sign-in has
+            // yet to retrieve the provider's ledger.
+            let desired = Set(reminders.map { prefix + $0.id })
+            let obsolete = pending.filter { item in
+                let provider = item.content.userInfo["providerRecord"] as? Bool == true
+                return !desired.contains(item.identifier) && (!provider || hasLoadedProviderHoldings)
+            }
+            center.removePendingNotificationRequests(withIdentifiers: obsolete.map(\.identifier))
+            let providerIDs = Set(providerHoldings.map(\.id))
+            for reminder in reminders {
+                guard !Task.isCancelled, scope == owner else { return }
+                let content = UNMutableNotificationContent()
+                content.title = "Capital call reminder"
+                content.body = "Review the payment deadline and source in Private Markets."
+                content.userInfo = ["privateMarkets": true, "capitalCalls": true,
+                                    "providerRecord": providerIDs.contains(reminder.holdingID)]
+                let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: reminder.date)
+                let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+                try? await center.add(.init(identifier: prefix + reminder.id, content: content, trigger: trigger))
+                if Task.isCancelled || scope != owner {
+                    center.removePendingNotificationRequests(withIdentifiers: [prefix + reminder.id])
+                    return
+                }
+            }
+        }
+    }
+
+    private func reminderPrefix(_ owner: UUID?) -> String {
+        "private-markets.capital." + (owner?.uuidString ?? "device") + "."
+    }
+
+    private func cancelCapitalReminders(scope owner: UUID?) {
+        let prefix = reminderPrefix(owner)
+        let previousTask = reminderTask
+        Task {
+            await previousTask?.value
+            let center = UNUserNotificationCenter.current()
+            let requests = await center.pendingNotificationRequests()
+            guard scope != owner || state.capitalReminders != true else { return }
+            center.removePendingNotificationRequests(withIdentifiers: requests.filter {
+                $0.identifier.hasPrefix(prefix)
+            }.map(\.identifier))
+        }
     }
 
     static func clearTestRecords() {

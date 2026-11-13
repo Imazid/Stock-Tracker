@@ -184,7 +184,7 @@ struct PrivateUpdatesView: View {
     var body: some View {
         List {
             Section("Notifications") {
-                Toggle("Notify me about followed companies", isOn: Binding(
+                Toggle("Notify me about company updates", isOn: Binding(
                     get: { store.state.notify }, set: setNotifications))
                     .disabled(auth.userId == nil)
                 Text("Stock Tracker checks verified updates when iOS permits background refresh.")
@@ -199,14 +199,24 @@ struct PrivateUpdatesView: View {
                 }
                 if auth.userId == nil {
                     Text("Sign in from Account to check followed companies.")
-                } else if store.state.follows.isEmpty {
+                } else if store.state.follows.isEmpty && store.providerHoldings.isEmpty && !loading {
                     Text("Follow a company from its opportunity page.")
                 } else if updates.isEmpty && !loading {
-                    Text("No verified updates are published for companies you follow.")
+                    Text("No verified updates are published for your followed companies or provider holdings.")
+                }
+                let announcements = updates.filter { $0.kind == "announcement" }
+                if !announcements.isEmpty {
+                    NavigationLink("Summarise published announcements") {
+                        PrivateResearchWorkspace(deals: [], announcements: announcements)
+                    }
                 }
                 ForEach(updates) { item in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(item.title).font(.headline)
+                        if item.kind == "open_round" || item.kind == "interest" {
+                            Text(item.kind == "open_round" ? "Funding round" : "Expression of interest")
+                                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        }
                         Text("\(item.company.name) · \(item.publishedAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.footnote).foregroundStyle(.secondary)
                         Text(item.significance)
@@ -223,11 +233,14 @@ struct PrivateUpdatesView: View {
     }
 
     private func load() async {
-        guard let id = auth.userId, !store.state.follows.isEmpty else { return }
+        guard let id = auth.userId else { return }
         error = nil
         loading = true
         defer { loading = false }
-        do { updates = try await store.checkUpdates(for: id) }
+        do {
+            await store.refreshProviderHoldings(for: id)
+            updates = try await store.checkUpdates(for: id)
+        }
         catch is CancellationError {
         } catch { self.error = error.localizedDescription }
     }
