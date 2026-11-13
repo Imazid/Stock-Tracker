@@ -423,6 +423,19 @@ Deno.test("cancel: before submission is local; after, only the provider's word c
 Deno.test("submit: under the lock, two orders that only pass alone can't both go through", async () => {
   // Shared exposure: risk fails once another order is reserving (submitting).
   let reserving = 0;
+  // A rendezvous makes the race deterministic: each risk check waits (up to 50 ms) for the
+  // other one to arrive, as two real requests in flight would.
+  let arrived = 0;
+  let release: () => void = () => {};
+  let bothIn = new Promise<void>((r) => (release = r));
+  const rendezvous = async () => {
+    if (++arrived >= 2) release();
+    await Promise.race([bothIn, new Promise((r) => setTimeout(r, 50))]);
+  };
+  const resetRendezvous = () => {
+    arrived = 0;
+    bothIn = new Promise<void>((r) => (release = r));
+  };
   let chain: Promise<unknown> = Promise.resolve();
   const mutex = <T>(fn: () => Promise<T>): Promise<T> => {
     const run = chain.then(fn);
@@ -440,7 +453,7 @@ Deno.test("submit: under the lock, two orders that only pass alone can't both go
         return moved;
       };
       x.deps.evaluateRisk = async () => {
-        await Promise.resolve(); // a real risk check awaits a quote
+        await rendezvous(); // a real risk check awaits a quote
         return reserving > 0 ? { ...passRisk(), result: "fail", reasonCodes: ["dailyNotional"] } : passRisk();
       };
       if (useLock) x.deps.serialize = mutex;
@@ -449,12 +462,14 @@ Deno.test("submit: under the lock, two orders that only pass alone can't both go
   };
   {
     reserving = 0;
+    resetRendezvous();
     const [a, b] = await make(false);
     const outs = await Promise.all([submitIntent(a.deps, a.intent, caller), submitIntent(b.deps, b.intent, caller)]);
     assertEquals(outs.filter((o) => o.ok).length, 2, "without the lock both slip through (this is the race)");
   }
   {
     reserving = 0;
+    resetRendezvous();
     const [a, b] = await make(true);
     const outs = await Promise.all([submitIntent(a.deps, a.intent, caller), submitIntent(b.deps, b.intent, caller)]);
     assertEquals(outs.filter((o) => o.ok).length, 1);
