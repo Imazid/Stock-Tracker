@@ -35,6 +35,20 @@
 
 Security: `Config/Secrets.plist` is copied into the app bundle, so every key ships in the IPA. Move OpenAI/Gemini/SnapTrade/Alpaca/FMP behind a backend proxy before release.
 
+## Look: Liquid Glass after Coinbase / Revolut / Fey / Luma (2026-11-13)
+- References from Mobbin: Coinbase (one blue, big numbers, centred amount entry and success), Revolut (gradient hero, round frosted action buttons, cents smaller), Fey (deep dark, glow tinted by the ticker, end-dot charts without grid lines), Luma (backdrop derived from the subject's colour, glass controls).
+- Tokens: `Theme` uses cool neutrals in light (#F4F5F8 page, white cards) and Revolut near-black in dark (#030408 page, navy-grey frosted cards). Section heroes (`BackdropStyle`): Home blue, Portfolio teal, Agents violet gradients fading to black; the Home balance sits centred on it with four `GlassActionButton`s (no card). Primary button = Revolut pale lavender (#D6DEFF, navy text) in dark, brand blue in light (`DS.primaryFill`/`primaryLabel`). `DS.accent` is #0052FF / #5B8CFF for text and links; `DS.accentFill` (#0052FF / #295CFF) fills buttons so white text keeps 4.5:1. Gains and losses are the Coinbase-like `Theme.positiveColor` / `negativeColor`, scheme-aware; the colour-blind modes are unchanged. `DS.display` is bold SF Pro (the New York serif is gone). `DS.money` is SF Pro with tabular digits.
+- `DSGlass.swift`:
+  - `ScreenBackdrop` / `.dsScreenBackground(tint:)` sits behind every screen: base colour plus two radial glows, and goes plain under Reduce Transparency. The stock page tints it with the logo's brand colour (`LogoDisc.brandColor`); black, white and grey logos keep the blue.
+  - `.frostedCard` (what `.dsCard` now draws).
+  - `GlassActionButton` (Revolut round actions; `accessibilityName` keeps long labels such as "Connect a broker" for tests).
+  - `GlassIconButton`, `.glassChip`.
+  - `MoneyText` (cents at 60% in the secondary colour; one accessibility label for the whole amount).
+  - `AgentAvatar` (stable gradient tile per agent/template).
+- Glass rule: Liquid Glass is for controls and floating chrome (primary/secondary pill styles, top-bar circles, action buttons, the result check). Content sits on frosted cards; never put glass on glass. Bottom button bars no longer get `.background(.bar)`, so the glass button floats.
+- `DSRangePicker` is a capsule track with a sliding raised chip. `DSPriceChart` draws an end dot with a halo and no grid lines.
+- `DesignTourTests` (opt-in, `TEST_RUNNER_RUN_DESIGN=1`) screenshots ~22 screens in light and dark. Export with `xcrun xcresulttool export attachments`.
+
 ## Onboarding (redesigned 2026-10-16)
 - Flow: welcome → markets → follow (stock picker) → portfolio (broker / CSV* / manual) → alerts → Face ID** → account** → done. *CSV only on Black (matches Portfolio tab). **Face ID only if enrolled; account only if signed out. Account is last on purpose (value before commitment).
 - Files: `OnboardingModel.swift` (steps, `PickedAsset`, `OnboardingCatalog`, `OnboardingHandoff`), `OnboardingView.swift` (container, top bar, `OnboardingPage` scaffold), `OnboardingIntroSteps.swift`, `OnboardingSetupSteps.swift`. Shared tokens/components in `DesignSystem.swift` (`DS`, pill button styles, `TickerLogo`, `ChangePill`, `SectionHeader`, `EmptyStateCard`).
@@ -45,7 +59,7 @@ Security: `Config/Secrets.plist` is copied into the app bundle, so every key shi
 
 ## Data honesty rules
 - Fresh installs start with an **empty** portfolio and watchlist — never mock holdings (`MarketData.loadInitialData`). No placeholder news either.
-- Theme defaults to **System** for new installs (onboarding stays dark by design) — check light AND dark.
+- Theme defaults to **Dark** for new installs (owner, 2026-11-13: "keep the aesthetic black", after Revolut); System and Light stay in Settings — still check light AND dark. A simulator's appearance can get stuck after many `simctl ui appearance` toggles (Apple's Settings stays light too): reboot it before blaming `DarkModeTests.testSystemAppearanceFollowsTheDevice`.
 - Unknown numbers are `0`/`nil` and render as "—" (`detailedStock(from:)`, `QuickStatsSection`, 52-week bar). Never synthesise market cap/volume/ranges — they're shown to users and fed to AI analysis.
 - Permission prompts are contextual: notifications in onboarding or on the first alert (`PriceAlertManager.addAlert`), ATT only after onboarding.
 
@@ -139,6 +153,8 @@ Security: `Config/Secrets.plist` is copied into the app bundle, so every key shi
 - **Markets:** US, ASX, crypto, London, Xetra, Paris, Amsterdam, SIX, Tokyo, Hong Kong, Singapore, KRX, NSE (`Venue`). Sessions incl. Asian lunch breaks in `MarketCalendar`; holiday tables for the non-US/ASX venues in `ExchangeHolidays.swift` (extend yearly; an unlisted holiday fails safe via the quote-freshness check). Yahoo quotes London in pence (`GBp`) — `normalisedCurrency` converts; a listing quoted in another currency than its venue's is refused. Tokyo shares trade in units of 100 (not ETFs); other non-US venues whole shares; tick tables and the per-stock board lots of HKEX and SGX (price-tiered 100/10/1 since 5 Oct 2026) aren't enforced (stated in `PaperBroker.capabilities.notes`). Definite transaction taxes are charged (`PaperBroker.taxBps`: UK 0.5% buys, France 0.4% buys, HK 0.1% both, Korea 0.20% sells, India 0.1% both). Practice portfolios and agents hold one currency each (`Currencies`).
 - Navigation: five tabs (Home, Markets, Portfolio, Agents, Activity). Search is a section of Markets — a sixth (system search) tab pushes Activity into "More". UI tests navigate with `app.open("Watchlist" | "Search" | "News" | tab)` from `AppNavigation.swift`.
 - UI tests: `TradingFlowTests` (launch args `-UITestFreshInstall -UITestTradingFixture -hasCompletedOnboarding YES`).
+- **Phone or account (`TradingStore.home`).** Signed out, everything runs on the phone (`Trading/state.json`, agents only while the app is open). Signed in, `useAccount()` loads the person's state from `trading-api` (`TradingServerClient`, action `state`) and from then on every change is a server action with `includeState: true`. The server is the truth, the phone renders what it returns, and agents run on the server's scheduler while the app is closed. If the server can't be reached, the phone's data stays in use with a `trading.syncProblem` line, and the loop retries every 3 min. Sign-out returns to the phone's own data, which is never uploaded or merged. Replies are adopted only if their audit trail isn't shorter than the one shown (out-of-order replies). Notices for what server-side agents did come from diffing states (`TradingStore.notices(from:to:)`). Order previews are still computed on the phone with the same engine; the server checks again. Order idempotency key = `clientOrderID`. `TradingHomeBadge` shows "On this phone" / "In your account".
+- `TradingAccountTests` drives that against the local stack (skips unless `supabase start` is up and the functions are served with `TRADING_ALLOW_FIXTURE_DATA=1`). DEBUG `-UITestSignIn email:password` signs in at launch, and with `-UITestTradingFixture` every server request carries `"fixture": "ui-test"`.
 - Research notes with sources: `docs/trading/provider-capabilities.md`, `regulatory-au.md`, `international-markets.md` (engineering research, not legal advice).
 
 ## Common Swift / Build Pitfalls

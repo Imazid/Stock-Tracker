@@ -163,7 +163,7 @@ struct AppleStocksWatchlistView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .environment(\.editMode, $editMode)
             .refreshable { await marketData.refreshFromAPI() }
             .toolbar(.hidden, for: .navigationBar)

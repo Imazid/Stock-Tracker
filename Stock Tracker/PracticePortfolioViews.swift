@@ -40,6 +40,8 @@ struct PracticePortfolioSection: View {
                 }
             }
 
+            TradingHomeBadge()
+
             if trading.practicePortfolios.isEmpty {
                 EmptyStateCard(
                     systemImage: "graduationcap",
@@ -100,9 +102,7 @@ struct PracticePortfolioCard: View {
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(theme.secondaryText)
             }
-            Text(TradingFormat.money(ledger.equity, ledger.currency))
-                .font(DS.money(28))
-                .foregroundStyle(theme.primaryText)
+            MoneyText(text: TradingFormat.money(ledger.equity, ledger.currency), size: 30)
                 .contentTransition(.numericText())
             HStack(spacing: DS.Space.m) {
                 GainLossText(value: ledger.totalReturn,
@@ -144,7 +144,7 @@ struct PracticePortfolioDetailView: View {
                 ContentUnavailableView("Portfolio removed", systemImage: "tray", description: Text("This practice portfolio no longer exists."))
             }
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
@@ -177,14 +177,16 @@ struct PracticePortfolioDetailView: View {
         }
         .sheet(item: $openedOrder) { ref in NavigationStack { OrderDetailView(orderID: ref.id) } }
         .confirmationDialog("Reset this portfolio?", isPresented: $confirmReset, titleVisibility: .visible) {
-            Button("Reset", role: .destructive) { attempt { try trading.resetPortfolio(ledgerID) } }
+            Button("Reset", role: .destructive) { attempt { try await trading.resetPortfolio(ledgerID) } }
         } message: {
             Text("Positions and open orders are cleared and the cash goes back to the starting balance. The history stays in the audit trail.")
         }
         .confirmationDialog("Delete this portfolio?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
-                attempt { try trading.deletePortfolio(ledgerID) }
-                if problem == nil { dismiss() }
+                attempt {
+                    try await trading.deletePortfolio(ledgerID)
+                    dismiss()
+                }
             }
         } message: {
             Text("Its practice positions and cash are removed. The history stays in the audit trail.")
@@ -197,8 +199,12 @@ struct PracticePortfolioDetailView: View {
         .task { await trading.refreshPrices() }
     }
 
-    private func attempt(_ work: () throws -> Void) {
-        do { try work() } catch { problem = error.localizedDescription }
+    /// Runs a change and shows any refusal. Changes can go to the account's server, so
+    /// they're asynchronous.
+    private func attempt(_ work: @escaping () async throws -> Void) {
+        Task {
+            do { try await work() } catch { problem = error.localizedDescription }
+        }
     }
 
     private func content(_ ledger: Ledger) -> some View {
@@ -207,8 +213,7 @@ struct PracticePortfolioDetailView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.l) {
                 VStack(alignment: .leading, spacing: DS.Space.s) {
-                    Text(TradingFormat.money(ledger.equity, ledger.currency))
-                        .font(DS.money(36))
+                    MoneyText(text: TradingFormat.money(ledger.equity, ledger.currency), size: 40)
                         .contentTransition(.numericText())
                         .accessibilityIdentifier("practice.equity")
                     GainLossText(value: ledger.totalReturn,
@@ -332,7 +337,7 @@ struct PracticePortfolioDetailView: View {
                                                mode: .paper, spec: AgentTemplates.riskManager(), budget: ledger.equity,
                                                maxPositionPct: 100, author: .template)
                         draft.attachToLedgerID = ledger.id
-                        try trading.createAgent(draft)
+                        try await trading.createAgent(draft)
                     }
                 }
             } message: {

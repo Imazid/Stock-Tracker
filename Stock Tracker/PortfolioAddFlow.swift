@@ -132,7 +132,7 @@ struct AddHoldingFlow: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("Add a holding")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -550,7 +550,7 @@ struct HoldingFormView: View {
             }
             .padding(DS.Space.gutter)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .toolbar {
             // The decimal pad has no return key: a Done in the bar puts the keyboard away.
             ToolbarItem(placement: .confirmationAction) {

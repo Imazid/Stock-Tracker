@@ -190,6 +190,13 @@ struct StockCryptoTrackerApp: App {
 
                 // Restore Supabase session so user stays signed in across launches
                 supabaseAuthManager.restoreSessionIfNeeded()
+                #if DEBUG
+                // `-UITestSignIn email:password`: signs in at launch (UI tests against a local stack).
+                if let pair = UserDefaults.standard.string(forKey: "UITestSignIn"), let split = pair.firstIndex(of: ":") {
+                    let email = String(pair[..<split]), password = String(pair[pair.index(after: split)...])
+                    Task { await supabaseAuthManager.signIn(email: email, password: password) }
+                }
+                #endif
 
                 // Check downgrade limits after data loads
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
@@ -235,6 +242,9 @@ struct StockCryptoTrackerApp: App {
             // When the user signs in to Supabase, run the first-sync merge
             .onReceive(supabaseAuthManager.$authState) { state in
                 if case .signedIn = state {
+                    // Practice money and agents move to the account, where agents keep
+                    // running while the app is closed (if its trading server answers).
+                    Task { await tradingStore.useAccount() }
                     Task {
                         await syncManager.syncOnSignIn(
                             marketData: marketData,
@@ -245,6 +255,7 @@ struct StockCryptoTrackerApp: App {
                         await referralManager.loadCode()
                     }
                 } else if case .signedOut = state {
+                    tradingStore.useDevice()
                     marketData.reloadFromDisk()
                     syncManager.resetInitialSyncFlag()
                 }
@@ -549,7 +560,7 @@ struct LockedView: View {
         .padding(.horizontal, DS.Space.gutter)
         .padding(.bottom, DS.Space.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .onAppear {
             if authManager.useBiometrics {
                 authManager.authenticate()

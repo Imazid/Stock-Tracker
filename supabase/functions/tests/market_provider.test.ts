@@ -21,7 +21,9 @@ import {
 import { AlpacaDataProvider, type AlpacaDataProviderOptions } from "../_shared/market/alpaca.ts";
 import { CoinGeckoVolumeSource, type CoinGeckoVolumeSourceOptions } from "../_shared/market/coingecko.ts";
 import { FixtureDataProvider } from "../_shared/market/fixture.ts";
-import { providerFromEnv } from "../_shared/market/index.ts";
+import { providerFromEnv, RoutedProvider, UITestFixtureProvider, uiTestCloses, YahooFinanceProvider } from "../_shared/market/index.ts";
+import { type YahooFinanceProviderOptions, yahooProvenance } from "../_shared/market/yahoo.ts";
+import { isTradingDay, timeZone } from "../_shared/trading/calendar.ts";
 import { CachedVolumeSource, memoryVolumeStore } from "../_shared/market/volume_cache.ts";
 import { type MarketDataProvider, parseVenueTime, ProviderError, snapshot } from "../_shared/market/provider.ts";
 
@@ -1339,6 +1341,8 @@ Deno.test("snapshot: never throws, and an instrument with no answer at all is a 
 Deno.test("snapshot through Alpaca and CoinGecko: consolidated stock bars need no figure; crypto gets CoinGecko's", async () => {
   const { fetch: fake, calls } = recorder((call) => {
     if (call.url.hostname === "api.coingecko.com") return json(geckoRows);
+    // ASX and London go to Yahoo now; here it has nothing for them.
+    if (call.url.hostname === "query1.finance.yahoo.com") return json({ chart: { result: null, error: { code: "Not Found" } } }, 404);
     switch (call.url.pathname) {
       case "/v2/stocks/bars":
         return json({ bars: { AAPL: [wireBar(nyMidnight(11), 105), wireBar(nyMidnight(12), 106)], MSFT: [wireBar(nyMidnight(12), 412)] }, next_page_token: null });
@@ -1364,8 +1368,8 @@ Deno.test("snapshot through Alpaca and CoinGecko: consolidated stock bars need n
   for (const quote of Object.values(result.quotes)) assert(!("dayVolume" in quote));
   assertEquals(result.failures, {
     "us:MSFT": "Live quote unavailable: Alpaca has no live quote for MSFT",
-    "asx:BHP": "Price history unavailable: ASX isn't supported by this data source",
-    "lse:VOD": "Price history unavailable: London market isn't supported by this data source",
+    "asx:BHP": "Price history unavailable: Yahoo Finance answered with an error (404).",
+    "lse:VOD": "Price history unavailable: Yahoo Finance answered with an error (404).",
   });
   // BTC's 1.39 coins a day on Alpaca's venue says nothing about Bitcoin; CoinGecko's figure does.
   assertEquals(result.dollarVolume, { "crypto:BTC": 33_235_034_316 });
@@ -1378,8 +1382,12 @@ Deno.test("snapshot through Alpaca and CoinGecko: consolidated stock bars need n
   assertEquals(gecko[0].headers.has("APCA-API-KEY-ID"), false);
   assertEquals(gecko[0].headers.has("APCA-API-SECRET-KEY"), false);
   for (const call of calls.filter((call) => call.url.hostname !== "api.coingecko.com")) {
-    assertEquals(call.url.hostname, "data.alpaca.markets");
     assertEquals(call.headers.has("x-cg-demo-api-key"), false);
+    if (call.url.hostname === "query1.finance.yahoo.com") {
+      assertEquals(call.headers.has("APCA-API-KEY-ID") || call.headers.has("APCA-API-SECRET-KEY"), false, "no key goes to Yahoo");
+    } else {
+      assertEquals(call.url.hostname, "data.alpaca.markets");
+    }
   }
 });
 
@@ -1532,7 +1540,7 @@ Deno.test("providerFromEnv: a fixture without the flag gives nothing — never r
   }
 });
 
-Deno.test("providerFromEnv: both Alpaca keys give the Alpaca provider, wired to the given fetch and log", async () => {
+Deno.test("providerFromEnv: both Alpaca keys route US shares and crypto to Alpaca, wired to the given fetch and log", async () => {
   const events: Record<string, unknown>[] = [];
   const { fetch: fake, calls } = recorder(() => json({ AAPL: { latestTrade: { t: "2026-11-12T19:59:58Z", p: 228.5 } } }));
 
@@ -1540,8 +1548,9 @@ Deno.test("providerFromEnv: both Alpaca keys give the Alpaca provider, wired to 
 
   assertEquals(choice.allowFixtureData, false);
   assertEquals(choice.reason, undefined);
-  assert(choice.provider instanceof AlpacaDataProvider);
-  assertEquals(choice.provider.name, "alpaca");
+  assert(choice.provider instanceof RoutedProvider);
+  assertEquals(choice.provider.name, "alpaca+yahoo");
+  assert(choice.provider.supports(AAPL) && choice.provider.supports(BTC) && choice.provider.supports(BHP) && choice.provider.supports(VOD));
   const quotes = await choice.provider.quotes([AAPL], NOW);
   assertEquals(quotes.quotes["us:AAPL"].last, 228.5);
   assertEquals(quotes.quotes["us:AAPL"].provenance.kind, "market");
@@ -1553,7 +1562,8 @@ Deno.test("providerFromEnv: both Alpaca keys give the Alpaca provider, wired to 
 
   // The flag alone doesn't change which provider real requests get.
   const flagged = providerFromEnv(envOf({ TRADING_ALLOW_FIXTURE_DATA: "1", ...KEYS }));
-  assert(flagged.provider instanceof AlpacaDataProvider);
+  assert(flagged.provider instanceof RoutedProvider);
+  assertEquals(flagged.provider.name, "alpaca+yahoo");
   assertEquals(flagged.allowFixtureData, true);
 });
 
@@ -1651,7 +1661,7 @@ Deno.test("volume cache: a broken store or source means asking directly, never a
   assertEquals(await new CachedVolumeSource(failing, store).dollarVolume([BTC], NOW), { "crypto:BTC": 3e10 });
 });
 
-Deno.test("providerFromEnv: without both keys, market data isn't configured", () => {
+Deno.test("providerFromEnv: without both Alpaca keys, only the exchanges Yahoo prices are covered", async () => {
   const cases: Record<string, string>[] = [
     {},
     { ALPACA_DATA_KEY_ID: KEY_ID },
@@ -1661,16 +1671,24 @@ Deno.test("providerFromEnv: without both keys, market data isn't configured", ()
     { COINGECKO_API_KEY: GECKO_KEY }, // a volume source alone is not market data
   ];
   for (const values of cases) {
-    assertEquals(providerFromEnv(envOf(values)), { provider: null, allowFixtureData: false, reason: "Market data isn't configured." });
+    const choice = providerFromEnv(envOf(values));
+    assert(choice.provider instanceof RoutedProvider);
+    assertEquals([choice.provider.name, choice.allowFixtureData, choice.reason], ["yahoo", false, "Market data for US shares and crypto isn't configured."]);
+    assertEquals([AAPL, BTC, BHP, VOD].map((instrument) => choice.provider!.supports(instrument)), [false, false, true, true]);
   }
-  assertEquals(providerFromEnv(envOf({ TRADING_ALLOW_FIXTURE_DATA: "1" })), { provider: null, allowFixtureData: true, reason: "Market data isn't configured." });
+  // US shares and crypto get a reason, never a price from somewhere else; nothing was fetched for them.
+  const { fetch: fake, calls } = recorder(() => json({}));
+  const { provider } = providerFromEnv(envOf({ TRADING_ALLOW_FIXTURE_DATA: "1" }), { fetch: fake });
+  const answer = await provider!.quotes([AAPL, BTC], NOW);
+  assertEquals(answer, { quotes: {}, failures: { "us:AAPL": "Market data for the US market isn't configured on the server", "crypto:BTC": "Market data for the Crypto isn't configured on the server" } });
+  assertEquals(calls.length, 0);
 });
 
 // ---------------------------------------------------------------------------------------
 // The guard: this layer reads market data and can do nothing else.
 
 Deno.test("source guard: no trading host, no order or account path, no write method, no clock", async () => {
-  const sources = ["provider.ts", "alpaca.ts", "coingecko.ts", "fixture.ts", "index.ts", "volume_cache.ts"];
+  const sources = ["provider.ts", "alpaca.ts", "coingecko.ts", "fixture.ts", "index.ts", "volume_cache.ts", "yahoo.ts", "routed.ts", "ui_test_fixture.ts"];
   const hosts = new Set<string>();
   for (const name of sources) {
     const text = await Deno.readTextFile(new URL(`../_shared/market/${name}`, import.meta.url));
@@ -1690,8 +1708,13 @@ Deno.test("source guard: no trading host, no order or account path, no write met
     assertNoSecrets(text);
     for (const match of text.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)) hosts.add(match[1].toLowerCase());
   }
-  // Two hosts are ever written down: Alpaca's data host and CoinGecko's public API.
-  assertEquals([...hosts].sort(), ["api.coingecko.com", "data.alpaca.markets"]);
+  // Three hosts are ever written down: Alpaca's data host, CoinGecko's public API and Yahoo's chart host.
+  assertEquals([...hosts].sort(), ["api.coingecko.com", "data.alpaca.markets", "query1.finance.yahoo.com"]);
+  // Yahoo: one read-only path, GET only, and nothing that looks like a credential.
+  const yahoo = await Deno.readTextFile(new URL("../_shared/market/yahoo.ts", import.meta.url));
+  assertEquals([...yahoo.matchAll(/"(\/v[^"]*)"/g)].map((match) => match[1]), ["/v8/finance/chart/"]);
+  assertEquals([...yahoo.matchAll(/method:\s*"([A-Z]+)"/g)].map((match) => match[1]), ["GET"]);
+  assert(!/api[_-]?key|authorization|cookie|crumb/i.test(yahoo), "Yahoo needs no credential and gets none");
 
   // Every path literal in the Alpaca provider is one of the four read-only data paths.
   const alpaca = await Deno.readTextFile(new URL("../_shared/market/alpaca.ts", import.meta.url));
@@ -1704,4 +1727,228 @@ Deno.test("source guard: no trading host, no order or account path, no write met
   assertEquals([...gecko.matchAll(/"(https:\/\/[^"]+)"/g)].map((match) => match[1]), ["https://api.coingecko.com/api/v3/coins/markets"]);
   assertEquals([...gecko.matchAll(/method:\s*"([A-Z]+)"/g)].map((match) => match[1]), ["GET"]);
   assert(!gecko.includes("x_cg_demo_api_key") && !gecko.includes("x_cg_pro_api_key"), "the CoinGecko key must never be a query parameter");
+});
+
+// ---------------------------------------------------------------------------------------
+// Yahoo Finance: the eleven exchanges outside the US (a port of the app's exchangeChart,
+// exchangeDailyBars and exchangeQuote).
+
+const TOYOTA = listed("7203", "tse", "Toyota");
+const NESTLE = listed("NESN", "six", "Nestlé");
+const RELIANCE = listed("RELIANCE", "nse", "Reliance");
+const yday = (date: string) => Date.parse(`${date}T08:00:00Z`) / 1_000;
+
+type YahooRow = [number, number | null, number | null, number | null, number | null, number | null];
+
+/** A chart answer the way Yahoo sends it (checked against a live VOD.L call, 13 Nov 2026). */
+function yahooChart(meta: Record<string, unknown>, rows: YahooRow[] = []) {
+  return {
+    chart: {
+      result: [{
+        meta: { exchangeTimezoneName: "Europe/London", instrumentType: "EQUITY", ...meta },
+        timestamp: rows.map((row) => row[0]),
+        indicators: {
+          quote: [{
+            open: rows.map((row) => row[1]), high: rows.map((row) => row[2]), low: rows.map((row) => row[3]),
+            close: rows.map((row) => row[4]), volume: rows.map((row) => row[5]),
+          }],
+        },
+      }],
+      error: null,
+    },
+  };
+}
+
+function yahooHarness(reply: Reply, options: Partial<YahooFinanceProviderOptions> = {}) {
+  const { fetch: fake, calls } = recorder(reply);
+  const sleeps: number[] = [];
+  const events: Record<string, unknown>[] = [];
+  const provider = new YahooFinanceProvider({
+    fetch: fake,
+    sleep: (ms) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    },
+    log: (event) => events.push(event),
+    ...options,
+  });
+  return { provider, calls, sleeps, events };
+}
+
+const chartSymbol = (call: Call) => decodeURIComponent(call.url.pathname.split("/").pop()!);
+
+Deno.test("Yahoo: a pence listing is converted to pounds; bars skip incomplete rows; one GET with a browser User-Agent", async () => {
+  const { provider, calls, events } = yahooHarness(() => json(yahooChart({ currency: "GBp", regularMarketPrice: 115.95, regularMarketTime: 1794557611 }, [
+    [yday("2026-11-09"), 116, 118, 115, 116.95, 1_200_000],
+    [yday("2026-11-10"), 117, 117.5, 115.5, 115.75, null], // no volume: counted as 0, as the app does
+    [yday("2026-11-11"), null, 118, 116, 117.35, 900_000], // no open: skipped
+    [yday("2026-11-12"), 117.3, 118.1, 116.2, 117.8, 1_000_000],
+  ])));
+  const answer = await provider.bars([VOD], "day", 3, NOW);
+  assertEquals(answer.failures, {});
+  const series = answer.series["lse:VOD"];
+  assertEquals(series.provenance, { kind: "market", source: "Yahoo Finance (LSE, 15 min delayed)", delaySeconds: 900 });
+  assertEquals(series.volumeIsMarketWide, true, "the home exchange's volume counts as market-wide");
+  assertEquals([series.timeframe, series.fetchedAt], ["day", NOW]);
+  // The last three complete rows, in pounds (×0.01), volume untouched.
+  assertEquals(series.bars, [
+    { time: yday("2026-11-09") * 1_000, open: 116 * 0.01, high: 118 * 0.01, low: 115 * 0.01, close: 116.95 * 0.01, volume: 1_200_000 },
+    { time: yday("2026-11-10") * 1_000, open: 117 * 0.01, high: 117.5 * 0.01, low: 115.5 * 0.01, close: 115.75 * 0.01, volume: 0 },
+    { time: yday("2026-11-12") * 1_000, open: 117.3 * 0.01, high: 118.1 * 0.01, low: 116.2 * 0.01, close: 117.8 * 0.01, volume: 1_000_000 },
+  ]);
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].url.origin + calls[0].url.pathname, "https://query1.finance.yahoo.com/v8/finance/chart/VOD.L");
+  assertEquals([calls[0].url.searchParams.get("interval"), calls[0].url.searchParams.get("range")], ["1d", "1y"]);
+  assertEquals(calls[0].init.method, "GET");
+  assertEquals(calls[0].headers.get("User-Agent"), "Mozilla/5.0");
+  assertEquals(events.map((event) => [event.provider, event.path, event.status]), [["yahoo", "/v8/finance/chart/", 200]]);
+
+  // The quote: regularMarketPrice in pounds, at regularMarketTime, with the day's volume.
+  const quoted = yahooHarness(() => json(yahooChart({ currency: "GBp", regularMarketPrice: 115.95, regularMarketTime: 1794557611, regularMarketVolume: 907253 })));
+  const quote = (await quoted.provider.quotes([VOD], NOW)).quotes["lse:VOD"];
+  assertEquals(quote, {
+    instrumentID: "lse:VOD", last: 115.95 * 0.01, time: 1794557611_000, dayVolume: 907253,
+    provenance: { kind: "market", source: "Yahoo Finance (LSE, 15 min delayed)", delaySeconds: 900 },
+  });
+  assertEquals(quoted.calls[0].url.searchParams.get("range"), "5d");
+});
+
+Deno.test("Yahoo: a listing quoted in another currency is refused, never mixed", async () => {
+  const { provider } = yahooHarness(() => json(yahooChart({ currency: "USD", regularMarketPrice: 12.5, regularMarketTime: 1794557611 }, [[yday("2026-11-12"), 12, 13, 11.5, 12.5, 10]])));
+  const reason = "VOD is quoted in USD on the London market, not GBP, so it can't be practice traded here.";
+  assertEquals(await provider.bars([VOD], "day", 5, NOW), { series: {}, failures: { "lse:VOD": reason } });
+  assertEquals(await provider.quotes([VOD], NOW), { quotes: {}, failures: { "lse:VOD": reason } });
+});
+
+Deno.test("Yahoo: no regularMarketTime, no price, an empty or missing result: no quote and no bars", async () => {
+  const cases: [string, unknown][] = [
+    ["missing regularMarketTime", yahooChart({ currency: "GBp", regularMarketPrice: 115.95 })],
+    ["unreadable regularMarketTime", yahooChart({ currency: "GBp", regularMarketPrice: 115.95, regularMarketTime: "today" })],
+    ["zero price", yahooChart({ currency: "GBp", regularMarketPrice: 0, regularMarketTime: 1794557611 })],
+    ["no price", yahooChart({ currency: "GBp", regularMarketTime: 1794557611 })],
+    ["empty result", { chart: { result: [], error: null } }],
+    ["null result", { chart: { result: null, error: { code: "Not Found", description: "No data found" } } }],
+    ["no currency", yahooChart({ regularMarketPrice: 115.95, regularMarketTime: 1794557611 })],
+  ];
+  for (const [name, body] of cases) {
+    const { provider } = yahooHarness(() => json(body));
+    assertEquals(await provider.quotes([VOD], NOW), { quotes: {}, failures: { "lse:VOD": "No prices came back for VOD." } }, name);
+  }
+  // A chart with no usable rows is no history.
+  const empty = yahooHarness(() => json(yahooChart({ currency: "GBp" }, [[yday("2026-11-12"), null, null, null, null, null]])));
+  assertEquals(await empty.provider.bars([VOD], "day", 5, NOW), { series: {}, failures: { "lse:VOD": "No prices came back for VOD." } });
+  const noRows = yahooHarness(() => json({ chart: { result: [{ meta: { currency: "GBp" } }], error: null } }));
+  assertEquals(await noRows.provider.bars([VOD], "day", 5, NOW), { series: {}, failures: { "lse:VOD": "No prices came back for VOD." } });
+});
+
+Deno.test("Yahoo: HTTP 429 and 5xx are retried with backoff (as for Alpaca); a 404 or a timeout is reported, nothing invented", async () => {
+  // Rate limited twice, then an answer.
+  const ok = yahooChart({ currency: "JPY", regularMarketPrice: 2_950, regularMarketTime: 1794557611 });
+  const recovering = yahooHarness((_call, index) => index < 2 ? json({}, 429, { "retry-after": "1" }) : json(ok));
+  assertEquals((await recovering.provider.quotes([TOYOTA], NOW)).quotes["tse:7203"].last, 2_950);
+  assertEquals([recovering.calls.length, recovering.sleeps], [3, [1_000, 1_000]]);
+
+  // Rate limited every time: three attempts, then the reason.
+  const limited = yahooHarness(() => json({}, 429));
+  assertEquals(await limited.provider.quotes([TOYOTA], NOW), { quotes: {}, failures: { "tse:7203": "Yahoo Finance answered with an error (429)." } });
+  assertEquals([limited.calls.length, limited.sleeps], [3, [300, 600]]);
+
+  const down = yahooHarness(() => json({}, 503));
+  assertEquals((await down.provider.bars([TOYOTA], "day", 5, NOW)).failures, { "tse:7203": "Yahoo Finance answered with an error (503)." });
+  assertEquals(down.calls.length, 3);
+
+  // Not found: not retried.
+  const missing = yahooHarness(() => json({ chart: { result: null, error: { code: "Not Found" } } }, 404));
+  assertEquals((await missing.provider.quotes([TOYOTA], NOW)).failures, { "tse:7203": "Yahoo Finance answered with an error (404)." });
+  assertEquals(missing.calls.length, 1);
+
+  const hung = yahooHarness(hang, { timeoutMs: 5, maxAttempts: 2 });
+  assertEquals((await hung.provider.quotes([TOYOTA], NOW)).failures, { "tse:7203": "The request timed out" });
+  const unreadable = yahooHarness(() => new Response("<html>consent</html>", { status: 200 }));
+  assertEquals((await unreadable.provider.quotes([TOYOTA], NOW)).failures, { "tse:7203": "Yahoo Finance returned an unreadable response" });
+});
+
+Deno.test("Yahoo: the app's per-exchange delays, ranges and symbols; hourly bars, US shares and crypto aren't its job", async () => {
+  const venues = ["asx", "lse", "xetra", "euronextParis", "euronextAmsterdam", "six", "tse", "hkex", "sgx", "krx", "nse"] as const;
+  const delays = Object.fromEntries(venues.map((venue) => [venue, yahooProvenance(venue).delaySeconds / 60]));
+  assertEquals(delays, { asx: 20, lse: 15, xetra: 15, euronextParis: 15, euronextAmsterdam: 15, six: 30, tse: 20, hkex: 15, sgx: 15, krx: 20, nse: 0 });
+  assertEquals(yahooProvenance("nse").source, "Yahoo Finance (NSE)", "no delay, no 'delayed' in the label");
+  assertEquals(yahooProvenance("six").source, "Yahoo Finance (SIX, 30 min delayed)");
+  assertEquals(yahooProvenance("asx").source, "Yahoo Finance (ASX, 20 min delayed)");
+
+  // Every venue's own suffix and currency, one request each, duplicates asked once.
+  const currencies: Record<string, string> = { "BHP.AX": "AUD", "7203.T": "JPY", "NESN.SW": "CHF", "RELIANCE.NS": "INR" };
+  const { provider, calls } = yahooHarness((call) => json(yahooChart({ currency: currencies[chartSymbol(call)], regularMarketPrice: 10, regularMarketTime: 1794557611 })));
+  const answer = await provider.quotes([BHP, TOYOTA, NESTLE, RELIANCE, BHP], NOW);
+  assertEquals(Object.keys(answer.quotes).sort(), ["asx:BHP", "nse:RELIANCE", "six:NESN", "tse:7203"]);
+  assertEquals(calls.map(chartSymbol).sort(), ["7203.T", "BHP.AX", "NESN.SW", "RELIANCE.NS"]);
+
+  for (const [count, range] of [[30, "1y"], [250, "1y"], [251, "2y"], [500, "2y"], [501, "5y"]] as const) {
+    const h = yahooHarness(() => json(yahooChart({ currency: "AUD" }, [[yday("2026-11-12"), 1, 2, 0.5, 1.5, 10]])));
+    await h.provider.bars([BHP], "day", count, NOW);
+    assertEquals(h.calls[0].url.searchParams.get("range"), range, `count ${count}`);
+  }
+
+  const refused = yahooHarness(() => json({}));
+  assertEquals(await refused.provider.bars([BHP], "hour", 30, NOW), { series: {}, failures: { "asx:BHP": "Hourly bars aren't available for shares on the ASX." } });
+  assertEquals((await refused.provider.quotes([AAPL, BTC], NOW)).failures, {
+    "us:AAPL": "This market isn't supported by this data source", "crypto:BTC": "This market isn't supported by this data source",
+  });
+  assertEquals(refused.calls.length, 0);
+  assertEquals([AAPL, BTC, BHP, VOD, TOYOTA].map((instrument) => refused.provider.supports(instrument)), [false, false, true, true, true]);
+  // A symbol with characters that could steer a URL never reaches one.
+  const odd = yahooHarness(() => json(yahooChart({ currency: "GBP", regularMarketPrice: 1, regularMarketTime: 1 })));
+  await odd.provider.quotes([{ ...VOD, symbol: "VOD/../x?y=1" }], NOW);
+  assertEquals(odd.calls[0].url.pathname, "/v8/finance/chart/VOD..XY1.L");
+});
+
+Deno.test("routing: each instrument goes to the source for its market, and the answers are merged", async () => {
+  const { fetch: fake, calls } = recorder((call) => call.url.hostname === "query1.finance.yahoo.com"
+    ? json(yahooChart({ currency: "AUD", regularMarketPrice: 45.1, regularMarketTime: 1794557611 }))
+    : json({ AAPL: { latestTrade: { t: "2026-11-12T19:59:58Z", p: 228.5 } } }));
+  const { provider } = providerFromEnv(envOf(KEYS), { fetch: fake });
+  const answer = await provider!.quotes([AAPL, BHP], NOW);
+  assertEquals([answer.quotes["us:AAPL"].last, answer.quotes["asx:BHP"].last], [228.5, 45.1]);
+  assertEquals(answer.quotes["asx:BHP"].provenance.source, "Yahoo Finance (ASX, 20 min delayed)");
+  assertEquals(calls.map((call) => call.url.hostname).sort(), ["data.alpaca.markets", "query1.finance.yahoo.com"]);
+  const toYahoo = calls.find((call) => call.url.hostname === "query1.finance.yahoo.com")!;
+  assertEquals(toYahoo.headers.has("APCA-API-KEY-ID") || toYahoo.headers.has("APCA-API-SECRET-KEY"), false, "Alpaca's keys never go to Yahoo");
+});
+
+// ---------------------------------------------------------------------------------------
+// The app's UI-test prices (FixtureMarketData).
+
+Deno.test("ui-test fixture: the app's formula, bar days, volume, ±1 bp quotes and fixture label", async () => {
+  const choice = providerFromEnv(envOf({ TRADING_ALLOW_FIXTURE_DATA: "1", ...KEYS }), { fixture: "ui-test" });
+  assert(choice.provider instanceof UITestFixtureProvider);
+  assertEquals(providerFromEnv(envOf(KEYS), { fixture: "ui-test" }), { provider: null, allowFixtureData: false, reason: "Fixture data isn't allowed here." });
+  const provider = choice.provider;
+
+  // close(i) = base × (1 + i × (0.0015 + drift) + sin(i / 6) × 0.02); AAPL's scalars sum to 291, so drift = 1 × 0.0002.
+  assertEquals(uiTestCloses(AAPL, 3), [200, 200 * (1 + 1 * (0.0015 + 0.0002) + Math.sin(1 / 6) * 0.02), 200 * (1 + 2 * (0.0015 + 0.0002) + Math.sin(2 / 6) * 0.02)]);
+  assertEquals([uiTestCloses(MSFT, 1), uiTestCloses(BTC, 1), uiTestCloses(BHP, 1)], [[400], [60_000], [200]]);
+
+  const series = (await provider.bars([BHP, BTC], "day", 30, NOW)).series;
+  const bhp = series["asx:BHP"];
+  assertEquals([bhp.bars.length, bhp.provenance, bhp.timeframe, bhp.fetchedAt], [30, { kind: "fixture", source: "ui-test", delaySeconds: 0 }, "day", NOW]);
+  const closes = uiTestCloses(BHP, 30);
+  const sydneyClock = new Intl.DateTimeFormat("en-GB", { timeZone: timeZone("asx"), hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  bhp.bars.forEach((b, i) => {
+    const open = i === 0 ? closes[0] : closes[i - 1];
+    assertEquals(b, { time: b.time, open, high: Math.max(open, closes[i]) * 1.004, low: Math.min(open, closes[i]) * 0.996, close: closes[i], volume: 8_000_000 });
+    // Midnight in Sydney on an ASX trading day, before the day `now` falls on.
+    assert(isTradingDay("asx", b.time), new Date(b.time).toISOString());
+    assertEquals(sydneyClock.format(b.time), "00:00");
+  });
+  assert(bhp.bars[29].time < NOW && bhp.bars.every((b, i) => i === 0 || b.time > bhp.bars[i - 1].time));
+  // Crypto: every calendar day, midnight UTC, up to yesterday (NOW is 12 Nov 2026, 20:00 UTC).
+  assertEquals(series["crypto:BTC"].bars.map((b) => b.time).slice(-2), [Date.UTC(2026, 10, 10), Date.UTC(2026, 10, 11)]);
+
+  // The quote is the 260th close, 1 bp either side, stamped now; no day volume.
+  const quote = (await provider.quotes([AAPL], NOW)).quotes["us:AAPL"];
+  const last = uiTestCloses(AAPL, 260)[259];
+  assertEquals(quote, { instrumentID: "us:AAPL", last, bid: last * 0.9999, ask: last * 1.0001, time: NOW, provenance: { kind: "fixture", source: "ui-test", delaySeconds: 0 } });
+  // An hourly request keeps its timeframe (as the app's fixture does).
+  assertEquals((await provider.bars([AAPL], "hour", 5, NOW)).series["us:AAPL"].timeframe, "hour");
+  assertEquals((await provider.bars([AAPL], "day", 0, NOW)).failures["us:AAPL"], "The number of bars must be a whole number from 1 to 5000");
 });

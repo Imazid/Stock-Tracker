@@ -36,6 +36,8 @@ struct AppleStocksDetailView: View {
     @State private var showsCompactTitle = false
     @State private var scrubbed: DSChartPoint?
     @State private var scrubbedCandle: Candle?
+    /// The listing's brand colour from its logo, for the glow behind the page (Fey / Luma).
+    @State private var brandTint: Color?
 
     /// `position` is kept for source compatibility; holdings are read live from
     /// `marketData.portfolio` so the block is never stale or missing.
@@ -147,9 +149,15 @@ struct AppleStocksDetailView: View {
                 if tracked != nil { await marketData.refreshFromAPI() }
                 await model.refresh()
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground(tint: brandTint)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
+        }
+        .task(id: live.symbol) {
+            guard let url = TickerLogo.logoURL(symbol: live.symbol, kind: live.kind, exchange: live.exchange),
+                  let image = await LogoImageCache.shared.load(url) else { return }
+            let tint = LogoDisc.brandColor(of: image, key: url.absoluteString)
+            dsAnimate(DS.spring) { brandTint = tint }
         }
         .overlay(alignment: .bottom) { toastView }
         .task { await model.start(isTracked: tracked != nil, candlesAllowed: isPro) }

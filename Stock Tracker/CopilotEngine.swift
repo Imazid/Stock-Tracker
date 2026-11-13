@@ -106,10 +106,11 @@ final class CopilotEngine: ObservableObject {
     }
 
     /// Applies a limit change the person confirmed. Goes through the store like any edit.
-    func confirmLimitChange(card: UUID, agentID: UUID, policy: RiskPolicy) {
+    func confirmLimitChange(card: UUID, agentID: UUID, policy: RiskPolicy) async {
         guard resolvedCards[card] == nil else { return }
+        resolvedCards[card] = "Applying…"
         do {
-            try trading.updateRiskPolicy(agentID: agentID, policy: policy, actor: .copilot)
+            try await trading.updateRiskPolicy(agentID: agentID, policy: policy, actor: .copilot)
             resolvedCards[card] = "Applied"
             messages.append(CopilotMessage(isUser: false, text: "Done. The new limits apply from the agent's next order, and the change is in the audit trail."))
         } catch {

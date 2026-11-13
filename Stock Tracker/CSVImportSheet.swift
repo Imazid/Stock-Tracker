@@ -54,7 +54,7 @@ struct CSVImportSheet: View {
                 }
                 .padding(DS.Space.gutter)
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .safeAreaInset(edge: .bottom) {
                 if !parsedRows.isEmpty && !importComplete {
                     Button("Import \(selectedRows.count) holding\(selectedRows.count == 1 ? "" : "s")", action: importSelected)

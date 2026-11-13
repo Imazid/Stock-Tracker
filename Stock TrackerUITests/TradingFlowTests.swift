@@ -238,8 +238,10 @@ final class TradingFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["ticket.review"].isEnabled, "Review waits until the lot is fixed")
         attach("tokyo-odd-lot")
 
+        // The amount field hugs its number (it's centred), so tap its trailing edge to put
+        // the cursor after the digits before deleting them.
         let field = app.textFields["ticket.amount"]
-        field.tap()
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "100")
         attach("tokyo-full-lot")
         tap("ticket.review")

@@ -70,7 +70,7 @@ struct NewsView: View {
                 }
                 .padding(.bottom, DS.Space.xxl)
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("News")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $viewModel.searchText, prompt: "Search headlines or tickers")

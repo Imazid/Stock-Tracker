@@ -515,9 +515,13 @@ apiTest("agent settings go through validation and are versioned", async (sql) =>
   // A strategy that can't be read, or isn't sound, is refused with the reasons.
   const unreadable = await api(person.token, { action: "updateStrategy", agentID, spec: { kind: "rules", universe: "everything" } });
   assertEquals(unreadable.status, 422);
-  const unsound = await api(person.token, { action: "updateStrategy", agentID, spec: { ...Fx.aboveAverageSpec([Fx.btc]), sizing: { mode: "percentOfEquity", value: 500 } } });
+  // (Fixture prices, so the market is priced and only the validator can object.)
+  const unsound = await api(person.token, { action: "updateStrategy", agentID, spec: { ...Fx.aboveAverageSpec([Fx.btc]), sizing: { mode: "percentOfEquity", value: 500 } }, fixture: prices() });
   assertEquals([unsound.status, unsound.error?.code], [422, "invalid"]);
-  assert(unsound.error!.details.reasons.length > 0);
+  assert(unsound.error!.details.reasons.some((reason: string) => /size|percent|100/i.test(reason)), JSON.stringify(unsound.error!.details.reasons));
+  // This server has no Alpaca keys, so nothing on it can price crypto: a BTC strategy is refused up front, with the reason.
+  const unpriced = await api(person.token, { action: "updateStrategy", agentID, spec: Fx.aboveAverageSpec([Fx.btc]) });
+  assertEquals([unpriced.status, unpriced.error?.details.reasons], [422, ["Prices for the Crypto aren't available on the server yet, so BTC can't be traded here."]]);
   const nameless = await api(person.token, { action: "createAgent", draft: draft({ name: "   " }) });
   assertEquals(nameless.status, 422);
   const reckless = await api(person.token, { action: "updateRiskPolicy", agentID, policy: { ...made.data.agent.riskPolicy, maxDailyLossPct: -1 } });
@@ -525,7 +529,10 @@ apiTest("agent settings go through validation and are versioned", async (sql) =>
   assertEquals(await count(sql, "agent_strategy_versions", person.id), 1);
 
   // A sound change becomes version 2; version 1 is kept as it was.
-  const changed = await api(person.token, { action: "updateStrategy", agentID, spec: { ...Fx.aboveAverageSpec([Fx.btc]), title: "Above average, tighter stop", protections: { stopLossPct: 5 } }, note: "Tighter stop" });
+  const changed = await api(person.token, {
+    action: "updateStrategy", agentID, spec: { ...Fx.aboveAverageSpec([Fx.btc]), title: "Above average, tighter stop", protections: { stopLossPct: 5 } }, note: "Tighter stop",
+    fixture: prices(),
+  });
   assertEquals(changed.status, 200, JSON.stringify(changed.error));
   assertEquals((await sql`select version, spec->>'title' as title from public.agent_strategy_versions where agent_id = ${agentID} order by version`).map((row) => [row.version, row.title]),
     [[1, "Above average"], [2, "Above average, tighter stop"]]);

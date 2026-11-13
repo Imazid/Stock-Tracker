@@ -94,7 +94,7 @@ struct CreateAgentFlow: View {
                 .padding(.vertical, DS.Space.l)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("New agent")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.accessibilityIdentifier("agent.new.cancel") } }
@@ -110,12 +110,7 @@ struct CreateAgentFlow: View {
 
     private func templateRow(_ template: AgentTemplate) -> some View {
         HStack(spacing: DS.Space.m) {
-            Image(systemName: template.symbolName)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 40, height: 40)
-                .background(Circle().fill(DS.accent.opacity(0.12)))
-                .accessibilityHidden(true)
+            AgentAvatar(seed: template.id, systemImage: template.symbolName, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(template.name).font(.subheadline.weight(.semibold)).foregroundStyle(theme.primaryText)
                 Text(template.tagline).font(.footnote).foregroundStyle(theme.secondaryText)
@@ -123,9 +118,8 @@ struct CreateAgentFlow: View {
             Spacer()
             Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(theme.secondaryText)
         }
-        .padding(DS.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous).fill(theme.subtleFill))
+        .dsCard(padding: DS.Space.m)
         .contentShape(Rectangle())
     }
 
@@ -187,6 +181,7 @@ struct AgentDraftEditor: View {
     @State private var problem: String?
     @State private var isBacktesting = false
     @State private var backtest: BacktestBox?
+    @State private var isCreating = false
 
     init(draft: AgentDraft, parsed: ParsedAgentRequest?, onCreated: @escaping () -> Void) {
         _draft = State(initialValue: draft)
@@ -317,18 +312,17 @@ struct AgentDraftEditor: View {
             .accessibilityIdentifier("agent.draft.screen")
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Review agent")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { if draft.mode == .paper { PracticeChip() } } }
         .safeAreaInset(edge: .bottom) {
-            Button(draft.mode == .paper ? "Start in practice" : "Start agent") { create() }
+            Button(isCreating ? "Starting…" : (draft.mode == .paper ? "Start in practice" : "Start agent")) { create() }
                 .buttonStyle(PrimaryPillButtonStyle())
-                .disabled(!problems.isEmpty)
+                .disabled(!problems.isEmpty || isCreating)
                 .accessibilityIdentifier("agent.draft.start")
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.vertical, DS.Space.m)
-                .background(.bar)
         }
         .sheet(isPresented: $showPicker) {
             InstrumentPickerView(title: "Add an asset", currency: draft.spec.universe.isEmpty ? nil : currency,
@@ -573,13 +567,20 @@ struct AgentDraftEditor: View {
     }
 
     private func create() {
-        do {
-            try trading.createAgent(resolved)
-            Haptics.success()
-            onCreated()
-        } catch {
-            problem = error.localizedDescription
-            Haptics.warning()
+        guard !isCreating else { return }
+        isCreating = true
+        problem = nil
+        let draft = resolved
+        Task {
+            do {
+                try await trading.createAgent(draft)
+                Haptics.success()
+                onCreated()
+            } catch {
+                problem = error.localizedDescription
+                Haptics.warning()
+            }
+            isCreating = false
         }
     }
 
@@ -644,11 +645,13 @@ struct AgentLimitsEditor: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         guard let policy else { return }
-                        do {
-                            try trading.updateRiskPolicy(agentID: agentID, policy: policy)
-                            dismiss()
-                        } catch {
-                            problem = error.localizedDescription
+                        Task {
+                            do {
+                                try await trading.updateRiskPolicy(agentID: agentID, policy: policy)
+                                dismiss()
+                            } catch {
+                                problem = error.localizedDescription
+                            }
                         }
                     }
                     .accessibilityIdentifier("agent.limits.save")
@@ -823,7 +826,7 @@ struct BacktestReportView: View {
             .padding(.horizontal, DS.Space.gutter)
             .padding(.vertical, DS.Space.l)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Backtest")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.accessibilityIdentifier("backtest.done") } }

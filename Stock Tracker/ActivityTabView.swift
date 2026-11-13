@@ -48,6 +48,7 @@ struct ActivityTabView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.Space.l) {
+                    TradingHomeBadge()
                     PausedAllBanner { router.showPauseAll = true }
 
                     if let problem = trading.dataProblem {
@@ -81,7 +82,7 @@ struct ActivityTabView: View {
                 .padding(.bottom, 60)
             }
             .refreshable { await trading.refreshPrices() }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("Activity")
             .toolbar { TradingToolbar() }
         }
@@ -359,7 +360,7 @@ struct OrderDetailView: View {
                                        description: Text("This order is no longer in the history."))
             }
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Order")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -492,7 +493,7 @@ struct OrderDetailView: View {
                         .frame(maxWidth: .infinity, minHeight: 50)
                         .accessibilityIdentifier("order.cancel")
                         .confirmationDialog("Cancel this order?", isPresented: $confirmCancel, titleVisibility: .visible) {
-                            Button("Cancel order", role: .destructive) { trading.cancelOrder(order.id) }
+                            Button("Cancel order", role: .destructive) { Task { try? await trading.cancelOrder(order.id) } }
                             Button("Keep it", role: .cancel) {}
                         } message: {
                             Text(order.filledQuantity > 0 ? "The part that already filled stays. The rest won't trade." : "It won't trade.")
@@ -517,6 +518,7 @@ struct PauseAllSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var cancelled: Int?
+    @State private var problem: String?
 
     var body: some View {
         let openAgentOrders = trading.openOrders.filter { $0.source.isAgent }.count
@@ -540,26 +542,43 @@ struct PauseAllSheet: View {
                             .font(.footnote)
                             .foregroundStyle(theme.secondaryText)
                     }
+                    if let problem {
+                        Text(problem).font(.footnote).foregroundStyle(theme.negativeColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("pauseAll.problem")
+                    }
                 }
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.vertical, DS.Space.xl)
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: DS.Space.s) {
                     if trading.isKillSwitchOn {
                         Button("Turn off pause-all") {
-                            trading.releaseKillSwitch()
-                            Haptics.tap()
-                            dismiss()
+                            Task {
+                                do {
+                                    try await trading.releaseKillSwitch()
+                                    Haptics.tap()
+                                    dismiss()
+                                } catch {
+                                    problem = error.localizedDescription
+                                }
+                            }
                         }
                         .buttonStyle(PrimaryPillButtonStyle())
                         .accessibilityIdentifier("pauseAll.release")
                     } else {
                         Button("Pause all") {
-                            cancelled = trading.engageKillSwitch()
-                            Haptics.warning()
-                            UIAccessibility.post(notification: .announcement, argument: "All agents paused")
+                            Task {
+                                do {
+                                    cancelled = try await trading.engageKillSwitch()
+                                    Haptics.warning()
+                                    UIAccessibility.post(notification: .announcement, argument: "All agents paused")
+                                } catch {
+                                    problem = error.localizedDescription
+                                }
+                            }
                         }
                         .buttonStyle(PrimaryPillButtonStyle())
                         .accessibilityIdentifier("pauseAll.confirm")
@@ -570,7 +589,6 @@ struct PauseAllSheet: View {
                 }
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.vertical, DS.Space.m)
-                .background(.bar)
             }
         }
         .presentationDetents([.large])
@@ -618,13 +636,38 @@ struct HomeTradingSection: View {
                           action: trading.agents.isEmpty ? nil : { router.requestedTab = .agents })
 
             if !trading.hasAnything {
-                EmptyStateCard(
-                    systemImage: "gearshape.2",
-                    title: "Put a strategy to work",
-                    message: "Describe a strategy in a sentence and an agent will watch the market and trade it with practice money, showing you every decision.",
-                    primaryTitle: "Create an agent",
-                    primaryAction: { router.createAgent() }
-                )
+                // One compact row, not a second big empty card under the portfolio's.
+                Button {
+                    Haptics.tap()
+                    router.createAgent()
+                } label: {
+                    HStack(spacing: DS.Space.m) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Circle().fill(LinearGradient(colors: [DS.accentFill, theme.glowSecondary],
+                                                                     startPoint: .topLeading, endPoint: .bottomTrailing)))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Put a strategy to work")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(theme.primaryText)
+                            Text("Describe it in a sentence; an agent trades it with practice money and shows every decision.")
+                                .font(.footnote)
+                                .foregroundStyle(theme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer(minLength: DS.Space.s)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    .dsCard()
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel("Create an agent. Describe a strategy in a sentence and an agent trades it with practice money.")
                 .accessibilityIdentifier("home.trading.empty")
             } else {
                 VStack(alignment: .leading, spacing: DS.Space.m) {
@@ -634,8 +677,7 @@ struct HomeTradingSection: View {
                                 Text("Practice money").font(.subheadline).foregroundStyle(theme.secondaryText)
                                 PracticeChip(compact: true)
                             }
-                            Text(TradingFormat.money(trading.practiceEquity(currency: "USD"), "USD"))
-                                .font(DS.money(26))
+                            MoneyText(text: TradingFormat.money(trading.practiceEquity(currency: "USD"), "USD"), size: 30)
                                 .contentTransition(.numericText())
                                 .accessibilityIdentifier("home.trading.equity")
                             // Other currencies are listed as they are, never converted and added up.

@@ -50,7 +50,7 @@ struct SnapTradeConnectionView: View {
                 .padding(DS.Space.gutter)
                 .animation(DS.spring, value: vm.hasLinkedAccounts)
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .overlay { if vm.isLoading { loadingOverlay } }
             // Bursts from the "Added N holdings" banner.
             .overlay { ConfettiBurst(trigger: confetti, origin: UnitPoint(x: 0.5, y: 0.3)).ignoresSafeArea() }
@@ -676,7 +676,7 @@ struct InstitutionPickerSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search brokers and exchanges")
             .navigationTitle("Choose your broker")
             .navigationBarTitleDisplayMode(.inline)

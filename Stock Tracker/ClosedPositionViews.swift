@@ -150,7 +150,7 @@ struct ClosedPositionSheet: View {
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle(position.map { "\($0.asset.symbol) · closed" } ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

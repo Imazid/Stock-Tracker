@@ -6,6 +6,11 @@
 // engine can't be skipped, and an order, its fill, the ledger change and the audit event
 // are stored together or not at all.
 //
+// For the app in cloud mode, `{ "action": "state" }` returns the person's whole trading
+// state as Swift's TradingCodec writes TradingState (bounded history: see STATE_WINDOW in
+// persistence.ts), and `"includeState": true` on any change adds that state, as saved, to
+// the answer. The idempotency record never stores it; a replay gets a freshly read one.
+//
 // Only paper (simulated) execution exists. A request for anything live is refused with the
 // reasons and recorded as `liveRequestRefused`; nothing here calls a broker. No language
 // model is consulted anywhere in this function.
@@ -19,7 +24,9 @@
 import { providerFromEnv } from "../_shared/market/index.ts";
 import { authenticate, type Caller, requireStepUp } from "../_shared/server/auth.ts";
 import { errorResponse, Field, HttpError, logEvent, ok, readJSONObject, refusal, tradingErrorStatus } from "../_shared/server/http.ts";
-import { database, type EngineSession, instrumentsNeedingQuotes, type LoadScope, type Sql, withEngine } from "../_shared/server/persistence.ts";
+import {
+  database, type EngineSession, instrumentsNeedingQuotes, type LoadScope, readStateSnapshot, type Sql, withEngine,
+} from "../_shared/server/persistence.ts";
 import { isLoosening } from "../_shared/server/policy.ts";
 import { assertPriced, latestQuotes, marketForOrder, type MarketSource, marketSnapshot } from "../_shared/server/runner.ts";
 import { postgresVolumeStore } from "../_shared/server/upkeep.ts";
@@ -40,6 +47,8 @@ interface Context {
   now: number;
   market: MarketSource;
   idempotencyKey?: string;
+  /** The caller asked for the saved state back with a change's answer. */
+  includeState: boolean;
 }
 
 const env = (name: string) => Deno.env.get(name);
@@ -132,7 +141,9 @@ function orderRequest(raw: unknown, needsClientID: boolean): OrderRequest {
 async function act(ctx: Context, scope: LoadScope, work: (session: EngineSession) => Promise<unknown> | unknown, readOnly = false): Promise<Response> {
   const key = ctx.idempotencyKey;
   const action = String(ctx.body.action);
-  const outcome = await withEngine(ctx.sql, ctx.caller.userID, ctx.now, { allowFixtureData: ctx.market.allowFixtureData, scope, readOnly }, async (session) => {
+  // `includeState` applies to changes; a read-only action has nothing new to show.
+  const includeState = ctx.includeState && !readOnly;
+  const outcome = await withEngine(ctx.sql, ctx.caller.userID, ctx.now, { allowFixtureData: ctx.market.allowFixtureData, scope, readOnly, includeState }, async (session) => {
     if (key !== undefined && !readOnly) {
       const [seen] = await session.tx`select status, response, action from public.trading_idempotency_keys where user_id = ${ctx.caller.userID} and key = ${key}`;
       if (seen) {
@@ -142,6 +153,7 @@ async function act(ctx: Context, scope: LoadScope, work: (session: EngineSession
     }
     const data = await work(session);
     const body = { ok: true, data };
+    // Only the action's own answer is kept for a replay — never the state, which can be large and goes stale.
     if (key !== undefined && !readOnly) {
       await session.tx`insert into public.trading_idempotency_keys ${session.tx({ user_id: ctx.caller.userID, key, action, status: 200, response: session.tx.json(body as never) })}`;
     }
@@ -152,8 +164,16 @@ async function act(ctx: Context, scope: LoadScope, work: (session: EngineSession
     return refusal(status, code, outcome.refusal.description, { reasons: outcome.refusal.messages });
   }
   const value = outcome.value!;
-  if ("replay" in value && value.replay) return new Response(JSON.stringify(value.replay.body), { status: value.replay.status, headers: { "content-type": "application/json; charset=utf-8", "idempotent-replay": "true" } });
-  return ok((value as { body: { data: unknown } }).body.data);
+  // With includeState, the state read back after this request's transaction (fresh on a replay too).
+  const withState = (data: unknown): unknown =>
+    includeState && outcome.state ? { ...(data as Record<string, unknown>), state: outcome.state.state } : data;
+  if ("replay" in value && value.replay) {
+    const stored = value.replay.body as { ok: boolean; data: unknown };
+    return new Response(JSON.stringify({ ...stored, data: withState(stored.data) }), {
+      status: value.replay.status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "idempotent-replay": "true" },
+    });
+  }
+  return ok(withState((value as { body: { data: unknown } }).body.data));
 }
 
 function orderOutcome(result: OrderResult): Record<string, unknown> {
@@ -399,6 +419,9 @@ const actions: Record<string, (ctx: Context) => Promise<Response>> = {
     });
   },
 
+  // Everything the app shows, in the shape Swift's TradingCodec decodes into TradingState.
+  state: async (ctx) => ok(await readStateSnapshot(ctx.sql, ctx.caller.userID, ctx.now, ctx.market.allowFixtureData)),
+
   auditStatus: (ctx) => act(ctx, {}, async ({ tx, userID }) => {
     const [row] = await tx`select * from public.verify_audit_chain(${userID})`;
     return { isIntact: row.is_intact, brokenAtSequence: row.broken_at_sequence === null ? null : Number(row.broken_at_sequence), eventCount: Number(row.event_count) };
@@ -422,10 +445,11 @@ async function handle(request: Request, started: number): Promise<{ response: Re
   const headerKey = request.headers.get("idempotency-key") ?? undefined;
   if (headerKey !== undefined && (headerKey.length < 8 || headerKey.length > 128)) throw new HttpError(400, "bad_request", "The Idempotency-Key must be 8 to 128 characters.");
 
+  const includeState = body.includeState === undefined ? false : Field.boolean(body.includeState, "includeState");
   const ctx: Context = {
     sql, caller, body, now: started,
     market: { provider: choice.provider, allowFixtureData: choice.allowFixtureData, reason: choice.reason },
-    idempotencyKey: headerKey,
+    idempotencyKey: headerKey, includeState,
   };
   return { response: await run(ctx), action };
 }

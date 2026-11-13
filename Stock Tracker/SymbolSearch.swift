@@ -446,7 +446,7 @@ struct SymbolSearchView: View {
 
     var body: some View {
         content
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .searchable(text: $model.query,
                         placement: .navigationBarDrawer(displayMode: .always),
                         prompt: mode == .add ? "Add a stock, ETF or crypto" : "Stocks, ETFs and crypto")

@@ -553,6 +553,39 @@ struct EquityCurveChart: View {
     }
 }
 
+// MARK: - Where it lives
+
+/// "On this phone" or "In your account", and whether the account could be reached.
+struct TradingHomeBadge: View {
+    @EnvironmentObject private var trading: TradingStore
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if trading.isSwitching {
+                    ProgressView().controlSize(.mini)
+                    Text("Connecting to your account…")
+                } else {
+                    Image(systemName: trading.isAccount ? "icloud" : "iphone")
+                    Text(trading.homeDescription)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(theme.secondaryText)
+            if let problem = trading.syncProblem {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(theme.warningColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("trading.syncProblem")
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(trading.isAccount ? "trading.home.account" : "trading.home.device")
+    }
+}
+
 // MARK: - Pause-all banner
 
 /// Shown under the top bar on every trading screen while the kill switch is on.

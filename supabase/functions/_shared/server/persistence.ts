@@ -24,7 +24,7 @@ import { TradingEngine } from "../trading/engine.ts";
 import type { EquityPoint, Ledger, Position } from "../trading/ledger.ts";
 import { instrumentID } from "../trading/market.ts";
 import { type Fill, isOpenStatus, type Order, type OrderSource, type OrderStatus } from "../trading/orders.ts";
-import { type EngineNotice, makeState, TradingError, type TradingState } from "../trading/state.ts";
+import { type EngineNotice, makeState, stateToJSON, TradingError, type TradingState } from "../trading/state.ts";
 
 // deno-lint-ignore no-explicit-any
 export type Sql = postgres.Sql<any>;
@@ -69,6 +69,8 @@ export interface SessionOutcome<T> {
   refusal?: TradingError;
   notices: EngineNotice[];
   auditEvents: AuditEvent[];
+  /** The state as saved, when `includeState` was asked for and the work wasn't refused. */
+  state?: StateRead;
 }
 
 const DEDUPE_WINDOW_MS = 21 * 86_400_000;
@@ -308,6 +310,137 @@ async function load(tx: Tx, userID: string, now: number, allowFixtureData: boole
   return { state, loaded };
 }
 
+// MARK: - The whole state, for the app
+
+/**
+ * How much history a `state` read returns. Open orders and waiting proposals always come
+ * back whatever their age; equity history follows the core's own cap (Ledger.recordEquity).
+ */
+export const STATE_WINDOW = { runs: 200, signals: 400, proposals: 500, orders: 1_000, fills: 2_000, audit: 500, equityPoints: 3_000 } as const;
+
+export interface StateRead {
+  /** The person's trading state as Swift's `TradingCodec` writes `TradingState`. */
+  state: Record<string, unknown>;
+  /** When it was read (ms since 1970). */
+  asOf: number;
+  /** Which histories had more than the window returned. */
+  truncated: { runs: boolean; signals: boolean; proposals: boolean; orders: boolean; fills: boolean; audit: boolean };
+}
+
+function runFromRow(row: Row): AgentRun {
+  const ids = (value: unknown): string[] => Array.isArray(value)
+    ? value.map(String)
+    : String(value ?? "{}").replace(/^\{|\}$/g, "").split(",").filter((id) => id !== "");
+  return {
+    id: row.id, agentID: row.agent_id, strategyVersion: row.strategy_version, trigger: row.trigger, startedAt: row.started_at.getTime(),
+    finishedAt: row.finished_at.getTime(), status: row.status, summary: row.summary, steps: row.steps,
+    signalIDs: ids(row.signal_ids), proposalIDs: ids(row.proposal_ids), orderIDs: ids(row.order_ids),
+  };
+}
+
+function auditFromRow(row: Row): AuditEvent {
+  const event: AuditEvent = {
+    // The hash covers the time to the millisecond, rounded; a JavaScript Date would truncate a stored half-millisecond.
+    id: row.id, sequence: Number(row.sequence), time: Number(row.time_ms), actor: row.actor, kind: row.kind, summary: row.summary,
+    details: row.details, previousHash: row.previous_hash, hash: row.hash,
+  };
+  setOptional(event, "mode", row.mode);
+  setOptional(event, "agentID", row.agent_id);
+  setOptional(event, "ledgerID", row.ledger_id);
+  setOptional(event, "orderID", row.order_id);
+  setOptional(event, "proposalID", row.proposal_id);
+  setOptional(event, "instrumentID", row.instrument_id);
+  return event;
+}
+
+/** The newest `limit` rows (fetching one more says whether there were more), oldest first. */
+async function newest(rows: Promise<Row[]>, limit: number): Promise<{ rows: Row[]; truncated: boolean }> {
+  const fetched = await rows;
+  return { rows: fetched.slice(0, limit).reverse(), truncated: fetched.length > limit };
+}
+
+/**
+ * A person's whole trading state, with bounded history, in the shape Swift's
+ * `TradingCodec.decoder()` decodes into `TradingState`. Run it inside a transaction that
+ * holds the person's lock (or that just saved), so every part comes from the same moment.
+ */
+export async function readState(tx: Tx, userID: string, now: number, allowFixtureData: boolean): Promise<StateRead> {
+  const { state } = await load(tx, userID, now, allowFixtureData, {});
+  // Live trading doesn't exist in this build, whatever a row says (the database refuses it too).
+  state.accountPolicy.live = { manualOrdersEnabled: false, approvalAgentsEnabled: false, autonomousAgentsEnabled: false };
+  state.accountPolicy.allowFixtureData = allowFixtureData;
+
+  // Equity history up to the core's cap, and every strategy version of every agent.
+  if (state.ledgers.length > 0) {
+    const points = await tx`
+      select ledger_id, time, equity, cash from (
+        select s.*, row_number() over (partition by ledger_id order by seq desc) as rn
+        from public.trading_portfolio_snapshots s where user_id = ${userID} and ledger_id in ${tx(state.ledgers.map((l) => l.id))}
+      ) recent where rn <= ${STATE_WINDOW.equityPoints} order by seq`;
+    for (const ledger of state.ledgers) {
+      ledger.equityHistory = points.filter((p) => p.ledger_id === ledger.id).map((p) => ({ time: p.time.getTime(), equity: p.equity, cash: p.cash }));
+    }
+  }
+  if (state.agents.length > 0) {
+    const versions = await tx`select * from public.agent_strategy_versions where agent_id in ${tx(state.agents.map((a) => a.id))} order by agent_id, version`;
+    for (const agent of state.agents) {
+      const own = versions.filter((v) => v.agent_id === agent.id);
+      if (own.length > 0) {
+        agent.versions = own.map((v) => ({ version: v.version, spec: v.spec, createdAt: v.created_at.getTime(), note: v.note, author: v.author }));
+      }
+    }
+  }
+
+  // History, newest first in the query, oldest first in the state.
+  const w = STATE_WINDOW;
+  const orders = await newest(tx`select * from public.orders where user_id = ${userID} order by seq desc limit ${w.orders + 1}`, w.orders);
+  const proposals = await newest(tx`select * from public.trade_proposals where user_id = ${userID} order by seq desc limit ${w.proposals + 1}`, w.proposals);
+  const signals = await newest(tx`select * from public.trading_signals where user_id = ${userID} order by seq desc limit ${w.signals + 1}`, w.signals);
+  const fills = await newest(tx`select * from public.order_fills where user_id = ${userID} order by seq desc limit ${w.fills + 1}`, w.fills);
+  const runs = await newest(tx`select * from public.agent_runs where user_id = ${userID} order by seq desc limit ${w.runs + 1}`, w.runs);
+  const audit = await newest(tx`
+    select *, round(extract(epoch from time) * 1000)::float8 as time_ms
+    from public.audit_events where user_id = ${userID} order by sequence desc limit ${w.audit + 1}`, w.audit);
+
+  // Open orders and waiting proposals always come back, however old (the loader already has them).
+  const openOrders = state.orders.filter((o) => !orders.rows.some((row) => row.id === o.id));
+  const pendingProposals = state.proposals.filter((p) => !proposals.rows.some((row) => row.id === p.id));
+  state.orders = [...openOrders, ...orders.rows.map(orderFromRow)];
+  state.proposals = [...pendingProposals, ...proposals.rows.map(proposalFromRow)];
+  state.signals = signals.rows.map(signalFromRow);
+  state.fills = fills.rows.map(fillFromRow);
+  state.runs = runs.rows.map(runFromRow);
+
+  // The newest audit events, continuing from the event just before them, so
+  // AuditLog.verify() checks the window: events ascend by sequence, and baseSequence is the
+  // sequence before the first one (0 when the window starts at the beginning).
+  const events = audit.rows.map(auditFromRow);
+  state.audit = events.length > 0 ? { events, baseHash: events[0].previousHash, baseSequence: events[0].sequence - 1 } : makeAuditLog();
+
+  // The real idempotency record stays on the server; these are the ids of the orders returned.
+  state.knownClientOrderIDs = new Set(state.orders.map((o) => o.clientOrderID));
+  // Quotes and liquidity figures aren't stored: the app prices what it shows itself.
+  state.quotes = {};
+  state.stats = {};
+
+  return {
+    state: stateToJSON(state), asOf: now,
+    truncated: {
+      runs: runs.truncated, signals: signals.truncated, proposals: proposals.truncated, orders: orders.truncated,
+      fills: fills.truncated, audit: audit.truncated,
+    },
+  };
+}
+
+/** `readState` in its own transaction, holding the person's lock so no write is half-seen. */
+export async function readStateSnapshot(sql: Sql, userID: string, now: number, allowFixtureData: boolean): Promise<StateRead> {
+  return await sql.begin(async (tx) => {
+    await tx`set local role service_role`;
+    await lock(tx, userID);
+    return await readState(tx, userID, now, allowFixtureData);
+  }) as StateRead;
+}
+
 async function save(tx: Tx, userID: string, now: number, engine: TradingEngine, loaded: Loaded): Promise<{ notices: EngineNotice[]; auditEvents: AuditEvent[] }> {
   const state = engine.state;
   const when = new Date(now);
@@ -542,7 +675,8 @@ async function insertRun(tx: Tx, userID: string, run: AgentRun): Promise<void> {
  * and the refusal is returned. Any other error rolls everything back.
  */
 export async function withEngine<T>(
-  sql: Sql, userID: string, now: number, options: { allowFixtureData: boolean; scope?: LoadScope; readOnly?: boolean },
+  sql: Sql, userID: string, now: number,
+  options: { allowFixtureData: boolean; scope?: LoadScope; readOnly?: boolean; includeState?: boolean },
   work: (session: EngineSession) => Promise<T> | T,
 ): Promise<SessionOutcome<T>> {
   return await sql.begin(async (tx) => {
@@ -562,6 +696,8 @@ export async function withEngine<T>(
     const saved = await save(tx, userID, now, engine, loaded);
     outcome.notices = saved.notices;
     outcome.auditEvents = saved.auditEvents;
+    // Read back from the tables just written, in the same transaction: exactly what was saved.
+    if (options.includeState && !outcome.refusal) outcome.state = await readState(tx, userID, now, options.allowFixtureData);
     return outcome;
   }) as SessionOutcome<T>;
 }
