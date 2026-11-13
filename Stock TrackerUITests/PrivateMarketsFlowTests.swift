@@ -93,7 +93,6 @@ final class PrivateMarketsFlowTests: XCTestCase {
     @MainActor
     func testOwnershipExcerptCanBeReviewedAndLinked() async throws {
         let host = "http://127.0.0.1:58531"
-        let api = "http://127.0.0.1:58521"
         let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
         func post(_ url: String, _ fields: [String: String], token: String? = nil) async throws -> (Int, [String: Any]) {
             var request = URLRequest(url: try XCTUnwrap(URL(string: url)), timeoutInterval: 20)
@@ -115,9 +114,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let email = "private-ui-\(UUID().uuidString.lowercased())@example.com"
         let password = "Test-Private-Markets-2026!"
         let credentials = ["email": email, "password": password]
-        let account = try await post(api + "/auth/v1/signup", credentials)
+        let account = try await post(host + "/auth/v1/signup", credentials)
         XCTAssertEqual(account.0, 200)
-        let session = try await post(api + "/auth/v1/token?grant_type=password", credentials)
+        let session = try await post(host + "/auth/v1/token?grant_type=password", credentials)
         XCTAssertEqual(session.0, 200)
         let token = try XCTUnwrap(session.1["access_token"] as? String)
         let saved = try await post(edge, ["action": "save_document", "title": "Ownership statement fixture",
@@ -129,6 +128,11 @@ final class PrivateMarketsFlowTests: XCTestCase {
                                 "-UITestSignIn", "\(email):\(password)"]
         app.launch()
         openPrivateMarkets()
+        app.buttons["private.destination.folder"].tap()
+        XCTAssertTrue(app.buttons["Add research excerpt"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["Deal Room"].buttons["BackButton"].waitForExistence(timeout: 6))
+        app.navigationBars["Deal Room"].buttons["BackButton"].tap()
+        XCTAssertTrue(app.buttons["private.destination.briefcase"].waitForExistence(timeout: 6))
         app.buttons["private.destination.briefcase"].tap()
         let add = app.buttons["private.holding.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
@@ -145,14 +149,18 @@ final class PrivateMarketsFlowTests: XCTestCase {
         if !evidence.isHittable { app.swipeUp() }
         XCTAssertTrue(evidence.waitForExistence(timeout: 8))
         evidence.tap()
-        let statement = app.buttons["Ownership statement fixture"]
-        XCTAssertTrue(statement.waitForExistence(timeout: 8))
+        let statement = app.buttons["private.ownership.excerpt"].firstMatch
+        XCTAssertTrue(statement.waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(statement.label.contains("Ownership statement fixture"))
         statement.tap()
-        let reviewed = app.switches["I checked the excerpt against this holding"]
-        XCTAssertTrue(reviewed.waitForExistence(timeout: 8))
-        reviewed.tap()
-        app.buttons["Save evidence review"].tap()
-        XCTAssertTrue(app.buttons["Open ownership excerpt"].waitForExistence(timeout: 8))
+        let reviewed = app.switches["private.ownership.reviewed"]
+        XCTAssertTrue(reviewed.waitForExistence(timeout: 20), app.debugDescription)
+        let control = reviewed.switches.firstMatch
+        if control.exists { control.tap() } else { reviewed.tap() }
+        let save = app.buttons["Save evidence review"]
+        XCTAssertTrue(save.isEnabled, app.debugDescription)
+        save.tap()
+        XCTAssertTrue(app.buttons["private.ownership.linked"].waitForExistence(timeout: 8), app.debugDescription)
     }
 
     private func openPrivateMarkets() {

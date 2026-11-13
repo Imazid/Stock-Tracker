@@ -475,6 +475,7 @@ struct PrivateOwnershipEvidenceView: View {
                     NavigationLink("Open ownership excerpt") {
                         review(id: id, title: "Ownership excerpt", reviewed: current.ownershipReviewedOn)
                     }
+                    .accessibilityIdentifier("private.ownership.linked")
                     Button("Unlink excerpt", role: .destructive) { update(nil) }
                 }
             }
@@ -483,6 +484,7 @@ struct PrivateOwnershipEvidenceView: View {
                 else if items.isEmpty { Text("Add an authorized ownership excerpt in Deal Room first.") }
                 ForEach(items) { item in
                     NavigationLink(item.title) { review(id: item.id, title: item.title, reviewed: nil) }
+                        .accessibilityIdentifier("private.ownership.excerpt")
                 }
             }
             if let error { Text(error).foregroundStyle(.secondary) }
@@ -538,6 +540,7 @@ private struct PrivateOwnershipReviewView: View {
                         LabeledContent("Reviewed by you", value: reviewed.formatted(date: .abbreviated, time: .omitted))
                     }
                     Toggle("I checked the excerpt against this holding", isOn: $acknowledged)
+                        .accessibilityIdentifier("private.ownership.reviewed")
                     Text("Your review records supporting evidence for a self-reported holding.")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button("Save evidence review") {

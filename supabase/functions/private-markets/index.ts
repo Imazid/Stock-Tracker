@@ -111,6 +111,11 @@ Deno.serve(async (req) => {
     }
     const userId = await authenticatedUserId(req, admin);
     if (!userId) return errorResponse(401, "UNAUTHENTICATED", "Sign in first.");
+    // PostgreSQL UUIDs are case-insensitive. The encryption context is case-sensitive.
+    for (const key of ["id", "opportunity_id"]) {
+      const value = body[key];
+      if (typeof value === "string" && uuid.test(value)) body[key] = value.toLowerCase();
+    }
 
     const audit = async (action: string, subject?: string) => {
       const { error } = await admin.from("investment_audit_logs").insert({ user_id: userId, action, subject_id: subject });
