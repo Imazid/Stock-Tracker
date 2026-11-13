@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Activity, ArrowDownRight, ArrowUpRight, Bitcoin, X } from "lucide-react";
 import { money, pct, type Instrument, type Series } from "../lib/models";
 
 export function Brand({ small = false }: { small?: boolean }) {
-  return <div className={`brand ${small ? "compact" : ""}`}><span className="brand-mark"><Activity size={21} strokeWidth={2.7}/></span>
-    <span>Stock<span className="brand-muted">Tracker</span><small>WORKSPACE</small></span></div>;
+  return <div className={`brand ${small ? "compact" : ""}`}><span className="brand-mark" aria-hidden="true"><Activity size={21} strokeWidth={2.7}/></span>
+    <span className="brand-label">Stock<span className="brand-muted"> Tracker</span><small aria-hidden="true">WORKSPACE</small></span></div>;
 }
 
 const assetColors: Record<string, string> = { SPY: "violet", QQQ: "blue", BTC: "orange", ETH: "blue", AAPL: "silver", NVDA: "green", MSFT: "blue", SOL: "violet", CBA: "orange" };
@@ -38,14 +38,29 @@ export function Empty({ icon, title, text, children }: { icon?: ReactNode; title
 }
 
 export function Modal({ title, onClose, children, palette = false }: { title: string; onClose: () => void; children: ReactNode; palette?: boolean }) {
+  const headingId = useId();
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  const close = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
     const dialog = ref.current;
+    const opener = document.activeElement;
     dialog?.showModal();
-    return () => dialog?.close();
+    return () => {
+      dialog?.close();
+      if (opener instanceof HTMLElement && opener.isConnected && !opener.closest("dialog")) {
+        opener.focus({ preventScroll: true });
+      }
+    };
   }, []);
-  return <dialog ref={ref} className={`dialog ${palette ? "palette" : ""}`} onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className="dialog-body"><header><h2>{title}</h2><button aria-label="Close" className="icon-button" onClick={onClose}><X size={19}/></button></header>{children}</div>
+
+  useLayoutEffect(() => {
+    const initialFocus = ref.current?.querySelector<HTMLElement>("[data-dialog-focus]") ?? close.current;
+    initialFocus?.focus({ preventScroll: true });
+  }, [title]);
+
+  return <dialog ref={ref} aria-labelledby={headingId} className={`dialog ${palette ? "palette" : ""}`} onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="dialog-body"><header><h2 id={headingId}>{title}</h2><button ref={close} type="button" aria-label="Close" className="icon-button" onClick={onClose}><X size={19}/></button></header>{children}</div>
   </dialog>;
 }
 
