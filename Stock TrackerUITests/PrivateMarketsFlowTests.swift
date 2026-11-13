@@ -79,6 +79,17 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Scenario Calculator"].waitForExistence(timeout: 5))
     }
 
+    func testCopilotShowsPrivateAndListedExposure() {
+        openPrivateMarkets()
+        let copilot = app.buttons["trading.copilot"].firstMatch
+        XCTAssertTrue(copilot.waitForExistence(timeout: 8))
+        copilot.tap()
+        let exposure = app.buttons["copilot.suggestion.Show my private in"]
+        XCTAssertTrue(exposure.waitForExistence(timeout: 5))
+        exposure.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["private.allocation"].firstMatch.waitForExistence(timeout: 6))
+    }
+
     private func openPrivateMarkets() {
         let tabs = app.tabBars.firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 12))

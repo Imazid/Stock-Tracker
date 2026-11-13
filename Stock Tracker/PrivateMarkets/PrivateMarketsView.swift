@@ -92,10 +92,15 @@ struct PrivateMarketsView: View {
             .background(theme.background.ignoresSafeArea())
             .navigationTitle("Private Markets")
             .toolbarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink(value: PrivateDestination.updates) { Image(systemName: "bell") }
-                    .accessibilityLabel("Company updates")
-            } }
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { router.showCopilot = true } label: { Image(systemName: "text.bubble") }
+                        .accessibilityLabel("Ask the copilot")
+                        .accessibilityIdentifier("trading.copilot")
+                    NavigationLink(value: PrivateDestination.updates) { Image(systemName: "bell") }
+                        .accessibilityLabel("Company updates")
+                }
+            }
             .navigationDestination(for: PrivateDestination.self) { destination in
                 switch destination {
                 case .discovery, .explorer, .rounds:
@@ -394,7 +399,7 @@ private struct PrivateDealDetail: View {
             }
             Section("Sources") {
                 LabeledContent("Verified", value: deal.verifiedAt.formatted(date: .abbreviated, time: .shortened))
-                if deal.sourceUrl.privateSourceIsSafe { Link("View source at \(deal.sourceName)", destination: deal.sourceUrl) }
+                if deal.sourceUrl.privateSourceIsSafe { Link("Read source", destination: deal.sourceUrl) }
                 if deal.company.sourceUrl.privateSourceIsSafe { Link("Company source", destination: deal.company.sourceUrl) }
                 if deal.round.sourceUrl.privateSourceIsSafe { Link("Funding round source", destination: deal.round.sourceUrl) }
                 if let document = deal.offerDocumentUrl, document.privateSourceIsSafe { Link("Read offer document", destination: document) }

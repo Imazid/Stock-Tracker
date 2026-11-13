@@ -150,6 +150,12 @@ select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a00
 update public.investment_opportunities set verified_at = now() - interval '25 hours' where id = 'a0000000-0000-0000-0000-000000000031';
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000031',100,'https://example.test/offer')$q$,
   '22023','stale listing cannot start a handoff');
+select pg_temp.expect_error($q$update public.investment_opportunities set status = 'open'
+  where id = 'd72c4060-1ae7-4a2f-8f2e-9f4bf1577e21'$q$,
+  '23514','issuer reference cannot be marked open');
+select pg_temp.expect_error($q$update public.investment_opportunities set handoff_url = 'https://example.test/offer'
+  where id = 'd72c4060-1ae7-4a2f-8f2e-9f4bf1577e21'$q$,
+  '23514','issuer reference cannot have a handoff route');
 insert into public.agent_analysis_runs (id,user_id,status) values
   ('a0000000-0000-0000-0000-000000000060','a0000000-0000-0000-0000-000000000001','running');
 select pg_temp.expect_error($q$select public.finish_private_research('a0000000-0000-0000-0000-000000000002',

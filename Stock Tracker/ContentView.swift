@@ -108,9 +108,9 @@ struct ContentView: View {
             }
         }
         .tint(DS.accent)
-        .environmentObject(privateMarkets)
         .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
         .modifier(TradingRootSheets())
+        .environmentObject(privateMarkets)
         .onChange(of: router.requestedTab, initial: true) { _, tab in
             if let tab {
                 selectedTab = tab

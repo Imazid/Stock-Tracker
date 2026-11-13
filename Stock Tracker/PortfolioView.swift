@@ -63,7 +63,6 @@ struct PortfolioView: View {
     @EnvironmentObject private var insightService: AIInsightService
     @Environment(\.theme) private var theme
     @EnvironmentObject private var privateMarkets: PrivateMarketsStore
-    @EnvironmentObject private var cloudAuth: SupabaseAuthManager
     @Environment(\.selectTab) private var selectTab
     @ObservedObject private var broker = SnapTradeViewModel.shared
 

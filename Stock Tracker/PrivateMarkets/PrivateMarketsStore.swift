@@ -74,7 +74,10 @@ struct PrivateDeal: Codable, Identifiable {
     let round: Round
 
     var company: Company { round.company }
-    var sourceName: String { PrivateProvider.directory.first { $0.id == provider }?.name ?? provider }
+    var sourceName: String {
+        if provider == "issuer" { return "Company announcement" }
+        return PrivateProvider.directory.first { $0.id == provider }?.name ?? provider
+    }
 
     var displayedStatus: String {
         if status == "closed" { return "Closed" }

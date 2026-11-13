@@ -33,12 +33,14 @@ enum CopilotCard: Identifiable {
     case limitChange(id: UUID, agentID: UUID, lines: [String], policy: RiskPolicy, loosens: Bool)
     case backtest(id: UUID, box: BacktestBox)
     case agentChoice(id: UUID, request: String, agentIDs: [UUID])
+    case unifiedAllocation(id: UUID)
     case pauseAll(id: UUID)
 
     var id: UUID {
         switch self {
         case .facts(let id, _, _, _), .orders(let id, _, _), .run(let id, _, _), .draft(let id, _),
-             .limitChange(let id, _, _, _, _), .backtest(let id, _), .agentChoice(let id, _, _), .pauseAll(let id):
+             .limitChange(let id, _, _, _, _), .backtest(let id, _), .agentChoice(let id, _, _),
+             .unifiedAllocation(let id), .pauseAll(let id):
             return id
         }
     }
@@ -70,6 +72,7 @@ final class CopilotEngine: ObservableObject {
     static let suggestions = [
         "Show me all my pending trades",
         "Analyse my portfolio concentration",
+        "Show my private investment exposure alongside my listed stocks",
         "Why did my agent stop trading?",
         "Create a paper-trading strategy for BTC and ETH",
         "Backtest my strategy over the last two years",
@@ -127,6 +130,12 @@ final class CopilotEngine: ObservableObject {
         let lower = text.lowercased()
         func has(_ words: String...) -> Bool { words.contains { lower.contains($0) } }
 
+        if has("private market", "private investment", "private asset", "private holding", "private equity") &&
+            has("exposure", "allocation", "concentration", "alongside") &&
+            !has("reduce", "set ", "change", "lower", "raise", "increase") {
+            return CopilotMessage(isUser: false, text: "Here’s the allocation across your tracked listed and private holdings.",
+                                  cards: [.unifiedAllocation(id: UUID())])
+        }
         if has("pause all", "pause everything", "stop everything", "stop all", "kill switch", "emergency") {
             return CopilotMessage(isUser: false, text: trading.isKillSwitchOn
                                   ? "Pause-all is already on. No agent can place orders."
