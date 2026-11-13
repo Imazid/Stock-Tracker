@@ -47,6 +47,8 @@ struct OrderTicketView: View {
     @State private var showTypes = false
     @State private var path: [Step] = []
     @State private var result: OrderResult?
+    @State private var isPlacing = false
+    @State private var placeProblem: String?
     /// One key per order attempt, so a double tap can never place two orders.
     @State private var orderKey = UUID().uuidString
     @FocusState private var amountFocused: Bool
@@ -546,13 +548,22 @@ struct OrderTicketView: View {
         .navigationTitle("Review")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
-            Button(preview?.willQueueUntilOpen == true && instrument.venue != .crypto ? "Queue practice order" : "Place practice order") {
-                place()
-            }
-            .buttonStyle(PrimaryPillButtonStyle())
-            .disabled(preview?.canSubmit != true)
+            VStack(spacing: DS.Space.s) {
+                if let placeProblem {
+                    Label(placeProblem, systemImage: "exclamationmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(theme.negativeColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("ticket.placeProblem")
+                }
+                Button(isPlacing ? "Placing…" : (preview?.willQueueUntilOpen == true && instrument.venue != .crypto ? "Queue practice order" : "Place practice order")) {
+                    place()
+                }
+                .buttonStyle(PrimaryPillButtonStyle())
+                .disabled(preview?.canSubmit != true || isPlacing)
             .accessibilityHint(preview?.canSubmit == true ? "Places a simulated order with practice money" : "A risk check is blocking this order")
-            .accessibilityIdentifier("ticket.place")
+                .accessibilityIdentifier("ticket.place")
+            }
             .padding(.horizontal, DS.Space.gutter)
             .padding(.vertical, DS.Space.m)
             .background(.bar)
@@ -590,11 +601,23 @@ struct OrderTicketView: View {
     }
 
     private func place() {
-        guard let request else { return }
-        let outcome = trading.submit(request)
-        result = outcome
-        if outcome.isAccepted { Haptics.success() } else { Haptics.warning() }
-        path.append(.done)
+        guard let request, !isPlacing else { return }
+        isPlacing = true
+        placeProblem = nil
+        Task {
+            do {
+                let outcome = try await trading.submit(request)
+                result = outcome
+                if outcome.isAccepted { Haptics.success() } else { Haptics.warning() }
+                path.append(.done)
+            } catch {
+                // Not sent, or the answer was lost: the order key stays the same, so trying
+                // again can't place it twice.
+                placeProblem = error.localizedDescription
+                Haptics.warning()
+            }
+            isPlacing = false
+        }
     }
 
     // MARK: Result
@@ -780,14 +803,16 @@ struct PracticeSetupView: View {
                 }
 
                 Button("Start practising") {
-                    do {
-                        let name = trading.practicePortfolios.isEmpty ? "Practice" : "Practice \(trading.practicePortfolios.count + 1)"
-                        let ledger = try trading.createPortfolio(name: currency == "USD" ? name : "\(name) (\(currency))",
-                                                                 startingCash: balance, currency: currency)
-                        Haptics.success()
-                        onCreated(ledger)
-                    } catch {
-                        problem = error.localizedDescription
+                    let name = trading.practicePortfolios.isEmpty ? "Practice" : "Practice \(trading.practicePortfolios.count + 1)"
+                    Task {
+                        do {
+                            let ledger = try await trading.createPortfolio(name: currency == "USD" ? name : "\(name) (\(currency))",
+                                                                           startingCash: balance, currency: currency)
+                            Haptics.success()
+                            onCreated(ledger)
+                        } catch {
+                            problem = error.localizedDescription
+                        }
                     }
                 }
                 .buttonStyle(PrimaryPillButtonStyle())

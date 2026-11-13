@@ -187,6 +187,7 @@ struct AgentDraftEditor: View {
     @State private var problem: String?
     @State private var isBacktesting = false
     @State private var backtest: BacktestBox?
+    @State private var isCreating = false
 
     init(draft: AgentDraft, parsed: ParsedAgentRequest?, onCreated: @escaping () -> Void) {
         _draft = State(initialValue: draft)
@@ -322,9 +323,9 @@ struct AgentDraftEditor: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { if draft.mode == .paper { PracticeChip() } } }
         .safeAreaInset(edge: .bottom) {
-            Button(draft.mode == .paper ? "Start in practice" : "Start agent") { create() }
+            Button(isCreating ? "Starting…" : (draft.mode == .paper ? "Start in practice" : "Start agent")) { create() }
                 .buttonStyle(PrimaryPillButtonStyle())
-                .disabled(!problems.isEmpty)
+                .disabled(!problems.isEmpty || isCreating)
                 .accessibilityIdentifier("agent.draft.start")
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.vertical, DS.Space.m)
@@ -573,13 +574,20 @@ struct AgentDraftEditor: View {
     }
 
     private func create() {
-        do {
-            try trading.createAgent(resolved)
-            Haptics.success()
-            onCreated()
-        } catch {
-            problem = error.localizedDescription
-            Haptics.warning()
+        guard !isCreating else { return }
+        isCreating = true
+        problem = nil
+        let draft = resolved
+        Task {
+            do {
+                try await trading.createAgent(draft)
+                Haptics.success()
+                onCreated()
+            } catch {
+                problem = error.localizedDescription
+                Haptics.warning()
+            }
+            isCreating = false
         }
     }
 
@@ -644,11 +652,13 @@ struct AgentLimitsEditor: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         guard let policy else { return }
-                        do {
-                            try trading.updateRiskPolicy(agentID: agentID, policy: policy)
-                            dismiss()
-                        } catch {
-                            problem = error.localizedDescription
+                        Task {
+                            do {
+                                try await trading.updateRiskPolicy(agentID: agentID, policy: policy)
+                                dismiss()
+                            } catch {
+                                problem = error.localizedDescription
+                            }
                         }
                     }
                     .accessibilityIdentifier("agent.limits.save")

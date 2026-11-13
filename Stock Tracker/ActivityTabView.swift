@@ -48,6 +48,7 @@ struct ActivityTabView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.Space.l) {
+                    TradingHomeBadge()
                     PausedAllBanner { router.showPauseAll = true }
 
                     if let problem = trading.dataProblem {
@@ -492,7 +493,7 @@ struct OrderDetailView: View {
                         .frame(maxWidth: .infinity, minHeight: 50)
                         .accessibilityIdentifier("order.cancel")
                         .confirmationDialog("Cancel this order?", isPresented: $confirmCancel, titleVisibility: .visible) {
-                            Button("Cancel order", role: .destructive) { trading.cancelOrder(order.id) }
+                            Button("Cancel order", role: .destructive) { Task { try? await trading.cancelOrder(order.id) } }
                             Button("Keep it", role: .cancel) {}
                         } message: {
                             Text(order.filledQuantity > 0 ? "The part that already filled stays. The rest won't trade." : "It won't trade.")
@@ -517,6 +518,7 @@ struct PauseAllSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var cancelled: Int?
+    @State private var problem: String?
 
     var body: some View {
         let openAgentOrders = trading.openOrders.filter { $0.source.isAgent }.count
@@ -540,6 +542,11 @@ struct PauseAllSheet: View {
                             .font(.footnote)
                             .foregroundStyle(theme.secondaryText)
                     }
+                    if let problem {
+                        Text(problem).font(.footnote).foregroundStyle(theme.negativeColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("pauseAll.problem")
+                    }
                 }
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.vertical, DS.Space.xl)
@@ -549,17 +556,29 @@ struct PauseAllSheet: View {
                 VStack(spacing: DS.Space.s) {
                     if trading.isKillSwitchOn {
                         Button("Turn off pause-all") {
-                            trading.releaseKillSwitch()
-                            Haptics.tap()
-                            dismiss()
+                            Task {
+                                do {
+                                    try await trading.releaseKillSwitch()
+                                    Haptics.tap()
+                                    dismiss()
+                                } catch {
+                                    problem = error.localizedDescription
+                                }
+                            }
                         }
                         .buttonStyle(PrimaryPillButtonStyle())
                         .accessibilityIdentifier("pauseAll.release")
                     } else {
                         Button("Pause all") {
-                            cancelled = trading.engageKillSwitch()
-                            Haptics.warning()
-                            UIAccessibility.post(notification: .announcement, argument: "All agents paused")
+                            Task {
+                                do {
+                                    cancelled = try await trading.engageKillSwitch()
+                                    Haptics.warning()
+                                    UIAccessibility.post(notification: .announcement, argument: "All agents paused")
+                                } catch {
+                                    problem = error.localizedDescription
+                                }
+                            }
                         }
                         .buttonStyle(PrimaryPillButtonStyle())
                         .accessibilityIdentifier("pauseAll.confirm")

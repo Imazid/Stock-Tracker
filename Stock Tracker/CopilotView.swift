@@ -255,7 +255,7 @@ private struct CopilotScreen: View {
                             .accessibilityIdentifier("copilot.limit.cancel")
                         Button("Confirm") {
                             Haptics.tap()
-                            engine.confirmLimitChange(card: id, agentID: agentID, policy: policy)
+                            Task { await engine.confirmLimitChange(card: id, agentID: agentID, policy: policy) }
                         }
                         .buttonStyle(PrimaryPillButtonStyle())
                         .accessibilityIdentifier("copilot.limit.confirm")

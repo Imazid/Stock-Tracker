@@ -26,6 +26,7 @@ struct AgentsTabView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.Space.l) {
+                    TradingHomeBadge()
                     PausedAllBanner { router.showPauseAll = true }
 
                     if !trading.pendingProposals.isEmpty {
@@ -237,13 +238,17 @@ struct AgentDetailView: View {
         }
         .alert("Rename agent", isPresented: $renaming) {
             TextField("Name", text: $newName)
-            Button("Save") { attempt { try trading.renameAgent(agentID, to: newName) } }
+            Button("Save") { attempt { try await trading.renameAgent(agentID, to: newName) } }
             Button("Cancel", role: .cancel) {}
         }
     }
 
-    private func attempt(_ work: () throws -> Void) {
-        do { try work() } catch { problem = error.localizedDescription }
+    /// Runs a change and shows any refusal. Changes can go to the account's server, so
+    /// they're asynchronous.
+    private func attempt(_ work: @escaping () async throws -> Void) {
+        Task {
+            do { try await work() } catch { problem = error.localizedDescription }
+        }
     }
 
     private func content(_ agent: TradingAgent) -> some View {
@@ -285,7 +290,7 @@ struct AgentDetailView: View {
                 .dsCard(padding: DS.Space.s)
                 .confirmationDialog("Delete \(agent.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
                     Button("Delete agent", role: .destructive) {
-                        attempt { try trading.deleteAgent(agentID) }
+                        attempt { try await trading.deleteAgent(agentID) }
                         dismiss()
                     }
                 } message: {
@@ -327,7 +332,7 @@ struct AgentDetailView: View {
             HStack(spacing: DS.Space.m) {
                 if agent.status == .active {
                     Button {
-                        attempt { try trading.pauseAgent(agentID) }
+                        attempt { try await trading.pauseAgent(agentID) }
                         Haptics.tap()
                     } label: {
                         Label("Pause", systemImage: "pause.fill")
@@ -336,7 +341,7 @@ struct AgentDetailView: View {
                     .accessibilityIdentifier("agent.pause")
                 } else {
                     Button {
-                        attempt { try trading.resumeAgent(agentID) }
+                        attempt { try await trading.resumeAgent(agentID) }
                         Haptics.tap()
                     } label: {
                         Label("Resume", systemImage: "play.fill")
@@ -415,7 +420,7 @@ struct AgentDetailView: View {
             Menu {
                 ForEach(AgentMode.allCases, id: \.self) { mode in
                     Button {
-                        if mode.isLive { lockedMode = mode } else { attempt { try trading.setMode(agentID: agentID, mode: mode) } }
+                        if mode.isLive { lockedMode = mode } else { attempt { try await trading.setMode(agentID: agentID, mode: mode) } }
                     } label: {
                         Label(mode.isLive ? "\(mode.displayName) (not available)" : mode.displayName,
                               systemImage: mode.isLive ? "lock" : (agent.mode == mode ? "checkmark" : mode.glyph))
@@ -434,7 +439,7 @@ struct AgentDetailView: View {
             if agent.mode == .paper {
                 Toggle("Ask me before each trade", isOn: Binding(
                     get: { agent.reviewEachPaperTrade },
-                    set: { value in attempt { try trading.setReviewEachTrade(agentID: agentID, value) } }))
+                    set: { value in attempt { try await trading.setReviewEachTrade(agentID: agentID, value) } }))
                     .font(.subheadline)
                     .accessibilityIdentifier("agent.review")
                 TradingRow(label: "Largest single order", value: TradingFormat.money(policy.maxOrderNotional, currency))
@@ -741,12 +746,14 @@ struct ProposalReviewSheet: View {
             if proposal.status == .pending, outcome == nil {
                 HStack(spacing: DS.Space.m) {
                     Button {
-                        do {
-                            try trading.rejectProposal(proposalID)
-                            Haptics.tap()
-                            dismiss()
-                        } catch {
-                            problem = error.localizedDescription
+                        Task {
+                            do {
+                                try await trading.rejectProposal(proposalID)
+                                Haptics.tap()
+                                dismiss()
+                            } catch {
+                                problem = error.localizedDescription
+                            }
                         }
                     } label: {
                         Label("Reject", systemImage: "xmark")
