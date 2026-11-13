@@ -6,7 +6,7 @@
 
 The iOS feature uses the existing navigation, portfolio, currency service, and Supabase session. An Edge Function serves the public catalogue. It requires a valid session for company updates, research, investor profiles and provider handoff. Supabase stores published facts and scoped account records. The iPhone stores manual holdings, valuations, cash flows and watchlists in account-specific, data-protected files excluded from backups. Signed-out device records stay in their own scope. The listed portfolio keeps its original daily performance history and gains a unified allocation that uses dated private carrying values.
 
-This design reuses the existing AI gateway, model credentials, quota and encryption envelope. The server fetches selected evidence by authenticated ownership, passes excerpts only after explicit permission and a deployment flag, validates exact quotations against their sources, and stores reports with the same envelope encryption. Source documents and analyst outputs are untrusted inputs. The language models receive no application or order tools. A specialist review or synthesis failure fails the committee run. Quotes are checked mechanically. Analysis and its interpretation still require review.
+This design reuses the existing AI gateway, model credentials, quota and encryption envelope. The server fetches selected evidence by authenticated ownership, passes excerpts only after explicit permission and a deployment flag, resolves numbered source citations, and stores reports with the same envelope encryption. Committee runs continue on the Edge runtime while the app polls an account-scoped status endpoint. Source documents and analyst outputs are untrusted inputs. The language models receive no application or order tools. A specialist review or synthesis failure fails the committee run. Quotes are checked mechanically. Analysis and its interpretation still require review.
 
 ## Phase 1 · Discovery, research and tracking
 
@@ -44,13 +44,14 @@ The product records capital calls, distributions, stale marks, share classes and
 
 ## Verification
 
-- 146 TradingCore tests and 31 Edge Function unit tests passed. The Edge Function type check and migration test suite passed.
-- A disposable Supabase stack verified the catalogue, updates and account boundaries. The hosted Stock Tracker project also returned the catalogue, refused anonymous private access and passed encrypted excerpt and cross-account checks. The SQL suite verified consent-related access controls, Australian offer gates, duplicate handoffs and provider-confirmed ownership using fixtures.
+- The integrated TradingCore suite passed with 170 tests executed, one skipped and zero failures. The research and gateway unit tests, Edge Function type check and migration test suite passed.
+- A disposable Supabase stack verified the catalogue, updates and account boundaries. The hosted Stock Tracker project also returned the catalogue, refused anonymous private access and passed encrypted excerpt and cross-account checks. A live model returned a cited answer and a saved committee report with five specialist findings and a synthesis. Both temporary smoke-test accounts were removed. The SQL suite verified consent-related access controls, Australian offer gates, duplicate handoffs and provider-confirmed ownership using fixtures.
 - Two iPhone 17 Pro simulator tests passed on iOS 26.5. They exercised the provider directory, offline scenario calculator, and private holding creation, valuation and persistence across relaunch.
 - AngelList’s production OAuth endpoint accepted a Stock Tracker dynamic client registration with the iOS redirect. The interactive consent, token exchange and fund reads require an entitled AngelList account. Provider onboarding and investment settlement remain gated on signed agreements and compliance approval.
 
 ## Primary sources
 
+- [Stock Tracker Private Markets pull request](https://github.com/Imazid/Stock-Tracker/pull/7)
 - [ASIC crowd-sourced funding](https://www.asic.gov.au/crowd-sourced-funding)
 - [ASIC Regulatory Guide 262](https://download.asic.gov.au/media/kdljjy4d/rg262-published-18-october-2018-20260421.pdf)
 - [ASIC licensing guidance for advice and dealing](https://www.asic.gov.au/regulatory-resources/financial-services/giving-financial-product-advice)
