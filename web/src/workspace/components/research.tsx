@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowUpRight, ExternalLink, Landmark, Sparkles } from "lucide-react";
 import { service } from "../lib/backend";
@@ -41,6 +42,7 @@ export function Research({ asset, journal, enabled }: { asset: Instrument; journ
     return () => { alive = false; };
   }, [asset, hasCompanyData]);
 
+  const companyListing = encodeURIComponent(`${asset.venue}:${asset.symbol}`);
   const latest = history?.bars.at(-1);
   const first = history?.bars[0];
   const listing = asset.venue === "crypto" ? `${asset.symbol}-USD` : asset.symbol + (venues[asset.venue].suffix ?? "");
@@ -65,6 +67,7 @@ export function Research({ asset, journal, enabled }: { asset: Instrument; journ
   return <><div className="two-grid">
     <section className="panel table-panel"><div className="panel-heading"><h2><Landmark size={18}/> Asset research</h2></div><div className="form panel-form">
       <AssetText asset={asset}/>
+      {asset.venue !== "crypto" && <Link className="text-button" href={`/markets/${companyListing}`}>Open Company Intelligence <ExternalLink size={14}/></Link>}
       {latest ? <div className="order-preview"><dl><dt>Latest close</dt><dd>{money(latest.close,asset.currency)}</dd><dt>Session high</dt><dd>{money(latest.high,asset.currency)}</dd><dt>Session low</dt><dd>{money(latest.low,asset.currency)}</dd></dl><p className="muted">{source}</p></div> : <p className="muted">{sourceError || "Loading the latest reported session…"}</p>}
       {company && <div className="order-preview"><strong>{company.profile.name || asset.name}</strong>
         <p className="muted">{[company.profile.industry, company.profile.exchange].filter(Boolean).join(" · ")}</p>

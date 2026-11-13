@@ -21,6 +21,10 @@ Deno.test("market data proxy only accepts Alpaca data routes and bounded query p
   duplicate.searchParams.append("path", "/v2/stocks/MSFT/snapshot");
   assertEquals(alpacaRequest(duplicate), undefined);
   assertExists(alpacaRequest(request("/v1beta3/crypto/us/snapshots", { symbols: "BTC/USD" })));
+  const book = "/v1beta3/crypto/us/latest/orderbooks";
+  assertExists(alpacaRequest(request(book, { symbols: "BTC/USD" })));
+  assertEquals(alpacaRequest(request(book, { symbols: "BTC/USDT" })), undefined);
+  assertEquals(alpacaRequest(request(book, { symbols: "BTC/USD", feed: "sip" })), undefined);
 });
 
 Deno.test("consolidated stock bars must end at least 15 minutes in the past", () => {

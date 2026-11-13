@@ -452,6 +452,7 @@ extension View {
 
 private struct DSCardModifier: ViewModifier {
     let padding: CGFloat
+    @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
         content

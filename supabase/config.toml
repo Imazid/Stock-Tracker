@@ -414,6 +414,10 @@ verify_jwt = false
 [functions.market-data-proxy]
 verify_jwt = false
 
+# The handler checks the signed-in session or the server-only featured-feed secret.
+[functions.market-workspace]
+verify_jwt = false
+
 # The scheduler is called by pg_cron with a secret header (TRADING_SCHEDULER_SECRET), not
 # a user token. Without the header it refuses.
 [functions.agent-scheduler]

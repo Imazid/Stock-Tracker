@@ -109,7 +109,6 @@ struct ContentView: View {
                 selectedTab = .markets
             }
         }
-        .tabViewStyle(.sidebarAdaptable)
         .tint(DS.accent)
         .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
         .modifier(TradingRootSheets())

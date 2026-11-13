@@ -89,6 +89,7 @@ struct PortfolioPerformanceChart: View {
                     if showsTodayLine && range != .oneDay && selection == nil {
                         changeLine(percent: marketData.dailyProfitLossPercent, amount: daily, label: Text("Today"))
                     }
+                }
             }
             .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
 
