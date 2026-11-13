@@ -1,9 +1,10 @@
 import { AI_LIMITS, type AiProxyDeps } from "../_shared/ai/proxy.ts";
 import { authenticatedUserId, errorResponse, jsonResponse, readJson, serviceClient } from "../_shared/secure/edge.ts";
-import { timingSafeEqual } from "../_shared/secure/encoding.ts";
+import { fromBase64, fromUtf8, timingSafeEqual, utf8 } from "../_shared/secure/encoding.ts";
 import { open, parseKeyring, seal, type SealedSecret } from "../_shared/secure/envelope.ts";
 import { buildResearch, type Evidence, ResearchError } from "../_shared/private-markets/research.ts";
 import { currentStatus, type Discoverable, interpretDiscovery, matchDiscovery } from "../_shared/private-markets/discovery.ts";
+import { ApnsSender, pushEnvironment, type PushEnvironment, validDeviceToken } from "../_shared/private-markets/apns.ts";
 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -108,13 +109,13 @@ type DigestJob = {
   sources: { id: string; company: string; title: string; summary: string; published_at: string; url: string }[];
 };
 
-async function scheduledDigests(req: Request, admin: ReturnType<typeof serviceClient>) {
+function schedulerAuthorized(req: Request) {
   const secret = Deno.env.get("PRIVATE_MARKET_DIGEST_SECRET");
   const supplied = req.headers.get("x-scheduler-secret");
-  const encoder = new TextEncoder();
-  if (!secret || !supplied || !timingSafeEqual(encoder.encode(supplied), encoder.encode(secret))) {
-    return errorResponse(401, "UNAUTHENTICATED", "Scheduler authorization required.");
-  }
+  return !!secret && !!supplied && timingSafeEqual(utf8(supplied), utf8(secret));
+}
+
+async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
   const keyring = await keys();
   const { data, error } = await admin.rpc("claim_private_market_digests");
   if (error) throw error;
@@ -149,6 +150,60 @@ async function scheduledDigests(req: Request, admin: ReturnType<typeof serviceCl
   });
 }
 
+function apnsConfig(environment: PushEnvironment) {
+  const prefix = "PRIVATE_MARKET_APNS_" + environment.toUpperCase();
+  const team = Deno.env.get(prefix + "_TEAM_ID");
+  const keyId = Deno.env.get(prefix + "_KEY_ID");
+  const privateKey = Deno.env.get(prefix + "_PRIVATE_KEY");
+  return team && keyId && privateKey ? { team, keyId, privateKey, environment } : undefined;
+}
+
+const senders = new Map<PushEnvironment, ApnsSender>();
+
+async function scheduledPush(admin: ReturnType<typeof serviceClient>) {
+  const environments = (["sandbox", "production"] as const).filter((environment) => {
+    const config = apnsConfig(environment);
+    if (!config) return false;
+    if (!senders.has(environment)) senders.set(environment, new ApnsSender(config, fetch));
+    return true;
+  });
+  if (!environments.length) return jsonResponse(200, { accepted: 0, configured: false });
+  const keyring = await keys();
+  const { data, error } = await admin.rpc("claim_private_market_push", { p_environments: environments });
+  if (error) throw error;
+  if (!Array.isArray(data)) throw new Error("Invalid push claims");
+  const jobs = data as {
+    owner_id: string; installation_id: string; lease: string; push_environment: PushEnvironment; envelope: SealedSecret;
+  }[];
+  const results = await Promise.allSettled(jobs.map(async (job) => {
+    const fields = { p_user: job.owner_id, p_device: job.installation_id, p_lease: job.lease };
+    const token = await open(keyring, job.envelope, context("push", job.owner_id, job.installation_id));
+    const current = await admin.rpc("private_market_push_is_current", fields);
+    if (current.error) throw current.error;
+    if (!current.data) return false;
+    const sender = senders.get(job.push_environment);
+    if (!sender) return false;
+    const result = await sender.send(token, job.lease);
+    const saved = await admin.rpc("finish_private_market_push", { ...fields, p_result: result });
+    if (saved.error) throw saved.error;
+    return result === "accepted";
+  }));
+  const accepted = results.filter((result) => result.status === "fulfilled" && result.value).length;
+  const failed = results.filter((result) => result.status === "rejected").length;
+  if (failed) console.warn("private push delivery errors", failed);
+  return jsonResponse(200, { accepted, attempted: jobs.length, failed, configured: true });
+}
+
+function sessionId(req: Request): string | null {
+  // Called only after Auth validates this bearer JWT. The RPC also checks that
+  // the referenced session is active and belongs to the verified user.
+  try {
+    const encoded = req.headers.get("Authorization")?.split(".")[1];
+    const id = encoded && JSON.parse(fromUtf8(fromBase64(encoded))).session_id;
+    return typeof id === "string" && uuid.test(id) ? id : null;
+  } catch { return null; }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return errorResponse(405, "METHOD_NOT_ALLOWED", "Use POST.");
   try {
@@ -164,7 +219,10 @@ Deno.serve(async (req) => {
       return errorResponse(400, "INVALID_REQUEST", "Send a JSON object under 24 KB.");
     }
 
-    if (body.action === "scheduled_digest") return await scheduledDigests(req, admin);
+    if (body.action === "scheduled_digest" || body.action === "scheduled_push") {
+      if (!schedulerAuthorized(req)) return errorResponse(401, "UNAUTHENTICATED", "Scheduler authorization required.");
+      return body.action === "scheduled_digest" ? await scheduledDigests(admin) : await scheduledPush(admin);
+    }
     if (body.action === "catalog") {
       const { data, error } = await catalogue(admin).range(0, 499);
       if (error) throw error;
@@ -183,6 +241,27 @@ Deno.serve(async (req) => {
       if (error) throw error;
     };
     switch (body.action) {
+      case "monitor_push": {
+        const { device_id: device, environment, token } = body;
+        if (typeof device !== "string" || !uuid.test(device) ||
+          (environment !== undefined && environment !== null && !pushEnvironment(environment)) ||
+          (token !== null && (!validDeviceToken(token) || !pushEnvironment(environment)))) {
+          return errorResponse(400, "INVALID_MONITOR_PUSH", "Send the installation identifier and a valid device token.");
+        }
+        const session = sessionId(req);
+        const configured = pushEnvironment(environment) && !!apnsConfig(environment);
+        const enabled = token !== null && configured && session !== null;
+        const normalized = validDeviceToken(token) ? token.toLowerCase() : "";
+        const digest = enabled ? await crypto.subtle.digest("SHA-256", utf8(normalized)) : null;
+        const hash = digest && Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const sealed = enabled ? await seal(await keys(), normalized, context("push", userId, device.toLowerCase())) : null;
+        const { data, error } = await admin.rpc("configure_private_market_push", {
+          p_user: userId, p_device: device, p_session: session, p_environment: environment ?? null,
+          p_token_hash: hash, p_sealed: sealed,
+        });
+        if (error) throw error;
+        return jsonResponse(200, { registered: data === true });
+      }
       case "monitor_settings": {
         const { device_id: device, company_ids: companies, enabled, eligible_opportunities: eligible, digest } = body;
         if (typeof device !== "string" || !uuid.test(device) || typeof enabled !== "boolean" || typeof eligible !== "boolean" ||

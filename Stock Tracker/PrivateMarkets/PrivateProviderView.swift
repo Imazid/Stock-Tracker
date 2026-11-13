@@ -211,7 +211,8 @@ struct PrivateUpdatesView: View {
                 Toggle("Notify me about company updates", isOn: Binding(
                     get: { store.state.notify }, set: setNotifications))
                     .disabled(auth.userId == nil)
-                Text("Device notifications appear when iOS permits the app to refresh.")
+                Text(store.remotePushActive ? "Push notifications are active on this device." :
+                    "Device notifications appear when iOS permits the app to refresh.")
                     .font(.footnote).foregroundStyle(.secondary)
                 if savingMonitor { ProgressView("Saving monitoring preferences") }
                 if let error = store.monitorError { Text(error).foregroundStyle(.secondary) }
@@ -347,7 +348,8 @@ struct PrivateUpdatesView: View {
                     guard allowed else { error = "Allow notifications in iOS Settings to receive updates."; return }
                 }
                 guard auth.userId == userID else { return }
-                try store.change { $0.notify = enabled }
+                try await store.setUpdateNotifications(enabled, owner: userID)
+            } catch is CancellationError {
             } catch { self.error = error.localizedDescription }
         }
     }

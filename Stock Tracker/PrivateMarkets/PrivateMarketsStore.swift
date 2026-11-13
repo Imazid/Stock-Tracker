@@ -2,6 +2,7 @@ import Auth
 import Combine
 import Foundation
 import TradingCore
+import UIKit
 import UserNotifications
 
 struct PrivateProvider: Identifiable {
@@ -175,6 +176,7 @@ enum PrivateMarketsAPI {
     struct Items: Decodable { let items: [PrivateSavedItem] }
     struct Updates: Decodable { let updates: [PrivateCompanyUpdate] }
     struct MonitorInbox: Decodable { let alerts: [PrivateMarketAlert] }
+    struct PushRegistration: Decodable { let registered: Bool }
     struct Applications: Decodable { let applications: [PrivateApplication] }
     struct ConfirmedHoldings: Decodable {
         let holdings: [ProviderPrivateHolding]
@@ -243,6 +245,9 @@ final class PrivateMarketsStore: ObservableObject {
     @Published private(set) var loadingProviderHoldings = false
     @Published private(set) var monitorAlerts: [PrivateMarketAlert] = []
     @Published private(set) var monitorError: String?
+    @Published private(set) var remotePushActive = false
+    private var pushToken: String?
+    private var pushPermissionDenied = false
     private var monitorSettingsTask: Task<Void, Error>?
     private var monitorSettingsRevision = UUID()
     private var monitorLastSync: Date?
@@ -273,6 +278,7 @@ final class PrivateMarketsStore: ObservableObject {
         monitorLastSync = nil
         monitorAlerts = []
         monitorError = nil
+        remotePushActive = false
         providerLoadTask?.cancel()
         providerLoadTask = nil
         providerRefreshID = UUID()
@@ -459,13 +465,76 @@ final class PrivateMarketsStore: ObservableObject {
             $0.monitorEligible = enabled && eligible
             $0.monitorDigest = enabled && digest
         }
-        if !enabled { monitorAlerts = [] }
+        if !enabled {
+            monitorAlerts = []
+            remotePushActive = false
+        }
         queueMonitorSettings(for: owner)
         await refreshMonitor(for: owner)
     }
 
+    private static var pushEnvironment: String? {
+        switch Bundle.main.object(forInfoDictionaryKey: "PrivateMarketAPSEnvironment") as? String {
+        case "development": return "sandbox"
+        case "production": return "production"
+        default: return nil
+        }
+    }
+
+    func setUpdateNotifications(_ enabled: Bool, owner: UUID) async throws {
+        guard scope == owner else { throw CancellationError() }
+        try change { $0.notify = enabled }
+        if !enabled { remotePushActive = false }
+        if state.monitorEnabled == true {
+            queueMonitorSettings(for: owner)
+            await refreshMonitor(for: owner)
+        }
+    }
+
+    func receivedPushToken(_ value: Data) {
+        guard !pushPermissionDenied else { return }
+        let token = value.map { String(format: "%02x", $0) }.joined()
+        if token != pushToken || !remotePushActive {
+            pushToken = token
+            if let scope, state.monitorEnabled == true, state.notify {
+                remotePushActive = false
+                queueMonitorSettings(for: scope)
+            }
+        }
+    }
+
+    func pushRegistrationFailed() {
+        guard pushToken != nil || remotePushActive else { return }
+        pushToken = nil
+        remotePushActive = false
+        if let scope, state.monitorEnabled == true { queueMonitorSettings(for: scope) }
+    }
+
+    private func refreshPushPermission(for owner: UUID) async {
+        guard Self.pushEnvironment != nil, state.monitorEnabled == true, state.notify else { return }
+        let authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        guard scope == owner, state.monitorEnabled == true, state.notify else { return }
+        switch authorization {
+        case .authorized, .provisional, .ephemeral:
+            pushPermissionDenied = false
+            if UIApplication.shared.applicationState == .active,
+               !UIApplication.shared.isRegisteredForRemoteNotifications || pushToken == nil {
+                UIApplication.shared.registerForRemoteNotifications()
+            }
+        default:
+            if !pushPermissionDenied {
+                pushPermissionDenied = true
+                pushToken = nil
+                remotePushActive = false
+                queueMonitorSettings(for: owner)
+            }
+        }
+    }
+
     func refreshMonitor(for owner: UUID) async {
         guard scope == owner, let enabled = state.monitorEnabled else { return }
+        await refreshPushPermission(for: owner)
+        guard scope == owner, state.monitorEnabled == enabled else { return }
         if monitorSettingsTask == nil && (monitorLastSync == nil ||
             (enabled && Date.now.timeIntervalSince(monitorLastSync ?? .distantPast) >= 86_400)) {
             queueMonitorSettings(for: owner)
@@ -504,6 +573,9 @@ final class PrivateMarketsStore: ObservableObject {
             "digest": state.monitorDigest == true,
             "company_ids": enabled ? monitoredCompanies(in: state).map(\.uuidString) : [],
         ]
+        let environment = Self.pushEnvironment
+        let token = state.notify ? pushToken : nil
+        let updatePush = !state.notify || pushPermissionDenied || token != nil
         monitorError = nil
         let task = Task {
             _ = await previous?.result
@@ -514,7 +586,17 @@ final class PrivateMarketsStore: ObservableObject {
             try Task.checkCancellation()
             do {
                 try await PrivateMarketsAPI.send("monitor_settings", fields, expectedUserID: owner)
-                if scope == owner, monitorSettingsRevision == revision { monitorLastSync = .now }
+                guard scope == owner, monitorSettingsRevision == revision else { return }
+                if enabled, updatePush, let environment {
+                    let push: PrivateMarketsAPI.PushRegistration = try await PrivateMarketsAPI.request("monitor_push", [
+                        "device_id": Self.monitorDeviceID.uuidString,
+                        "environment": environment,
+                        "token": token as Any? ?? NSNull(),
+                    ], expectedUserID: owner)
+                    guard scope == owner, monitorSettingsRevision == revision else { return }
+                    remotePushActive = push.registered
+                }
+                monitorLastSync = .now
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -541,7 +623,7 @@ final class PrivateMarketsStore: ObservableObject {
     }
 
     private func deliverMonitorNotifications(_ alerts: [PrivateMarketAlert], owner: UUID) async {
-        guard state.notify, !deliveringUpdates else { return }
+        guard state.notify, !remotePushActive, !deliveringUpdates else { return }
         deliveringUpdates = true
         defer { deliveringUpdates = false }
         let seen = Set(state.seenMonitorAlerts ?? [])
