@@ -114,9 +114,12 @@ final class PrivateMarketsFlowTests: XCTestCase {
         try XCTSkipUnless(probe?.0 == 200, "Start the disposable Private Markets test stack and function proxy.")
         let email = "private-ui-\(UUID().uuidString.lowercased())@example.com"
         let password = "Test-Private-Markets-2026!"
-        let account = try await post(api + "/auth/v1/signup", ["email": email, "password": password])
+        let credentials = ["email": email, "password": password]
+        let account = try await post(api + "/auth/v1/signup", credentials)
         XCTAssertEqual(account.0, 200)
-        let token = try XCTUnwrap(account.1["access_token"] as? String)
+        let session = try await post(api + "/auth/v1/token?grant_type=password", credentials)
+        XCTAssertEqual(session.0, 200)
+        let token = try XCTUnwrap(session.1["access_token"] as? String)
         let saved = try await post(edge, ["action": "save_document", "title": "Ownership statement fixture",
                                           "excerpt": "The unit registry statement records 25 ordinary units and AUD 9500 of paid capital."], token: token)
         XCTAssertEqual(saved.0, 201)
