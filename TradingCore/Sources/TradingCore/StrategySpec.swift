@@ -120,7 +120,8 @@ public struct Operand: Codable, Hashable, Sendable {
         return "\(Self.trim(factor)) × \(base)"
     }
 
-    static func trim(_ x: Double) -> String {
+    /// "10" for 10.0, "2.50" for 2.5 — a number without pointless decimals.
+    public static func trim(_ x: Double) -> String {
         x == x.rounded() ? String(format: "%.0f", x) : String(format: "%.2f", x)
     }
 }

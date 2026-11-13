@@ -6,22 +6,23 @@
 import SwiftUI
 import UIKit
 
-// Add to MainTab enum
+/// The five places in the app, plus the system search tab. Labels are always shown:
+/// "Agents" is a new idea and no icon explains it without the word.
 enum MainTab: String, CaseIterable, Hashable {
     case home = "Home"
-    case watchlist = "Watchlist"
+    case markets = "Markets"
     case portfolio = "Portfolio"
-    case aiAgent = "AI Agent"
-    case news = "News"
+    case agents = "Agents"
+    case activity = "Activity"
     case search = "Search"
 
     var icon: String {
         switch self {
         case .home:         return "house"
-        case .watchlist:    return "chart.line.uptrend.xyaxis"
+        case .markets:      return "chart.line.uptrend.xyaxis"
         case .portfolio:    return "briefcase"
-        case .aiAgent:      return "brain.head.profile"
-        case .news:         return "newspaper"
+        case .agents:       return "gearshape.2"
+        case .activity:     return "list.bullet.rectangle"
         case .search:       return "magnifyingglass"
         }
     }
@@ -29,10 +30,10 @@ enum MainTab: String, CaseIterable, Hashable {
     var localizedTitle: LocalizedStringKey {
         switch self {
         case .home: return "Home"
-        case .watchlist: return "Watchlist"
+        case .markets: return "Markets"
         case .portfolio: return "Portfolio"
-        case .aiAgent: return "AI Agent"
-        case .news: return "News"
+        case .agents: return "Agents"
+        case .activity: return "Activity"
         case .search: return "Search"
         }
     }
@@ -56,6 +57,8 @@ struct ContentView: View {
     @EnvironmentObject var marketData: MarketData
     @EnvironmentObject var alertManager: PriceAlertManager
     @EnvironmentObject var subscriptionManager: SubscriptionManager
+    @EnvironmentObject var trading: TradingStore
+    @EnvironmentObject var router: TradingRouter
     @Environment(\.colorScheme) var colorScheme
 
     /// Binding allows the parent (StockCryptoTrackerApp) to drive tab selection from widget deep links.
@@ -71,16 +74,22 @@ struct ContentView: View {
                 HomeView()
             }
 
-            Tab("Watchlist", systemImage: MainTab.watchlist.icon, value: MainTab.watchlist) {
-                AppleStocksWatchlistView()
+            Tab("Markets", systemImage: MainTab.markets.icon, value: MainTab.markets) {
+                MarketsTabView()
             }
 
             Tab("Portfolio", systemImage: MainTab.portfolio.icon, value: MainTab.portfolio) {
                 PortfolioView()
             }
 
-            Tab("News", systemImage: MainTab.news.icon, value: MainTab.news) {
-                NewsView()
+            Tab("Agents", systemImage: MainTab.agents.icon, value: MainTab.agents) {
+                AgentsTabView()
+            }
+            // Proposals waiting for a yes or no.
+            .badge(trading.pendingProposals.count)
+
+            Tab("Activity", systemImage: MainTab.activity.icon, value: MainTab.activity) {
+                ActivityTabView()
             }
 
             Tab("Search", systemImage: "magnifyingglass", value: MainTab.search, role: .search) {
@@ -88,6 +97,13 @@ struct ContentView: View {
             }
         }
         .tint(DS.accent)
+        .modifier(TradingRootSheets())
+        .onChange(of: router.requestedTab) { _, tab in
+            if let tab {
+                selectedTab = tab
+                router.requestedTab = nil
+            }
+        }
         .environment(\.selectTab, { [selectedTab = $selectedTab] tab in selectedTab.wrappedValue = tab })
         .sensoryFeedback(.impact(flexibility: .soft), trigger: selectedTab)
         .onChange(of: selectedTab) { _, _ in marketData.refreshIfStale() }
@@ -265,4 +281,6 @@ struct AIFeatureHighlight: View {
         .environmentObject(PriceAlertManager())
         .environmentObject(SubscriptionManager.shared)
         .environmentObject(ThemeManager())
+        .environmentObject(TradingStore.shared)
+        .environmentObject(TradingRouter.shared)
 }

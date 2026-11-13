@@ -35,6 +35,9 @@ struct HomeView: View {
                         PortfolioSummaryHero()
                             .staggeredAppear(1).scrollCardMotion()
 
+                        // 2b. Practice money, agents and anything waiting for a decision
+                        HomeTradingSection()
+
                         // 3. What you follow
                         HomeWatchlistSection()
                             .staggeredAppear(2).scrollCardMotion()

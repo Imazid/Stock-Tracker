@@ -155,6 +155,9 @@ struct PortfolioView: View {
                     case .income:      PortfolioIncomeTab().portfolioRow(bottom: DS.Space.xxl)
                     }
                 }
+                // Practice (paper) portfolios sit apart from real holdings, always labelled.
+                PracticePortfolioSection()
+                    .portfolioRow(bottom: DS.Space.xxl)
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)

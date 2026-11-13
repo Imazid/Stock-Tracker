@@ -78,6 +78,13 @@ public struct TradingEngine: Sendable {
                            summary: "Paper portfolio \"\(ledger.name)\" deleted.", mode: .paper, ledgerID: id)
     }
 
+    /// Records that a backtest was run, so the audit trail shows what a decision was based on.
+    public mutating func noteBacktest(title: String, summary: String, agentID: UUID? = nil, actor: AuditActor = .user,
+                                      details: [String: String] = [:], now: Date) {
+        state.audit.append(time: now, actor: actor, kind: .backtestRun, summary: "Backtest of \(title): \(summary)",
+                           agentID: agentID, details: details)
+    }
+
     // MARK: - Live eligibility
 
     /// Why real-money trading can't be used in a given mode. Empty means it could be.

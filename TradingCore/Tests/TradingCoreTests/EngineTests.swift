@@ -681,3 +681,35 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(engine.state.fills.last?.source.agentID, agent.id)
     }
 }
+
+final class LiquidityDataTests: XCTestCase {
+    /// One venue's sliver of volume must never be read as the asset's liquidity.
+    func testVenueOnlyVolumeIsNotUsedToMeasureLiquidity() throws {
+        var engine = Fx.engine()
+        let draft = AgentDraft(name: "Coin", mode: .paper, spec: Fx.aboveAverageSpec([Fx.btc]), budget: 5_000, maxPositionPct: 10)
+        let agent = try engine.createAgent(draft, now: Fx.now)
+        let closes = Fx.risingCloses().map { $0 * 500 }
+        var snapshot = MarketSnapshot()
+        // A venue that traded a fraction of a coin per day.
+        snapshot.series[Fx.btc.id] = BarSeries(instrument: Fx.btc, timeframe: .day,
+                                               bars: Fx.dailyBars(closes: closes, days: Fx.cryptoDays(count: closes.count), volume: 0.09),
+                                               provenance: .fixture("test"), fetchedAt: Fx.now, volumeIsMarketWide: false)
+        snapshot.quotes[Fx.btc.id] = Fx.quote(Fx.btc, last: closes.last!, spreadBps: 4)
+
+        // No market-wide figure: liquidity is unknown, so the agent may not buy.
+        var run = try XCTUnwrap(engine.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: Fx.now))
+        XCTAssertNil(engine.state.stats[Fx.btc.id])
+        XCTAssertEqual(engine.state.proposals.last?.status, .blocked)
+        XCTAssertTrue(engine.state.proposals.last?.risk.check(.liquidity)?.detail.contains("couldn't be measured") == true)
+        XCTAssertTrue(run.orderIDs.isEmpty)
+
+        // With the market-wide figure supplied, the same order goes through.
+        snapshot.dollarVolume[Fx.btc.id] = 25_000_000_000
+        let later = Fx.now.addingTimeInterval(600)
+        snapshot.quotes[Fx.btc.id] = Fx.quote(Fx.btc, last: closes.last!, spreadBps: 4, time: later)
+        run = try XCTUnwrap(engine.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: later))
+        XCTAssertEqual(engine.state.stats[Fx.btc.id]?.averageDollarVolume, 25_000_000_000)
+        XCTAssertEqual(run.orderIDs.count, 1)
+        XCTAssertEqual(engine.state.orders.last?.status, .filled)
+    }
+}

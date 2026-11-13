@@ -33,5 +33,7 @@ final class BackgroundRefresh {
     func run() async {
         schedule()   // keep the chain going
         await marketData?.refreshForAlertCheck()
+        // Best effort: let due agents look at the market and waiting paper orders trade.
+        await TradingStore.shared.backgroundTick()
     }
 }

@@ -42,11 +42,11 @@ public extension TradingEngine {
         }
 
         // Take in what the snapshot learned about prices before deciding anything.
-        var measured: [String: InstrumentStats] = [:]
-        for (instrumentID, series) in snapshot.series where series.timeframe == .day && isUsable(series.provenance) {
-            if let stats = InstrumentStats.measure(calendar.completedBars(series, now: now)) { measured[instrumentID] = stats }
-        }
-        ingest(quotes: Array(snapshot.quotes.values), stats: measured, now: now)
+        var usable = snapshot
+        usable.series = snapshot.series.filter { isUsable($0.value.provenance) }
+        // An instrument whose liquidity can't be measured this time loses its old figure too.
+        for instrumentID in usable.series.keys { state.stats[instrumentID] = nil }
+        ingest(quotes: Array(snapshot.quotes.values), stats: usable.stats(calendar: calendar, now: now), now: now)
 
         let spec = agent.spec
         var instruments = spec.universe

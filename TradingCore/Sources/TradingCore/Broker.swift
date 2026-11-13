@@ -129,6 +129,11 @@ public enum PaperBroker {
         }
     }
 
+    /// A quantity as a person would read it: at the instrument's precision, without trailing zeros.
+    public static func quantityText(_ quantity: Double, for instrument: Instrument) -> String {
+        RiskEngine.quantityText(quantity, rules(for: instrument))
+    }
+
     public static func fee(for instrument: Instrument, notional: Double, isFirstFillOfOrder: Bool,
                            config: PaperBrokerConfig) -> Double {
         switch instrument.assetClass {

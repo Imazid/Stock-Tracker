@@ -28,6 +28,8 @@ struct StockCryptoTrackerApp: App {
     @StateObject private var aiInsightService = AIInsightService.shared
     @StateObject private var notificationScheduler = NotificationScheduler.shared
     @StateObject private var referralManager = ReferralManager.shared
+    @StateObject private var tradingStore = TradingStore.shared
+    @StateObject private var tradingRouter = TradingRouter.shared
 
     // Widget deep link routing state
     @State private var widgetSelectedTab: MainTab = .home
@@ -119,6 +121,8 @@ struct StockCryptoTrackerApp: App {
                         .environmentObject(aiInsightService)
                         .environmentObject(notificationScheduler)
                         .environmentObject(referralManager)
+                        .environmentObject(tradingStore)
+                        .environmentObject(tradingRouter)
                         .fullScreenCover(isPresented: $subscriptionManager.needsKeeperSelection) {
                             TierKeeperSheet()
                                 .environmentObject(marketData)
@@ -152,6 +156,8 @@ struct StockCryptoTrackerApp: App {
                 marketData.alertManager = alertManager
                 marketData.notificationScheduler = notificationScheduler
                 BackgroundRefresh.shared.marketData = marketData
+                // Agents and waiting paper orders keep moving while the app is on screen.
+                tradingStore.start()
                 // Broker syncs import straight into the portfolio.
                 SnapTradeViewModel.shared.marketData = marketData
                 #if DEBUG
@@ -303,7 +309,12 @@ struct StockCryptoTrackerApp: App {
         case "portfolio":
             widgetSelectedTab = .portfolio
         case "watchlist":
-            widgetSelectedTab = .watchlist
+            tradingRouter.marketsSection = .watchlist
+            widgetSelectedTab = .markets
+        case "agents":
+            widgetSelectedTab = .agents
+        case "activity":
+            widgetSelectedTab = .activity
         case "home":
             widgetSelectedTab = .home
         case "paywall":
@@ -316,10 +327,12 @@ struct StockCryptoTrackerApp: App {
         case "alerts":
             if canPresentFromDeepLink { deepLinkAlerts = true }
         case "news":
-            widgetSelectedTab = .news
+            tradingRouter.marketsSection = .news
+            widgetSelectedTab = .markets
         case "calendar":
-            // Calendar events surface through the news tab (no dedicated calendar tab).
-            widgetSelectedTab = .news
+            // Calendar events surface through the news section (no dedicated calendar tab).
+            tradingRouter.marketsSection = .news
+            widgetSelectedTab = .markets
         case "trade":
             // stocktracker://trade/{SYMBOL} — the app doesn't trade; open the stock's page.
             openStock(url.pathComponents.dropFirst().first ?? "")
@@ -560,6 +573,15 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler handler: @escaping () -> Void
     ) {
+        let info = response.notification.request.content.userInfo
+        // Trading notices open the proposal that needs a decision, or the Activity tab.
+        if let route = info["tradingRoute"] as? String {
+            let proposalID = (info["proposalID"] as? String).flatMap(UUID.init)
+            let orderID = (info["orderID"] as? String).flatMap(UUID.init)
+            Task { @MainActor in TradingRouter.shared.open(route: route, proposalID: proposalID, orderID: orderID) }
+            handler()
+            return
+        }
         // Price alerts, big moves and earnings reminders carry their symbol: open its page.
         if let symbol = response.notification.request.content.userInfo["symbol"] as? String,
            let encoded = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),

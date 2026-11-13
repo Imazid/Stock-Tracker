@@ -184,7 +184,7 @@ struct HomeWatchlistSection: View {
             SectionHeader(
                 title: "Watchlist",
                 actionTitle: assets.isEmpty ? nil : "See all",
-                action: { selectTab(.watchlist) }
+                action: { selectTab(.markets) }
             )
 
             if assets.isEmpty {

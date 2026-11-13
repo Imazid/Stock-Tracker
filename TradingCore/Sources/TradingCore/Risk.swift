@@ -675,8 +675,8 @@ public enum RiskEngine {
             }
         } else {
             let status: RiskCheckStatus = byAgent && isBuy ? .failed : .warning
-            add(.liquidity, status, "There isn't enough price history to measure liquidity.")
-            add(.volatility, status, "There isn't enough price history to measure volatility.")
+            add(.liquidity, status, "Liquidity couldn't be measured for \(intent.instrument.symbol).")
+            add(.volatility, status, "Volatility couldn't be measured for \(intent.instrument.symbol).")
         }
 
         // 23. Duplicates and agents trading against each other.

@@ -100,6 +100,9 @@ struct AppleStocksDetailView: View {
                         scrubbedCandle: $scrubbedCandle
                     )
 
+                    // Paper Buy / Sell and "Create agent" for assets that can be traded.
+                    AssetTradeBar(asset: live)
+
                     if canTrack {
                         if let holding {
                             DetailPositionCard(holding: holding, live: live, format: format)

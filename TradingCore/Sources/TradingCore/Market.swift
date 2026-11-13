@@ -170,14 +170,19 @@ public struct BarSeries: Codable, Sendable {
     public var bars: [Bar]
     public var provenance: DataProvenance
     public var fetchedAt: Date
+    /// False when the volumes cover one venue only (a single exchange's slice of the
+    /// market). Such volumes say nothing about how liquid the asset is, so they are never
+    /// used to measure liquidity.
+    public var volumeIsMarketWide: Bool
 
     public init(instrument: Instrument, timeframe: Timeframe, bars: [Bar],
-                provenance: DataProvenance, fetchedAt: Date) {
+                provenance: DataProvenance, fetchedAt: Date, volumeIsMarketWide: Bool = true) {
         self.instrument = instrument
         self.timeframe = timeframe
         self.bars = bars.filter(\.isValid).sorted { $0.time < $1.time }
         self.provenance = provenance
         self.fetchedAt = fetchedAt
+        self.volumeIsMarketWide = volumeIsMarketWide
     }
 }
 
@@ -189,7 +194,9 @@ public struct Quote: Codable, Hashable, Sendable {
     /// When the venue produced this price (not when we fetched it).
     public var time: Date
     public var provenance: DataProvenance
-    /// Units traded so far today, when the feed reports it.
+    /// A market-wide daily volume in units (today's, or a typical day's), when one is known.
+    /// The simulator uses it to decide how much of a large order can fill at once. Leave it
+    /// nil rather than pass one venue's slice of the market.
     public var dayVolume: Double?
 
     public init(instrumentID: String, last: Double, bid: Double? = nil, ask: Double? = nil,
@@ -257,11 +264,32 @@ public struct MarketSnapshot: Sendable {
     public var quotes: [String: Quote]
     /// Instruments whose data could not be loaded, with the reason. Nothing trades on these.
     public var failures: [String: String]
+    /// Market-wide average daily traded value, for instruments whose bars carry only one
+    /// venue's volume (crypto, mostly).
+    public var dollarVolume: [String: Double]
 
-    public init(series: [String: BarSeries] = [:], quotes: [String: Quote] = [:], failures: [String: String] = [:]) {
+    public init(series: [String: BarSeries] = [:], quotes: [String: Quote] = [:], failures: [String: String] = [:],
+                dollarVolume: [String: Double] = [:]) {
         self.series = series
         self.quotes = quotes
         self.failures = failures
+        self.dollarVolume = dollarVolume
+    }
+
+    /// Liquidity and volatility for each instrument with daily bars. An instrument whose
+    /// volume can't be trusted and has no market-wide figure gets no stats at all — an
+    /// unknown is reported as unknown, never as a small number.
+    public func stats(calendar: MarketCalendar = .standard, now: Date) -> [String: InstrumentStats] {
+        var out: [String: InstrumentStats] = [:]
+        for (id, s) in series where s.timeframe == .day {
+            guard let measured = InstrumentStats.measure(calendar.completedBars(s, now: now)) else { continue }
+            if s.volumeIsMarketWide {
+                out[id] = measured
+            } else if let known = dollarVolume[id], known > 0 {
+                out[id] = InstrumentStats(averageDollarVolume: known, dailyVolatilityPct: measured.dailyVolatilityPct)
+            }
+        }
+        return out
     }
 }
 
@@ -270,22 +298,33 @@ public struct MarketSnapshot: Sendable {
 public protocol MarketDataProviding: Sendable {
     func bars(for instrument: Instrument, timeframe: Timeframe, count: Int) async throws -> BarSeries
     func quote(for instrument: Instrument) async throws -> Quote
+    /// Market-wide average daily traded value, for instruments whose bars only carry one
+    /// venue's volume. nil when it isn't known.
+    func averageDollarVolume(for instrument: Instrument) async -> Double?
 }
 
 public extension MarketDataProviding {
+    func averageDollarVolume(for instrument: Instrument) async -> Double? { nil }
+
     /// Bars and quotes for a set of instruments. Failures are recorded, not thrown, so one
     /// missing symbol doesn't stop the rest — it just can't be traded.
     func snapshot(for instruments: [Instrument], timeframe: Timeframe, barCount: Int) async -> MarketSnapshot {
         var snapshot = MarketSnapshot()
-        await withTaskGroup(of: (Instrument, Result<BarSeries, Error>, Result<Quote, Error>).self) { group in
+        await withTaskGroup(of: (Instrument, Result<BarSeries, Error>, Result<Quote, Error>, Double?).self) { group in
             for instrument in instruments {
                 group.addTask {
                     async let bars = Result { try await self.bars(for: instrument, timeframe: timeframe, count: barCount) }
                     async let quote = Result { try await self.quote(for: instrument) }
-                    return (instrument, await bars, await quote)
+                    let series = await bars
+                    var known: Double?
+                    if case .success(let s) = series, !s.volumeIsMarketWide {
+                        known = await self.averageDollarVolume(for: instrument)
+                    }
+                    return (instrument, series, await quote, known)
                 }
             }
-            for await (instrument, bars, quote) in group {
+            for await (instrument, bars, quote, known) in group {
+                if let known { snapshot.dollarVolume[instrument.id] = known }
                 switch bars {
                 case .success(let series): snapshot.series[instrument.id] = series
                 case .failure(let error): snapshot.failures[instrument.id] = "Price history unavailable: \(error.localizedDescription)"

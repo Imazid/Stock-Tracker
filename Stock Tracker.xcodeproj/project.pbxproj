@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7A11C0DE2FA0000100AA0001 /* TradingCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7A11C0DE2FA0000100AA0002 /* TradingCore */; };
 		B38711A72F52825D00DD83A8 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B38710CC2F5281C300DD83A8 /* Supabase */; };
 		B3BEC3862EEA664D0063B198 /* Stock Tracker Notification.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B3BEC37F2EEA664D0063B198 /* Stock Tracker Notification.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B3BEC3D72EEAE6F30063B198 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3BEC31A2EEA63500063B198 /* WidgetKit.framework */; };
@@ -153,6 +154,7 @@
 			files = (
 				B3E6C6EC2F664F2500BC2A5C /* GoogleMobileAds in Frameworks */,
 				B38711A72F52825D00DD83A8 /* Supabase in Frameworks */,
+				7A11C0DE2FA0000100AA0001 /* TradingCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -255,6 +257,7 @@
 			packageProductDependencies = (
 				B38710CC2F5281C300DD83A8 /* Supabase */,
 				B3E6C6EB2F664F2500BC2A5C /* GoogleMobileAds */,
+				7A11C0DE2FA0000100AA0002 /* TradingCore */,
 			);
 			productName = "Stock Tracker";
 			productReference = B3B9AE252ED9CE2D005F35F7 /* Stock Tracker.app */;
@@ -341,6 +344,7 @@
 			packageReferences = (
 				B38710CA2F52817C00DD83A8 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
 				B38710CB2F5281C300DD83A8 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				7A11C0DE2FA0000100AA0003 /* XCLocalSwiftPackageReference "TradingCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B3B9AE262ED9CE2D005F35F7 /* Products */;
@@ -843,6 +847,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		7A11C0DE2FA0000100AA0003 /* XCLocalSwiftPackageReference "TradingCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = TradingCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		B38710CA2F52817C00DD83A8 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -863,6 +874,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		7A11C0DE2FA0000100AA0002 /* TradingCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TradingCore;
+		};
 		B38710CC2F5281C300DD83A8 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B38710CB2F5281C300DD83A8 /* XCRemoteSwiftPackageReference "supabase-swift" */;
