@@ -3,13 +3,17 @@
 //   TRADING_ALLOW_FIXTURE_DATA   "1" only in test deployments; anything else means no fixtures
 //   ALPACA_DATA_KEY_ID           market-data credentials. They are read here, handed to
 //   ALPACA_DATA_SECRET           the provider, and never logged, returned or put in a URL.
+//   COINGECKO_API_KEY            optional CoinGecko Demo key (a higher rate limit for the
+//                                crypto traded-value lookup). Same handling.
 
 import { AlpacaDataProvider } from "./alpaca.ts";
+import { CoinGeckoVolumeSource } from "./coingecko.ts";
 import { type FixtureData, FixtureDataProvider } from "./fixture.ts";
 import type { MarketDataProvider } from "./provider.ts";
 
 export * from "./provider.ts";
 export { AlpacaDataProvider, type AlpacaDataProviderOptions } from "./alpaca.ts";
+export { CoinGeckoVolumeSource, type CoinGeckoVolumeSourceOptions } from "./coingecko.ts";
 export { type FixtureData, FixtureDataProvider, type FixtureQuote, type FixtureSeries } from "./fixture.ts";
 
 export interface ProviderFromEnvOptions {
@@ -44,7 +48,9 @@ export function providerFromEnv(env: (name: string) => string | undefined, optio
   const keyId = (env("ALPACA_DATA_KEY_ID") ?? "").trim();
   const secret = (env("ALPACA_DATA_SECRET") ?? "").trim();
   if (keyId !== "" && secret !== "") {
-    return { provider: new AlpacaDataProvider({ keyId, secret, fetch: options.fetch, log: options.log }), allowFixtureData };
+    // Always wired: the key only raises CoinGecko's rate limit, the lookup works without it.
+    const volumeSource = new CoinGeckoVolumeSource({ apiKey: env("COINGECKO_API_KEY"), fetch: options.fetch, log: options.log });
+    return { provider: new AlpacaDataProvider({ keyId, secret, fetch: options.fetch, log: options.log, volumeSource }), allowFixtureData };
   }
 
   return { provider: null, allowFixtureData, reason: "Market data isn't configured." };

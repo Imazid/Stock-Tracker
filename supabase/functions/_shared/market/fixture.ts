@@ -31,6 +31,11 @@ import {
 export interface FixtureSeries {
   timeframe: Timeframe;
   bars: Bar[];
+  /**
+   * False to play a feed whose volume is one venue's slice (Alpaca crypto, IEX). Left
+   * out, the volume counts as the whole market's.
+   */
+  volumeIsMarketWide?: boolean;
 }
 
 export interface FixtureQuote {
@@ -41,17 +46,26 @@ export interface FixtureQuote {
   dayVolume?: number;
 }
 
-/** Series and quotes are keyed by instrument id ("us:AAPL"). */
+/** Series, quotes and dollar volumes are keyed by instrument id ("us:AAPL"). */
 export interface FixtureData {
   series?: Record<string, FixtureSeries>;
   quotes?: Record<string, FixtureQuote>;
+  /** Market-wide average daily traded value, for `dollarVolume()` to hand back. */
+  dollarVolume?: Record<string, number>;
   source?: string;
+}
+
+interface StoredSeries {
+  timeframe: Timeframe;
+  bars: Bar[];
+  volumeIsMarketWide: boolean;
 }
 
 export class FixtureDataProvider implements MarketDataProvider {
   readonly name = "fixture";
-  readonly #series = new Map<string, FixtureSeries>();
+  readonly #series = new Map<string, StoredSeries>();
   readonly #quotes = new Map<string, FixtureQuote>();
+  readonly #dollarVolume = new Map<string, number>();
   readonly #provenance: DataProvenance;
 
   constructor(data: FixtureData) {
@@ -69,6 +83,12 @@ export class FixtureDataProvider implements MarketDataProvider {
       for (const [id, raw] of Object.entries(input.quotes)) {
         const quote = readQuote(raw);
         if (quote !== undefined) this.#quotes.set(id, quote);
+      }
+    }
+    if (isRecord(input.dollarVolume)) {
+      for (const [id, raw] of Object.entries(input.dollarVolume)) {
+        const value = positiveNumber(raw);
+        if (value !== undefined) this.#dollarVolume.set(id, value);
       }
     }
   }
@@ -89,7 +109,7 @@ export class FixtureDataProvider implements MarketDataProvider {
       const stored = this.#series.get(id);
       const series = stored === undefined || stored.timeframe !== timeframe
         ? undefined
-        : makeBarSeries(instrument, timeframe, stored.bars.map((bar) => ({ ...bar })), this.#provenance, now);
+        : makeBarSeries(instrument, timeframe, stored.bars.map((bar) => ({ ...bar })), this.#provenance, now, stored.volumeIsMarketWide);
       if (series === undefined || series.bars.length === 0) {
         result.failures[id] = `No fixture price history for ${instrument.symbol}`;
       } else {
@@ -116,13 +136,28 @@ export class FixtureDataProvider implements MarketDataProvider {
     }
     return Promise.resolve(result);
   }
+
+  /** The fixture's own figures for the instruments asked about; nothing for the rest. */
+  dollarVolume(instruments: Instrument[], _now: number): Promise<Record<string, number>> {
+    const known: Record<string, number> = {};
+    for (const instrument of uniqueInstruments(instruments)) {
+      const id = instrumentID(instrument);
+      const value = this.#dollarVolume.get(id);
+      if (value !== undefined) known[id] = value;
+    }
+    return Promise.resolve(known);
+  }
 }
 
 /** A well-formed series, or undefined. One bad bar spoils the series: no silent gaps. */
-function readSeries(raw: unknown): FixtureSeries | undefined {
+function readSeries(raw: unknown): StoredSeries | undefined {
   if (!isRecord(raw)) return undefined;
   if (raw.timeframe !== "hour" && raw.timeframe !== "day") return undefined;
   if (!Array.isArray(raw.bars)) return undefined;
+  // Left out (or null) means the usual case; anything else that isn't true or false is
+  // a mistake, and guessing which was meant would decide whether the volume is trusted.
+  const marketWide = raw.volumeIsMarketWide;
+  if (marketWide !== undefined && marketWide !== null && typeof marketWide !== "boolean") return undefined;
   const bars: Bar[] = [];
   for (const item of raw.bars) {
     if (!isRecord(item)) return undefined;
@@ -137,7 +172,7 @@ function readSeries(raw: unknown): FixtureSeries | undefined {
     }
     bars.push({ time, open, high, low, close, volume });
   }
-  return { timeframe: raw.timeframe, bars };
+  return { timeframe: raw.timeframe, bars, volumeIsMarketWide: marketWide !== false };
 }
 
 /** A well-formed quote, or undefined. An optional field may be left out or null. */
