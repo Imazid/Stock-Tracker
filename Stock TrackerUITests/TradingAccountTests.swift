@@ -41,7 +41,7 @@ final class TradingAccountTests: XCTestCase {
                                "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
                                "-UITestSignIn", "\(email):\(password)"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Agents"].waitForExistence(timeout: 30), "The app should open on the tabs")
+        XCTAssertTrue(app.tabBars.buttons["Portfolio"].waitForExistence(timeout: 30), "The app should open on the tabs")
         XCTAssertTrue(app.open("Agents"))
         let inAccount = element("trading.home.account")
         if !inAccount.waitForExistence(timeout: 30) {
@@ -54,7 +54,7 @@ final class TradingAccountTests: XCTestCase {
 
     func testReconciledPortfolioReturnSyncs() throws {
         let token = try signIn()
-        let probe = try request("GET", "/rest/v1/portfolio_performance_results?select=id&limit=1", token: token)
+        let probe = try request("GET", "/rest/v1/portfolio_performance_results?select=id,time_weighted_return_pct,money_weighted_return_pct&limit=1", token: token)
         try XCTSkipIf(probe.status == 404, "The local database needs the portfolio performance migration.")
         XCTAssertEqual(probe.status, 200)
         launchSignedIn()
@@ -65,8 +65,10 @@ final class TradingAccountTests: XCTestCase {
         tap("portfolio.returns.save")
         let result = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "10.00%")).firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 25), "The saved period shows its return")
-        let saved = try rows("portfolio_performance_results", select: "return_pct,investment_change_usd", token: token)
-        XCTAssertEqual((saved.first?["return_pct"] as? NSNumber)?.doubleValue, 10)
+        let saved = try rows("portfolio_performance_results", select: "return_pct,time_weighted_return_pct,money_weighted_return_pct,investment_change_usd", token: token)
+        for key in ["return_pct", "time_weighted_return_pct", "money_weighted_return_pct"] {
+            XCTAssertEqual((saved.first?[key] as? NSNumber)?.doubleValue, 10, key)
+        }
         XCTAssertEqual((saved.first?["investment_change_usd"] as? NSNumber)?.doubleValue, 100)
     }
 
