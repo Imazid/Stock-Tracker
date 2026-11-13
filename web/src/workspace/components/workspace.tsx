@@ -60,6 +60,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
   const main = useRef<HTMLElement>(null);
   const menuToggle = useRef<HTMLButtonElement>(null);
   const closeMenuButton = useRef<HTMLButtonElement>(null);
+  const restoreMenuFocus = useRef(false);
   const sessionCheck = useRef(0);
   const privateOwner = useRef<string | undefined>(undefined);
   const validateSession = useCallback(async () => {
@@ -140,12 +141,17 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
   },[notice]);
 
   const closeMenu = useCallback(() => {
+    restoreMenuFocus.current = true;
     setMobile(false);
-    requestAnimationFrame(() => menuToggle.current?.focus());
   }, []);
 
   useLayoutEffect(() => {
-    if (mobile) closeMenuButton.current?.focus();
+    if (mobile) {
+      closeMenuButton.current?.focus();
+    } else if (restoreMenuFocus.current) {
+      restoreMenuFocus.current = false;
+      menuToggle.current?.focus();
+    }
   }, [mobile]);
 
   useEffect(() => {
