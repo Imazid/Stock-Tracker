@@ -13,7 +13,9 @@
 // The user id always comes from the token, never the body. State-changing calls also take an
 // `Idempotency-Key` header (8–128 chars); a retry with the same key returns the first answer.
 //
-// Errors are `{ error: { code, message, details? } }` with a machine-readable `code`:
+// Same envelope as trading-api: success `{ ok: true, data }`; refusal
+// `{ ok: false, error: { code, message, details? } }` with a machine-readable `code`
+// (plus `unauthenticated` / `unavailable` from the sign-in check):
 //   unauthorized | step_up_required | forbidden | not_found | invalid | conflict
 //   | feature_disabled      (a platform/compliance gate is off — details.gate names it)
 //   | kill_switch_engaged | risk_rejected (details.reasonCodes) | approval_invalid
