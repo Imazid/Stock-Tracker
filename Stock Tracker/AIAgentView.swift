@@ -139,6 +139,7 @@ struct AIAgentView: View {
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject var marketData: MarketData
     @EnvironmentObject var subscriptionManager: SubscriptionManager
+    @AppStorage("aiPortfolioContextEnabled") private var includePortfolioContext = false
     @State private var userInput = ""
     @State private var messages: [ChatMessage] = [
         ChatMessage(text: "Hi! I'm your AI investing assistant. Ask me about your portfolio, watchlist, stocks, or market trends.", isUser: false)
@@ -147,6 +148,7 @@ struct AIAgentView: View {
     @State private var scrollProxy: ScrollViewProxy?
     @State private var showSuggestions = true
     @State private var isRecording = false
+    @State private var conversationID = UUID()
     @EnvironmentObject var insightService: AIInsightService
 
     let speechRecognizer = SpeechRecognizer()
@@ -285,16 +287,20 @@ struct AIAgentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Clear") {
-                    messages = [messages.first!]
-                    showSuggestions = true
+                Menu {
+                    Toggle("Share portfolio summary with AI", isOn: $includePortfolioContext)
+                    Button("Clear conversation") {
+                        clearConversation()
+                    }
+                } label: {
+                    Label("Assistant options", systemImage: "ellipsis.circle")
                 }
-                .foregroundColor(theme.primaryText)
             }
         }
         .onAppear {
             speechRecognizer.requestAuthorization()
         }
+        .onChange(of: includePortfolioContext) { _, _ in clearConversation() }
     }
 
     @ViewBuilder
@@ -329,35 +335,46 @@ struct AIAgentView: View {
         "Summarize my portfolio",
         "Analyze my watchlist",
         "What's the market outlook?",
-        "Recommend diversification"
+        "Explain diversification"
     ]
     
+    private func clearConversation() {
+        conversationID = UUID()
+        messages = [messages.first!]
+        showSuggestions = true
+    }
+
     private func sendMessage() {
         let trimmed = userInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isAtDailyLimit else { return }
+        guard !trimmed.isEmpty, !isAtDailyLimit, !isTyping else { return }
 
         insightService.incrementQueryCount()
         messages.append(ChatMessage(text: trimmed, isUser: true))
         userInput = ""
         isTyping = true
 
+        let requestID = conversationID
+        let systemMessage = ChatMessage(text: buildSystemPrompt(), isUser: false, role: "system")
+        let history = Array(messages.dropFirst().suffix(39))
         Task {
+            defer { isTyping = false }
             do {
-                let systemPrompt = buildSystemPrompt()
-                let systemMessage = ChatMessage(text: systemPrompt, isUser: false)
-
-                let fullMessages = [systemMessage] + messages
-
-                let response = try await aiService.sendMessage(messages: fullMessages)
-                messages.append(ChatMessage(text: response, isUser: false))
+                let response = try await aiService.sendMessage(messages: [systemMessage] + history)
+                if requestID == conversationID {
+                    messages.append(ChatMessage(text: response, isUser: false))
+                }
             } catch {
-                messages.append(ChatMessage(text: "Error: \(error.localizedDescription)", isUser: false))
+                if requestID == conversationID {
+                    messages.append(ChatMessage(text: "Error: \(error.localizedDescription)", isUser: false))
+                }
             }
-            isTyping = false
         }
     }
     
     private func buildSystemPrompt() -> String {
+        guard includePortfolioContext else {
+            return "Provide factual market information. The user has not shared their holdings or watchlist. Ask for any details you need. Do not give financial advice."
+        }
         // SECURITY: Only send anonymized/aggregated data to external AI service.
         // Do NOT send exact share counts, cost basis, or exact portfolio values.
         let watchlistSymbols = marketData.watchlist.map { $0.symbol }.joined(separator: ", ")

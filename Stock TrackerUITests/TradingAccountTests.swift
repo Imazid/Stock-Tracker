@@ -52,6 +52,24 @@ final class TradingAccountTests: XCTestCase {
 
     // MARK: - Tests
 
+    func testReconciledPortfolioReturnSyncs() throws {
+        let token = try signIn()
+        let probe = try request("GET", "/rest/v1/portfolio_performance_results?select=id&limit=1", token: token)
+        try XCTSkipIf(probe.status == 404, "The local database needs the portfolio performance migration.")
+        XCTAssertEqual(probe.status, 200)
+        launchSignedIn()
+        XCTAssertTrue(app.open("Portfolio"))
+        tap("portfolio.returns.add")
+        type("1000", into: "portfolio.returns.opening")
+        type("1100", into: "portfolio.returns.closing")
+        tap("portfolio.returns.save")
+        let result = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "10.00%")).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 25), "The saved period shows its return")
+        let saved = try rows("portfolio_performance_results", select: "return_pct,investment_change_usd", token: token)
+        XCTAssertEqual((saved.first?["return_pct"] as? NSNumber)?.doubleValue, 10)
+        XCTAssertEqual((saved.first?["investment_change_usd"] as? NSNumber)?.doubleValue, 100)
+    }
+
     /// A manual order placed in the app is made by the server, and a fresh install that signs
     /// in again shows the same portfolio and position.
     func testPracticeOrderLivesInTheAccount() throws {
