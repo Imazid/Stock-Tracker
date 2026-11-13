@@ -265,11 +265,14 @@ final class PrivateMarketsFlowTests: XCTestCase {
         row.tap()
         let status = app.staticTexts["Exited · Provider confirmed"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Exit source"].exists)
-        XCTAssertTrue(app.staticTexts["Final sale receipt"].exists)
-        let remaining = app.staticTexts["Remaining shares or units"]
-        if !remaining.isHittable { app.swipeUp() }
-        XCTAssertTrue(remaining.exists)
+        let source = app.descendants(matching: .any)["private.holding.exitSource"].firstMatch
+        let remaining = app.descendants(matching: .any)["private.holding.units"].firstMatch
+        for _ in 0..<3 where !source.exists || !remaining.exists { app.swipeUp() }
+        XCTAssertTrue(source.exists, app.debugDescription)
+        XCTAssertEqual(source.value as? String, "Final sale receipt")
+        XCTAssertTrue(remaining.exists, app.debugDescription)
+        XCTAssertEqual(remaining.label, "Remaining shares or units")
+        XCTAssertEqual(remaining.value as? String, 0.formatted())
     }
 
     @MainActor

@@ -471,6 +471,9 @@ struct PrivateHoldingDetail: View {
                 if position.hasExited, let date = position.lastDispositionOn, let source = position.exitSource {
                     LabeledContent("Exit settled", value: date.formatted(date: .abbreviated, time: .omitted))
                     LabeledContent("Exit source", value: source)
+                        .accessibilityLabel("Exit source")
+                        .accessibilityValue(source)
+                        .accessibilityIdentifier("private.holding.exitSource")
                 }
                 if !position.hasCompleteActivity {
                     Text("Only recent provider activity is available.").font(.footnote).foregroundStyle(.secondary)
@@ -479,6 +482,9 @@ struct PrivateHoldingDetail: View {
             if let units = holding.units {
                 LabeledContent(holding.latestDispositionOn == nil ? "Shares or units" : "Remaining shares or units",
                                value: units.formatted())
+                    .accessibilityLabel(holding.latestDispositionOn == nil ? "Shares or units" : "Remaining shares or units")
+                    .accessibilityValue(units.formatted())
+                    .accessibilityIdentifier("private.holding.units")
             }
             if let percent = holding.ownershipPercent { LabeledContent("Ownership", value: (percent / 100).formatted(.percent)) }
             if !holding.shareClass.isEmpty { LabeledContent("Share class", value: holding.shareClass) }
