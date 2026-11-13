@@ -35,13 +35,14 @@ final class TradingAccountTests: XCTestCase {
         app = XCUIApplication()
     }
 
-    private func launchSignedIn() {
+    private func launchSignedIn(waitForTrading: Bool = true) {
         app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
                                "-app_theme_mode", "Light",
                                "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
                                "-UITestSignIn", "\(email):\(password)"]
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Portfolio"].waitForExistence(timeout: 30), "The app should open on the tabs")
+        guard waitForTrading else { return }
         XCTAssertTrue(app.open("Agents"))
         let inAccount = element("trading.home.account")
         if !inAccount.waitForExistence(timeout: 30) {
@@ -57,9 +58,9 @@ final class TradingAccountTests: XCTestCase {
         let probe = try request("GET", "/rest/v1/portfolio_performance_results?select=id,time_weighted_return_pct,money_weighted_return_pct&limit=1", token: token)
         try XCTSkipIf(probe.status == 404, "The local database needs the portfolio performance migration.")
         XCTAssertEqual(probe.status, 200)
-        launchSignedIn()
+        launchSignedIn(waitForTrading: false)
         XCTAssertTrue(app.open("Portfolio"))
-        tap("portfolio.returns.add")
+        tap("portfolio.returns.add", timeout: 25)
         type("1000", into: "portfolio.returns.opening")
         type("1100", into: "portfolio.returns.closing")
         tap("portfolio.returns.save")
