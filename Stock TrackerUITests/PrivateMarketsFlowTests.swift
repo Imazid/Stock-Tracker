@@ -110,8 +110,12 @@ final class PrivateMarketsFlowTests: XCTestCase {
         }
 
         let edge = host + "/functions/v1/private-markets"
-        let probe = try? await post(edge, ["action": "catalog"])
-        try XCTSkipUnless(probe?.0 == 200, "Start the disposable Private Markets test stack and function proxy.")
+        var health = URLRequest(url: try XCTUnwrap(URL(string: authHost + "/auth/v1/health")), timeoutInterval: 5)
+        health.setValue(key, forHTTPHeaderField: "apikey")
+        let response = try? await URLSession.shared.data(for: health).1 as? HTTPURLResponse
+        try XCTSkipUnless(response?.statusCode == 200, "Start the disposable Private Markets test stack and function proxy.")
+        let catalogue = try await post(edge, ["action": "catalog"])
+        XCTAssertEqual(catalogue.0, 200)
         let email = "private-ui-\(UUID().uuidString.lowercased())@example.com"
         let password = "Test-Private-Markets-2026!"
         let credentials = ["email": email, "password": password]
