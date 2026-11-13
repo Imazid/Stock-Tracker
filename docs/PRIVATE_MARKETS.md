@@ -27,9 +27,9 @@ The service-role-only provider event RPC matches an existing connected provider 
 
 | Provider | Verified public capability | Integration status |
 | --- | --- | --- |
-| Birchal | Australian CSF and provider-hosted checks and applications. | Public directory link. Offer-specific handoff code requires signed approval, approved data and a verification adapter. |
-| OnMarket | Australian CSF, IPO and eligible wholesale offers. Its website terms restrict commercial content reuse. | Public directory link. Offer-specific handoff has the same gates as Birchal. |
-| AngelList | Meridian hosts funds, SPVs and permissioned deal rooms. Link is an OAuth MCP for read-only authorised fund data. | The iOS app implements on-device OAuth with PKCE, dynamic registration and revocation. Fund records are requested directly from AngelList using read-only scopes. An entitled account is required to verify returned records. |
+| Birchal | Australian CSF, provider-hosted checks and applications, and a documented third-party referral programme. | Public directory link. Offer-specific handoff requires signed approval, publication rights and a verification adapter. |
+| OnMarket | Australian CSF, IPO and eligible wholesale offers. OnMarket documented a broker-specific IPO API integration with CMC Markets. | Public directory link. The CMC integration establishes a commercial precedent. Stock Tracker requires its own agreement and integration specification. |
+| AngelList | Meridian hosts funds, SPVs and permissioned deal rooms. Link is an OAuth MCP for read-only authorised fund data. Digital Subscriptions is a separate commercial product. | The iOS app implements on-device OAuth with PKCE, dynamic registration and revocation. Fund records are requested directly from AngelList using read-only scopes. An entitled account is required to verify returned records. |
 | Syndex | New Zealand registry and primary and secondary marketplace services. | Public directory link. No Stock Tracker access agreement or Australian transaction pathway. |
 
 ## Phase 3 · Advanced infrastructure
@@ -68,8 +68,11 @@ The product records capital calls, distributions, stale marks, share classes and
 - [Apple Vision text recognition](https://developer.apple.com/documentation/vision/recognizing-text-in-images)
 - [Supabase Cron](https://supabase.com/docs/guides/cron)
 - [Birchal investor process](https://www.birchal.com/investors)
+- [Birchal Financial Services Guide](https://www.birchal.com/legal-pages/financial-services-guide)
 - [OnMarket Financial Services Guide](https://www.onmarket.com.au/general/financial-services-guide/) and [Terms of Use](https://www.onmarket.com.au/general/terms-of-use/)
+- [OnMarket and CMC Markets commercial integration](https://www.onmarket.com.au/pressroom/announcements/onmarket-bookbuilds-and-cmc-markets-boost-online-ipo-offering/)
 - [AngelList Meridian](https://help.angellist.com/hc/en-us/articles/38089333472269-What-is-Meridian) and [AngelList Link data and privacy](https://help.angellist.com/hc/en-us/articles/47543225581965-AngelList-Link-Data-Privacy)
+- [AngelList Link setup](https://help.angellist.com/hc/en-us/articles/47546984470669-Get-AngelList-Link) and [AngelList Digital Subscriptions](https://www.angellist.com/investor-management/digital-subscriptions)
 - [ASX upcoming floats](https://www.asx.com.au/listings/upcoming-floats-and-listings.) and [Alvear Tungsten issuer prospectus page](https://alveartungsten.com/)
 - [Heidi Series C announcement](https://www.heidihealth.com/en-gb/blog/heidi-secures-us340m-to-scale-agents-across-health-systems-globally)
 - [AdvanCell Series D announcement](https://www.advancell.com.au/news/advancell-closes-us-315-million-oversubscribed-series-d-financing-to-advance-targeted-alpha-therapies-and-expand-clinical-and-commercial-manufacturing-infrastructure/)

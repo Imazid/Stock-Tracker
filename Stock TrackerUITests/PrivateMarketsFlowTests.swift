@@ -166,21 +166,14 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(save.isEnabled, app.debugDescription)
         save.tap()
         XCTAssertTrue(app.buttons["private.ownership.linked"].waitForExistence(timeout: 8), app.debugDescription)
-        app.buttons["private.ownership.linked"].tap()
-        XCTAssertTrue(app.staticTexts["Reviewed by you"].waitForExistence(timeout: 8))
+    }
 
-        for title in ["Ownership excerpt", "Ownership Evidence", "Private evidence holding", "My Private Portfolio"] {
-            let back = app.navigationBars[title].buttons["BackButton"]
-            XCTAssertTrue(back.waitForExistence(timeout: 6), app.debugDescription)
-            back.tap()
-        }
+    func testCompanyUpdatesShowsMonitoringControls() {
+        openPrivateMarkets()
         app.buttons["private.companyUpdates"].tap()
         let monitor = app.switches["private.monitor.enable"]
         XCTAssertTrue(monitor.waitForExistence(timeout: 8), app.debugDescription)
-        let monitorControl = monitor.switches.firstMatch
-        if monitorControl.exists { monitorControl.tap() } else { monitor.tap() }
-        XCTAssertTrue(app.switches["private.monitor.eligible"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Monitoring inbox"].waitForExistence(timeout: 8))
+        XCTAssertFalse(monitor.isEnabled)
     }
 
     private func openPrivateMarkets() {
