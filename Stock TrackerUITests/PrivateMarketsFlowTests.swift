@@ -255,8 +255,13 @@ final class PrivateMarketsFlowTests: XCTestCase {
             if portfolio.exists { portfolio.tap() }
             if app.navigationBars["My Private Portfolio"].waitForExistence(timeout: 3) {
                 if row.waitForExistence(timeout: 5) { break }
-                if !portfolio.exists { app.swipeUp() }
-                if row.waitForExistence(timeout: 3) { break }
+                if app.navigationBars["My Private Portfolio"].exists {
+                    // A transient failure in the disposable gateway can leave the ledger empty.
+                    app.swipeDown()
+                    if row.waitForExistence(timeout: 5) { break }
+                    app.swipeUp()
+                    if row.waitForExistence(timeout: 3) { break }
+                }
             }
         }
         XCTAssertTrue(row.exists, app.debugDescription)
