@@ -12,7 +12,8 @@ The provisioning steps below apply when setting up a separate environment.
 | `trading-api`, `agent-scheduler` | Supabase Edge Functions (Deno 2) | practice trading |
 | `broker-connections`, `broker-orders` | Supabase Edge Functions | provider connections and orders |
 | `market-data-proxy`, `snaptrade-proxy`, `ai-proxy` | Supabase Edge Functions | signed-in iOS data, broker aggregation and model access |
-| Web app | Any Node host for Next.js (Vercel fits) | `web/` |
+| `market-workspace` | Supabase Edge Functions | workspace market data, fundamentals and shared backtesting |
+| Web app | Vercel (Sydney functions) | `web/` |
 
 ## 1. Create the backend (one time)
 
@@ -37,7 +38,7 @@ The provisioning steps below apply when setting up a separate environment.
    key unreadable** — people would have to reconnect.
 5. Deploy the functions:
    ```
-   supabase functions deploy trading-api agent-scheduler broker-orders broker-connections snaptrade-proxy ai-proxy market-data-proxy
+   supabase functions deploy trading-api agent-scheduler broker-orders broker-connections snaptrade-proxy ai-proxy market-data-proxy market-workspace
    ```
 
 ## 2. Gates (what is switched on)
@@ -62,8 +63,17 @@ cp .env.example .env.local     # fill NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUP
                                # market-data keys, ANTHROPIC_API_KEY for the AI workspace
 npm ci && npm run build && npm start
 ```
-On Vercel: import the repo with `web/` as the root directory and set the same variables. Server-only
-keys (`ALPACA_*`, `ANTHROPIC_API_KEY`) must not start with `NEXT_PUBLIC_`.
+On Vercel, use `web/` as the project root and include its shared Supabase source files from
+the repository. Run `vercel deploy --prod` from the repository root. The Stock Tracker release
+project uses Vercel Authentication on every deployment. Keep production and previews private
+while using the existing market-data account. The Stock Tracker sign-in separately controls
+access to each person's portfolios, watchlist and paper orders.
+
+Set `WORKSPACE_OVERVIEW_SECRET` to the same randomly generated value in Vercel and the Supabase
+function secrets. Set `FINNHUB_API_KEY` in Supabase for US fundamentals and news. Set
+`ENABLE_AI` and `ENABLE_SNAPTRADE` in Vercel after configuring the corresponding shared Edge
+Functions. Allowlist the production workspace URL in Supabase Auth. Standard Supabase hosted
+email limits apply until a custom SMTP sender is configured.
 
 ## 4. Local development
 

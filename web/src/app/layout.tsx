@@ -7,6 +7,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: { default: "Stock Tracker", template: "%s · Stock Tracker" },
   description: "Markets, watchlists, strategies and order review for stocks and crypto.",
+  robots: { index: false, follow: false },
 };
 
 export const viewport: Viewport = {

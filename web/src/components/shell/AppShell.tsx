@@ -110,6 +110,11 @@ function Account() {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  return pathname === "/" ? children : <ToolsShell>{children}</ToolsShell>;
+}
+
+function ToolsShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useStoredFlag(COLLAPSE_KEY);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
