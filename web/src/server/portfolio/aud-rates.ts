@@ -1,7 +1,7 @@
 import {
   ECB_FIRST_DATE, ECB_LOOKBACK_DAYS, ecbRate, ecbURL, offsetDay, parseECBObservations,
   type ECBRate,
-} from "../../../../supabase/functions/_shared/market/ecb.ts";
+} from "../../../../supabase/functions/_shared/fx/ecb.ts";
 import { sydneyDate } from "./lots.ts";
 import type { TransactionRow } from "./transactions.ts";
 

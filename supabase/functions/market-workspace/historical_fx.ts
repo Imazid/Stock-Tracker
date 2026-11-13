@@ -1,5 +1,5 @@
 import { compare, isZero, mul, round } from "../_shared/decimal.ts";
-import { ECB_FIRST_DATE, ECB_LOOKBACK_DAYS, ecbRate, ecbURL, isoDay, offsetDay, parseECBObservations, validISODay } from "../_shared/market/ecb.ts";
+import { ECB_FIRST_DATE, ECB_LOOKBACK_DAYS, ecbRate, ecbURL, isoDay, offsetDay, parseECBObservations, validISODay } from "../_shared/fx/ecb.ts";
 import { HttpError } from "../_shared/server/http.ts";
 
 const MAX_AMOUNT = "9999999999999.99";
