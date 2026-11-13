@@ -6,6 +6,7 @@ struct PrivateInvestorView: View {
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var country = "AU"
     @State private var declaredClass = "unknown"
+    @State private var eligibility: [PrivateProviderEligibility] = []
     @State private var records: [PrivateApplication] = []
     @State private var recordsOwner: UUID?
     @State private var busy = false
@@ -33,6 +34,27 @@ struct PrivateInvestorView: View {
                     NavigationLink("AngelList Link") { AngelListView() }
                     Text("Read authorised fund and capital activity from AngelList.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                if recordsOwner == auth.userId {
+                    Section("Provider verification") {
+                        if eligibility.isEmpty {
+                            Text("No provider verification on record.").foregroundStyle(.secondary)
+                        }
+                        ForEach(eligibility) { check in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(check.providerName + " · " + check.jurisdiction).font(.headline)
+                                LabeledContent("Classification on record", value: check.verifiedClass.capitalized)
+                                Text(check.status(asOf: .now)).font(.footnote).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("private.investor.verificationStatus." + check.id)
+                                verificationDate("Verified on", check.verifiedAt)
+                                verificationDate("Expires on", check.expiresAt)
+                                if let reviewed = check.accountantCertificateReviewedAt {
+                                    verificationDate("Accountant certificate reviewed", reviewed)
+                                        .accessibilityIdentifier("private.investor.certificate." + check.id)
+                                }
+                            }
+                        }
+                    }
                 }
                 Section("Provider applications") {
                     if busy && records.isEmpty {
@@ -65,6 +87,7 @@ struct PrivateInvestorView: View {
         .navigationTitle("Investor Profile & Applications")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: auth.userId, initial: true) { _, _ in
+            eligibility = []
             records = []
             recordsOwner = nil
             country = "AU"
@@ -76,13 +99,17 @@ struct PrivateInvestorView: View {
         .refreshable { await load() }
     }
 
+    private func verificationDate(_ label: String, _ date: Date) -> some View {
+        LabeledContent(label, value: date.formatted(date: .abbreviated, time: .shortened))
+            .font(.footnote)
+    }
+
     private func load() async {
         guard let owner = auth.userId else { return }
         busy = true
         defer { if auth.userId == owner { busy = false } }
         do {
-            struct Response: Decodable { let profile: PrivateInvestorProfile? }
-            async let profile: Response = PrivateMarketsAPI.request("profile", expectedUserID: owner)
+            async let profile: PrivateMarketsAPI.InvestorProfile = PrivateMarketsAPI.request("profile", expectedUserID: owner)
             async let applications: PrivateMarketsAPI.Applications = PrivateMarketsAPI.request("applications", expectedUserID: owner)
             let (saved, tracking) = try await (profile, applications)
             try Task.checkCancellation()
@@ -91,6 +118,7 @@ struct PrivateInvestorView: View {
                 country = saved.country
                 declaredClass = saved.declaredClass
             }
+            eligibility = saved.eligibility ?? []
             records = tracking.applications
             recordsOwner = owner
         } catch is CancellationError {

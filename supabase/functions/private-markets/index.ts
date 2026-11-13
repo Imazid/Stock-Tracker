@@ -366,9 +366,17 @@ Deno.serve(async (req) => {
         });
       }
       case "profile": {
-        const { data, error } = await admin.from("investor_profiles").select("country,declared_class").eq("user_id", userId).maybeSingle();
-        if (error) throw error;
-        return jsonResponse(200, { profile: data });
+        const [profile, checks] = await Promise.all([
+          admin.from("investor_profiles").select("country,declared_class").eq("user_id", userId).maybeSingle(),
+          admin.from("investor_eligibility")
+            .select("provider,jurisdiction,verified_class,verified_at,expires_at,accountant_certificate_reviewed_at," +
+              "connection:provider_connections!inner(revoked_at)")
+            .eq("user_id", userId).eq("connection.user_id", userId)
+            .order("provider").order("jurisdiction"),
+        ]);
+        if (profile.error) throw profile.error;
+        if (checks.error) throw checks.error;
+        return jsonResponse(200, { profile: profile.data, eligibility: checks.data });
       }
       case "save_profile": {
         if (typeof body.country !== "string" || !/^[A-Z]{2}$/.test(body.country) ||

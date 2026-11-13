@@ -186,6 +186,28 @@ struct PrivateInvestorProfile: Codable {
     var declaredClass: String
 }
 
+struct PrivateProviderEligibility: Decodable, Identifiable {
+    struct Connection: Decodable { let revokedAt: Date? }
+
+    let provider: String
+    let jurisdiction: String
+    let verifiedClass: String
+    let verifiedAt: Date
+    let expiresAt: Date
+    let accountantCertificateReviewedAt: Date?
+    let connection: Connection
+
+    var id: String { provider + ":" + jurisdiction }
+    var providerName: String { PrivateProvider.directory.first { $0.id == provider }?.name ?? provider }
+
+    func status(asOf now: Date) -> String {
+        if connection.revokedAt != nil { return "Connection revoked" }
+        if expiresAt <= now { return "Verification expired" }
+        if verifiedAt > now { return "Verification pending" }
+        return "Verification current"
+    }
+}
+
 enum PrivateMarketsAPI {
     struct Catalog: Decodable { let deals: [PrivateDeal] }
     struct Items: Decodable { let items: [PrivateSavedItem] }
@@ -193,6 +215,10 @@ enum PrivateMarketsAPI {
     struct MonitorInbox: Decodable { let alerts: [PrivateMarketAlert] }
     struct PushRegistration: Decodable { let registered: Bool }
     struct Applications: Decodable { let applications: [PrivateApplication] }
+    struct InvestorProfile: Decodable {
+        let profile: PrivateInvestorProfile?
+        let eligibility: [PrivateProviderEligibility]?
+    }
     struct ConfirmedHoldings: Decodable {
         let holdings: [ProviderPrivateHolding]
         let nextOffset: Int?

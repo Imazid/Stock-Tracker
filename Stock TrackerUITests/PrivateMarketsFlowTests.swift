@@ -245,6 +245,32 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testProviderVerificationIsSeparateFromInvestorDeclaration() throws {
+        try launchWithLocalSession("PRIVATE_ELIGIBILITY_TEST_SESSION")
+        openPrivateMarkets()
+        let active = app.staticTexts["private.investor.verificationStatus.birchal:AU"]
+        let investor = app.buttons["Investor profile & applications"]
+        for _ in 0..<3 where !active.exists {
+            if investor.exists {
+                if !investor.isHittable { app.swipeUp() }
+                investor.tap()
+            }
+            if app.navigationBars["Investor Profile & Applications"].waitForExistence(timeout: 5) {
+                for _ in 0..<3 where !active.exists { app.swipeUp() }
+                if active.waitForExistence(timeout: 5) { break }
+            }
+        }
+        XCTAssertTrue(active.exists, app.debugDescription)
+        XCTAssertEqual(active.label, "Verification current")
+        let certificate = app.descendants(matching: .any)["private.investor.certificate.birchal:AU"].firstMatch
+        XCTAssertTrue(certificate.exists)
+        let revoked = app.staticTexts["private.investor.verificationStatus.onmarket:AU"]
+        for _ in 0..<3 where !revoked.exists { app.swipeUp() }
+        XCTAssertTrue(revoked.exists, app.debugDescription)
+        XCTAssertEqual(revoked.label, "Connection revoked")
+    }
+
+    @MainActor
     func testProviderExitShowsSettlementSourceAndRemainingUnits() async throws {
         try launchWithLocalSession("PRIVATE_DISPOSITION_TEST_SESSION")
         openPrivateMarkets()
