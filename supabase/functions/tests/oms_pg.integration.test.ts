@@ -102,8 +102,9 @@ Deno.test({ name: "pg: approved → submitting → filled, recorded end to end",
     assert(view.approval?.consumedAt, "approval consumed");
     assertEquals(view.brokerOrder?.filledQuantity, "10");
     assertEquals(view.brokerOrder?.averageFillPrice, "190.42");
-    const events = await sql`select kind from public.oms_events where intent_id = ${intent.id} order by id`;
+    const events = await sql`select kind, detail from public.oms_events where intent_id = ${intent.id} order by id`;
     assertEquals(events.map((e) => e.kind), ["oms.submitting", "oms.submitted"]);
+    assert(Number.isInteger(events[1].detail.submitLatencyMs) && events[1].detail.submitLatencyMs >= 0);
   } finally {
     await sql.end();
   }
@@ -247,6 +248,7 @@ Deno.test({ name: "pg: authenticated scheduler reconciles an order and imports a
     });
     assertEquals((await providerMaintenance(request())).status, 401);
     assertEquals(requests.length, 0);
+    const [before] = await sql`select count(*)::integer as count from provider_operations.worker_runs where worker = 'provider-maintenance'`;
     const runs = await Promise.all([providerMaintenance(request(env.PROVIDER_MAINTENANCE_SECRET)), providerMaintenance(request(env.PROVIDER_MAINTENANCE_SECRET))]);
     const reports = await Promise.all(runs.map((r) => r.json()));
     assertEquals(reports.reduce((total, row) => total + row.data.errors, 0), 0);
@@ -254,6 +256,11 @@ Deno.test({ name: "pg: authenticated scheduler reconciles an order and imports a
     assertEquals(reports.reduce((total, row) => total + row.data.imported, 0), 1);
     assertEquals(requests.sort(), ["/v2/account/activities/FILL", "/v2/orders:by_client_order_id"]);
     assertEquals((await loadIntent(sql, USER, intent.id))?.status, "filled");
+    const [after] = await sql`select count(*)::integer as count, sum(jobs)::integer as jobs, sum(errors)::integer as errors
+      from provider_operations.worker_runs where worker = 'provider-maintenance'`;
+    assertEquals(after.count - before.count, 2);
+    assertEquals(after.jobs, 2);
+    assertEquals(after.errors, 0);
   } finally {
     globalThis.fetch = originalFetch;
     for (const name of Object.keys(env)) {

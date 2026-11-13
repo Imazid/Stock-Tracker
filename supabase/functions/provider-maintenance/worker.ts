@@ -1,6 +1,7 @@
 import { adapterFor } from "../_shared/brokers/registry.ts";
 import { BrokerError } from "../_shared/brokers/types.ts";
 import { errorResponse, HttpError, json, logEvent, sameSecret } from "../_shared/server/http.ts";
+import { type FailureCode, providerFailure, reportWorker } from "../_shared/worker-report.ts";
 import { reconcileIntent } from "../_shared/oms/execute.ts";
 import { syncProviderFills } from "../_shared/oms/fill_sync.ts";
 import { database, loadConnection, loadIntent, openCredentials, PgOmsStore, type Sql } from "../_shared/oms/store_pg.ts";
@@ -10,11 +11,20 @@ const env = (name: string) => Deno.env.get(name);
 type Job = { id: string; user_id: string; connection_id: string };
 const LEASE_MS = 120_000;
 
-function reportFailure(operation: "order" | "fills", error: unknown) {
-  logEvent("provider_maintenance_failure", {
-    operation,
-    code: error instanceof BrokerError ? error.code : error instanceof Error ? error.name : "unknown",
-  });
+function failureCode(error: unknown): FailureCode {
+  if (!(error instanceof BrokerError)) return "internal";
+  return brokerFailure(error.code, error.details.status);
+}
+
+function brokerFailure(code: unknown, status: unknown): FailureCode {
+  switch (code) {
+    case "unauthorized":
+    case "forbidden": return "provider_auth";
+    case "rate_limited": return "provider_rate_limit";
+    case "provider_unavailable": return "provider_unavailable";
+    case "unexpected_response": return "provider_response";
+    default: return providerFailure(typeof status === "number" ? status : undefined, "provider_order");
+  }
 }
 
 async function claimOrders(sql: Sql, now: Date, lease: Date): Promise<Job[]> {
@@ -46,15 +56,8 @@ async function claimFills(sql: Sql, now: Date, lease: Date): Promise<Job[]> {
     from due where c.id = due.id returning c.id, c.user_id, c.id as connection_id`;
 }
 
-async function handle(request: Request): Promise<Response> {
-  if (request.method !== "POST") throw new HttpError(405, "method_not_allowed", "Send a POST request.");
-  const secret = env("PROVIDER_MAINTENANCE_SECRET") ?? "";
-  if (secret.length < 32 || !sameSecret(secret, request.headers.get("x-scheduler-secret") ?? "")) {
-    throw new HttpError(401, "unauthorized", "Not allowed.");
-  }
-
+async function reconcileDue(sql: Sql, failures: Set<FailureCode>) {
   const now = Date.now();
-  const sql = database();
   const ring = await keyRingFromEnv(env);
   const lease = new Date(now + LEASE_MS);
   const [orders, connections] = await Promise.all([claimOrders(sql, new Date(now), lease), claimFills(sql, new Date(now), lease)]);
@@ -94,11 +97,12 @@ async function handle(request: Request): Promise<Response> {
         else {
           delay = 5 * 60_000;
           errors++;
+          failures.add(brokerFailure(outcome.details?.providerCode, outcome.details?.status));
         }
       } catch (error) {
         delay = 5 * 60_000;
         errors++;
-        reportFailure("order", error);
+        failures.add(failureCode(error));
       } finally {
         await sql`update public.order_intents set provider_check_due_at = ${new Date(Date.now() + delay)}
           where id = ${job.id} and user_id = ${job.user_id} and provider_check_due_at = ${lease}`;
@@ -112,21 +116,45 @@ async function handle(request: Request): Promise<Response> {
         imported += result.fills;
       } catch (error) {
         errors++;
-        reportFailure("fills", error);
+        failures.add(failureCode(error));
       }
     }),
   ]);
   const data = { ordersClaimed: orders.length, connectionsClaimed: connections.length, checked, imported, errors };
   logEvent("provider_maintenance", data);
-  return json(200, { ok: true, data });
+  return data;
 }
 
 export async function providerMaintenance(request: Request): Promise<Response> {
+  const started = performance.now();
+  let sql: Sql | undefined;
+  let jobs = 0;
+  let errors = 0;
+  const failures = new Set<FailureCode>();
   try {
-    return await handle(request);
+    if (request.method !== "POST") throw new HttpError(405, "method_not_allowed", "Send a POST request.");
+    const secret = env("PROVIDER_MAINTENANCE_SECRET") ?? "";
+    if (secret.length < 32 || !sameSecret(secret, request.headers.get("x-scheduler-secret") ?? "")) {
+      throw new HttpError(401, "unauthorized", "Not allowed.");
+    }
+    sql = database();
+    const data = await reconcileDue(sql, failures);
+    jobs = data.ordersClaimed + data.connectionsClaimed;
+    errors = data.errors;
+    return json(200, { ok: true, data });
   } catch (error) {
     const response = errorResponse(error);
+    if (sql) { errors++; failures.add("worker_error"); }
     logEvent("provider_maintenance_refused", { status: response.status });
     return response;
+  } finally {
+    const db = sql;
+    if (db) await reportWorker("provider-maintenance", started, { jobs, errors, failureCodes: [...failures] }, async (run) => {
+      await db.begin(async (tx) => {
+        await tx`set local statement_timeout = '3s'`;
+        await tx`select public.record_provider_worker_run('provider-maintenance',
+          ${run.durationMs}, ${run.jobs}, ${run.errors}, ${run.failureCodes}::text[])`;
+      });
+    });
   }
 }

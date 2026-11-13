@@ -3,6 +3,7 @@
 //   npx -y deno test --no-check=remote supabase/functions/tests/snaptrade_proxy.test.ts
 
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1";
+import type { FailureCode } from "../_shared/worker-report.ts";
 import {
   buildSignedRequest,
   handleSnapTradeRequest,
@@ -328,4 +329,25 @@ Deno.test("activity worker pages only provider reads and advances the fenced dat
   assertEquals((writes[1].p_rows as { cashFlow: unknown }[])[0].cashFlow, { date: "2026-01-16", kind: "deposit", amount: 25 });
   assertEquals(calls.map((call) => call.method), ["GET", "GET"]);
   assertEquals(calls[1].url.searchParams.get("offset"), "50");
+});
+
+Deno.test("activity worker classifies rate limits and defers without publishing the failed page", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });
+  const { deps } = harness(() => json(429, { detail: "provider body" }), store);
+  const failures = new Set<FailureCode>();
+  const calls: string[] = [];
+  const database = {
+    rpc(name: string, args?: Record<string, unknown>) {
+      calls.push(name);
+      if (name === "claim_snaptrade_activity_jobs") {
+        return Promise.resolve({ data: [{ credential_id: "credential", lease_id: "lease", user_id: USER, pending_id: null }], error: null });
+      }
+      assertEquals(args, { p_credential: "credential", p_lease: "lease", p_reset: false });
+      return Promise.resolve({ data: true, error: null });
+    },
+  };
+  assertEquals(await syncSnapTradeActivities(database, deps, failures), { brokerActivityJobs: 1, advanced: 0, errors: 1 });
+  assertEquals([...failures], ["provider_rate_limit"]);
+  assertEquals(calls, ["claim_snaptrade_activity_jobs", "defer_snaptrade_activity_job"]);
 });

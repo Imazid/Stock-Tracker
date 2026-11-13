@@ -63,7 +63,7 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 | §14 Premium UI | iPhone redesign **Done**; web shell **Done** (12-section sidebar, ⌘K, dark/light, PRACTICE badge on every page; Portfolio, Agent Studio, Paper Trading and Activity are connected | `web/src/components` |
 | §15 Security / threat model | `THREAT_MODEL.md` | |
 | §16 Australian regulation | `REGULATORY_REVIEW.md` (decisions) + `docs/trading/regulatory-au.md` (research, other effort) | |
-| §17 Observability | Structured logs in functions; OMS events append-only; metrics/alerting **Not started** | |
+| §17 Observability | Structured function logs, append-only OMS events, recorded worker outcomes, scheduled alerts for overdue provider work, and 24-hour submission latency and outcomes. External paging remains open. | `DEPLOYMENT.md` §10, `provider_operations` |
 | §18 Testing | Swift 140+, TS parity vectors; provider path: OMS 21, risk 9, vault 5, brokers 66, boundaries 1, Postgres integration 3, SQL behaviour checks; studio port 31; web e2e **Not started** | `supabase/functions/tests/`, `supabase/tests/` |
 
 ## 4. Architecture decisions
