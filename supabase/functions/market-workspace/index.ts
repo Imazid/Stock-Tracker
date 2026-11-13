@@ -2,6 +2,7 @@
 import { serviceClient } from "../_shared/secure/edge.ts";
 import { authenticate } from "../_shared/server/auth.ts";
 import { errorResponse, Field, HttpError, ok, readJSONObject, sameSecret } from "../_shared/server/http.ts";
+import { historicalCashConversion } from "./historical_fx.ts";
 import { providerFromEnv } from "../_shared/market/index.ts";
 import { catalogInstruments } from "../_shared/trading/catalog.ts";
 import { decodeInstrument, instrumentID, parseYahooSymbol, venueCurrency, VENUES } from "../_shared/trading/market.ts";
@@ -49,6 +50,7 @@ Deno.serve(async (request) => {
       if (!allowed) throw new HttpError(429, "rate_limit", "Market data request limit reached. Wait a minute and retry.");
     }
     const now = Date.now();
+    if (body.action === "historicalFx") return ok(await historicalCashConversion(body, now));
     const { provider } = providerFromEnv(env);
     if (!provider) throw new HttpError(503, "unavailable", "The market data provider is unavailable.");
 

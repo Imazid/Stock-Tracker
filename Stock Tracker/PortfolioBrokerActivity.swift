@@ -14,6 +14,18 @@ struct PortfolioBrokerActivity: View {
         }
     }
 
+    private struct ForeignCashFlow: Decodable {
+        let date: String
+        let kind: PerformanceFlow.Kind
+        let currency: String
+        let amount: String
+    }
+
+    private struct Conversion: Decodable {
+        let usdAmount: Decimal
+        let fx: HistoricalCashFX
+    }
+
     private struct Activity: Decodable, Identifiable {
         let id: String
         let date: String
@@ -24,6 +36,7 @@ struct PortfolioBrokerActivity: View {
         let fee: Decimal?
         let symbol: String?
         let cashFlow: PerformanceFlow?
+        let foreignCashFlow: ForeignCashFlow?
     }
 
     private struct Page: Decodable {
@@ -48,6 +61,9 @@ struct PortfolioBrokerActivity: View {
     @State private var page: Page?
     @State private var busy = false
     @State private var error: String?
+    @State private var conversions: [String: Conversion] = [:]
+    @State private var lookup: String?
+    @State private var failedLookup: String?
 
     var body: some View {
         Section {
@@ -58,15 +74,17 @@ struct PortfolioBrokerActivity: View {
                     Picker("Brokerage account", selection: $accountId) {
                         ForEach(accounts) { Text($0.title).tag($0.id) }
                     }
-                    .disabled(busy)
+                    .disabled(busy || lookup != nil)
                     .onChange(of: accountId) { _, _ in
                         page = nil
                         error = nil
+                        conversions = [:]
+                        failedLookup = nil
                     }
-                    Button("Load broker activity") { Task { await loadPage(0) } }.disabled(busy)
+                    Button("Load broker activity") { Task { await loadPage(0) } }.disabled(busy || lookup != nil)
                 }
             } else {
-                Button("Find linked accounts") { Task { await loadAccounts() } }.disabled(busy)
+                Button("Find linked accounts") { Task { await loadAccounts() } }.disabled(busy || lookup != nil)
             }
             if busy { ProgressView("Loading brokerage data") }
             if let error { Text(error).foregroundStyle(.red) }
@@ -80,13 +98,13 @@ struct PortfolioBrokerActivity: View {
                     activityRow(activity)
                 }
                 if let next = page.nextOffset {
-                    Button("Load more activity") { Task { await loadPage(next) } }.disabled(busy)
+                    Button("Load more activity") { Task { await loadPage(next) } }.disabled(busy || lookup != nil)
                 }
             }
         } header: {
             Text("Broker activity")
         } footer: {
-            Text("Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Compare with transfers already entered from statements. SnapTrade refreshes activity daily. Enter non-USD flows manually after conversion at the activity date.")
+            Text("Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Compare with transfers already entered from statements. SnapTrade refreshes activity daily. For foreign cash, look up an ECB reference rate or enter the USD amount from your statement.")
         }
     }
 
@@ -99,17 +117,53 @@ struct PortfolioBrokerActivity: View {
             Text([activity.date, amount, units, fee].compactMap { $0 }.joined(separator: " · "))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let flow = activity.cashFlow, flow.date > start {
-                let included = imported.contains(activity.id)
+            let converted = conversions[activity.id]
+            let included = imported.contains(activity.id)
+            if let converted {
+                Text("\(converted.usdAmount.formatted(.currency(code: "USD"))) · \(converted.fx.details)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if failedLookup == activity.id {
+                Text("Historical exchange rate unavailable. You can enter the USD amount manually.")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            if activity.date > start, let foreign = activity.foreignCashFlow, converted == nil, !included {
+                Button(lookup == activity.id ? "Looking up rate…" : "Look up USD value") {
+                    Task { await convert(activity.id, foreign) }
+                }
+                .buttonStyle(.borderless)
+                .disabled(busy || lookup != nil || !canInclude)
+            }
+            if activity.date > start && (activity.cashFlow != nil || converted != nil || included) {
                 Button(included ? "Included" : "Include transfer") {
-                    var selected = flow
-                    selected.snaptrade_id = activity.id
-                    include(selected)
+                    if var flow = activity.cashFlow {
+                        flow.snaptrade_id = activity.id
+                        include(flow)
+                    } else if let foreign = activity.foreignCashFlow, let converted {
+                        include(PerformanceFlow(date: foreign.date, kind: foreign.kind, amount: converted.usdAmount,
+                            snaptrade_id: activity.id, fx: converted.fx))
+                    }
                 }
                 .buttonStyle(.borderless)
                 .disabled(included || !canInclude)
                 .accessibilityLabel(included ? "Already included" : "Include \(activity.label) on \(activity.date)")
             }
+        }
+    }
+
+    private func convert(_ id: String, _ foreign: ForeignCashFlow) async {
+        guard lookup == nil, !busy else { return }
+        lookup = id
+        failedLookup = nil
+        defer { lookup = nil }
+        do {
+            let data = try await SecureBackend.invoke("market-workspace", body: [
+                "action": "historicalFx", "date": foreign.date, "currency": foreign.currency, "amount": foreign.amount,
+            ], expectedUserID: userId)
+            struct Response: Decodable { let data: Conversion }
+            conversions[id] = try JSONDecoder().decode(Response.self, from: data).data
+        } catch {
+            failedLookup = id
         }
     }
 
@@ -134,10 +188,14 @@ struct PortfolioBrokerActivity: View {
     }
 
     private func loadPage(_ offset: Int) async {
-        guard !busy, !accountId.isEmpty else { return }
+        guard !busy, lookup == nil, !accountId.isEmpty else { return }
         busy = true
         error = nil
         defer { busy = false }
+        if offset == 0 {
+            conversions = [:]
+            failedLookup = nil
+        }
         do {
             var result: Page = try await brokerage("accountActivities", params: [
                 "accountId": accountId, "startDate": start, "endDate": end, "offset": offset,

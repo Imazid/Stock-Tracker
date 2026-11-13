@@ -18,7 +18,7 @@ import { type Bar, type Instrument, instrumentID, makeInstrument, measureStats, 
 import type { OrderType, TimeInForce } from "../trading/orders.ts";
 import { type AccountPolicy, evaluate, type OrderIntent, type RiskCheck, type RiskPolicy } from "../trading/risk.ts";
 import type { RiskEvaluationView } from "./api.ts";
-import * as D from "./decimal.ts";
+import * as D from "../decimal.ts";
 import type { ConnectionState, IntentRecord } from "./execute.ts";
 
 /** Limits the brief asks for that the engine's per-ledger policy doesn't carry. */
