@@ -77,6 +77,13 @@ export interface SnapTradeProxyDeps {
   fetch: typeof fetch;
   /** Milliseconds since the epoch. */
   now: () => number;
+  readActivityCache?: (userId: string, request: {
+    accountId: string;
+    startDate: string;
+    endDate: string;
+    offset: number;
+    snapshot: string | null;
+  }) => Promise<unknown>;
 }
 
 export interface ProxyResponse {
@@ -175,6 +182,16 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
       }
       if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 || offset > 2147483600) {
         return fail(400, "INVALID_ACTIVITY_PAGE", "Choose a valid activity page.");
+      }
+      const { preferCached, snapshot = null } = params;
+      if (snapshot !== null && (typeof snapshot !== "string" || !UUID.test(snapshot))) {
+        return fail(400, "INVALID_ACTIVITY_SNAPSHOT", "Reload brokerage activity.");
+      }
+      if (preferCached === true && (offset === 0 || snapshot !== null)) {
+        const cached = await deps.readActivityCache?.(userId, { accountId, startDate, endDate, offset, snapshot })
+          .catch(() => null);
+        if (cached) return { status: 200, body: cached };
+        if (snapshot !== null) return fail(409, "ACTIVITY_SNAPSHOT_CHANGED", "Broker activity changed. Reload from the first page.");
       }
       return withUser(userId, deps, async (user) => {
         const result = await call(deps, "GET", `/accounts/${accountId}/activities`, {

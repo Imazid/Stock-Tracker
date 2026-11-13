@@ -25,7 +25,7 @@ type Activity = {
   cashFlow: Omit<BrokerCashFlow, "snaptrade_id"> | null;
   foreignCashFlow?: ForeignCashFlow | null;
 };
-type Page = { activities: Activity[]; omitted: number; nextOffset: number | null };
+type Page = { activities: Activity[]; omitted: number; nextOffset: number | null; snapshot?: string; syncedAt?: string };
 
 function quantity(value: number | string, currency?: string | null) {
   return [new Intl.NumberFormat(undefined, { maximumFractionDigits: 12 }).format(Number(value)), currency].filter(Boolean).join(" ");
@@ -81,14 +81,14 @@ export function BrokerActivity({ start, end, imported, canInclude, onInclude }: 
     }
   }
 
-  async function loadPage(offset: number) {
+  async function loadPage(offset: number, preferCached = true) {
     if (!accountId || !start || end <= start || lookup) return;
     setBusy(true);
     setError("");
     if (!offset) { setConversions({}); setFxError(undefined); }
     try {
       const result = await service<Page>("brokerage", {
-        operation: "accountActivities", params: { accountId, startDate: start, endDate: end, offset },
+        operation: "accountActivities", params: { accountId, startDate: start, endDate: end, offset, preferCached, snapshot: offset ? page?.snapshot : undefined },
       });
       setPage((current) => {
         if (!offset || !current) return result;
@@ -123,6 +123,10 @@ export function BrokerActivity({ start, end, imported, canInclude, onInclude }: 
     {busy && <p role="status" className="text-xs text-text-2">Loading brokerage data…</p>}
     {error && <p role="alert" className="text-sm text-down">{error}</p>}
     {page && <div className="space-y-2">
+      {page.syncedAt && <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-text-2">Imported {new Date(page.syncedAt).toLocaleString()}</p>
+        <Button size="sm" disabled={busy || Boolean(lookup)} onClick={() => void loadPage(0, false)}>Fetch from broker</Button>
+      </div>}
       <p className="text-xs text-text-2">SnapTrade refreshes activity daily. For foreign cash, you can look up an ECB reference rate or enter the USD amount from your statement.</p>
       {page.omitted > 0 && <p role="status" className="text-xs text-warn">{page.omitted} records had missing or unsupported data. Check your statement for complete activity.</p>}
       {page.activities.length === 0 && <p className="text-sm text-text-2">No reported cash or corporate activity in this date range.</p>}

@@ -43,6 +43,8 @@ struct PortfolioBrokerActivity: View {
         var activities: [Activity]
         var omitted: Int
         let nextOffset: Int?
+        let snapshot: String?
+        let syncedAt: String?
     }
 
     private struct Registration: Decodable {
@@ -89,6 +91,13 @@ struct PortfolioBrokerActivity: View {
             if busy { ProgressView("Loading brokerage data") }
             if let error { Text(error).foregroundStyle(.red) }
             if let page {
+                if let stamp = page.syncedAt {
+                    let date = ISO8601DateFormatter().date(from: stamp)
+                        ?? (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(stamp))
+                    if let date { Text("Imported \(date.formatted())").font(.footnote) }
+                    Button("Fetch from broker") { Task { await loadPage(0, preferCached: false) } }
+                        .disabled(busy || lookup != nil)
+                }
                 if page.omitted > 0 {
                     Text("Some records had missing or unsupported data. Check your statement for complete activity.")
                         .font(.footnote)
@@ -187,7 +196,7 @@ struct PortfolioBrokerActivity: View {
         }
     }
 
-    private func loadPage(_ offset: Int) async {
+    private func loadPage(_ offset: Int, preferCached: Bool = true) async {
         guard !busy, lookup == nil, !accountId.isEmpty else { return }
         busy = true
         error = nil
@@ -197,15 +206,19 @@ struct PortfolioBrokerActivity: View {
             failedLookup = nil
         }
         do {
-            var result: Page = try await brokerage("accountActivities", params: [
-                "accountId": accountId, "startDate": start, "endDate": end, "offset": offset,
-            ])
+            var params: [String: Any] = [
+                "accountId": accountId, "startDate": start, "endDate": end, "offset": offset, "preferCached": preferCached,
+            ]
+            if offset > 0, let snapshot = page?.snapshot { params["snapshot"] = snapshot }
+            var result: Page = try await brokerage("accountActivities", params: params)
             if let prior = page, offset > 0 {
                 let updatedIds = Set(result.activities.map(\.id))
                 result.activities = prior.activities.filter { !updatedIds.contains($0.id) } + result.activities
                 result.omitted += prior.omitted
             }
             page = result
+        } catch let failure as SecureBackend.FunctionError where failure.code == "ACTIVITY_SNAPSHOT_CHANGED" {
+            self.error = "Broker activity changed. Reload from the first page."
         } catch {
             self.error = "Couldn’t load brokerage activity. Try again."
         }
