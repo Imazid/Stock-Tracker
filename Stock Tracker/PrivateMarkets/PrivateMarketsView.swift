@@ -367,13 +367,10 @@ private struct PrivateDiscoverySearchView: View {
     var body: some View {
         List {
             Section("Catalogue search") {
-                TextField("Ask about a company, stage or sector", text: $question, axis: .vertical)
+                TextField("Ask about a company, stage or sector", text: $question,
+                          prompt: Text("Find closed Australian healthcare rounds"), axis: .vertical)
                     .lineLimit(2...4)
                     .accessibilityIdentifier("private.discover.question")
-                Button("Australian healthcare startups currently raising for retail investors") {
-                    question = "Find Australian healthcare startups currently raising through retail-accessible platforms."
-                }
-                .font(.footnote)
                 Button("Search published opportunities", action: search)
                     .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || question.utf16.count > 600 || searchTask != nil)
                 if searchTask != nil { ProgressView("Checking published opportunities") }

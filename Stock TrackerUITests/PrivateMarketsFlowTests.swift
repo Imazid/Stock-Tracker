@@ -90,6 +90,68 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["private.allocation"].firstMatch.waitForExistence(timeout: 6))
     }
 
+    @MainActor
+    func testOwnershipExcerptCanBeReviewedAndLinked() async throws {
+        let host = "http://127.0.0.1:58531"
+        let api = "http://127.0.0.1:58521"
+        let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+        func post(_ url: String, _ fields: [String: String], token: String? = nil) async throws -> (Int, [String: Any]) {
+            var request = URLRequest(url: try XCTUnwrap(URL(string: url)), timeoutInterval: 20)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(key, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(token ?? key)", forHTTPHeaderField: "Authorization")
+            var body: [String: Any] = fields
+            if fields["action"] == "save_document" { body["authorized"] = true }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return ((response as? HTTPURLResponse)?.statusCode ?? 0,
+                    (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:])
+        }
+
+        let edge = host + "/functions/v1/private-markets"
+        let probe = try? await post(edge, ["action": "catalog"])
+        try XCTSkipUnless(probe?.0 == 200, "Start the disposable Private Markets test stack and function proxy.")
+        let email = "private-ui-\(UUID().uuidString.lowercased())@example.com"
+        let password = "Test-Private-Markets-2026!"
+        let account = try await post(api + "/auth/v1/signup", ["email": email, "password": password])
+        XCTAssertEqual(account.0, 200)
+        let token = try XCTUnwrap(account.1["access_token"] as? String)
+        let saved = try await post(edge, ["action": "save_document", "title": "Ownership statement fixture",
+                                          "excerpt": "The unit registry statement records 25 ordinary units and AUD 9500 of paid capital."], token: token)
+        XCTAssertEqual(saved.0, 201)
+
+        app.terminate()
+        app.launchArguments += ["-SupabaseURLOverride", host, "-SupabaseAnonKeyOverride", key,
+                                "-UITestSignIn", "\(email):\(password)"]
+        app.launch()
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let add = app.buttons["private.holding.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.tap()
+        let name = app.textFields["private.holding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Private evidence holding")
+        app.buttons["private.holding.save"].tap()
+        let holding = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(holding.waitForExistence(timeout: 8))
+        holding.tap()
+        let evidence = app.buttons["private.ownership.evidence"]
+        if !evidence.isHittable { app.swipeUp() }
+        XCTAssertTrue(evidence.waitForExistence(timeout: 8))
+        evidence.tap()
+        let statement = app.buttons["Ownership statement fixture"]
+        XCTAssertTrue(statement.waitForExistence(timeout: 8))
+        statement.tap()
+        let reviewed = app.switches["I checked the excerpt against this holding"]
+        XCTAssertTrue(reviewed.waitForExistence(timeout: 8))
+        reviewed.tap()
+        app.buttons["Save evidence review"].tap()
+        XCTAssertTrue(app.buttons["Open ownership excerpt"].waitForExistence(timeout: 8))
+    }
+
     private func openPrivateMarkets() {
         let tabs = app.tabBars.firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 12))

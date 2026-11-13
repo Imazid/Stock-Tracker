@@ -56,6 +56,7 @@ The product records capital calls, distributions, stale marks, share classes and
 ## Primary sources
 
 - [Stock Tracker Private Markets pull request](https://github.com/Imazid/Stock-Tracker/pull/7)
+- [Conversational discovery and ownership evidence pull request](https://github.com/Imazid/Stock-Tracker/pull/12)
 - [ASIC crowd-sourced funding](https://www.asic.gov.au/crowd-sourced-funding)
 - [ASIC Regulatory Guide 262](https://download.asic.gov.au/media/kdljjy4d/rg262-published-18-october-2018-20260421.pdf)
 - [ASIC licensing guidance for advice and dealing](https://www.asic.gov.au/regulatory-resources/financial-services/giving-financial-product-advice)

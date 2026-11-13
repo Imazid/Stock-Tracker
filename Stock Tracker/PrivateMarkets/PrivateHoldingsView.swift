@@ -316,6 +316,7 @@ struct PrivateHoldingDetail: View {
                         NavigationLink(holding.ownershipEvidenceID == nil ? "Link a Deal Room excerpt" : "Review linked ownership evidence") {
                             PrivateOwnershipEvidenceView(holding: holding, owner: owner)
                         }
+                        .accessibilityIdentifier("private.ownership.evidence")
                     }
                 }
                 if providerPosition?.canCalculatePerformance != false {
