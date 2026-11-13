@@ -493,7 +493,8 @@ struct AccountView: View {
             Task {
                 await syncManager.pullAndRefresh(
                     marketData: marketData,
-                    alertManager: alertManager
+                    alertManager: alertManager,
+                    force: true
                 )
             }
         } label: {

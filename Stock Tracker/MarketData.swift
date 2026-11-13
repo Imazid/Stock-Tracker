@@ -977,8 +977,8 @@ final class MarketData: ObservableObject {
 
     // MARK: - Portfolio Mutations
 
-    func addToPortfolio(asset: Asset, shares: Double, avgCost: Double, date: Date = Date()) {
-        upsertTrackedAsset(asset)
+    @discardableResult
+    func addToPortfolio(asset: Asset, shares: Double, avgCost: Double, date: Date = Date()) -> HoldingChange {
         let transaction = Transaction(
             date: date,
             shares: shares,
@@ -986,28 +986,32 @@ final class MarketData: ObservableObject {
             type: .buy
         )
 
-        if let index = portfolio.firstIndex(where: { $0.asset.symbol == asset.symbol }) {
+        let index = portfolio.firstIndex(where: { $0.asset.symbol == asset.symbol })
+        var holding: PortfolioHolding
+        if let index {
             // Merge into existing holding with weighted average cost
-            let existing = portfolio[index]
-            let totalCost = (existing.shares * existing.avgCost) + (shares * avgCost)
-            let totalShares = existing.shares + shares
-            portfolio[index].shares = totalShares
-            portfolio[index].avgCost = totalShares > 0 ? totalCost / totalShares : 0
-            portfolio[index].asset = asset
-            portfolio[index].transactions.append(transaction)
+            holding = portfolio[index]
+            let totalCost = (holding.shares * holding.avgCost) + (shares * avgCost)
+            holding.shares += shares
+            holding.avgCost = holding.shares > 0 ? totalCost / holding.shares : 0
+            holding.asset = asset
+            holding.transactions.append(transaction)
         } else {
             // New holding with initial transaction
-            portfolio.append(PortfolioHolding(
+            holding = PortfolioHolding(
                 asset: asset,
                 shares: shares,
                 avgCost: avgCost,
                 transactions: [transaction]
-            ))
+            )
         }
-
+        guard SyncManager.shared.queuePortfolioChange(holding, changed: [transaction.id]) else {
+            return .invalid("Couldn’t save the portfolio change on this device.")
+        }
+        upsertTrackedAsset(asset)
+        if let index { portfolio[index] = holding } else { portfolio.append(holding) }
         saveToDisk()
         updateWidgetData()
-        if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
         // Price it now, not on the next refresh cycle — until then a manually added
         // holding is valued at its cost and every total/chart is wrong.
         Task { await refreshQuote(for: asset) }
@@ -1016,6 +1020,7 @@ final class MarketData: ObservableObject {
         if portfolio.count == 1 {
             Task { await ReferralManager.shared.reportQualificationEvent(.firstHolding) }
         }
+        return .ok
     }
 
     // MARK: - Validated holdings API
@@ -1046,8 +1051,7 @@ final class MarketData: ObservableObject {
             return .limitReached(SubscriptionManager.shared.currentTier.maxPortfolioHoldings ?? portfolio.count)
         }
         let usd = costPerUnit * (FXRates.shared.toUSDFactor(from: costCurrency) ?? 1)
-        addToPortfolio(asset: asset, shares: shares, avgCost: usd, date: date)
-        return .ok
+        return addToPortfolio(asset: asset, shares: shares, avgCost: usd, date: date)
     }
 
     /// Records a buy or sell on an existing holding. A sell can't exceed what's
@@ -1071,21 +1075,28 @@ final class MarketData: ObservableObject {
         // known even when the list doesn't show how the shares were bought.
         let tx = Transaction(date: date, shares: shares, pricePerShare: usd, type: type, fees: feesUSD,
                              avgCostAtSale: type == .sell ? portfolio[i].avgCost : nil)
+        var holding = portfolio[i]
         switch type {
         case .buy:
             let total = held * portfolio[i].avgCost + shares * usd + feesUSD
-            portfolio[i].shares = held + shares
-            portfolio[i].avgCost = portfolio[i].shares > 0 ? total / portfolio[i].shares : 0
+            holding.shares = held + shares
+            holding.avgCost = total / holding.shares
         case .sell:
-            portfolio[i].shares = max(held - shares, 0)   // average cost is unchanged by a sale
+            holding.shares = max(held - shares, 0)
         }
-        portfolio[i].transactions.append(tx)
-        if portfolio[i].shares <= 1e-9 {
-            closePosition(portfolio[i])
+        holding.transactions.append(tx)
+        let closes = type == .sell && holding.shares <= 1e-9
+        if closes { holding.shares = 0 }
+        guard SyncManager.shared.queuePortfolioChange(holding, changed: [tx.id], archived: closes,
+                                                    closedAt: closes ? date : nil) else {
+            return .invalid("Couldn’t save the portfolio change on this device.")
+        }
+        if closes {
+            closePosition(holding)
         } else {
+            portfolio[i] = holding
             saveToDisk()
             updateWidgetData()
-            if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
         }
         return .ok
     }
@@ -1094,13 +1105,21 @@ final class MarketData: ObservableObject {
     @discardableResult
     func deleteTransaction(holdingID: UUID, transactionID: UUID) -> HoldingChange {
         guard let i = portfolio.firstIndex(where: { $0.id == holdingID }) else { return .invalid("That holding no longer exists.") }
+        guard let deleted = portfolio[i].transactions.first(where: { $0.id == transactionID }) else {
+            return .invalid("That transaction no longer exists.")
+        }
         let remaining = portfolio[i].transactions.filter { $0.id != transactionID }
         guard !remaining.isEmpty else { return .invalid("A holding needs at least one transaction — remove the holding instead.") }
         let rebuilt = Self.position(from: remaining)
         guard rebuilt.shares > 1e-9 else { return .invalid("Removing this would leave a negative position.") }
-        portfolio[i].transactions = remaining
-        portfolio[i].shares = rebuilt.shares
-        portfolio[i].avgCost = rebuilt.avgCost
+        var holding = portfolio[i]
+        holding.transactions = remaining
+        holding.shares = rebuilt.shares
+        holding.avgCost = rebuilt.avgCost
+        guard SyncManager.shared.queuePortfolioChange(holding, deleted: [deleted]) else {
+            return .invalid("Couldn’t save the portfolio change on this device.")
+        }
+        portfolio[i] = holding
         saveToDisk()
         updateWidgetData()
         return .ok
@@ -1126,13 +1145,28 @@ final class MarketData: ObservableObject {
             portfolioGroups[activePortfolioIndex].closedPositions.removeAll { $0.id == closed.id }
             portfolioGroups[activePortfolioIndex].closedPositions.insert(closed, at: 0)
         }
-        removeFromPortfolio(holding)
+        removeLocalHolding(holding)
     }
 
     /// Forgets a closed position — its realised profit leaves the totals.
     func removeClosedPosition(id: UUID) {
         guard portfolioGroups.indices.contains(activePortfolioIndex) else { return }
+        DataPersistenceManager.shared.hideSyncedClosedPosition(id)
         portfolioGroups[activePortfolioIndex].closedPositions.removeAll { $0.id == id }
+        saveToDisk()
+    }
+
+    func applySyncedClosedPositions(_ positions: [ClosedPosition], reset: Bool = false) {
+        guard portfolioGroups.indices.contains(activePortfolioIndex) else { return }
+        if reset {
+            for index in portfolioGroups.indices { portfolioGroups[index].closedPositions.removeAll() }
+        }
+        let known = Set(portfolioGroups.flatMap { $0.closedPositions.map(\.id) })
+        let hidden = DataPersistenceManager.shared.hiddenSyncedClosedPositions()
+        let incoming = positions.filter { !known.contains($0.id) && !hidden.contains($0.id) }
+        guard reset || !incoming.isEmpty else { return }
+        portfolioGroups[activePortfolioIndex].closedPositions.append(contentsOf: incoming)
+        portfolioGroups[activePortfolioIndex].closedPositions.sort { $0.closedAt > $1.closedAt }
         saveToDisk()
     }
 
@@ -1185,6 +1219,11 @@ final class MarketData: ObservableObject {
     }
 
     func removeFromPortfolio(_ holding: PortfolioHolding) {
+        guard SyncManager.shared.queuePortfolioChange(holding, archived: true) else { return }
+        removeLocalHolding(holding)
+    }
+
+    private func removeLocalHolding(_ holding: PortfolioHolding) {
         portfolio.removeAll { $0.id == holding.id }
         if portfolio.isEmpty {
             // Reset chart and history when all holdings removed
@@ -1197,18 +1236,17 @@ final class MarketData: ObservableObject {
         }
         saveToDisk()
         updateWidgetData()
-        if SyncManager.shared.isSignedIn {
-            Task { await SyncManager.shared.softDeleteHolding(id: holding.id) }
-        }
     }
 
     func updateHolding(_ holding: PortfolioHolding, shares: Double, avgCost: Double) {
         guard let index = portfolio.firstIndex(where: { $0.id == holding.id }) else { return }
-        portfolio[index].shares = shares
-        portfolio[index].avgCost = avgCost
+        var updated = portfolio[index]
+        updated.shares = shares
+        updated.avgCost = avgCost
+        guard SyncManager.shared.queuePortfolioChange(updated) else { return }
+        portfolio[index] = updated
         saveToDisk()
         updateWidgetData()
-        if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
     }
 
     // MARK: - Watchlist Mutations

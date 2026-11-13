@@ -74,16 +74,19 @@ final class KeychainManager {
     // MARK: - Data overloads (for larger payloads such as JSON-encoded models)
 
     func saveData(key: String, value: Data) -> Bool {
-        delete(key: key)
-
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
+            kSecAttrAccount as String: key
+        ]
+        let attributes: [String: Any] = [
             kSecValueData as String: value,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
 
-        let status = SecItemAdd(query as CFDictionary, nil)
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(query.merging(attributes) { _, value in value } as CFDictionary, nil)
+        }
         if status != errSecSuccess {
             AppLogger.persist.error("Keychain saveData failed for key \(key): \(status)")
         }

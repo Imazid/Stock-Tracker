@@ -223,7 +223,7 @@ struct PortfolioHolding: Identifiable, Codable {
 
 // MARK: - Transactions
 
-struct Transaction: Identifiable, Codable {
+struct Transaction: Identifiable, Codable, Equatable {
     let id: UUID
     let date: Date
     let shares: Double

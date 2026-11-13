@@ -112,6 +112,7 @@ struct RemoteHolding: Codable {
     let dateAdded: String
     let updatedAt: String
     let deletedAt: String?
+    let closedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -125,6 +126,7 @@ struct RemoteHolding: Codable {
         case dateAdded     = "date_added"
         case updatedAt     = "updated_at"
         case deletedAt     = "deleted_at"
+        case closedAt      = "closed_at"
     }
 
     var isDeleted: Bool { deletedAt != nil }
@@ -150,6 +152,14 @@ struct RemoteHolding: Codable {
         )
     }
 
+    func toClosedPosition(transactions: [Transaction]) -> ClosedPosition? {
+        guard let closedAt, let id = UUID(uuidString: id), !transactions.isEmpty else { return nil }
+        let holding = toDomain()
+        return ClosedPosition(id: id, asset: holding.asset, transactions: transactions,
+                              openedAt: transactions.map(\.date).min() ?? holding.dateAdded,
+                              closedAt: parseDate(closedAt))
+    }
+
     static func from(_ holding: PortfolioHolding, userId: UUID) -> HoldingUpsert {
         HoldingUpsert(
             id:             holding.id.uuidString,
@@ -165,7 +175,7 @@ struct RemoteHolding: Codable {
     }
 }
 
-struct HoldingUpsert: Encodable {
+nonisolated struct HoldingUpsert: Encodable, Sendable {
     let id: String
     let user_id: String
     let asset_symbol: String
@@ -229,7 +239,7 @@ struct RemoteTransaction: Codable {
             id:               tx.id.uuidString,
             user_id:          userId.uuidString,
             holding_id:       holdingId.uuidString,
-            transaction_date: iso8601Basic.string(from: tx.date),
+            transaction_date: iso8601Full.string(from: tx.date),
             shares:           tx.shares,
             price_per_share:  tx.pricePerShare,
             type:             tx.type.rawValue,
@@ -239,7 +249,7 @@ struct RemoteTransaction: Codable {
     }
 }
 
-struct TransactionUpsert: Encodable {
+nonisolated struct TransactionUpsert: Encodable, Sendable {
     let id: String
     let user_id: String
     let holding_id: String
@@ -249,6 +259,51 @@ struct TransactionUpsert: Encodable {
     let type: String
     let fees: Double
     let avg_cost_at_sale: Double?
+}
+
+struct PortfolioLedgerChange: Codable {
+    let revision: UUID
+    let holding: PortfolioHolding
+    let changed: Set<UUID>
+    let deleted: [Transaction]
+    let archivedAt: Date?
+    let closedAt: Date?
+
+    nonisolated struct Parameters: Encodable, Sendable {
+        let p_user_id: UUID
+        let p_holding: HoldingUpsert
+        let p_transactions: [TransactionUpsert]
+        let p_changed_ids: Set<UUID>
+        let p_deleted_ids: [UUID]
+        let p_archived_at: String?
+        let p_closed_at: String?
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(p_user_id, forKey: .p_user_id)
+            try container.encode(p_holding, forKey: .p_holding)
+            try container.encode(p_transactions, forKey: .p_transactions)
+            try container.encode(p_changed_ids, forKey: .p_changed_ids)
+            try container.encode(p_deleted_ids, forKey: .p_deleted_ids)
+            try container.encode(p_archived_at, forKey: .p_archived_at)
+            try container.encode(p_closed_at, forKey: .p_closed_at)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case p_user_id, p_holding, p_transactions, p_changed_ids, p_deleted_ids, p_archived_at, p_closed_at
+        }
+    }
+
+    func parameters(userId: UUID, existingArchive: String? = nil) -> Parameters {
+        let rows = Dictionary((holding.transactions + deleted).map { ($0.id, $0) },
+                              uniquingKeysWith: { _, latest in latest })
+        return Parameters(p_user_id: userId, p_holding: RemoteHolding.from(holding, userId: userId),
+                   p_transactions: rows.values.map {
+                       RemoteTransaction.from($0, holdingId: holding.id, userId: userId)
+                   }, p_changed_ids: changed, p_deleted_ids: deleted.map(\.id),
+                   p_archived_at: existingArchive ?? archivedAt.map { iso8601Full.string(from: $0) },
+                   p_closed_at: closedAt.map { iso8601Full.string(from: $0) })
+    }
 }
 
 // MARK: - RemotePriceAlert
