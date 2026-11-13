@@ -41,6 +41,7 @@ final class TradingRouter: ObservableObject {
 
     /// Set to move to a tab; the root clears it once it has switched.
     @Published var requestedTab: MainTab?
+    @Published var requestedPrivateDestination: PrivateDestination?
     @Published var marketsSection: MarketsSection = .watchlist
     @Published var ticket: Ticket?
     @Published var newAgent: NewAgent?

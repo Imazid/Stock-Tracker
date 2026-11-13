@@ -55,6 +55,7 @@ struct StockCryptoTrackerApp: App {
         if Self.isUITestFreshInstall {
             if let id = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: id) }
             DataPersistenceManager.shared.clearAllData()
+            PrivateMarketsStore.clearTestRecords()
             // Including the Supabase SDK's saved session (its own keychain item), or a
             // previous test's account is silently restored and onboarding skips sign-up.
             for itemClass in [kSecClassGenericPassword, kSecClassInternetPassword] {
@@ -601,6 +602,16 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler handler: @escaping () -> Void
     ) {
         let info = response.notification.request.content.userInfo
+        if info["privateMarkets"] as? Bool == true {
+            let capitalCall = info["capitalCalls"] as? Bool == true
+            Task { @MainActor in
+                let router = TradingRouter.shared
+                router.requestedPrivateDestination = capitalCall ? .capital : .updates
+                router.requestedTab = .privateMarkets
+            }
+            handler()
+            return
+        }
         // Trading notices open the proposal that needs a decision, or the Activity tab.
         if let route = info["tradingRoute"] as? String {
             let proposalID = (info["proposalID"] as? String).flatMap(UUID.init)

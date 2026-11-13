@@ -41,22 +41,29 @@ enum SecureBackend {
 
     /// POSTs `body` to `functions/v1/<function>` and returns the response body on 2xx.
     /// Non-2xx responses become `FunctionError` with the server's machine-readable code.
-    static func invoke(_ function: String, body: [String: Any]) async throws -> Data {
+    static func invoke(_ function: String, body: [String: Any], requiresSession: Bool = true,
+                       expectedUserID: UUID? = nil) async throws -> Data {
         guard isConfigured, let base = URL(string: SecretsConfig.supabaseURL) else {
             throw FunctionError(status: 503, code: "BACKEND_NOT_CONFIGURED",
                                 message: "This feature needs the Stock Tracker server, which isn't configured in this build.")
         }
-        let accessToken: String
-        do {
-            accessToken = try await SupabaseManager.auth.session.accessToken
-        } catch {
-            throw FunctionError(status: 401, code: "SIGN_IN_REQUIRED",
-                                message: "Sign in to your Stock Tracker account to use this feature.")
+        var accessToken: String?
+        if requiresSession {
+            do {
+                let session = try await SupabaseManager.auth.session
+                if let expectedUserID, session.user.id != expectedUserID { throw CancellationError() }
+                accessToken = session.accessToken
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw FunctionError(status: 401, code: "SIGN_IN_REQUIRED",
+                                    message: "Sign in to your Stock Tracker account to use this feature.")
+            }
         }
 
         var request = URLRequest(url: base.appendingPathComponent("functions/v1/\(function)"))
         request.httpMethod = "POST"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        if let accessToken { request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization") }
         request.setValue(SecretsConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

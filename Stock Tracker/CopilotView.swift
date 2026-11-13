@@ -19,6 +19,7 @@ struct CopilotView: View {
     @EnvironmentObject private var marketData: MarketData
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var insightService: AIInsightService
+    @EnvironmentObject private var cloudAuth: SupabaseAuthManager
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -26,6 +27,7 @@ struct CopilotView: View {
                       canUseModel: { insightService.canQuery(tier: subscriptionManager.currentTier) },
                       didUseModel: { insightService.incrementQueryCount() },
                       onClose: { dismiss() })
+        .id(cloudAuth.userId)
     }
 }
 
@@ -36,6 +38,8 @@ private struct CopilotScreen: View {
     let onClose: () -> Void
 
     @EnvironmentObject private var trading: TradingStore
+    @EnvironmentObject private var cloudAuth: SupabaseAuthManager
+    @EnvironmentObject private var privateMarkets: PrivateMarketsStore
     @Environment(\.theme) private var theme
     @State private var input = ""
     @State private var draft: DraftSheet?
@@ -291,6 +295,17 @@ private struct CopilotScreen: View {
                         }
                     }
                 }
+            }
+
+        case .unifiedAllocation:
+            VStack(alignment: .leading) {
+                UnifiedPrivateAllocation()
+                if privateMarkets.loadingProviderHoldings { ProgressView("Checking provider records") }
+                if let error = privateMarkets.providerError { Text(error).font(.footnote).foregroundStyle(.secondary) }
+            }
+            .privatePanel()
+            .task(id: cloudAuth.userId) {
+                if let owner = cloudAuth.userId { await privateMarkets.refreshProviderHoldings(for: owner) }
             }
 
         case .pauseAll:

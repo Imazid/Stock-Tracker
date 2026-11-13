@@ -6,12 +6,12 @@
 import SwiftUI
 import UIKit
 
-/// The five places in the app, plus the system search tab. Labels are always shown:
-/// "Agents" is a new idea and no icon explains it without the word.
+/// Primary destinations. Search is hosted in Markets.
 enum MainTab: String, CaseIterable, Hashable {
     case home = "Home"
     case markets = "Markets"
     case portfolio = "Portfolio"
+    case privateMarkets = "Private Markets"
     case agents = "Agents"
     case activity = "Activity"
     case search = "Search"
@@ -21,6 +21,7 @@ enum MainTab: String, CaseIterable, Hashable {
         case .home:         return "house"
         case .markets:      return "chart.line.uptrend.xyaxis"
         case .portfolio:    return "briefcase"
+        case .privateMarkets: return "building.2"
         case .agents:       return "gearshape.2"
         case .activity:     return "list.bullet.rectangle"
         case .search:       return "magnifyingglass"
@@ -32,6 +33,7 @@ enum MainTab: String, CaseIterable, Hashable {
         case .home: return "Home"
         case .markets: return "Markets"
         case .portfolio: return "Portfolio"
+        case .privateMarkets: return "Private Markets"
         case .agents: return "Agents"
         case .activity: return "Activity"
         case .search: return "Search"
@@ -59,6 +61,8 @@ struct ContentView: View {
     @EnvironmentObject var subscriptionManager: SubscriptionManager
     @EnvironmentObject var trading: TradingStore
     @EnvironmentObject var router: TradingRouter
+    @EnvironmentObject private var cloudAuth: SupabaseAuthManager
+    @StateObject private var privateMarkets = PrivateMarketsStore.shared
     @Environment(\.colorScheme) var colorScheme
 
     /// Binding allows the parent (StockCryptoTrackerApp) to drive tab selection from widget deep links.
@@ -82,6 +86,10 @@ struct ContentView: View {
                 PortfolioView()
             }
 
+            Tab("Private Markets", systemImage: MainTab.privateMarkets.icon, value: MainTab.privateMarkets) {
+                PrivateMarketsView()
+            }
+
             Tab("Agents", systemImage: MainTab.agents.icon, value: MainTab.agents) {
                 AgentsTabView()
             }
@@ -92,7 +100,7 @@ struct ContentView: View {
                 ActivityTabView()
             }
         }
-        // Search lives in Markets (a sixth tab would push Activity into a "More" menu).
+        .tabViewStyle(.sidebarAdaptable)
         .onChange(of: selectedTab) { _, tab in
             if tab == .search {
                 router.marketsSection = .search
@@ -100,8 +108,10 @@ struct ContentView: View {
             }
         }
         .tint(DS.accent)
+        .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
         .modifier(TradingRootSheets())
-        .onChange(of: router.requestedTab) { _, tab in
+        .environmentObject(privateMarkets)
+        .onChange(of: router.requestedTab, initial: true) { _, tab in
             if let tab {
                 selectedTab = tab
                 router.requestedTab = nil
