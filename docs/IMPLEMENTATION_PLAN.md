@@ -124,12 +124,9 @@ that applies with or without the practice migration.
 
 ## 7. Known gaps and follow-ups (found while integrating, 2026-11-13)
 
-- **Engine port lag.** Commit `b0d2f19` changed the Swift core (exchange calendars, lots, transaction
-  taxes); 6 parity tests in `parity.test.ts` / `engine.test.ts` fail on that commit by itself until
-  the TypeScript port follows. Owned by the practice-trading effort.
-- **Studio backtester vs Swift taxes.** `Backtester.swift` now adds UK/FR/HK/KR/IN transaction taxes
-  via `PaperBroker.tax`; the TS port (`_shared/studio/backtester.ts`) predates that and has no tax
-  until the TS `PaperBroker` gains `tax`/`taxBps`. US and crypto backtests are unaffected.
+- **Engine port lag — resolved.** The TS port caught up with core `b0d2f19` (calendars, lots,
+  transaction taxes) in the practice effort's `e1039ec`; parity tests pass again, and the studio
+  backtester now charges the same transaction taxes as `Backtester.swift`.
 - **Two decimal helpers** (`_shared/brokers/decimal.ts`, `_shared/oms/decimal.ts`) and **two HTTP/auth
   helpers** (`_shared/server`, `_shared/oms/http.ts`) were written in parallel; fold each pair into one.
 - **"Today" on the provider path** is the trailing 24 hours (conservative), not the exchange day.

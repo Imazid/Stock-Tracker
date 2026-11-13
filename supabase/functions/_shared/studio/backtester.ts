@@ -1,4 +1,4 @@
-// Port of TradingCore/Backtester.swift. Local additions: config initialiser helpers,
+// Port of TradingCore/Backtester.swift (incl. the transaction taxes from core b0d2f19). Local additions: config initialiser helpers,
 // BacktestError, and deterministic UUID-shaped trade IDs in place of Swift's UUID().
 // No clock, randomness, I/O, or runtime-specific APIs are used here.
 
@@ -222,9 +222,12 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
   let fees = 0;
   const slip = config.slippageBps / 10_000;
 
-  const fee = (instrument: Instrument, notional: number): number => instrument.assetClass === "crypto"
-    ? Rounding.money(notional * config.cryptoFeeBps / 10_000)
-    : Rounding.money(config.equityFeePerOrder + notional * config.equityFeeBps / 10_000);
+  const fee = (instrument: Instrument, side: OrderSide, notional: number): number => {
+    const commission = instrument.assetClass === "crypto"
+      ? Rounding.money(notional * config.cryptoFeeBps / 10_000)
+      : Rounding.money(config.equityFeePerOrder + notional * config.equityFeeBps / 10_000);
+    return Rounding.money(commission + PaperBroker.tax(instrument, side, notional));
+  };
   const equity = (): number => cash + Array.from(holdings).reduce(
     (sum, [id, held]) => sum + held.quantity * (lastClose.get(id) ?? held.entryPrice), 0,
   );
@@ -252,13 +255,14 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
       if (order.side === "buy") {
         const price = open * (1 + slip);
         let notional = Math.min(order.notional ?? 0, config.maxOrderNotional);
-        const feeRate = instrument.assetClass === "crypto" ? config.cryptoFeeBps / 10_000 : config.equityFeeBps / 10_000;
+        const feeRate = (instrument.assetClass === "crypto" ? config.cryptoFeeBps : config.equityFeeBps) / 10_000
+          + PaperBroker.taxBps(instrument, "buy") / 10_000;
         const flat = instrument.assetClass === "crypto" ? 0 : config.equityFeePerOrder;
         notional = Math.min(notional, Math.max((cash - flat) / (1 + feeRate), 0));
         const quantity = Rounding.floor(notional / price, rules.quantityIncrement);
         const gross = Rounding.money(quantity * price);
         if (!(quantity >= rules.minQuantity && gross >= rules.minNotional)) continue;
-        const cost = fee(instrument, gross);
+        const cost = fee(instrument, "buy", gross);
         cash = Rounding.money(cash - gross - cost);
         fees += cost;
         const held = holdings.get(id);
@@ -278,7 +282,7 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
         if (!(quantity > 0)) continue;
         const closing = held.quantity - quantity <= 1e-9;
         const gross = Rounding.money(quantity * price);
-        const cost = fee(instrument, gross);
+        const cost = fee(instrument, "sell", gross);
         const costRemoved = closing ? held.costBasis : Rounding.money(held.costBasis / held.quantity * quantity);
         cash = Rounding.money(cash + gross - cost);
         fees += cost;
@@ -403,7 +407,7 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
   const assumptions = [
     `Signals use completed ${barName(spec.timeframe)} bars only. An order decided on one bar's close trades at the next bar's open.`,
     `Every fill gives up ${cFixed(config.slippageBps, 0)} bps of price as slippage.`,
-    `Fees: equities ${NumberText.money(config.equityFeePerOrder)} per order plus ${cFixed(config.equityFeeBps, 0)} bps; crypto ${cFixed(config.cryptoFeeBps, 0)} bps.`,
+    `Fees: equities ${NumberText.money(config.equityFeePerOrder)} per order plus ${cFixed(config.equityFeeBps, 0)} bps; crypto ${cFixed(config.cryptoFeeBps, 0)} bps. Transaction taxes (UK, France, Hong Kong, Korea, India) are included.`,
     "Orders are assumed to fill in full at the open. Real orders can fill at worse prices, in parts, or not at all.",
     "Stops are checked on bar closes, not inside the bar, so a real stop could trigger earlier or later.",
     spec.universe.some((i) => i.assetClass !== "crypto")

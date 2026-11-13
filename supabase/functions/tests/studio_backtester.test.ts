@@ -6,7 +6,7 @@ import {
   backtestConfigForAgent, type BacktestConfig, BacktestError, Backtester, type BacktestTrade, makeBacktestConfig,
 } from "../_shared/studio/mod.ts";
 import { defaultPaperConfig } from "../_shared/trading/broker.ts";
-import { type BarSeries, instrumentID, marketProvenance, syntheticProvenance, usETF } from "../_shared/trading/market.ts";
+import { type BarSeries, instrumentID, makeInstrument, marketProvenance, syntheticProvenance, usETF } from "../_shared/trading/market.ts";
 import * as Rounding from "../_shared/trading/rounding.ts";
 import { makeDraft } from "../_shared/trading/state.ts";
 import type { StrategySpec } from "../_shared/trading/strategy.ts";
@@ -83,6 +83,21 @@ Deno.test("fees and slippage only ever cost", () => {
   assert(costly.overall.feesPaid > 0);
   assert(costly.overall.endEquity < costless.overall.endEquity);
   assertEquals(costly.trades.length, costless.trades.length);
+});
+
+Deno.test("transaction taxes are charged where the exchange levies them (core b0d2f19)", () => {
+  // Same prices, no commission or slippage: a US listing pays nothing, a London one pays 0.5%
+  // UK stamp duty on every buy and nothing on sells.
+  const free = { ...config, slippageBps: 0, equityFeePerOrder: 0, equityFeeBps: 0 };
+  const vod = makeInstrument("VOD", "equity", "lse", "Vodafone", "GBP");
+  const days = Fx.usTradingDays(240);
+  const us = run(Fx.aboveAverageSpec([Fx.aapl]), [Fx.series(Fx.aapl, wave(), { days })], undefined, free);
+  const london = run(Fx.aboveAverageSpec([vod]), [Fx.series(vod, wave(), { days })], undefined, free);
+  assertEquals(us.overall.feesPaid, 0);
+  assert(london.trades.length > 0);
+  const buys = london.trades.reduce((sum, t) => sum + Rounding.money(t.quantity * t.entryPrice), 0);
+  assertAlmostEquals(london.overall.feesPaid, buys * 0.005, london.trades.length * 0.01 + 1e-9);
+  assert(london.assumptions.some((a) => a.includes("Transaction taxes")));
 });
 
 Deno.test("metrics on a known curve", () => {
