@@ -17,6 +17,7 @@ const nextConfig: NextConfig = {
   },
   outputFileTracingRoot: repoRoot,
   poweredByHeader: false,
+  devIndicators: false,
   async headers() {
     return [
       {

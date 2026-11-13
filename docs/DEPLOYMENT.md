@@ -12,8 +12,8 @@ The provisioning steps below apply when setting up a separate environment.
 | `trading-api`, `agent-scheduler` | Supabase Edge Functions (Deno 2) | practice trading |
 | `broker-connections`, `broker-orders` | Supabase Edge Functions | provider connections and orders |
 | `market-data-proxy`, `snaptrade-proxy`, `ai-proxy` | Supabase Edge Functions | signed-in iOS data, broker aggregation and model access |
-| `market-workspace` | Supabase Edge Functions | Workspace market data, fundamentals and shared backtesting |
-| Web app | Any Node host for Next.js (Vercel fits) | `web/` |
+| `market-workspace` | Supabase Edge Functions | workspace market data, fundamentals and shared backtesting |
+| Web app | Vercel (Sydney functions) | `web/` |
 
 ## 1. Create the backend (one time)
 
@@ -67,7 +67,8 @@ On Vercel, use `web/` as the project root and include its shared Supabase source
 the repository. Run `vercel deploy --prod` from the repository root. The Stock Tracker release
 project uses Vercel Authentication on every deployment. Keep production and previews private
 while using the existing market-data account. The Stock Tracker sign-in separately controls
-access to each person's portfolios, watchlist and paper orders.
+access to each person's portfolios, watchlist and paper orders. Keep `ALPACA_*`,
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` server-side.
 
 Set `WORKSPACE_OVERVIEW_SECRET` to the same randomly generated value in Vercel and the Supabase
 function secrets. Set `FINNHUB_API_KEY` in Supabase for US fundamentals and news. Set

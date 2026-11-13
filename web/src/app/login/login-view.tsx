@@ -17,7 +17,7 @@ export function LoginView() {
   const router = useRouter();
   const params = useSearchParams();
   const next = safeReturnPath(params.get("next"));
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(params.get("mode") === "signup" ? "signup" : "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
