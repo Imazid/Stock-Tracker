@@ -205,11 +205,11 @@ Deno.test("the server's code can't place a real order or ask a model", async () 
   // Every address the code can call.
   const hosts = new Set<string>();
   for (const file of files) for (const match of code(file.text).matchAll(/https?:\/\/([a-zA-Z0-9.-]+)/g)) hosts.add(match[1]);
-  assertEquals([...hosts].sort(), ["api.coingecko.com", "data.alpaca.markets"], "market data (read-only) and nothing else");
+  assertEquals([...hosts].sort(), ["api.coingecko.com", "data.alpaca.markets", "query1.finance.yahoo.com"], "market data (read-only) and nothing else");
 
-  // Network calls are made in three places only: the two market-data clients and the sign-in check.
+  // Network calls are made in four places only: the three market-data clients and the sign-in check.
   const callers = files.filter((file) => /\bfetch\s*\)?\s*\(|\bfetch\)\(/.test(code(file.text)) || /\?\? fetch\b/.test(code(file.text))).map((file) => file.path).sort();
-  assertEquals(callers, ["_shared/market/alpaca.ts", "_shared/market/coingecko.ts", "_shared/server/auth.ts"]);
+  assertEquals(callers, ["_shared/market/alpaca.ts", "_shared/market/coingecko.ts", "_shared/market/yahoo.ts", "_shared/server/auth.ts"]);
 
   for (const file of files) {
     const text = code(file.text);
@@ -230,7 +230,7 @@ Deno.test("the server's code can't place a real order or ask a model", async () 
   }
 
   // The only non-GET request the market-data clients could make would be a trading call: there is none.
-  for (const path of ["_shared/market/alpaca.ts", "_shared/market/coingecko.ts"]) {
+  for (const path of ["_shared/market/alpaca.ts", "_shared/market/coingecko.ts", "_shared/market/yahoo.ts"]) {
     const text = code(files.find((file) => file.path === path)!.text);
     assert(!/method:\s*["'`](POST|PUT|PATCH|DELETE)/i.test(text), `${path} sends something other than a GET`);
   }
