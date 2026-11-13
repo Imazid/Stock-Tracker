@@ -176,6 +176,49 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertFalse(monitor.isEnabled)
     }
 
+    @MainActor
+    func testSignedInMonitoringRequiresSeparateDigestConsent() async throws {
+        let authHost = "http://127.0.0.1:58521"
+        let host = "http://127.0.0.1:58531"
+        let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+        let email = "private-monitor-ui-\(UUID().uuidString.lowercased())@example.com"
+        let password = "Test-Private-Markets-2026!"
+        var health = URLRequest(url: try XCTUnwrap(URL(string: authHost + "/auth/v1/health")), timeoutInterval: 5)
+        health.setValue(key, forHTTPHeaderField: "apikey")
+        let response = try? await URLSession.shared.data(for: health).1 as? HTTPURLResponse
+        try XCTSkipUnless(response?.statusCode == 200, "Start the disposable Private Markets test stack and function proxy.")
+        var signup = URLRequest(url: try XCTUnwrap(URL(string: authHost + "/auth/v1/signup")), timeoutInterval: 10)
+        signup.httpMethod = "POST"
+        signup.setValue(key, forHTTPHeaderField: "apikey")
+        signup.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        signup.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "password": password])
+        let (_, signUpResponse) = try await URLSession.shared.data(for: signup)
+        XCTAssertEqual((signUpResponse as? HTTPURLResponse)?.statusCode, 200)
+
+        app.terminate()
+        app.launchArguments += ["-SupabaseURLOverride", host, "-SupabaseAnonKeyOverride", key,
+                                "-UITestSignIn", "\(email):\(password)"]
+        app.launch()
+        openPrivateMarkets()
+        app.buttons["private.companyUpdates"].tap()
+        let monitor = app.switches["private.monitor.enable"]
+        XCTAssertTrue(monitor.waitForExistence(timeout: 10))
+        XCTAssertTrue(monitor.isEnabled, app.debugDescription)
+        let monitorControl = monitor.switches.firstMatch
+        if monitorControl.exists { monitorControl.tap() } else { monitor.tap() }
+
+        let digest = app.switches["private.monitor.digest"]
+        XCTAssertTrue(digest.waitForExistence(timeout: 20), app.debugDescription)
+        let digestControl = digest.switches.firstMatch
+        let toggle = digestControl.exists ? digestControl : digest
+        XCTAssertTrue(toggle.wait(for: \.isEnabled, toEqual: true, timeout: 20), app.debugDescription)
+        XCTAssertEqual(toggle.value as? String, "0")
+        toggle.tap()
+        let ready = app.staticTexts["A summary appears after the next scheduled run with new announcements."]
+        if !ready.isHittable { app.swipeUp() }
+        XCTAssertTrue(ready.waitForExistence(timeout: 20), app.debugDescription)
+    }
+
     private func openPrivateMarkets() {
         let tabs = app.tabBars.firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 12))
