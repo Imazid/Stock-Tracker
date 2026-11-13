@@ -97,7 +97,7 @@ export function AssistantChat({ compact = false }: { compact?: boolean }) {
       <div className={cn("min-h-0 flex-1 space-y-4 overflow-y-auto", compact ? "p-4" : "p-5")} aria-live="polite">
         {unavailable ? (
           <Notice tone="warn" title="The assistant isn't switched on for this site">
-            The server needs an <code className="rounded bg-surface px-1">ANTHROPIC_API_KEY</code>{status.data?.accounts ? "" : " and accounts (Supabase) configured"}. Nothing here answers until then.
+            This site needs a configured AI provider{status.data?.accounts ? "" : " and sign-in"} before you can send messages.
           </Notice>
         ) : null}
         {turns.length === 0 ? (

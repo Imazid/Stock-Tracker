@@ -70,11 +70,13 @@ struct AIInsightCard: View {
                     if isLocked {
                         lockedContent(theme: theme)
                     } else if !includePortfolioContext {
-                        Toggle("Share portfolio summary with AI", isOn: $includePortfolioContext)
-                            .font(.subheadline)
-                        Text("Enables insights using your tracked assets and relevant portfolio data.")
-                            .font(.caption)
-                            .foregroundStyle(theme.secondaryText)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle("Share portfolio summary with AI", isOn: $includePortfolioContext)
+                                .font(.subheadline)
+                            Text("Enables insights using your tracked assets and relevant portfolio data.")
+                                .font(.caption)
+                                .foregroundStyle(theme.secondaryText)
+                        }
                     } else if isLoading {
                         skeletonContent
                     } else if let text = insightText, !text.isEmpty {

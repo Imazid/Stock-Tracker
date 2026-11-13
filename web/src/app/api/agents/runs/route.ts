@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabaseConfigured } from "@/lib/env";
 import { serverSupabase } from "@/lib/supabase/server";
 import { type AgentEvent, type ChatTurn, runTurn } from "@/server/agent/run";
+import { runOpenAITurn } from "@/server/agent/openai";
 import { jsonError, rateLimited } from "@/server/http/respond";
 
 export const runtime = "nodejs";
@@ -32,8 +33,10 @@ function decodeHistory(body: unknown): ChatTurn[] {
 export async function POST(request: Request) {
   const limited = rateLimited(request, 12);
   if (limited) return limited;
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    return jsonError(503, "feature_disabled", "The assistant isn't configured on this server (ANTHROPIC_API_KEY is not set).");
+  const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  const openAIKey = process.env.OPENAI_API_KEY;
+  if (!anthropicConfigured && !openAIKey) {
+    return jsonError(503, "feature_disabled", "The assistant is unavailable on this site.");
   }
   const supabase = await serverSupabase();
   let signedIn = false;
@@ -68,7 +71,10 @@ export async function POST(request: Request) {
         }
       };
       try {
-        await runTurn(history, { supabase: shareAccountContext ? supabase ?? undefined : undefined, signedIn: shareAccountContext && signedIn, now: Date.now() }, emit, abort.signal);
+        const context = { supabase: shareAccountContext ? supabase ?? undefined : undefined,
+          signedIn: shareAccountContext && signedIn, now: Date.now() };
+        if (anthropicConfigured) await runTurn(history, context, emit, abort.signal);
+        else if (openAIKey) await runOpenAITurn(openAIKey, history, context, emit, abort.signal);
       } catch (error) {
         if (error instanceof Anthropic.RateLimitError) emit({ type: "error", code: "rate_limited", message: "The assistant is busy. Try again in a minute." });
         else if (error instanceof Anthropic.AuthenticationError) emit({ type: "error", code: "feature_disabled", message: "The assistant's API key was refused." });
