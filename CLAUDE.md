@@ -59,7 +59,7 @@ Security: `Config/Secrets.plist` is copied into the app bundle, so every key shi
 
 ## Data honesty rules
 - Fresh installs start with an **empty** portfolio and watchlist — never mock holdings (`MarketData.loadInitialData`). No placeholder news either.
-- Theme defaults to **Dark** for new installs (owner, 2026-11-13: "keep the aesthetic black", after Revolut); System and Light stay in Settings — still check light AND dark. The iOS 27.0 simulator ignores appearance changes, so `DarkModeTests.testSystemAppearanceFollowsTheDevice` needs an iOS 26 sim.
+- Theme defaults to **Dark** for new installs (owner, 2026-11-13: "keep the aesthetic black", after Revolut); System and Light stay in Settings — still check light AND dark. A simulator's appearance can get stuck after many `simctl ui appearance` toggles (Apple's Settings stays light too): reboot it before blaming `DarkModeTests.testSystemAppearanceFollowsTheDevice`.
 - Unknown numbers are `0`/`nil` and render as "—" (`detailedStock(from:)`, `QuickStatsSection`, 52-week bar). Never synthesise market cap/volume/ranges — they're shown to users and fed to AI analysis.
 - Permission prompts are contextual: notifications in onboarding or on the first alert (`PriceAlertManager.addAlert`), ATT only after onboarding.
 

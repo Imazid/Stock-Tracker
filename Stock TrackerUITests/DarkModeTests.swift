@@ -36,8 +36,8 @@ final class DarkModeTests: XCTestCase {
 
     /// With System chosen, the theme the views read follows the device — including a live
     /// switch — or a dark device gets the light palette with white text.
-    /// Note: the iOS 27.0 simulator ignores appearance changes (simctl and XCUIDevice both;
-    /// Apple's Settings app stays light), so run this on an iOS 26 simulator.
+    /// If it fails with a light screen on a dark device, check the simulator first: its
+    /// appearance can get stuck (Apple's Settings app stays light too). Reboot it.
     func testSystemAppearanceFollowsTheDevice() {
         XCUIDevice.shared.appearance = .dark
         app.launchArguments = ["-UITestFreshInstall", "-app_theme_mode", "System"]
