@@ -28,6 +28,7 @@ export function Research({ asset, journal, enabled }: { asset: Instrument; journ
   const [chat,setChat] = useState<Chat[]>([]);
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState("");
+  const [aiConsent, setAiConsent] = useState(false);
   const [portfolioContext,setPortfolioContext] = useState(false);
   const [sourceError,setSourceError] = useState("");
 
@@ -49,7 +50,7 @@ export function Research({ asset, journal, enabled }: { asset: Instrument; journ
   const source = latest ? `${history!.provenance.source} · ${dateText(latest.time,true)}` : "";
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!enabled || busy || !question.trim()) return;
+    if (!enabled || !aiConsent || busy || !question.trim()) return;
     setBusy(true); setError("");
     const next: Chat[] = [...chat, {role:"user",content:question.trim()}];
     try {
@@ -60,7 +61,7 @@ export function Research({ asset, journal, enabled }: { asset: Instrument; journ
         portfolioContext ? `User opted in to share these tracked holding quantities and USD average costs: ${JSON.stringify(journal.holdings.slice(0, 25).map(row => ({ symbol:row.asset_symbol, quantity:row.shares, averageCost:row.avg_cost })))}` : "",
         "Give factual educational analysis. Ask for missing facts. Do not recommend a specific trade or invent external source links.",
       ].filter(Boolean).join("\n");
-      const result = await service<{text:string}>("research",{ purpose:"chat", messages:[{role:"system",content:context}, ...next.slice(-12)] });
+      const result = await service<{text:string}>("research",{ purpose:"chat", consent: 1, messages:[{role:"system",content:context}, ...next.slice(-12)] });
       setChat([...next,{role:"assistant",content:result.text}]); setQuestion("");
     } catch (failure) { setError(message(failure)); } finally { setBusy(false); }
   }
@@ -87,9 +88,13 @@ export function Research({ asset, journal, enabled }: { asset: Instrument; journ
       {enabled ? <form className="form panel-form" onSubmit={submit}>
         {chat.map((entry,index) => <div className="chat-message" key={index}><strong>{entry.role === "user" ? "You" : "Stock Tracker"}</strong><p>{entry.content}</p></div>)}
         <label>Question<textarea maxLength={2400} rows={3} placeholder={`Summarise the recent price action for ${asset.symbol}`} value={question} onChange={e => setQuestion(e.target.value)} required/></label>
-        <label className="checkbox"><input type="checkbox" checked={portfolioContext} onChange={e => setPortfolioContext(e.target.checked)}/> Include holding quantities and average costs</label>
+        <label className="checkbox"><input type="checkbox" checked={aiConsent} onChange={e => {
+          setAiConsent(e.target.checked);
+          if (!e.target.checked) setPortfolioContext(false);
+        }}/> Allow the AI provider to receive my question and the selected asset’s research data</label>
+        <label className="checkbox"><input type="checkbox" checked={portfolioContext} disabled={!aiConsent} onChange={e => setPortfolioContext(e.target.checked)}/> Include holding quantities and average costs</label>
         {error && <p className="error" role="alert">{error}</p>}
-        <button className="button primary" disabled={busy}>{busy ? "Researching…" : "Ask Stock Tracker"}<ArrowUpRight size={16}/></button>
+        <button className="button primary" disabled={busy || !aiConsent}>{busy ? "Researching…" : "Ask Stock Tracker"}<ArrowUpRight size={16}/></button>
       </form> : <Empty icon={<Sparkles size={20}/>} title="AI provider awaiting configuration" text="Market prices and research sources are available."/>}
     </section>
   </div>
