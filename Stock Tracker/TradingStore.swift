@@ -108,10 +108,10 @@ final class TradingStore: ObservableObject {
         if fixture {
             data = FixtureMarketData()
         } else {
-            data = LiveMarketData(alpacaKey: SecretsConfig.alpacaAPIKey, alpacaSecret: SecretsConfig.alpacaSecretKey)
+            data = LiveMarketData()
         }
         #else
-        data = LiveMarketData(alpacaKey: SecretsConfig.alpacaAPIKey, alpacaSecret: SecretsConfig.alpacaSecretKey)
+        data = LiveMarketData()
         #endif
 
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in

@@ -40,6 +40,24 @@ jobs:
       - run: swift test
         working-directory: TradingCore
 
+  web:
+    name: Web app (lint, typecheck, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run build
+
   ios:
     name: iOS app (Release build + UI test bundle)
     # The app targets iOS 26.1, which needs an Xcode 26+ toolchain.

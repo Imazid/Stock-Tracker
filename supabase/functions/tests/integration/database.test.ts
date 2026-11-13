@@ -309,9 +309,9 @@ dbTest("live rows and live flags are refused for every role", async (sql) => {
       // A read-only connection can be recorded; one that could trade real money cannot.
       await tx`insert into public.broker_connections ${tx({ user_id: person.id, adapter_id: "snaptrade", name: "CommSec", environment: "live", permissions: ["read"] })}`;
       assertMatch(await refused(tx, "a live connection with trade permission", (sp) => sp`insert into public.broker_connections ${sp({ user_id: person.id, adapter_id: "alpaca", name: "Alpaca", environment: "live", permissions: ["read", "trade"] })}`), /broker_connections_no_live_trade_in_this_build/);
-      // And there is nowhere to keep a credential.
+      // Connection metadata contains a masked key hint. Sealed credentials live in their own table.
       const columns = await tx`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'broker_connections'`;
-      assert(!columns.some((c) => /secret|token|credential|key|password/i.test(c.column_name)), "broker_connections must not have a credentials column");
+      assert(!columns.some((c) => c.column_name !== "key_hint" && /secret|token|credential|key|password/i.test(c.column_name)), "broker_connections must not have a credentials column");
     });
   }
 });

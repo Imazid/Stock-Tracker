@@ -13,8 +13,6 @@ class APIService {
     static let shared = APIService()
 
     // MARK: - API Keys (loaded from Keychain via SecretsConfig)
-    private var alpacaAPIKey: String { SecretsConfig.alpacaAPIKey }
-    private var alpacaSecretKey: String { SecretsConfig.alpacaSecretKey }
     private var alphaVantageKey: String { SecretsConfig.alphaVantageKey }
     private var finnhubAPIKey: String { SecretsConfig.finnhubAPIKey }
     // Cursor for Finnhub news pagination (minId = fetch articles older than this id)
@@ -74,20 +72,16 @@ class APIService {
         // which made this checker report a working Alpaca key as down.
         request.httpMethod = "GET"
 
-        // Add auth headers per service
-        if endpoint == "alpaca" {
-            request.setValue(
-                "Basic \(Data("\(alpacaAPIKey):\(alpacaSecretKey)".utf8).base64EncodedString())",
-                forHTTPHeaderField: "Authorization"
-            )
-        }
-
         do {
-            let (_, response) = try await secureSession.rateLimitedData(
-                for: request,
-                endpoint: endpoint,
-                config: .default
-            )
+            let response: URLResponse
+            switch endpoint {
+            case "alpaca":
+                (_, response) = try await MarketDataProxy.data(for: url, using: secureSession)
+            case "finnhub":
+                (_, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub", direct: request, config: .newsAPI)
+            default:
+                (_, response) = try await secureSession.rateLimitedData(for: request, endpoint: endpoint, config: .default)
+            }
             if let httpResponse = response as? HTTPURLResponse {
                 return (200...299).contains(httpResponse.statusCode)
             }
@@ -169,17 +163,7 @@ class APIService {
             throw APIError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        // Alpaca bars requires native key headers (Basic auth returns 401 on this endpoint)
-        request.setValue(alpacaAPIKey, forHTTPHeaderField: "APCA-API-KEY-ID")
-        request.setValue(alpacaSecretKey, forHTTPHeaderField: "APCA-API-SECRET-KEY")
-
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: request,
-            endpoint: "alpaca",
-            config: .alpaca
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession)
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             if let httpResponse = response as? HTTPURLResponse {
@@ -218,16 +202,7 @@ class APIService {
             throw APIError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(alpacaAPIKey, forHTTPHeaderField: "APCA-API-KEY-ID")
-        request.setValue(alpacaSecretKey, forHTTPHeaderField: "APCA-API-SECRET-KEY")
-
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: request,
-            endpoint: "alpaca",
-            config: .alpaca
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession)
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             if let httpResponse = response as? HTTPURLResponse {
@@ -392,11 +367,7 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        var request = URLRequest(url: url)
-        request.setValue(alpacaAPIKey, forHTTPHeaderField: "APCA-API-KEY-ID")
-        request.setValue(alpacaSecretKey, forHTTPHeaderField: "APCA-API-SECRET-KEY")
-
-        let (data, response) = try await secureSession.rateLimitedData(for: request, endpoint: "alpaca", config: .alpaca)
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             AppLogger.api.error("Alpaca crypto bars HTTP \(code) for \(symbol)")
@@ -414,7 +385,7 @@ extension APIService {
     /// Page 1 fetches the latest articles. Subsequent pages use `minId` to load older articles.
     func fetchNews(page: Int = 1, pageSize: Int? = nil) async throws -> [NewsArticle] {
         let pageSize = pageSize ?? Constants.Pagination.newsPageSize
-        guard !finnhubAPIKey.isEmpty else {
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey) else {
             AppLogger.news.warning("Finnhub API key not configured — returning empty news")
             return []
         }
@@ -435,11 +406,8 @@ extension APIService {
         guard let url = components.url else { throw APIError.invalidURL }
 
         let request = URLRequest(url: url)
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: request,
-            endpoint: "finnhub",
-            config: .newsAPI
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub",
+                                                direct: request, config: .newsAPI)
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
             if let httpResponse = response as? HTTPURLResponse {
                 throw APIError.serverError(statusCode: httpResponse.statusCode)
@@ -477,7 +445,7 @@ extension APIService {
     /// Watchlist/Portfolio news filters return anything.
     func fetchCompanyNews(symbol: String, days: Int = 7, limit: Int = 10) async throws -> [NewsArticle] {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
-        guard !finnhubAPIKey.isEmpty, !isPlanGated("Finnhub company-news") else { return [] }
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey), !isPlanGated("Finnhub company-news") else { return [] }
 
         let dateFmt = DateFormatter()
         dateFmt.dateFormat = "yyyy-MM-dd"
@@ -494,11 +462,8 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: URLRequest(url: url),
-            endpoint: "finnhub",
-            config: .newsAPI
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub",
+                                                direct: URLRequest(url: url), config: .newsAPI)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             AppLogger.news.error("Finnhub company-news HTTP \(code) for \(sanitized)")
@@ -526,7 +491,7 @@ extension APIService {
     func fetchFiscalFundamentals(symbol: String, exchange: String = "") async throws -> FiscalFundamentals {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
         let apiKey = SecretsConfig.fiscalAIAPIKey
-        guard !apiKey.isEmpty else {
+        guard MarketDataProxy.available(debugKey: apiKey) else {
             AppLogger.api.warning("Fiscal.ai API key not configured")
             throw APIError.noData
         }
@@ -613,11 +578,8 @@ extension APIService {
         // Header auth keeps the key out of URLs (and any URL logging); verified working.
         request.setValue(apiKey, forHTTPHeaderField: "X-API-KEY")
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: request,
-            endpoint: "fiscalAI",
-            config: .fiscalAI
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "fiscal",
+                                                direct: request, config: .fiscalAI)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
@@ -654,7 +616,7 @@ extension APIService {
 
     func fetchFinnhubEarnings(symbol: String) async throws -> [FinnhubEarningsItem] {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
-        guard !finnhubAPIKey.isEmpty else { return [] }
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey) else { return [] }
 
         var components = URLComponents(string: "\(Constants.URLs.finnhub)/stock/earnings")!
         components.queryItems = [
@@ -663,11 +625,8 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: URLRequest(url: url),
-            endpoint: "finnhub",
-            config: .newsAPI
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub",
+                                                direct: URLRequest(url: url), config: .newsAPI)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             if let http = response as? HTTPURLResponse {
                 throw APIError.serverError(statusCode: http.statusCode)
@@ -681,7 +640,7 @@ extension APIService {
 
     func fetchFinnhubRecommendations(symbol: String) async throws -> [FinnhubRecommendationItem] {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
-        guard !finnhubAPIKey.isEmpty else { return [] }
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey) else { return [] }
 
         var components = URLComponents(string: "\(Constants.URLs.finnhub)/stock/recommendation")!
         components.queryItems = [
@@ -690,11 +649,8 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: URLRequest(url: url),
-            endpoint: "finnhub",
-            config: .newsAPI
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub",
+                                                direct: URLRequest(url: url), config: .newsAPI)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             if let http = response as? HTTPURLResponse {
                 throw APIError.serverError(statusCode: http.statusCode)
@@ -709,7 +665,7 @@ extension APIService {
     func fetchFinnhubUpgradeDowngrade(symbol: String, limit: Int = 10) async throws -> [FinnhubUpgradeDowngrade] {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
         // /stock/upgrade-downgrade is a Finnhub premium endpoint (free keys get 403).
-        guard !finnhubAPIKey.isEmpty, !isPlanGated("Finnhub upgrade-downgrade") else { return [] }
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey), !isPlanGated("Finnhub upgrade-downgrade") else { return [] }
 
         let calendar = Calendar.current
         let now = Date()
@@ -727,11 +683,8 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: URLRequest(url: url),
-            endpoint: "finnhub",
-            config: .newsAPI
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub",
+                                                direct: URLRequest(url: url), config: .newsAPI)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             if let http = response as? HTTPURLResponse {
                 if http.statusCode == 401 || http.statusCode == 403 {
@@ -750,7 +703,7 @@ extension APIService {
     func fetchFinnhubFundOwnership(symbol: String) async throws -> FinnhubFundOwnership? {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
         // /stock/fund-ownership is a Finnhub premium endpoint (free keys get 403).
-        guard !finnhubAPIKey.isEmpty, !isPlanGated("Finnhub fund-ownership") else { return nil }
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey), !isPlanGated("Finnhub fund-ownership") else { return nil }
 
         var components = URLComponents(string: "\(Constants.URLs.finnhub)/stock/fund-ownership")!
         components.queryItems = [
@@ -760,11 +713,8 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: URLRequest(url: url),
-            endpoint: "finnhub",
-            config: .newsAPI
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub",
+                                                direct: URLRequest(url: url), config: .newsAPI)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             if let http = response as? HTTPURLResponse {
                 if http.statusCode == 401 || http.statusCode == 403 {
@@ -873,11 +823,8 @@ extension APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
 
-        let (data, _) = try await secureSession.rateLimitedData(
-            for: request,
-            endpoint: "alphaVantage",
-            config: .alphaVantage
-        )
+        let (data, _) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "alpha",
+                                                direct: request, config: .alphaVantage)
 
         let decoded = try JSONDecoder().decode(AlphaVantageSearchResponse.self, from: data)
         // bestMatches is absent when Alpha Vantage returns a rate-limit note or error message
@@ -950,6 +897,15 @@ extension APIService {
 
     /// Fetches latest trade price + daily change from Alpaca snapshot endpoint.
     func fetchStockQuote(symbol: String) async throws -> Asset {
+        do {
+            return try await fetchAlpacaStockQuote(symbol: symbol)
+        } catch {
+            try Task.checkCancellation()
+            return try await fetchYahooQuote(symbol: InputSanitizer.sanitizeSymbol(symbol))
+        }
+    }
+
+    private func fetchAlpacaStockQuote(symbol: String) async throws -> Asset {
         let sanitizedSymbol = InputSanitizer.sanitizeSymbol(symbol)
 
         // feed=iex uses the IEX free feed; without this, free-plan accounts receive 403
@@ -957,18 +913,7 @@ extension APIService {
             throw APIError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(
-            "Basic \(Data("\(alpacaAPIKey):\(alpacaSecretKey)".utf8).base64EncodedString())",
-            forHTTPHeaderField: "Authorization"
-        )
-
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: request,
-            endpoint: "alpaca",
-            config: .alpaca
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
@@ -996,13 +941,7 @@ extension APIService {
         components.queryItems = [URLQueryItem(name: "symbols", value: sanitized.joined(separator: ",")),
                                  URLQueryItem(name: "feed", value: "iex")]
         guard let url = components.url else { throw APIError.invalidURL }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(
-            "Basic \(Data("\(alpacaAPIKey):\(alpacaSecretKey)".utf8).base64EncodedString())",
-            forHTTPHeaderField: "Authorization"
-        )
-        let (data, response) = try await secureSession.rateLimitedData(for: request, endpoint: "alpaca", config: .alpaca)
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             if let http = response as? HTTPURLResponse { throw APIError.serverError(statusCode: http.statusCode) }
             throw APIError.invalidResponse
@@ -1146,10 +1085,7 @@ extension APIService {
                                        resolvingAgainstBaseURL: true)!
         components.queryItems = [URLQueryItem(name: "symbols", value: pairs.map { "\($0.1)/USD" }.joined(separator: ","))]
         guard let url = components.url else { throw APIError.invalidURL }
-        var request = URLRequest(url: url)
-        request.setValue(alpacaAPIKey, forHTTPHeaderField: "APCA-API-KEY-ID")
-        request.setValue(alpacaSecretKey, forHTTPHeaderField: "APCA-API-SECRET-KEY")
-        let (data, response) = try await secureSession.rateLimitedData(for: request, endpoint: "alpaca", config: .alpaca)
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw APIError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
         }
@@ -1245,11 +1181,8 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: URLRequest(url: url),
-            endpoint: "alphaVantage",
-            config: .alphaVantage
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "alpha",
+                                                direct: URLRequest(url: url), config: .alphaVantage)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             if let http = response as? HTTPURLResponse {
                 AppLogger.api.error("Alpha Vantage quote HTTP \(http.statusCode) for \(sanitized)")
@@ -1352,14 +1285,14 @@ extension APIService {
     /// (ASX returns 403). Fills the key-stats gaps when FMP's 250/day free quota is spent.
     func fetchFinnhubFundamentals(symbol: String) async throws -> FinnhubFundamentals {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
-        guard !finnhubAPIKey.isEmpty else { throw APIError.noData }
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey) else { throw APIError.noData }
         func get(_ path: String, _ extra: [URLQueryItem]) async throws -> [String: Any] {
             var components = URLComponents(string: "\(Constants.URLs.finnhub)\(path)")!
             components.queryItems = [URLQueryItem(name: "symbol", value: sanitized)] + extra
                 + [URLQueryItem(name: "token", value: finnhubAPIKey)]
             guard let url = components.url else { throw APIError.invalidURL }
-            let (data, response) = try await secureSession.rateLimitedData(
-                for: URLRequest(url: url), endpoint: "finnhub", config: .newsAPI)
+            let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "finnhub",
+                                                direct: URLRequest(url: url), config: .newsAPI)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 if let http = response as? HTTPURLResponse { throw APIError.serverError(statusCode: http.statusCode) }
                 throw APIError.invalidResponse
@@ -1623,11 +1556,8 @@ extension APIService {
         ]
         guard let url = components.url else { throw APIError.invalidURL }
 
-        let (data, response) = try await secureSession.rateLimitedData(
-            for: URLRequest(url: url),
-            endpoint: "alphaVantage",
-            config: .alphaVantage
-        )
+        let (data, response) = try await MarketDataProxy.data(for: url, using: secureSession, provider: "alpha",
+                                                direct: URLRequest(url: url), config: .alphaVantage)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             if let http = response as? HTTPURLResponse {
                 AppLogger.api.error("Alpha Vantage daily HTTP \(http.statusCode) for \(sanitized)")

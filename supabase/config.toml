@@ -401,11 +401,14 @@ verify_jwt = true
 [functions.broker-connections]
 verify_jwt = true
 
-# These proxies validate bearer tokens with Supabase Auth in the handler.
+# Both proxies validate the bearer token with Supabase Auth in the handler.
 [functions.snaptrade-proxy]
 verify_jwt = false
 
 [functions.ai-proxy]
+verify_jwt = false
+
+[functions.market-data-proxy]
 verify_jwt = false
 
 # The scheduler is called by pg_cron with a secret header (TRADING_SCHEDULER_SECRET), not

@@ -117,16 +117,13 @@ final class QuoteService: QuoteServiceProtocol {
             for index in usIndices {
                 if let apiAsset = batch[updated[index].symbol.uppercased()] {
                     updated[index] = mergedAsset(old: updated[index], api: apiAsset)
-                } else {
-                    AppLogger.api.error("Stock quote failed for \(updated[index].symbol): not in Alpaca snapshot batch")
-                    lastFailedSymbols.insert(updated[index].symbol)
                 }
             }
         }
 
         // ASX (Yahoo), a lone US symbol, or the batch failing: one request each, concurrently.
         let singles = updated.indices.filter {
-            batch == nil || isASXStock(updated[$0]) || updated[$0].exchange == "International"
+            isASXStock(updated[$0]) || updated[$0].exchange == "International" || batch?[updated[$0].symbol.uppercased()] == nil
         }
         await withTaskGroup(of: (Int, Asset?).self) { group in
             for index in singles {

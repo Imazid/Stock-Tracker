@@ -113,7 +113,7 @@ final class StockInsightService: ObservableObject {
         if !force, let hit = insightCache[key], Date().timeIntervalSince(hit.fetchedAt) < ttl {
             return hit.insight
         }
-        let hasFMP = !SecretsConfig.fmpAPIKey.isEmpty
+        let hasFMP = MarketDataProxy.available(debugKey: SecretsConfig.fmpAPIKey)
 
         async let recsTask = Self.finnhubRecommendations(key)
         async let earningsTask = Self.finnhubEarnings(key)
@@ -184,7 +184,7 @@ final class StockInsightService: ObservableObject {
     func statements(for symbol: String) async -> FinancialStatements {
         let key = symbol.uppercased()
         if let hit = statementCache[key], !hit.isEmpty { return hit }
-        guard !SecretsConfig.fmpAPIKey.isEmpty else { return FinancialStatements(balance: [], cashFlow: []) }
+        guard MarketDataProxy.available(debugKey: SecretsConfig.fmpAPIKey) else { return FinancialStatements(balance: [], cashFlow: []) }
         async let balanceTask = fmp.fetchBalanceSheet(symbol: key, limit: 3)
         async let cashTask = fmp.fetchCashFlowStatements(symbol: key, limit: 3)
         let result = FinancialStatements(

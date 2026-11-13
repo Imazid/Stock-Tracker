@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { useSearch } from "@/hooks/market";
 import { dateTime } from "@/lib/format";
 import { BacktestPanel } from "./backtest-panel";
+import { StartAgent } from "./start-agent";
 import { asGroup, ConditionEditor, simplify } from "./condition-editor";
 import { deleteVersion, readVersions, type SavedVersion, saveVersion } from "./versions";
 
@@ -252,7 +253,7 @@ export function StrategiesView() {
               </ul>
             )}
           </Card>
-          <Notice>Lifecycle: <strong>Draft → Validated → Backtested</strong> happens here. Paper and live trading of a strategy are not available from the web yet — a good backtest never switches either on.</Notice>
+          <StartAgent spec={spec} valid={errors.length === 0} />
         </div>
       </div>
     </div>

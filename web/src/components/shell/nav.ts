@@ -14,14 +14,14 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/markets", label: "Markets", icon: LineChart },
-  { href: "/portfolio", label: "Portfolio", icon: Wallet, soon: "Synced holdings and performance aren't in the web app yet." },
+  { href: "/portfolio", label: "Portfolio", icon: Wallet },
   { href: "/watchlists", label: "Watchlists", icon: ListChecks },
   { href: "/ai", label: "AI Workspace", icon: BrainCircuit },
-  { href: "/agents", label: "Agent Studio", icon: Bot, soon: "Agents run in the iPhone app today; the web studio isn't built yet." },
+  { href: "/agents", label: "Agent Studio", icon: Bot },
   { href: "/strategies", label: "Strategies", icon: FlaskConical },
-  { href: "/paper", label: "Paper Trading", icon: Workflow, soon: "Practice trading runs in the iPhone app; the web version waits for the trading API." },
+  { href: "/paper", label: "Paper Trading", icon: Workflow },
   { href: "/orders", label: "Orders", icon: ClipboardList },
-  { href: "/activity", label: "Activity", icon: Activity, soon: "The audit timeline isn't in the web app yet." },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/connections", label: "Connections", icon: Cable },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

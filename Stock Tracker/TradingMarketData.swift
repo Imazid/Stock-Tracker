@@ -37,8 +37,6 @@ nonisolated enum TradingDataError: LocalizedError {
 
 /// Bars and quotes from Alpaca (US stocks, ETFs and crypto) and Yahoo Finance (ASX).
 nonisolated struct LiveMarketData: MarketDataProviding {
-    private let alpacaKey: String
-    private let alpacaSecret: String
     private let session: URLSession
     private let cache = BarCache()
 
@@ -47,9 +45,7 @@ nonisolated struct LiveMarketData: MarketDataProviding {
     /// The consolidated (all-exchange) tape is free once it is 15 minutes old.
     private static let consolidatedDelay: TimeInterval = 16 * 60
 
-    init(alpacaKey: String, alpacaSecret: String) {
-        self.alpacaKey = alpacaKey
-        self.alpacaSecret = alpacaSecret
+    init() {
         self.session = SecureURLSessionFactory.makeSecureSession(timeoutInterval: 15)
     }
 
@@ -330,16 +326,10 @@ nonisolated struct LiveMarketData: MarketDataProviding {
     // MARK: Plumbing
 
     private func alpacaJSON(_ path: String, _ query: [(String, String)]) async throws -> [String: Any] {
-        guard !alpacaKey.isEmpty, !alpacaSecret.isEmpty else { throw TradingDataError.notConfigured }
         var components = URLComponents(string: Self.alpaca + path)
         components?.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) }
         guard let url = components?.url else { throw TradingDataError.notConfigured }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"      // read-only: this client has no other verb
-        request.setValue(alpacaKey, forHTTPHeaderField: "APCA-API-KEY-ID")
-        request.setValue(alpacaSecret, forHTTPHeaderField: "APCA-API-SECRET-KEY")
-        NetRequestLog.record(endpoint: "trading-alpaca", url: url)
-        let (data, response) = try await session.rateLimitedData(for: request, endpoint: "alpaca", config: .alpaca)
+        let (data, response) = try await MarketDataProxy.data(for: url, using: session)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200...299).contains(status) else { throw TradingDataError.http(status, "Alpaca") }
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]

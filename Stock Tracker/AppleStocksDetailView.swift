@@ -825,7 +825,7 @@ final class AssetDetailViewModel: ObservableObject {
     private func loadUSFundamentals() async {
         fundamentalsState = .loading
         let symbol = seed.symbol.uppercased()
-        let hasFMP = !SecretsConfig.fmpAPIKey.isEmpty
+        let hasFMP = MarketDataProxy.available(debugKey: SecretsConfig.fmpAPIKey)
         async let p = hasFMP ? FMPService.shared.fetchProfile(symbol: symbol) : nil
         async let q = hasFMP ? FMPService.shared.fetchQuote(symbol: symbol) : nil
         async let r = hasFMP ? FMPService.shared.fetchRatios(symbol: symbol) : nil
