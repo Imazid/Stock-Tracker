@@ -12,6 +12,9 @@
 //      signal → sizing → risk engine → proposal → paper order or wait for approval —
 //      saves everything, and releases the leases.
 //
+// Each run also prunes idempotency keys older than 30 days, and CoinGecko's traded-value
+// figures are cached for a day (migration 20261113150000), as the phone caches them.
+//
 // A failed fetch means no trade: the run is recorded as failed, the agent's error count
 // goes up, and after five in a row it pauses itself. Every write is idempotent (state is
 // re-read under the person's lock; client order ids, signal keys and fill numbers are
@@ -33,6 +36,7 @@ import { errorResponse, HttpError, json, logEvent, readJSONObject, sameSecret } 
 import { reconcile } from "../_shared/server/live.ts";
 import { database, instrumentsNeedingQuotes, type Sql, withEngine } from "../_shared/server/persistence.ts";
 import { latestQuotes, type MarketSource, marketSnapshot, subset } from "../_shared/server/runner.ts";
+import { postgresVolumeStore, pruneIdempotencyKeys } from "../_shared/server/upkeep.ts";
 import { emptySnapshot, type Instrument, instrumentID, type MarketSnapshot, type Quote, type Timeframe } from "../_shared/trading/market.ts";
 import { barsToFetch, decodeStrategySpec, type StrategySpec } from "../_shared/trading/strategy.ts";
 
@@ -66,6 +70,7 @@ interface Summary {
   proposals: number;
   errors: number;
   skippedForTime: number;
+  prunedIdempotencyKeys: number;
 }
 
 const env = (name: string) => Deno.env.get(name);
@@ -171,13 +176,22 @@ async function handle(request: Request, started: number): Promise<Response> {
   if (secret.length < 16 || !sameSecret(secret, given)) throw new HttpError(401, "unauthorized", "Not allowed.");
 
   const body = await readJSONObject(request);
-  const choice = providerFromEnv(env, body.fixture === undefined ? {} : { fixture: body.fixture });
+  const sql = database();
+  // CoinGecko's traded-value figures are kept for a day in the database, as the phone keeps them.
+  const volumeStore = postgresVolumeStore(sql);
+  const choice = providerFromEnv(env, body.fixture === undefined ? { volumeStore } : { fixture: body.fixture, volumeStore });
   if (body.fixture !== undefined && !choice.provider) throw new HttpError(403, "fixtures_not_allowed", choice.reason ?? "Fixture data isn't allowed here.");
   const source: MarketSource = { provider: choice.provider, allowFixtureData: choice.allowFixtureData, reason: choice.reason };
 
-  const sql = database();
   const worker = crypto.randomUUID();
-  const summary: Summary = { claimed: 0, people: 0, runs: {}, fills: 0, proposals: 0, errors: 0, skippedForTime: 0 };
+  const summary: Summary = { claimed: 0, people: 0, runs: {}, fills: 0, proposals: 0, errors: 0, skippedForTime: 0, prunedIdempotencyKeys: 0 };
+
+  // Housekeeping first and on its own: a failure here is logged and never stops agents running.
+  try {
+    summary.prunedIdempotencyKeys = await pruneIdempotencyKeys(sql, started);
+  } catch (error) {
+    logEvent("scheduler_prune_failed", { error: error instanceof Error ? error.name : "unknown" });
+  }
 
   const claimed = await claim(sql, started, worker);
   summary.claimed = claimed.length;

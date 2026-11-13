@@ -61,6 +61,8 @@ struct OrderTicketView: View {
     // MARK: Derived
 
     private var currency: String { instrument.currency }
+    /// Numeric tickers ("7203", "0700") read better as the company name.
+    private var displayName: String { instrument.symbol.allSatisfy(\.isNumber) ? instrument.name : instrument.symbol }
     private var rules: InstrumentRules { PaperBroker.rules(for: instrument) }
     private var portfolios: [Ledger] { trading.practicePortfolios.filter { $0.currency == currency } }
     private var ledger: Ledger? {
@@ -128,7 +130,7 @@ struct OrderTicketView: View {
                 }
             }
             .background(theme.background.ignoresSafeArea())
-            .navigationTitle("\(side == .buy ? "Buy" : "Sell") \(instrument.symbol)")
+            .navigationTitle("\(side == .buy ? "Buy" : "Sell") \(displayName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -175,14 +177,6 @@ struct OrderTicketView: View {
                 if type != .market { priceFields }
 
                 summaryCard
-
-                if let problem = entryProblem {
-                    Label(problem, systemImage: "exclamationmark.circle")
-                        .font(.footnote)
-                        .foregroundStyle(theme.negativeColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("ticket.problem")
-                }
             }
             .padding(.horizontal, DS.Space.gutter)
             .padding(.top, DS.Space.m)
@@ -197,7 +191,7 @@ struct OrderTicketView: View {
                     path.append(.review)
                 }
                 .buttonStyle(PrimaryPillButtonStyle())
-                .disabled(preview == nil || isLoadingPrice)
+                .disabled(preview == nil || isLoadingPrice || entryProblem != nil)
                 .accessibilityHint(reviewHint)
                 .accessibilityIdentifier("ticket.review")
             }
@@ -209,6 +203,7 @@ struct OrderTicketView: View {
 
     private var reviewHint: String {
         if isLoadingPrice { return "Getting the price" }
+        if let entryProblem { return entryProblem }
         if preview == nil { return "Enter an amount first" }
         return "Shows the cost and checks before anything is placed"
     }
@@ -311,6 +306,15 @@ struct OrderTicketView: View {
                 .font(.footnote.monospacedDigit())
                 .foregroundStyle(theme.secondaryText)
                 .accessibilityIdentifier("ticket.conversion")
+
+            // Problems you can fix here show next to the number, before Review — not after it.
+            if let problem = entryProblem {
+                Label(problem, systemImage: "exclamationmark.circle")
+                    .font(.footnote)
+                    .foregroundStyle(theme.negativeColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("ticket.problem")
+            }
 
             if !rules.fractionable {
                 Text(rules.quantityIncrement > 1
@@ -500,7 +504,7 @@ struct OrderTicketView: View {
                         .accessibilityIdentifier("ticket.review.sentence")
 
                     VStack(spacing: DS.Space.m) {
-                        TradingRow(label: "Account", value: "\(ledger.name) · Practice")
+                        TradingRow(label: "Account", value: TradingFormat.accountName(ledger.name))
                         TradingRow(label: "Order type", value: type.displayName)
                         if type != .market { TradingRow(label: "Good for", value: timeInForce.displayName) }
                         TradingRow(label: "Estimated price", value: TradingFormat.price(preview.estimatedPrice, currency))
@@ -518,6 +522,9 @@ struct OrderTicketView: View {
                     if preview.willQueueUntilOpen, instrument.venue != .crypto {
                         note("clock", "The \(instrument.venue.displayName) is closed. This order waits and trades when it opens"
                              + (preview.nextOpen.map { " (\(TradingFormat.time($0)))" } ?? "") + ".")
+                    }
+                    if let taxNote = PaperBroker.taxNote(for: instrument, side: side) {
+                        note("building.columns", taxNote)
                     }
                     if preview.usesModelledSpread, type == .market {
                         note("arrow.left.and.right", "The price feed has no bid and ask right now, so the fill uses the last price plus a small assumed spread.")
@@ -688,15 +695,25 @@ struct OrderTicketView: View {
 
 /// The one-time explanation of practice money, and the choice of a starting balance.
 struct PracticeSetupView: View {
-    var currency: String = "USD"
     var onCreated: (Ledger) -> Void = { _ in }
+    /// Offer a choice of currency (from the Portfolio tab). From an order ticket the currency
+    /// is fixed by what is being bought.
+    var allowsCurrencyChoice = false
 
     @EnvironmentObject private var trading: TradingStore
     @Environment(\.theme) private var theme
-    @State private var balance: Double = 10_000
+    @State private var currency: String
+    @State private var chosenBalance: Double?
     @State private var problem: String?
 
+    init(currency: String = "USD", allowsCurrencyChoice: Bool = false, onCreated: @escaping (Ledger) -> Void = { _ in }) {
+        _currency = State(initialValue: currency)
+        self.allowsCurrencyChoice = allowsCurrencyChoice
+        self.onCreated = onCreated
+    }
+
     private var choices: [Double] { Currencies.balanceChoices(currency) }
+    private var balance: Double { chosenBalance.flatMap { choices.contains($0) ? $0 : nil } ?? choices[1] }
 
     var body: some View {
         ScrollView {
@@ -714,12 +731,28 @@ struct PracticeSetupView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                if allowsCurrencyChoice {
+                    VStack(alignment: .leading, spacing: DS.Space.s) {
+                        Text("Currency").font(.headline)
+                        Picker("Currency", selection: $currency) {
+                            ForEach(Currencies.supported, id: \.self) { code in
+                                Text("\(code) · \(Self.markets(for: code))").tag(code)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .accessibilityIdentifier("practice.currency")
+                        Text("A practice portfolio holds one currency and trades the markets that use it.")
+                            .font(.footnote)
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: DS.Space.m) {
                     Text(currency == "USD" ? "Starting balance" : "Starting balance in \(currency)").font(.headline)
                     ForEach(choices, id: \.self) { choice in
                         Button {
                             Haptics.select()
-                            balance = choice
+                            chosenBalance = choice
                         } label: {
                             HStack {
                                 Text(TradingFormat.money(choice, currency)).font(DS.money(18))
@@ -765,6 +798,15 @@ struct PracticeSetupView: View {
         }
         .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("practice.setup")
+    }
+}
+
+extension PracticeSetupView {
+    /// "London", "Frankfurt, Paris, Amsterdam" — the markets a currency trades on here.
+    static func markets(for currency: String) -> String {
+        let names = Venue.allCases.filter { $0.currency == currency && $0 != .crypto }.map(\.country)
+        if currency == "USD" { return "US stocks and crypto" }
+        return names.isEmpty ? currency : names.joined(separator: ", ")
     }
 }
 

@@ -339,9 +339,7 @@ final class DarkModeTests: XCTestCase {
     }
 
     private func tab(_ name: String) {
-        let button = app.tabBars.buttons[name].exists ? app.tabBars.buttons[name] : app.buttons[name]
-        XCTAssertTrue(button.waitForExistence(timeout: 10), "\(name) tab")
-        button.tap()
+        XCTAssertTrue(app.open(name), "\(name) tab")
     }
 
     private func closeDetail() {

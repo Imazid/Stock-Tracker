@@ -163,9 +163,7 @@ final class DetailScreenTests: XCTestCase {
     /// having priced the onboarding pick (keyless CoinGecko throttles).
     func testCryptoDetail() {
         launchAndOnboard(theme: "Light")
-        let tab = app.tabBars.buttons["Search"].exists ? app.tabBars.buttons["Search"] : app.buttons["Search"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 5), "Search tab")
-        tab.tap()
+        XCTAssertTrue(app.open("Search"), "Search")
         let field = app.searchFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Search field")
         field.tap()
@@ -304,9 +302,7 @@ final class DetailScreenTests: XCTestCase {
             if !row.isHittable { scrollHome() }
             row.tap()
         } else {
-            let tab = app.tabBars.buttons["Search"].exists ? app.tabBars.buttons["Search"] : app.buttons["Search"]
-            XCTAssertTrue(tab.waitForExistence(timeout: 5), "Search tab")
-            tab.tap()
+            XCTAssertTrue(app.open("Search"), "Search")
             let field = app.searchFields.firstMatch
             XCTAssertTrue(field.waitForExistence(timeout: 5), "Search field")
             field.tap()

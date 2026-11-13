@@ -99,7 +99,7 @@ struct CreateAgentFlow: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.accessibilityIdentifier("agent.new.cancel") } }
             .navigationDestination(item: $draft) { box in
-                AgentDraftEditor(draft: box.draft, parsed: parsed) { dismiss() }
+                AgentDraftEditor(draft: box.draft, parsed: box.parsed) { dismiss() }
             }
         }
         .onAppear {
@@ -142,14 +142,14 @@ struct CreateAgentFlow: View {
             }
         }
         parsed = result
-        draft = DraftBox(draft: result.draft)
+        draft = DraftBox(draft: result.draft, parsed: result)
     }
 
     private func start(from template: AgentTemplate) {
         var universe = template.defaultUniverse
         if let prefill, !template.needsExistingPortfolio { universe = [prefill] }
         parsed = nil
-        draft = DraftBox(draft: template.draft(universe: universe))
+        draft = DraftBox(draft: template.draft(universe: universe), parsed: nil)
     }
 }
 
@@ -157,6 +157,9 @@ struct CreateAgentFlow: View {
 struct DraftBox: Identifiable, Hashable {
     let id = UUID()
     let draft: AgentDraft
+    /// What the typed sentence was understood as (nil for a template). Carried with the
+    /// draft: the destination is built from this value, not from the parent's state.
+    let parsed: ParsedAgentRequest?
 
     static func == (lhs: DraftBox, rhs: DraftBox) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -310,6 +313,8 @@ struct AgentDraftEditor: View {
             .padding(.horizontal, DS.Space.gutter)
             .padding(.top, DS.Space.m)
             .padding(.bottom, 120)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("agent.draft.screen")
         }
         .scrollDismissesKeyboard(.interactively)
         .background(theme.background.ignoresSafeArea())
@@ -341,7 +346,6 @@ struct AgentDraftEditor: View {
         } message: {
             Text(trading.liveBlockers(for: lockedMode).joined(separator: " ") + " Agents can research, signal and trade practice money.")
         }
-        .accessibilityIdentifier("agent.draft.screen")
     }
 
     // MARK: Cards

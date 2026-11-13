@@ -84,6 +84,12 @@ enum TradingFormat {
         date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
     }
 
+    /// A portfolio's name with "Practice" added only when the name doesn't already say it.
+    static func accountName(_ name: String?) -> String {
+        guard let name, !name.isEmpty else { return "Practice" }
+        return name.localizedCaseInsensitiveContains("practice") ? name : "\(name) · Practice"
+    }
+
     /// "Market buy", "Limit sell".
     static func orderTitle(_ type: OrderType, _ side: OrderSide) -> String {
         "\(type.displayName) \(side == .buy ? "buy" : "sell")"
@@ -558,28 +564,33 @@ struct PausedAllBanner: View {
     var body: some View {
         if trading.isKillSwitchOn {
             HStack(spacing: DS.Space.s) {
-                Image(systemName: "pause.circle.fill").font(.body)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("All agents are paused").font(.subheadline.weight(.semibold))
-                    if let at = trading.state.accountPolicy.killSwitchAt {
-                        Text("Since \(TradingFormat.time(at)). No agent can place orders.")
-                            .font(.caption)
-                            .foregroundStyle(theme.secondaryText)
+                HStack(spacing: DS.Space.s) {
+                    Image(systemName: "pause.circle.fill").font(.body)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("All agents are paused").font(.subheadline.weight(.semibold))
+                        if let at = trading.state.accountPolicy.killSwitchAt {
+                            Text("Since \(TradingFormat.time(at)). No agent can place orders.")
+                                .font(.caption)
+                                .foregroundStyle(theme.secondaryText)
+                        }
                     }
                 }
+                .accessibilityElement(children: .combine)
                 Spacer(minLength: DS.Space.s)
                 if let onResume {
                     Button("Review", action: onResume)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(DS.accent)
                         .frame(minHeight: 44)
+                        .accessibilityLabel("Review pause-all")
+                        .accessibilityIdentifier("trading.pausedAllBanner.review")
                 }
             }
             .padding(.horizontal, DS.Space.l)
             .padding(.vertical, DS.Space.s)
             .background(RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous).fill(theme.subtleFill))
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous).strokeBorder(theme.cardBorder, lineWidth: 0.5))
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("trading.pausedAllBanner")
         }
     }

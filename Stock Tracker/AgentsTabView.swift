@@ -701,7 +701,7 @@ struct ProposalReviewSheet: View {
                 }
 
                 TradingSection(title: "What it would do") {
-                    TradingRow(label: "Account", value: "\(ledger?.name ?? "Practice") · Practice")
+                    TradingRow(label: "Account", value: TradingFormat.accountName(ledger?.name))
                     TradingRow(label: "Price when proposed", value: TradingFormat.price(proposal.referencePrice, currency))
                     TradingRow(label: proposal.side == .buy ? "Estimated cost" : "Estimated proceeds", value: TradingFormat.money(proposal.notional, currency), emphasised: true)
                     TradingRow(label: "Estimated fee", value: TradingFormat.money(proposal.estimatedFee, currency))

@@ -7,6 +7,7 @@
 import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { canTransition, ORDER_STATUSES, type OrderStatus } from "../../_shared/trading/orders.ts";
 import { type AuditEvent, verifyEvents } from "../../_shared/trading/audit.ts";
+import { postgresVolumeStore, pruneIdempotencyKeys } from "../../_shared/server/upkeep.ts";
 import { loadVectors } from "../fixtures.ts";
 import {
   AAPL, connect, refused, removePeople, rest, scratch, seedAccount, seedAgent, seedAudit, seedOrder, signUp, type Sql, type Tx,
@@ -545,6 +546,67 @@ dbTest("the every-minute schedule is skipped cleanly where pg_cron or pg_net is 
   // The migration file itself carries no secret and no project address.
   const migration = await Deno.readTextFile(new URL("../../../migrations/20261113120000_trading_platform.sql", import.meta.url));
   assert(!/eyJ[A-Za-z0-9_-]{10,}|sb_secret_|supabase\.co\/functions\/v1\/agent-scheduler'\s*\)/.test(migration.replace(/<project>/g, "")), "no key or live address in the migration");
+});
+
+// MARK: - Scheduler upkeep
+
+dbTest("the traded-value cache keeps only real figures for a day, newest wins, and only the functions can touch it", async (sql) => {
+  const id = `crypto:T${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const store = postgresVolumeStore(sql);
+  const t0 = Date.parse("2026-11-13T00:00:00Z");
+  try {
+    await store.write({ [id]: 4.2e10 }, t0, "CoinGecko");
+    assertEquals(await store.read([id], t0 - 86_400_000), { [id]: 4.2e10 });
+    assertEquals(await store.read([id], t0 + 1), {}, "older than asked for: not returned");
+    // An older answer finishing late doesn't replace a newer one; a newer one does.
+    await store.write({ [id]: 1 }, t0 - 60_000, "CoinGecko");
+    assertEquals((await sql`select dollar_volume from public.trading_volume_cache where instrument_id = ${id}`)[0].dollar_volume, 4.2e10);
+    await store.write({ [id]: 4.4e10 }, t0 + 60_000, "CoinGecko");
+    assertEquals((await sql`select dollar_volume, source from public.trading_volume_cache where instrument_id = ${id}`)[0], { dollar_volume: 4.4e10, source: "CoinGecko" });
+
+    // Unknown stays unknown: the table refuses anything that isn't a real positive figure.
+    await scratch(sql, async (tx) => {
+      await tx`set local role service_role`;
+      for (const bad of [0, -5, Number.POSITIVE_INFINITY, Number.NaN]) {
+        assertMatch(await refused(tx, `a figure of ${bad}`, (sp) => sp`insert into public.trading_volume_cache ${sp({ instrument_id: `crypto:BAD${String(bad).length}`, dollar_volume: bad, source: "x", fetched_at: new Date() })}`), /dollar_volume_check/);
+      }
+    });
+
+    // Nobody signed in can read or write it, and the anonymous key can't either.
+    const person = await signUp("cache");
+    assertEquals((await rest(person.token, "trading_volume_cache?select=*")).status, 403);
+    assertEquals((await rest(person.token, "trading_volume_cache", { method: "POST", body: JSON.stringify({ instrument_id: "crypto:BTC", dollar_volume: 1, source: "me", fetched_at: new Date().toISOString() }) })).status, 403);
+    const anonymous = await fetch(`${Deno.env.get("API_URL")}/rest/v1/trading_volume_cache?select=*`, { headers: { apikey: Deno.env.get("ANON_KEY")! } });
+    assert(anonymous.status === 401 || anonymous.status === 403, `anon got ${anonymous.status}`);
+    await anonymous.body?.cancel();
+  } finally {
+    await sql`delete from public.trading_volume_cache where instrument_id = ${id}`;
+  }
+});
+
+dbTest("idempotency keys older than 30 days are pruned; newer ones stay", async (sql) => {
+  const person = await signUp("prune");
+  const now = Date.now();
+  const day = 86_400_000;
+  await sql.begin(async (tx) => {
+    await tx`set local role service_role`;
+    for (const [key, age] of [["old-key-0001", 31 * day], ["old-key-0002", 400 * day], ["edge-key-001", 30 * day - 60_000], ["new-key-0001", day], ["now-key-0001", 0]] as const) {
+      await tx`insert into public.trading_idempotency_keys ${tx({ user_id: person.id, key, action: "placeOrder", status: 200, response: tx.json({ ok: true }), created_at: new Date(now - age) })}`;
+    }
+  });
+  const pruned = await pruneIdempotencyKeys(sql, now);
+  assert(pruned >= 2, `pruned ${pruned}`);
+  assertEquals((await sql`select key from public.trading_idempotency_keys where user_id = ${person.id} order by key`).map((row) => row.key),
+    ["edge-key-001", "new-key-0001", "now-key-0001"]);
+  assertEquals(await pruneIdempotencyKeys(sql, now), 0, "nothing left to prune");
+  // The prune can walk the created_at index (on a tiny local table the planner may still
+  // prefer a scan, so a scan is ruled out to ask whether the index serves this query).
+  const plan = await sql.begin(async (tx) => {
+    await tx`set local enable_seqscan = off`;
+    return (await tx`explain select user_id, key from public.trading_idempotency_keys where created_at < now() - interval '30 days' order by created_at limit 5000`)
+      .map((row) => String(Object.values(row)[0])).join("\n");
+  });
+  assertMatch(plan, /trading_idempotency_keys_created_at_idx/);
 });
 
 dbTest("with pg_cron and pg_net present, one job calls the scheduler every minute with the secret from Vault", async (sql) => {

@@ -22,6 +22,7 @@ import { errorResponse, Field, HttpError, logEvent, ok, readJSONObject, refusal,
 import { database, type EngineSession, instrumentsNeedingQuotes, type LoadScope, type Sql, withEngine } from "../_shared/server/persistence.ts";
 import { isLoosening } from "../_shared/server/policy.ts";
 import { assertPriced, latestQuotes, marketForOrder, type MarketSource, marketSnapshot } from "../_shared/server/runner.ts";
+import { postgresVolumeStore } from "../_shared/server/upkeep.ts";
 import { AGENT_MODES, type AgentMode, agentSpec, CHANGE_AUTHORS, modeIsLive } from "../_shared/trading/agent.ts";
 import { appendAudit } from "../_shared/trading/audit.ts";
 import { LiveVenues, PaperBroker } from "../_shared/trading/broker.ts";
@@ -413,13 +414,16 @@ async function handle(request: Request, started: number): Promise<{ response: Re
   if (!run) throw new HttpError(400, "unknown_action", "That isn't something the trading API can do.");
 
   // Fixture prices are for tests: they are honoured only when the function's own flag is on.
-  const choice = providerFromEnv(env, body.fixture === undefined ? {} : { fixture: body.fixture });
+  // CoinGecko's traded-value figures come from the same day-long cache the scheduler fills.
+  const sql = database();
+  const volumeStore = postgresVolumeStore(sql);
+  const choice = providerFromEnv(env, body.fixture === undefined ? { volumeStore } : { fixture: body.fixture, volumeStore });
   if (body.fixture !== undefined && !choice.provider) throw new HttpError(403, "fixtures_not_allowed", choice.reason ?? "Fixture data isn't allowed here.");
   const headerKey = request.headers.get("idempotency-key") ?? undefined;
   if (headerKey !== undefined && (headerKey.length < 8 || headerKey.length > 128)) throw new HttpError(400, "bad_request", "The Idempotency-Key must be 8 to 128 characters.");
 
   const ctx: Context = {
-    sql: database(), caller, body, now: started,
+    sql, caller, body, now: started,
     market: { provider: choice.provider, allowFixtureData: choice.allowFixtureData, reason: choice.reason },
     idempotencyKey: headerKey,
   };

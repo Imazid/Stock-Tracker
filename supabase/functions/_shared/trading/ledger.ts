@@ -140,8 +140,13 @@ export function applyFill(ledger: Ledger, incoming: Fill): Fill {
   const fill: Fill = { ...incoming };
   rollDayIfNeeded(ledger, fill.time);
   const id = instrumentID(fill.instrument);
-  const gross = fillGross(fill);
   const index = ledger.positions.findIndex((p) => positionID(p) === id);
+  // Never sell more than is held (no short selling): a sell for more is cut to the
+  // holding, and only what was really sold is paid for and counted.
+  if (fill.side === "sell" && index >= 0 && fill.quantity > ledger.positions[index].quantity) {
+    fill.quantity = ledger.positions[index].quantity;
+  }
+  const gross = fillGross(fill);
   if (fill.side === "buy") {
     ledger.cash = Rounding.money(ledger.cash - gross - fill.fee);
     if (index >= 0) {
@@ -161,7 +166,7 @@ export function applyFill(ledger: Ledger, incoming: Fill): Fill {
     if (index < 0) return fill;
     const current = ledger.positions[index];
     const held = current.quantity;
-    const sold = Math.min(fill.quantity, held);
+    const sold = fill.quantity;
     const closing = held - sold <= 1e-9;
     const costRemoved = closing ? current.costBasis : Rounding.money(current.costBasis / held * sold);
     const realized = Rounding.money(gross - fill.fee - costRemoved);

@@ -325,7 +325,8 @@ struct StockCryptoTrackerApp: App {
             // stocktracker://asset/{SYMBOL} — open that stock's page.
             openStock(url.pathComponents.dropFirst().first ?? "")
         case "search":
-            widgetSelectedTab = .search
+            tradingRouter.marketsSection = .search
+            widgetSelectedTab = .markets
         case "alerts":
             if canPresentFromDeepLink { deepLinkAlerts = true }
         case "news":

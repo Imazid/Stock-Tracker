@@ -420,7 +420,7 @@ struct OrderDetailView: View {
                 }
 
                 VStack(spacing: DS.Space.m) {
-                    TradingRow(label: "Account", value: "\(trading.ledger(order.ledgerID)?.name ?? "Practice") · Practice")
+                    TradingRow(label: "Account", value: TradingFormat.accountName(trading.ledger(order.ledgerID)?.name))
                     TradingRow(label: "Order type", value: order.type.displayName)
                     TradingRow(label: "Good for", value: order.timeInForce.displayName)
                     TradingRow(label: "Quantity", value: TradingFormat.units(order.quantity, order.instrument))
@@ -638,9 +638,13 @@ struct HomeTradingSection: View {
                                 .font(DS.money(26))
                                 .contentTransition(.numericText())
                                 .accessibilityIdentifier("home.trading.equity")
-                            let aud = trading.practiceEquity(currency: "AUD")
-                            if aud > 0 {
-                                Text("and \(TradingFormat.money(aud, "AUD"))").font(.footnote.monospacedDigit()).foregroundStyle(theme.secondaryText)
+                            // Other currencies are listed as they are, never converted and added up.
+                            let others = Currencies.supported.filter { $0 != "USD" }
+                                .map { ($0, trading.practiceEquity(currency: $0)) }.filter { $0.1 > 0 }
+                            if !others.isEmpty {
+                                Text("and " + others.map { TradingFormat.money($0.1, $0.0) }.joined(separator: " · "))
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(theme.secondaryText)
                             }
                         }
                         Spacer()
