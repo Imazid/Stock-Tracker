@@ -49,15 +49,19 @@ async function call<T>(fn: "broker-connections" | "broker-orders", body: Connect
   } catch {
     throw new OmsError("not_deployed", "Order routing couldn't be reached. It may not be deployed yet.");
   }
-  const parsed = (await response.json().catch(() => undefined)) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } } | undefined;
-  if (response.ok && parsed && !parsed.error) return parsed as T;
+  // Same envelope as trading-api: { ok: true, data } or { ok: false, error: { code, message, details? } }.
+  const parsed = (await response.json().catch(() => undefined)) as
+    | { ok?: boolean; data?: unknown; error?: { code?: string; message?: string; details?: Record<string, unknown> } }
+    | undefined;
+  if (response.ok && parsed?.ok === true && parsed.data !== undefined) return parsed.data as T;
   const err = parsed?.error;
-  // Our functions always answer errors as { error: { code } }. A 404 without that shape is the
-  // gateway saying the function doesn't exist.
+  // A 404 without that shape is the gateway saying the function doesn't exist.
   if (!err?.code) {
     if (response.status === 404) throw new OmsError("not_deployed", "Order routing isn't deployed yet.");
     throw new OmsError("network", `Order routing answered ${response.status}.`);
   }
+  if (err.code === "unauthenticated") throw new OmsError("signed_out", err.message ?? "Sign in again.");
+  if (err.code === "unavailable") throw new OmsError("network", err.message ?? "Order routing is unavailable right now.");
   throw new OmsError(err.code as OmsErrorCode, err.message ?? "The request was refused.", err.details);
 }
 
