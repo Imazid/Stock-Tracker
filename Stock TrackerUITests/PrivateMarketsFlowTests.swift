@@ -246,9 +246,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let timeline = app.staticTexts["Withdrawal requested"]
         if !timeline.isHittable { app.swipeUp() }
         XCTAssertTrue(timeline.waitForExistence(timeout: 8))
-        let help = app.links["Open provider withdrawal instructions"]
+        let help = app.descendants(matching: .any)["private.application.withdrawalHelp"].firstMatch
         if !help.isHittable { app.swipeUp() }
-        XCTAssertTrue(help.waitForExistence(timeout: 8))
+        XCTAssertTrue(help.waitForExistence(timeout: 8), app.debugDescription)
     }
 
     private func openPrivateMarkets() {

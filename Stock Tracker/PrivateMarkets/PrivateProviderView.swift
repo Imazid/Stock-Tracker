@@ -183,7 +183,10 @@ private struct PrivateApplicationDetail: View {
                             Text("Awaiting the provider’s decision on your request. Check the provider account for refund information.")
                                 .foregroundStyle(.secondary)
                         }
-                        if let help = record.withdrawalHelp { Link("Open provider withdrawal instructions", destination: help) }
+                        if let help = record.withdrawalHelp {
+                            Link("Open provider withdrawal instructions", destination: help)
+                                .accessibilityIdentifier("private.application.withdrawalHelp")
+                        }
                     }
                 }
                 if let feedback { Text(feedback).foregroundStyle(.secondary) }
