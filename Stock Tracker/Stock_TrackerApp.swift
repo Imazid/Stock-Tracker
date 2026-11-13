@@ -83,6 +83,20 @@ struct StockCryptoTrackerApp: App {
     
 
     
+    private func restoreOrSignIn() {
+        #if DEBUG
+        if Self.isUITestFreshInstall,
+           let pair = UserDefaults.standard.string(forKey: "UITestSignIn"),
+           let split = pair.firstIndex(of: ":") {
+            let email = String(pair[..<split])
+            let password = String(pair[pair.index(after: split)...])
+            Task { await supabaseAuthManager.signIn(email: email, password: password) }
+            return
+        }
+        #endif
+        supabaseAuthManager.restoreSessionIfNeeded()
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack {
@@ -189,15 +203,8 @@ struct StockCryptoTrackerApp: App {
                 }
                 #endif
 
-                // Restore Supabase session so user stays signed in across launches
-                supabaseAuthManager.restoreSessionIfNeeded()
-                #if DEBUG
-                // `-UITestSignIn email:password`: signs in at launch (UI tests against a local stack).
-                if let pair = UserDefaults.standard.string(forKey: "UITestSignIn"), let split = pair.firstIndex(of: ":") {
-                    let email = String(pair[..<split]), password = String(pair[pair.index(after: split)...])
-                    Task { await supabaseAuthManager.signIn(email: email, password: password) }
-                }
-                #endif
+                restoreOrSignIn()
+
 
                 // Check downgrade limits after data loads
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
