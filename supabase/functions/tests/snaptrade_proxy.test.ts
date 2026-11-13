@@ -12,6 +12,8 @@ import {
   type SnapTradeUserStore,
 } from "../_shared/snaptrade/proxy.ts";
 
+import { syncSnapTradeActivities } from "../snaptrade-activity-sync/worker.ts";
+
 const USER = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
 const ACCOUNT = "33333333-3333-3333-3333-333333333333";
@@ -266,4 +268,64 @@ Deno.test("activity refuses malformed dates or pagination and never uses a diffe
   assertEquals((await handleSnapTradeRequest(OTHER, { operation: "accountActivities", params }, deps)).status, 409);
   assertEquals(calls.length, 0);
   assertEquals((await handleSnapTradeRequest(USER, { operation: "accountActivities", params }, deps)).status, 502);
+});
+
+Deno.test("activity cache uses the signed-in owner and pins subsequent pages to a snapshot", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });
+  const { deps, calls } = harness(() => json(200, { data: [], pagination: { offset: 0, total: 0 } }), store);
+  const snapshot = "55555555-5555-5555-5555-555555555555";
+  let cached = true;
+  deps.readActivityCache = (userId, request) => {
+    assertEquals(userId, USER);
+    assertEquals(request.accountId, ACCOUNT);
+    assertEquals(request.startDate, "2026-01-01");
+    assertEquals(request.endDate, "2026-01-31");
+    assertEquals(request.snapshot, request.offset === 0 ? null : snapshot);
+    return Promise.resolve(cached ? { activities: [], omitted: 0, nextOffset: null, snapshot } : null);
+  };
+  const request = { accountId: ACCOUNT, startDate: "2026-01-01", endDate: "2026-01-31", preferCached: true, userId: OTHER };
+  assertEquals((await handleSnapTradeRequest(USER, { operation: "accountActivities", params: request }, deps)).body,
+    { activities: [], omitted: 0, nextOffset: null, snapshot });
+  assertEquals(calls.length, 0);
+  cached = false;
+  assertEquals((await handleSnapTradeRequest(USER, { operation: "accountActivities", params: { ...request, offset: 50, snapshot } }, deps)).status, 409);
+  assertEquals(calls.length, 0);
+  assertEquals((await handleSnapTradeRequest(USER, { operation: "accountActivities", params: request }, deps)).status, 200);
+  assertEquals(calls.length, 1, "a cache miss on the first page falls back to SnapTrade");
+});
+
+Deno.test("activity worker pages only provider reads and advances the fenced database lease", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });
+  const { deps, calls } = harness((request) => request.url.pathname.endsWith("/activities")
+    ? json(200, {
+      data: [{ id: "fixture-deposit", trade_date: "2026-01-16", symbol: null, currency: { code: "USD" }, amount: 25, type: "CONTRIBUTION" }],
+      pagination: { total: 51, offset: 50 },
+    })
+    : json(200, [{ id: ACCOUNT }, { id: ACCOUNT }]), store);
+  const first = { credential_id: "credential", lease_id: "lease", user_id: USER, pending_id: null };
+  const pending = {
+    ...first, pending_id: "snapshot", account_id: ACCOUNT, page_offset: 50,
+    start_date: "2026-01-01", end_date: "2026-01-31",
+  };
+  let job: Record<string, unknown> = first;
+  const writes: Record<string, unknown>[] = [];
+  const database = {
+    rpc(name: string, args?: Record<string, unknown>) {
+      if (name === "claim_snaptrade_activity_jobs") return Promise.resolve({ data: [job], error: null });
+      assertEquals(name, "advance_snaptrade_activity_job");
+      writes.push(args ?? {});
+      return Promise.resolve({ data: true, error: null });
+    },
+  };
+  assertEquals(await syncSnapTradeActivities(database, deps), { brokerActivityJobs: 1, advanced: 1, errors: 0 });
+  assertEquals(writes[0], { p_credential: "credential", p_lease: "lease", p_accounts: [ACCOUNT] });
+  job = pending;
+  assertEquals(await syncSnapTradeActivities(database, deps), { brokerActivityJobs: 1, advanced: 1, errors: 0 });
+  assertEquals(writes[1].p_next_offset, null);
+  assertEquals(writes[1].p_lease, "lease");
+  assertEquals((writes[1].p_rows as { cashFlow: unknown }[])[0].cashFlow, { date: "2026-01-16", kind: "deposit", amount: 25 });
+  assertEquals(calls.map((call) => call.method), ["GET", "GET"]);
+  assertEquals(calls[1].url.searchParams.get("offset"), "50");
 });
