@@ -253,6 +253,12 @@ struct StockCryptoTrackerApp: App {
                     }
                 }
             }
+            .onChange(of: networkMonitor.isConnected) { _, connected in
+                guard connected, supabaseAuthManager.isSignedIn else { return }
+                Task {
+                    await syncManager.pullAndRefresh(marketData: marketData, alertManager: alertManager)
+                }
+            }
             // When the user signs in to Supabase, run the first-sync merge
             .onReceive(supabaseAuthManager.$authState) { state in
                 if case .signedIn = state {

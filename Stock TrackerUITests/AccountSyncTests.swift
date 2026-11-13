@@ -109,6 +109,99 @@ final class AccountSyncTests: XCTestCase {
                        "Other people's codes aren't readable")
     }
 
+    func testClosingSaleAndDeletedTransactionSync() throws {
+        let email = "ledger-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: try JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let user = try XCTUnwrap(account["user"] as? [String: Any])
+        let userId = try XCTUnwrap(user["id"] as? String)
+        let token = try signIn(email: email)
+        let schema = try request("GET", "/rest/v1/portfolio_holdings?select=closed_at&limit=1", token: token)
+        try XCTSkipIf(schema.status == 400, "Apply the portfolio ledger sync migration to the local stack first.")
+        XCTAssertEqual(schema.status, 200)
+        let holding = UUID().uuidString
+        let first = UUID()
+        let extra = UUID()
+        let position: [String: Any] = [
+            "id": holding, "user_id": userId, "asset_symbol": "MSFT", "asset_name": "Microsoft",
+            "asset_kind": "Stock", "asset_exchange": "NASDAQ", "shares": 3, "avg_cost": 100
+        ]
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings", body: JSONSerialization.data(withJSONObject: position), token: token).status, 201)
+        let trades: [[String: Any]] = [(first, 2), (extra, 1)].map { id, shares in
+            ["id": id.uuidString, "user_id": userId, "holding_id": holding,
+             "transaction_date": "2026-10-07T00:00:00Z", "shares": shares, "price_per_share": 100, "type": "Buy"]
+        }
+        XCTAssertEqual(try request("POST", "/rest/v1/transactions", body: JSONSerialization.data(withJSONObject: trades), token: token).status, 201)
+
+        func launchAccount() {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                                   "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                                   "-UITestSignIn", "\(email):\(password)"]
+            app.launch()
+            XCTAssertTrue(app.open("Portfolio"))
+        }
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<8 where !element.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(element.isHittable)
+        }
+        launchAccount()
+        let positionRow = app.buttons["portfolio.holding.MSFT"].firstMatch
+        // Holdings are a lazy list below the portfolio summary.
+        for _ in 0..<10 where !positionRow.exists {
+            app.swipeUp(velocity: .slow)
+            if !positionRow.exists { Thread.sleep(forTimeInterval: 1) }
+        }
+        reveal(positionRow)
+        positionRow.tap()
+        let extraRow = app.buttons["holding.tx.\(extra.uuidString.prefix(8))"].firstMatch
+        reveal(extraRow)
+        extraRow.swipeLeft()
+        app.buttons["Delete"].firstMatch.tap()
+        XCTAssertTrue(extraRow.waitForNonExistence(timeout: 8))
+
+        let add = app.buttons["holding.addTransaction"]
+        reveal(add)
+        add.tap()
+        let sell = app.buttons["tx.type.sell"]
+        XCTAssertTrue(sell.waitForExistence(timeout: 5))
+        sell.tap()
+        let quantity = app.textFields.matching(identifier: "0.00").element(boundBy: 0)
+        quantity.tap()
+        quantity.typeText("2")
+        let price = app.textFields["tx.price"].firstMatch
+        let original = (price.value as? String) ?? ""
+        price.tap()
+        if original != "0.00" { price.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: original.count)) }
+        price.typeText("150")
+        app.buttons["keyboard.done"].firstMatch.tap()
+        app.buttons["tx.save"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["holding.closed"].firstMatch.waitForExistence(timeout: 8))
+
+        var saved: [[String: Any]] = []
+        for _ in 0..<15 {
+            saved = try rows("transactions", select: "id,shares,type,deleted_at", token: token)
+            if saved.contains(where: { $0["type"] as? String == "Sell" }) { break }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        XCTAssertEqual(saved.filter { $0["type"] as? String == "Sell" }.count, 1)
+        XCTAssertEqual(saved.first { $0["type"] as? String == "Sell" }?["shares"] as? Double, 2)
+        XCTAssertTrue(saved.first { ($0["id"] as? String)?.lowercased() == extra.uuidString.lowercased() }?["deleted_at"] is String)
+        let archived = try rows("portfolio_holdings", select: "shares,closed_at,deleted_at", token: token)
+        XCTAssertEqual(archived.first?["shares"] as? Double, 0)
+        XCTAssertTrue(archived.first?["closed_at"] is String)
+        XCTAssertTrue(archived.first?["deleted_at"] is String)
+
+        app.terminate()
+        launchAccount()
+        let closed = app.buttons["portfolio.closed.MSFT"].firstMatch
+        reveal(closed)
+        closed.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["closed.realised"].firstMatch.waitForExistence(timeout: 8))
+    }
+
     // MARK: - Helpers
 
     /// Welcome → markets → picks → … → account step: email sign-up → "You're all set" → Home.

@@ -56,6 +56,9 @@ final class DataPersistenceManager {
         static let customAssets         = "com.stocktracker.persist.customAssets"
         static let watchlistGroups      = "com.stocktracker.persist.watchlistGroups"
         static let portfolioGroups      = "com.stocktracker.persist.portfolioGroups"
+        static let portfolioLedgerQueue = "com.stocktracker.persist.portfolioLedgerQueue"
+        static let lastPortfolioAccount = "com.stocktracker.persist.lastPortfolioAccount"
+        static let hiddenClosedPositions = "com.stocktracker.persist.hiddenClosedPositions"
         static let referralCode         = "com.stocktracker.persist.referralCode"
     }
 
@@ -219,6 +222,39 @@ final class DataPersistenceManager {
 
     // MARK: - Sync metadata
 
+    func rememberPortfolioAccount(_ userId: UUID) {
+        _ = keychain.save(key: KeychainKeys.lastPortfolioAccount, value: userId.uuidString)
+    }
+
+    func lastPortfolioAccount() -> UUID? {
+        keychain.retrieve(key: KeychainKeys.lastPortfolioAccount).flatMap(UUID.init(uuidString:))
+    }
+
+    func hiddenSyncedClosedPositions() -> Set<UUID> {
+        guard let data = keychain.retrieveData(key: KeychainKeys.hiddenClosedPositions),
+              let ids = try? decoder.decode(Set<UUID>.self, from: data) else { return [] }
+        return ids
+    }
+
+    func hideSyncedClosedPosition(_ id: UUID) {
+        let ids = hiddenSyncedClosedPositions().union([id])
+        if let data = try? encoder.encode(ids) {
+            _ = keychain.saveData(key: KeychainKeys.hiddenClosedPositions, value: data)
+        }
+    }
+
+    func loadPortfolioLedgerQueue() -> [String: [PortfolioLedgerChange]] {
+        guard let data = keychain.retrieveData(key: KeychainKeys.portfolioLedgerQueue),
+              let queue = try? decoder.decode([String: [PortfolioLedgerChange]].self, from: data) else { return [:] }
+        return queue
+    }
+
+    @discardableResult
+    func savePortfolioLedgerQueue(_ queue: [String: [PortfolioLedgerChange]]) -> Bool {
+        guard let data = try? encoder.encode(queue) else { return false }
+        return keychain.saveData(key: KeychainKeys.portfolioLedgerQueue, value: data)
+    }
+
     func saveLastSyncDate(_ date: Date) {
         let iso = ISO8601DateFormatter().string(from: date)
         _ = keychain.save(key: Constants.Sync.lastSyncDateKey, value: iso)
@@ -272,6 +308,9 @@ final class DataPersistenceManager {
         // or "cleared" watchlists come back.
         _ = keychain.delete(key: KeychainKeys.watchlistGroups)
         _ = keychain.delete(key: KeychainKeys.portfolioGroups)
+        _ = keychain.delete(key: KeychainKeys.portfolioLedgerQueue)
+        _ = keychain.delete(key: KeychainKeys.lastPortfolioAccount)
+        _ = keychain.delete(key: KeychainKeys.hiddenClosedPositions)
         _ = keychain.delete(key: KeychainKeys.portfolio)
         _ = keychain.delete(key: KeychainKeys.customAssets)
         _ = keychain.delete(key: KeychainKeys.priceAlerts)
