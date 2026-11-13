@@ -21,7 +21,7 @@ import { BrokerError } from "../_shared/brokers/types.ts";
 import { providerFromEnv } from "../_shared/market/index.ts";
 import type { ApiErrorCode, OrderIntentInput, OrdersRequest } from "../_shared/oms/api.ts";
 import { checkApprove, DEFAULT_APPROVAL_POLICY } from "../_shared/oms/approval.ts";
-import * as D from "../_shared/oms/decimal.ts";
+import * as D from "../_shared/decimal.ts";
 import { cancelIntent, type ExecutionDeps, type ExecutionOutcome, type IntentRecord, reconcileIntent, submitIntent } from "../_shared/oms/execute.ts";
 import { GateClosedError, gateForEnvironment, requireGates } from "../_shared/oms/gates.ts";
 import { authenticate, type Caller, errorResponse, HttpError, idempotencyKey, json, logEvent, preflight, readJSONObject, statusFor } from "../_shared/oms/http.ts";

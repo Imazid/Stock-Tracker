@@ -6,7 +6,7 @@
 // checked again at submission, after the intent is re-read from the database.
 
 import type { TradingEnvironment } from "../brokers/types.ts";
-import { compare } from "./decimal.ts";
+import { compare } from "../decimal.ts";
 import { sameHash } from "./intent.ts";
 
 export interface ApprovalPolicy {

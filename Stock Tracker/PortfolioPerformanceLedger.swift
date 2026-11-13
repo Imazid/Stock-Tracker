@@ -1,6 +1,16 @@
 import Supabase
 import SwiftUI
 
+struct HistoricalCashFX: Codable {
+    let source: String
+    let currency: String
+    let amount: String
+    let usd_per_unit: String
+    let rate_date: String
+
+    var details: String { "\(amount) \(currency) · \(usd_per_unit) USD per \(currency) · \(source) \(rate_date)" }
+}
+
 struct PerformanceFlow: Codable, Identifiable {
     enum Kind: String, Codable, CaseIterable {
         case deposit, withdrawal
@@ -18,8 +28,9 @@ struct PerformanceFlow: Codable, Identifiable {
     var kind: Kind
     var amount: Decimal
     var snaptrade_id: String?
+    var fx: HistoricalCashFX?
 
-    enum CodingKeys: String, CodingKey { case date, kind, amount, snaptrade_id }
+    enum CodingKeys: String, CodingKey { case date, kind, amount, snaptrade_id, fx }
 }
 
 private struct PerformancePeriod: Decodable, Identifiable {
@@ -225,6 +236,7 @@ private struct PerformancePeriodEditor: View {
         var kind = PerformanceFlow.Kind.deposit
         var amount = ""
         var snaptradeID: String?
+        var fx: HistoricalCashFX?
     }
 
     let userId: UUID
@@ -261,7 +273,7 @@ private struct PerformancePeriodEditor: View {
         _transferValues = State(initialValue: period?.transfer_values_usd?.mapValues(\.description) ?? [:])
         _transfers = State(initialValue: period?.external_flows.compactMap { flow in
             guard let date = formatter.date(from: flow.date) else { return nil }
-            return Transfer(date: date, kind: flow.kind, amount: flow.amount.description, snaptradeID: flow.snaptrade_id)
+            return Transfer(date: date, kind: flow.kind, amount: flow.amount.description, snaptradeID: flow.snaptrade_id, fx: flow.fx)
         } ?? [])
     }
 
@@ -287,7 +299,7 @@ private struct PerformancePeriodEditor: View {
                     ) { flow in
                         guard let date = formatter.date(from: flow.date), transfers.count < 366,
                               !transfers.contains(where: { $0.snaptradeID == flow.snaptrade_id }) else { return }
-                        transfers.append(Transfer(date: date, kind: flow.kind, amount: flow.amount.description, snaptradeID: flow.snaptrade_id))
+                        transfers.append(Transfer(date: date, kind: flow.kind, amount: flow.amount.description, snaptradeID: flow.snaptrade_id, fx: flow.fx))
                     }
                     .id("\(startsOn)/\(endsOn)")
                 }
@@ -307,6 +319,9 @@ private struct PerformancePeriodEditor: View {
                         TextField("Transfer amount (USD)", text: $transfer.amount)
                             .keyboardType(.decimalPad)
                             .disabled(transfer.snaptradeID != nil)
+                        if let fx = transfer.fx {
+                            Text(fx.details).font(.caption).foregroundStyle(.secondary)
+                        }
                         Button("Remove transfer", role: .destructive) {
                             let id = transfer.id
                             transfers.removeAll { $0.id == id }
@@ -378,7 +393,7 @@ private struct PerformancePeriodEditor: View {
                 error = "Enter a positive amount and a date after opening and through closing for each transfer."
                 return
             }
-            flows.append(PerformanceFlow(date: date, kind: transfer.kind, amount: amount, snaptrade_id: transfer.snaptradeID))
+            flows.append(PerformanceFlow(date: date, kind: transfer.kind, amount: amount, snaptrade_id: transfer.snaptradeID, fx: transfer.fx))
         }
         var values: [String: Decimal] = [:]
         for date in valuationDates {

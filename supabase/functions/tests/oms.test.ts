@@ -5,7 +5,7 @@
 import { assert, assertEquals, assertNotEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import type { OrderIntentInput, RiskEvaluationView } from "../_shared/oms/api.ts";
 import { type ApprovalRecord, checkApprove, DEFAULT_APPROVAL_POLICY } from "../_shared/oms/approval.ts";
-import * as D from "../_shared/oms/decimal.ts";
+import * as D from "../_shared/decimal.ts";
 import { cancelIntent, type ExecutionDeps, type IntentRecord, type OmsStore, RECONCILE_GIVE_UP_MS, recomputeHash, reconcileIntent, submitIntent } from "../_shared/oms/execute.ts";
 import { resolveGates } from "../_shared/oms/gates.ts";
 import { canonicalIntent, canonicalJSON, IntentError, intentHash, newClientOrderID, validateInput } from "../_shared/oms/intent.ts";
