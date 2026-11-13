@@ -36,6 +36,17 @@ Deno.test("numbered sources are resolved and a uniquely supported amount adds a 
   assertThrows(() => parseFinding(JSON.stringify({ ...answer, analysis: "Raised A$850,000" }), "Financial", [funds]), ResearchError);
 });
 
+Deno.test("committee can decode structured scenario assumptions without accepting absent scenarios", () => {
+  const answer = { ...finding, scenarios: {
+    bull: { assumption: "Demand increases.", outcome: "Revenue could rise." },
+    base: "Demand is steady.",
+    bear: "Demand weakens.",
+  } };
+  const committee = parseFinding(JSON.stringify(answer), "Committee", [source], true);
+  assertEquals(committee.bull, "Demand increases. Revenue could rise.");
+  assertEquals(committee.base, "Demand is steady.");
+});
+
 Deno.test("committee requests each role, synthesizes validated reviews and charges shared quota", async () => {
   let requests = 0;
   let charges = 0;

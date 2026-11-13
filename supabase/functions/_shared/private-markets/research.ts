@@ -75,37 +75,37 @@ export function parseFinding(text: string, title: string, evidence: Evidence[], 
   } catch {
     throw bad("JSON");
   }
-  const string = (v: unknown, length: number) => {
-    if (typeof v !== "string" || !v.trim() || v.length > length) throw bad("text field");
-    return v.trim();
+  const string = (v: unknown, length: number, field: string) => {
+    if (typeof v !== "string" || !v.trim()) throw bad(field);
+    return v.trim().slice(0, length);
   };
-  const items = (v: unknown) => {
-    if (!Array.isArray(v) || v.length > 3) throw bad("list field");
-    return v as unknown[];
+  const items = (v: unknown, field: string) => {
+    if (!Array.isArray(v)) throw bad(field);
+    return v.slice(0, 3) as unknown[];
   };
   if (!result || typeof result.confidence !== "string") throw bad("confidence");
   const confidence = result.confidence.trim().toLowerCase();
   if (confidence !== "low" && confidence !== "medium" && confidence !== "high") throw bad("confidence value");
-  const citations = items(result.evidence).map((v) => {
+  const citations = items(result.evidence, "evidence").map((v) => {
     if (!v || typeof v !== "object" || !("source" in v)) throw bad("citation shape");
     const source = evidence.find((e) => e.id === v.source);
     if (!source) throw bad("source ID");
     const quote = "line" in v && typeof v.line === "number" && Number.isSafeInteger(v.line)
       ? evidenceLines(source.text)[v.line - 1]
-      : "quote" in v ? normalize(string(v.quote, 300)) : undefined;
+      : "quote" in v ? normalize(string(v.quote, 300, "quote")) : undefined;
     if (!quote || quote.length < 3 || !normalize(source.text).includes(quote)) throw bad("source line");
     return { source: source.id, quote };
   });
   const finding: Finding = {
     title,
-    analysis: string(result.analysis, 2400)
+    analysis: string(result.analysis, 2400, "analysis")
       .replace(/\s*\((?:source\s+)?[DO]\d+(?:[, ]+line\s+\d+)?\)/gi, "")
       .replace(/\s*\[(?:source\s+)?[DO]\d+(?:[, ]+line\s+\d+)?\]/gi, "")
       .replace(/^\s*\d+[.)]\s+/gm, ""),
     confidence: citations.length === 0 ? "low" : confidence,
     evidence: citations,
-    missing: items(result.missing).map((v) => string(v, 400)),
-    questions: items(result.questions).map((v) => string(v, 400)),
+    missing: items(result.missing, "missing facts").map((v) => string(v, 400, "missing fact")),
+    questions: items(result.questions, "questions").map((v) => string(v, 400, "question")),
   };
   if (citations.length === 0 && finding.missing.length === 0) throw bad("missing evidence");
   const citedNumbers = new Set(citations.flatMap((item) => numbers(item.quote)));
@@ -122,9 +122,17 @@ export function parseFinding(text: string, title: string, evidence: Evidence[], 
     citations.push(support[0]);
     for (const number of numbers(support[0].quote)) citedNumbers.add(number);
   }
-  return committee
-    ? { ...finding, bull: string(result.bull, 600), base: string(result.base, 600), bear: string(result.bear, 600) }
-    : finding;
+  if (!committee) return finding;
+  const scenario = (label: string): string => {
+    const value = result[label] ?? result.scenarios?.[label];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const parts = [value.assumption, value.assumptions, value.outcome, value.description]
+        .flat().filter((part) => typeof part === "string" && part.trim());
+      return string(parts.join(" "), 600, label + " scenario");
+    }
+    return string(value, 600, label + " scenario");
+  };
+  return { ...finding, bull: scenario("bull"), base: scenario("base"), bear: scenario("bear") };
 }
 
 export async function buildResearch(userId: string, question: string, evidence: Evidence[], mode: "committee" | "question", deps: AiProxyDeps) {
@@ -156,8 +164,9 @@ export async function buildResearch(userId: string, question: string, evidence: 
       return { finding: decode(first.text), model: first.model };
     } catch (error) {
       if (!(error instanceof ResearchError) || error.code !== "INVALID_RESEARCH") throw error;
-      const retry = await ask(instruction + " Use qualitative wording and the exact numbered evidence references. " +
-        "If evidence is insufficient, return an empty evidence array and describe what is missing.", previous);
+      const retry = await ask(instruction + ' Return all required keys. Always supply evidence, missing and questions as JSON arrays, ' +
+        'using [] where a list has no entries. Use qualitative wording and exact numbered evidence references. ' +
+        'If evidence is insufficient, return an empty evidence array and describe what is missing.', previous);
       return { finding: decode(retry.text), model: retry.model };
     }
   }
@@ -175,8 +184,9 @@ export async function buildResearch(userId: string, question: string, evidence: 
   const complete = reviews.flatMap((r) => r.status === "fulfilled" ? [r.value] : []);
   const findings = complete.map((r) => r.finding);
   const answer = await validated(
-    "Synthesize the reviews into an executive thesis, strengths and weaknesses. Add keys bull, base and bear " +
-      "(short qualitative scenarios with explicit assumptions). Reviews are leads. Cite only the supplied source material.",
+    "Synthesize the reviews into an executive thesis, strengths and weaknesses. Include three top-level JSON keys " +
+      "named bull, base and bear. Each must be a short plain string, with an assumption and its possible outcome. " +
+      "For example: \"bull\":\"If adoption expands, revenue could grow.\". Cite only the supplied source material.",
     (text) => parseFinding(text, "Investment Committee", evidence, true),
     findings,
   );
