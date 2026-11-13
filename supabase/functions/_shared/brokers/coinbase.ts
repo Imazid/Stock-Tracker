@@ -543,6 +543,7 @@ export const coinbaseAdapter: BrokerAdapter = {
       limit: Math.min(Math.max(options.limit ?? 100, 1), 1000),
       cursor: options.cursor,
       start_sequence_timestamp: options.since,
+      end_sequence_timestamp: options.until,
     });
     const items = asArray(body.fills, "fills").map(normaliseFill);
     const cursor = stringField(body, "cursor");

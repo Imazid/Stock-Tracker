@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
   Activity, ArrowRight, ExternalLink, Bell, Bot, ChartCandlestick, ChevronDown, Command, FlaskConical, KeyRound,
@@ -57,6 +57,10 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
   const [refresh,setRefresh] = useState(0);
   const [syncing,setSyncing] = useState(false);
 
+  const main = useRef<HTMLElement>(null);
+  const menuToggle = useRef<HTMLButtonElement>(null);
+  const closeMenuButton = useRef<HTMLButtonElement>(null);
+  const restoreMenuFocus = useRef(false);
   const sessionCheck = useRef(0);
   const privateOwner = useRef<string | undefined>(undefined);
   const validateSession = useCallback(async () => {
@@ -136,8 +140,38 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
     return () => clearTimeout(timer);
   },[notice]);
 
+  const closeMenu = useCallback(() => {
+    restoreMenuFocus.current = true;
+    setMobile(false);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (mobile) {
+      closeMenuButton.current?.focus();
+    } else if (restoreMenuFocus.current) {
+      restoreMenuFocus.current = false;
+      menuToggle.current?.focus();
+    }
+  }, [mobile]);
+
+  useEffect(() => {
+    if (!mobile) return;
+    const escape = (event: KeyboardEvent) => {
+      if (!dialog && event.key === "Escape") closeMenu();
+    };
+    const compact = window.matchMedia("(max-width: 740px)");
+    const resize = () => { if (!compact.matches) setMobile(false); };
+    window.addEventListener("keydown", escape);
+    compact.addEventListener("change", resize);
+    return () => {
+      window.removeEventListener("keydown", escape);
+      compact.removeEventListener("change", resize);
+    };
+  }, [closeMenu, dialog, mobile]);
+
   function navigate(next: Page) {
     setPage(next); setMobile(false);
+    if (mobile || dialog === "command") requestAnimationFrame(() => main.current?.focus({ preventScroll: true }));
     if (window.location.hash !== `#${next}`) window.history.pushState(null,"",`#${next}`);
     window.scrollTo({top:0});
   }
@@ -180,15 +214,17 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
   const marketPage = page === "overview" || page === "markets";
   const nav = (start: number,end: number) => sections.slice(start,end).map(section => {
     const Icon = section.icon;
-    return <button key={section.id} title={collapsed ? section.title : undefined} className={page === section.id ? "active" : ""} aria-current={page === section.id ? "page" : undefined} onClick={() => navigate(section.id)}><Icon size={18}/><span>{section.title}</span></button>;
+    return <button key={section.id} aria-label={section.title} title={collapsed ? section.title : undefined} className={page === section.id ? "active" : ""} aria-current={page === section.id ? "page" : undefined} onClick={() => navigate(section.id)}><Icon size={18}/><span>{section.title}</span></button>;
   });
   const requiresTrading = page === "paper" || page === "agents";
 
   return <div className={`workspace ${collapsed ? "folded" : ""}`}>
-    {mobile && <button className="nav-scrim" aria-label="Close navigation" onClick={() => setMobile(false)}/>}
-    <aside className={`sidebar ${mobile ? "mobile-open" : ""}`}>
-      <a className="brand-link" href="#overview" aria-label="Stock Tracker overview" onClick={event => {event.preventDefault(); navigate("overview");}}><Brand small={collapsed}/></a>
-      <button className="workspace-switch" onClick={() => setDialog("command")}><span className="workspace-symbol"><Activity size={16}/></span><span>Trading workspace<small>Quick navigation</small></span><ChevronDown className="switch-chevron" size={14}/></button>
+    <a className="skip-link" href="#main" inert={mobile} onClick={event => { event.preventDefault(); main.current?.focus(); }}>Skip to content</a>
+    {mobile && <div className="nav-scrim" aria-hidden="true" onClick={closeMenu}/>}
+    <aside id="workspace-sidebar" className={`sidebar ${mobile ? "mobile-open" : ""}`}>
+      <button ref={closeMenuButton} className="icon-button mobile-nav-close" aria-label="Close navigation" onClick={closeMenu}><X size={19}/></button>
+      <a className="brand-link" href="#overview" onClick={event => {event.preventDefault(); navigate("overview");}}><Brand small={collapsed}/></a>
+      <button className="workspace-switch" onClick={() => setDialog("command")}><span className="workspace-symbol"><Activity size={16}/></span><span className="workspace-switch-label">Trading workspace<small>Quick navigation</small></span><ChevronDown className="switch-chevron" size={14}/></button>
       <nav aria-label="Workspace">
         <div className="nav-group"><p>WORKSPACE</p>{nav(0,4)}</div>
         <div className="nav-group"><p>TOOLS</p>{nav(4,8)}</div>
@@ -197,14 +233,14 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
       <div className="sidebar-bottom"><span className="avatar">{signedIn ? (user?.email?.slice(0,2).toUpperCase() || "ST") : <KeyRound size={15}/>}</span><span><strong>{signedIn ? user?.email : "Stock Tracker account"}</strong><small>{signedIn ? "Account connected" : "Sync with your iOS app"}</small></span><button className="icon-button" aria-label={signedIn ? "Open account" : "Sign in"} onClick={() => signedIn ? navigate("settings") : signIn()}>{signedIn ? <Settings2 size={16}/> : <LogIn size={16}/>}</button></div>
     </aside>
 
-    <div className="body-shell">
+    <div className="body-shell" inert={mobile}>
       <header className="topbar">
-        <div className="crumb"><button className="icon-button side-toggle" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(value => !value)}><Menu size={19}/></button><button className="icon-button mobile-toggle" aria-label="Open navigation" onClick={() => setMobile(true)}><Menu size={20}/></button><span>Workspace</span><span className="crumb-slash">/</span><strong>{current.title}</strong></div>
-        <div className="top-actions"><button className="search-trigger" aria-label="Search assets and commands" onClick={() => setDialog("command")}><Search size={16}/><span>Search anything</span><kbd><Command size={12}/> K</kbd></button><button className="icon-button top-bell" aria-label="Price alerts" onClick={() => navigate("watchlist")}><Bell size={18}/></button>
+        <div className="crumb"><button className="icon-button side-toggle" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(value => !value)}><Menu size={19}/></button><button ref={menuToggle} className="icon-button mobile-toggle" aria-label="Open navigation" aria-expanded={mobile} aria-controls="workspace-sidebar" onClick={() => setMobile(true)}><Menu size={20}/></button><span>Workspace</span><span className="crumb-slash">/</span><strong>{current.title}</strong></div>
+        <div className="top-actions"><button className="search-trigger" onClick={() => setDialog("command")}><Search size={16}/><span className="search-label">Search anything</span><kbd aria-hidden="true"><Command size={12}/> K</kbd></button><button className="icon-button top-bell" aria-label="Price alerts" onClick={() => navigate("watchlist")}><Bell size={18}/></button>
           {signedIn ? <button className="button secondary small" disabled={syncing} onClick={() => setRefresh(count => count + 1)}>{syncing ? "Syncing…" : "Sync"}</button> : <button className="button primary small sign-button" onClick={signIn}>Sign in <ArrowRight size={15}/></button>}
         </div>
       </header>
-      <main id="main" className="main">
+      <main ref={main} id="main" className="main" tabIndex={-1}>
         <header className="page-heading"><div><div className="market-label"><span className="status-dot"/>{marketPage ? "MARKET WORKSPACE" : "STOCK TRACKER"}</div><h1>{page === "overview" ? "Market overview" : current.title}</h1><p>{current.description}</p></div>
           {marketPage && <button aria-label="Find an asset" className="button secondary market-search" onClick={() => setDialog("command")}><Search size={16}/> Find an asset <ArrowRight size={15}/></button>}
           {(page === "strategy" || page === "research") && signedIn && <button className="button secondary" onClick={() => setDialog("command")}><Search size={16}/> Change asset</button>}
