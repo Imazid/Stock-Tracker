@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { KeyRound } from "lucide-react";
 import { backend } from "../lib/backend";
 import { message } from "../lib/models";
@@ -14,6 +14,11 @@ export default function Auth({ mode, onDone }: { mode: "login" | "mfa"; onDone: 
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const emailCode = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (sent) emailCode.current?.focus();
+  }, [sent]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -48,9 +53,9 @@ export default function Auth({ mode, onDone }: { mode: "login" | "mfa"; onDone: 
 
   return <form className="form" onSubmit={submit}>
     <div className="auth-note"><KeyRound size={19}/><p>{mode === "mfa" ? "Enter the six-digit code from your authenticator app." : "Use the email address associated with your Stock Tracker account."}</p></div>
-    {mode === "login" && <label>Email<input autoFocus type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required disabled={sent}/></label>}
+    {mode === "login" && <label>Email<input data-dialog-focus type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required disabled={sent}/></label>}
     {mode === "login" && flow === "password" && <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required/></label>}
-    {(mode === "mfa" || sent) && <label>{mode === "mfa" ? "Authenticator code" : "Email code"}<input autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,10}" value={code} onChange={e => setCode(e.target.value)} required/></label>}
+    {(mode === "mfa" || sent) && <label>{mode === "mfa" ? "Authenticator code" : "Email code"}<input ref={emailCode} data-dialog-focus={mode === "mfa" || undefined} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,10}" value={code} onChange={e => setCode(e.target.value)} required/></label>}
     {sent && <p className="muted">Check your email for a sign-in link or code.</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {!backend && <p className="error">Account services are awaiting configuration.</p>}
