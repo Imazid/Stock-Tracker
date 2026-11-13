@@ -45,9 +45,9 @@ _2026-11-13. Scope: the iOS app, `TradingCore`, and the Supabase backend (`opruu
 | **Logging leaks** | Proxies log only error class and code, never bodies; upstream error text is redacted of `userSecret=`; responses scrubbed of `userSecret` at any depth | `snaptrade_proxy.test.ts` | **Done** |
 | **KEK loss** | Keyring supports multiple keys and rewrap; operator keeps an offline copy before setting the secret | `secure_envelope.test.ts` (rotation) | Procedure in `IMPLEMENTATION_PLAN.md` §7 |
 
-## Database checks awaiting approval
+## Database checks
 
-`supabase/migrations/20261113150000_server_side_secret_custody.sql` has static tests via the Deno suite. I wrote a SQL check script for a **throwaway local container**. It confirms app users can't read or write `secure_credentials` or call `consume_ai_quota`, the uniqueness rules hold, `credential_events` rejects updates and direct deletes but still cascades when an account is deleted, and the quota never passes its limit. It hasn't run: the script contains `DELETE` statements, and this machine's guard hook requires the owner's explicit approval for that. Once approved, run it before `supabase db push`.
+`supabase/tests/secret_custody_checks.sql` checks that app users can't read or write `secure_credentials` or call `consume_ai_quota`. It also checks the uniqueness rules, that `credential_events` rejects updates and direct deletes but still cascades when an account is deleted, and that the quota never passes its limit. It only ever runs against a throwaway database: the CI `migrations` job, or `scripts/verify-migrations.sh` locally. Status: written, not yet run (see `IMPLEMENTATION_PLAN.md` §10).
 
 ## Residual risks we accept for now
 

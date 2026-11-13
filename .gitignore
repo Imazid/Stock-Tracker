@@ -27,3 +27,6 @@ TradingCore/.swiftpm/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Xcode command-line build output (was committed by mistake)
+build/

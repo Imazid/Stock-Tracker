@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "feature/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Edge Functions (lint, typecheck, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno lint supabase/functions
+      - run: deno check supabase/functions/*/index.ts
+      - run: deno test --no-check=remote --allow-read --allow-env supabase/functions/tests/
+
+  migrations:
+    name: Migrations (throwaway Postgres + behaviour checks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/verify-migrations.sh
+
+  trading-core:
+    name: TradingCore (swift test)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+        working-directory: TradingCore
+
+  ios:
+    name: iOS app (Release build + UI test bundle)
+    # The app targets iOS 26.1, which needs an Xcode 26+ toolchain.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secrets stub (reads Config/Secrets.plist, absent in CI, so every key is empty)
+        run: cp "Stock Tracker/SecretsConfig.swift.template" "Stock Tracker/SecretsConfig.swift"
+      - name: Release build
+        run: >
+          xcodebuild -project "Stock Tracker.xcodeproj" -scheme "Stock Tracker"
+          -configuration Release -destination "generic/platform=iOS Simulator"
+          CODE_SIGNING_ALLOWED=NO build
+      - name: Debug build for testing (app + UI tests)
+        run: >
+          xcodebuild -project "Stock Tracker.xcodeproj" -scheme "Stock Tracker"
+          -configuration Debug -destination "generic/platform=iOS Simulator"
+          CODE_SIGNING_ALLOWED=NO build-for-testing

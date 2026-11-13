@@ -113,7 +113,7 @@ Accept when `supabase db push` has applied the baseline, the in-flight trading m
 
 ## 7. Deployment (the new Supabase project)
 
-Nothing has been applied or deployed yet. Each step below changes a shared system, so run it deliberately:
+Nothing has been applied or deployed yet. `scripts/deploy-backend.sh` performs the steps below with guard rails: it refuses Miraa project refs, makes you type the target ref, shows a dry run before pushing, and reads the DB password and KEK from the Keychain so neither is printed. The manual equivalent, for reference:
 
 ```bash
 supabase link --project-ref opruuwczvrwklmwdtsaw     # DB password: macOS Keychain item "supabase-stock-tracker-db"
@@ -140,10 +140,33 @@ supabase functions deploy snaptrade-proxy ai-proxy --project-ref opruuwczvrwklmw
 
 ## 9. How to verify
 
-```bash
-npx -y deno test --no-check=remote supabase/functions/tests/       # server units (no network)
-npx -y deno lint supabase/functions
-(cd TradingCore && swift test)                                       # trading domain
-xcodebuild -project "Stock Tracker.xcodeproj" -scheme "Stock Tracker" \
-  -configuration Release -destination "generic/platform=iOS Simulator" CODE_SIGNING_ALLOWED=NO build
-```
+CI (`.github/workflows/ci.yml`) runs everything below on every pull request and on pushes to `main` and `feature/**`:
+
+| Job | What it proves | Local equivalent |
+|---|---|---|
+| `server` | Edge Functions lint, typecheck and unit tests (no network) | `npx -y deno test --no-check=remote --allow-read --allow-env supabase/functions/tests/` |
+| `migrations` | Every migration applies to a fresh Supabase Postgres, and the custody rules hold: RLS denial, uniqueness, append-only log, cascade on account deletion, quota limit | `scripts/verify-migrations.sh` (throwaway container, removed on exit) |
+| `trading-core` | The trading domain | `(cd TradingCore && swift test)` |
+| `ios` | Release build and the UI test bundle compile from a **clean checkout** | `cp "Stock Tracker/SecretsConfig.swift.template" "Stock Tracker/SecretsConfig.swift"`, then `xcodebuild … build` |
+
+A clean checkout now builds: `SecretsConfig.swift.template` is the real plist-reading implementation (a missing key reads as empty), not an outdated list of hard-coded strings.
+
+## 10. Merge readiness
+
+Merge order: the parallel session's server work → `feature/agentic-trading-platform` → this branch (`feature/agentic-trading-platform-backend`) → `main`. `main` is an ancestor of the feature branch, so that last step has no conflicts today.
+
+| Gate | Status (2026-11-13) |
+|---|---|
+| Debug and Release iOS builds | Pass (local, Xcode 27.2) |
+| UI test bundle compiles | Pass (`build-for-testing`) |
+| Broker and onboarding UI tests | See the PR description for the run result |
+| TradingCore tests | Pass: 142 tests |
+| Edge Function tests, lint, typecheck | Pass: 27 tests |
+| Migration behaviour checks | Written (`supabase/tests/secret_custody_checks.sql`). **Not yet run**: the Miraa guard hook in the authoring session blocks database clients. CI or `scripts/verify-migrations.sh` runs them |
+| CI green on GitHub | **Unverified** until the first run. The `ios` job assumes a `macos-26` runner image |
+| Build artefacts untracked (`build/`, 547 files) | Done |
+| Backend deployed to `opruuwczvrwklmwdtsaw` | **Not yet**: run `scripts/deploy-backend.sh` (it refuses Miraa project refs and asks you to type the target ref) |
+| Provider secrets set (SnapTrade, Gemini/OpenAI) | **You**: see the end of `deploy-backend.sh` |
+| Leaked credentials rotated | **You**: §5 item 1 |
+
+**Before the merged app ships:** deploy the backend and set the provider secrets. Release builds route SnapTrade and AI only through the server, so without a deployed backend both features show "not configured".
