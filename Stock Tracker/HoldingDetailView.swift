@@ -523,6 +523,7 @@ struct TransactionFormSheet: View {
                             TextField("0.00", text: $priceText)
                                 .keyboardType(.decimalPad)
                                 .focused($focus, equals: .price)
+                            .accessibilityIdentifier("tx.price")
                         }
                     }
 

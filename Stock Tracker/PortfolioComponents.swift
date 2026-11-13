@@ -114,12 +114,20 @@ extension MarketData {
         guard rebuilt.shares > 1e-9 else {
             return .invalid("That leaves no shares — remove the holding instead.")
         }
-        portfolio[index].transactions = transactions
-        portfolio[index].shares = rebuilt.shares
-        portfolio[index].avgCost = rebuilt.avgCost
+        var holding = portfolio[index]
+        let before = Dictionary(holding.transactions.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let kept = Set(transactions.map(\.id))
+        let deleted = holding.transactions.filter { !kept.contains($0.id) }
+        let changed = Set(transactions.filter { before[$0.id] != $0 }.map(\.id))
+        holding.transactions = transactions
+        holding.shares = rebuilt.shares
+        holding.avgCost = rebuilt.avgCost
+        guard SyncManager.shared.queuePortfolioChange(holding, changed: changed, deleted: deleted) else {
+            return .invalid("Couldn’t save the portfolio change on this device.")
+        }
+        portfolio[index] = holding
         saveToDisk()
         updateWidgetData()
-        if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
         return .ok
     }
 }
