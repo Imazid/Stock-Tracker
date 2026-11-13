@@ -112,7 +112,6 @@ struct ContentView: View {
         .tint(DS.accent)
         .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
         .modifier(TradingRootSheets())
-        .environmentObject(privateMarkets)
         .sheet(isPresented: $router.showCommands, onDismiss: performCommand) {
             CommandPalette { destination in
                 pendingCommand = destination
@@ -131,6 +130,7 @@ struct ContentView: View {
         .sensoryFeedback(.impact(flexibility: .soft), trigger: selectedTab)
         .onChange(of: selectedTab) { _, _ in marketData.refreshIfStale() }
         .onChange(of: colorScheme, initial: true) { _, _ in configureTabBar() }
+        .environmentObject(privateMarkets)
     }
 
     private func performCommand() {

@@ -91,6 +91,7 @@ final class TradingRouter: ObservableObject {
 struct TradingRootSheets: ViewModifier {
     @EnvironmentObject private var router: TradingRouter
     @EnvironmentObject private var trading: TradingStore
+    @EnvironmentObject private var privateMarkets: PrivateMarketsStore
 
     func body(content: Content) -> some View {
         content
@@ -120,6 +121,7 @@ struct TradingRootSheets: ViewModifier {
             }
             .sheet(isPresented: $router.showCopilot, onDismiss: { router.copilotPrompt = nil }) {
                 CopilotView(initialPrompt: router.copilotPrompt)
+                    .environmentObject(privateMarkets)
             }
     }
 }
