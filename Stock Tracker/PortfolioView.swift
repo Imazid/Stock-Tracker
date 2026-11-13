@@ -163,7 +163,7 @@ struct PortfolioView: View {
                     case .income:      PortfolioIncomeTab().portfolioRow(bottom: DS.Space.xxl)
                     }
                 }
-                if !privateMarkets.state.holdings.isEmpty || !privateMarkets.providerHoldings.isEmpty {
+                if !privateMarkets.allocationHoldings.isEmpty {
                     UnifiedPrivateAllocation()
                         .portfolioRow(bottom: DS.Space.m)
                     Button("Open Private Markets") { selectTab(.privateMarkets) }

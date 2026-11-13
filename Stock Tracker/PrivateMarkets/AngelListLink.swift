@@ -7,6 +7,14 @@ import UIKit
 
 @MainActor
 final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = AngelListLink()
+
+    struct Records {
+        let text: String
+        let statements: [PrivateFundSnapshot.Record]
+        let connectionID: String
+    }
+
     struct Tool: Identifiable {
         struct Field: Identifiable {
             let id: String
@@ -62,10 +70,17 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
         return URLSession(configuration: configuration, delegate: AngelListNoRedirect(), delegateQueue: nil)
     }()
     private var browser: ASWebAuthenticationSession?
+    private var refreshing: [UUID: Task<Connection, Error>] = [:]
+    private var disconnecting: Set<UUID> = []
 
     func isConnected(_ owner: UUID) -> Bool { connection(owner) != nil }
 
+    func isCurrentConnection(_ id: String, owner: UUID) -> Bool {
+        !disconnecting.contains(owner) && connection(owner)?.clientID == id
+    }
+
     func connect(_ owner: UUID, stillSignedIn: () -> Bool) async throws {
+        guard !disconnecting.contains(owner) else { throw Failure.disconnected }
         let (data, _) = try await request(Self.auth.appendingPathComponent("oauth/register"), json: [
             "client_name": "Stock Tracker",
             "redirect_uris": [Self.redirect.absoluteString],
@@ -94,11 +109,14 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
             "grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirect.absoluteString,
             "code_verifier": verifier
         ])
-        guard stillSignedIn() else { throw Failure.disconnected }
+        guard stillSignedIn(), !disconnecting.contains(owner) else { throw Failure.disconnected }
         try save(credential, owner: owner)
     }
 
     func disconnect(_ owner: UUID) async throws {
+        guard disconnecting.insert(owner).inserted else { throw Failure.disconnected }
+        defer { disconnecting.remove(owner) }
+        _ = try? await refreshing[owner]?.value
         guard let active = connection(owner) else { return }
         // Revoke the refresh token last. If either request fails, a retry still has the token.
         if active.expiresAt > .now {
@@ -115,7 +133,7 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
     }
 
     func tools(_ owner: UUID) async throws -> [Tool] {
-        try await withSession(owner) { headers in
+        try await withSession(owner) { headers, _ in
             var result: [Tool] = []
             var cursor: String?
             for page in 0..<5 {
@@ -144,7 +162,7 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
         }
     }
 
-    func call(_ tool: Tool, arguments: [String: String], owner: UUID) async throws -> String {
+    func call(_ tool: Tool, arguments: [String: String], owner: UUID) async throws -> Records {
         var params: [String: Any] = [:]
         for field in tool.fields {
             let raw = arguments[field.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -162,17 +180,21 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
                 params[field.id] = value
             }
         }
-        return try await withSession(owner) { headers in
+        return try await withSession(owner) { headers, connectionID in
             let result = try await rpc("tools/call", id: 2, parameters: ["name": tool.id, "arguments": params], headers: headers).0
             guard result["isError"] as? Bool != true else { throw Failure.arguments }
             let contents = (result["content"] as? [[String: Any]] ?? []).compactMap {
                 $0["type"] as? String == "text" ? $0["text"] as? String : nil
             }
-            if !contents.isEmpty { return contents.joined(separator: "\n\n") }
-            if let value = result["structuredContent"],
-               let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
-               let text = String(data: data, encoding: .utf8) { return text }
-            throw Failure.unsupported
+            let structured = result["structuredContent"].flatMap {
+                try? JSONSerialization.data(withJSONObject: $0, options: [.prettyPrinted, .sortedKeys])
+            }
+            let display = structured.flatMap { String(data: $0, encoding: .utf8) } ?? contents.joined(separator: "\n\n")
+            guard !display.isEmpty else { throw Failure.unsupported }
+            let canImport = tool.id == "get_capital_account" || tool.id == "list_capital_accounts"
+            return Records(text: display,
+                           statements: canImport ? PrivateFundSnapshot.statementRecords(structured: structured, text: contents) : [],
+                           connectionID: connectionID)
         }
     }
 
@@ -186,8 +208,9 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
         return !["document", "download", "partner", "subscription"].contains(where: { terms.contains($0) })
     }
 
-    private func withSession<T>(_ owner: UUID, operation: ([String: String]) async throws -> T) async throws -> T {
+    private func withSession<T>(_ owner: UUID, operation: ([String: String], String) async throws -> T) async throws -> T {
         let active = try await freshConnection(owner)
+        guard !disconnecting.contains(owner) else { throw Failure.disconnected }
         var headers = ["Authorization": "Bearer " + active.access, "Accept": "application/json, text/event-stream"]
         let (server, response) = try await rpc("initialize", id: 1, parameters: [
             "protocolVersion": Self.protocolVersion, "capabilities": [:],
@@ -199,7 +222,7 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
         headers["Mcp-Session-Id"] = response.value(forHTTPHeaderField: "Mcp-Session-Id")
         _ = try await request(Self.endpoint, json: ["jsonrpc": "2.0", "method": "notifications/initialized"], headers: headers)
         do {
-            let value = try await operation(headers)
+            let value = try await operation(headers, active.clientID)
             if headers["Mcp-Session-Id"] != nil { _ = try? await request(Self.endpoint, method: "DELETE", headers: headers) }
             return value
         } catch {
@@ -219,6 +242,7 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
     }
 
     private func authenticate(_ url: URL) async throws -> URL {
+        guard browser == nil else { throw Failure.presentation }
         defer { browser = nil }
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: Self.redirect.scheme) { response, error in
@@ -236,13 +260,20 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
     }
 
     private func freshConnection(_ owner: UUID) async throws -> Connection {
+        guard !disconnecting.contains(owner) else { throw Failure.disconnected }
         guard let existing = connection(owner) else { throw Failure.disconnected }
         if existing.expiresAt.timeIntervalSinceNow > 60 { return existing }
         guard let refresh = existing.refresh else { throw Failure.authorization }
-        let renewed = try await token(clientID: existing.clientID,
-                                      fields: ["grant_type": "refresh_token", "refresh_token": refresh], oldRefresh: refresh)
-        try save(renewed, owner: owner)
-        return renewed
+        if let pending = refreshing[owner] { return try await pending.value }
+        let pending = Task {
+            let renewed = try await token(clientID: existing.clientID,
+                                          fields: ["grant_type": "refresh_token", "refresh_token": refresh], oldRefresh: refresh)
+            try save(renewed, owner: owner)
+            return renewed
+        }
+        refreshing[owner] = pending
+        defer { refreshing[owner] = nil }
+        return try await pending.value
     }
 
     private func token(clientID: String, fields: [String: String], oldRefresh: String? = nil) async throws -> Connection {

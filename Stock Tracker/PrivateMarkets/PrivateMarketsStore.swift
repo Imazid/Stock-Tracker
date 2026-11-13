@@ -229,6 +229,7 @@ final class PrivateMarketsStore: ObservableObject {
 
     struct State: Codable {
         var holdings: [PrivateHolding] = []
+        var angelListSnapshots: [PrivateFundSnapshot]?
         var follows: [Follow] = []
         var notify = false
         var seenUpdates: [UUID] = []
@@ -258,6 +259,13 @@ final class PrivateMarketsStore: ObservableObject {
     private var scope: UUID?
     private var didLoad = false
     private var deliveringUpdates = false
+
+    var angelListSnapshots: [PrivateFundSnapshot] { state.angelListSnapshots ?? [] }
+
+    var allocationHoldings: [PrivateHolding] {
+        PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.map(\.holding),
+                                       snapshots: angelListSnapshots)
+    }
 
     func selectAccount(_ id: UUID?) {
         guard !didLoad || scope != id else { return }
@@ -369,6 +377,36 @@ final class PrivateMarketsStore: ObservableObject {
                 next.holdings.append(holding)
             }
         }
+    }
+
+    func saveAngelListSnapshot(_ snapshot: PrivateFundSnapshot, owner: UUID, connectionID: String) throws {
+        guard scope == owner else { throw CancellationError() }
+        guard AngelListLink.shared.isCurrentConnection(connectionID, owner: owner) else {
+            throw AngelListLink.Failure.disconnected
+        }
+        if let manual = snapshot.replacesManualHoldingID {
+            guard state.holdings.contains(where: { $0.id == manual && $0.currency == snapshot.currency }),
+                  !angelListSnapshots.contains(where: { $0.reference != snapshot.reference && $0.replacesManualHoldingID == manual }) else {
+                throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_FUND_ALLOCATION",
+                    message: "Choose an unlinked manual holding in the same currency.")
+            }
+        }
+        guard angelListSnapshots.count < 100 || angelListSnapshots.contains(where: { $0.reference == snapshot.reference }),
+              let updated = snapshot.replacing(in: angelListSnapshots) else {
+            throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_FUND_SNAPSHOT",
+                message: "Check the reference, date and currency against the saved statement. You can keep up to 100 statements.")
+        }
+        try change { $0.angelListSnapshots = updated }
+    }
+
+    func removeAngelListSnapshot(_ id: UUID, owner: UUID) throws {
+        guard scope == owner else { throw CancellationError() }
+        try change { $0.angelListSnapshots?.removeAll { $0.id == id } }
+    }
+
+    func removeAngelListSnapshots(owner: UUID) throws {
+        guard scope == owner else { throw CancellationError() }
+        try change { $0.angelListSnapshots = nil }
     }
 
     func updateOwnershipEvidence(for holdingID: UUID, owner: UUID, documentID: UUID?) throws {

@@ -76,6 +76,25 @@ struct PrivateHoldingsView: View {
                     if let error = store.providerError { Text(error).foregroundStyle(.secondary) }
                 }
             }
+            if let owner = auth.userId {
+                Section("AngelList statements") {
+                    ForEach(store.angelListSnapshots) { statement in
+                        NavigationLink {
+                            PrivateFundSnapshotDetail(id: statement.id, owner: owner)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(statement.name).font(.headline)
+                                Text(statement.asOf.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                Text(PrivateInput.money(statement.netAssetValue, currency: statement.currency))
+                                    .font(.subheadline.monospacedDigit())
+                            }
+                        }
+                    }
+                    NavigationLink("Read an AngelList capital account") { AngelListView() }
+                        .accessibilityIdentifier("private.angellist.open")
+                }
+            }
         }
         .navigationTitle("My Private Portfolio")
         .navigationBarTitleDisplayMode(.inline)
@@ -86,6 +105,61 @@ struct PrivateHoldingsView: View {
 
     private func refresh() async {
         if let owner = auth.userId { await store.refreshProviderHoldings(for: owner) }
+    }
+}
+
+private struct PrivateFundSnapshotDetail: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @Environment(\.dismiss) private var dismiss
+    let id: UUID
+    let owner: UUID
+    @State private var showRemove = false
+    @State private var error: String?
+
+    var body: some View {
+        if auth.userId == owner, let statement = store.angelListSnapshots.first(where: { $0.id == id }) {
+            List {
+                Section("Statement") {
+                    Text(PrivateFundSnapshot.source + " · User-reviewed")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    LabeledContent("Statement date", value: statement.asOf.formatted(date: .abbreviated, time: .omitted))
+                    LabeledContent("Retrieved", value: statement.retrievedAt.formatted(date: .abbreviated, time: .shortened))
+                    LabeledContent("Capital account ID", value: statement.reference)
+                    LabeledContent("Investment type", value: statement.assetClass.rawValue)
+                    LabeledContent("Currency", value: statement.currency)
+                }
+                Section("Reported balances") {
+                    balance("Net asset value", statement.netAssetValue, statement.currency)
+                    balance("Capital committed", statement.commitment, statement.currency)
+                    balance("Paid-in capital", statement.paidIn, statement.currency)
+                    balance("Distributions received", statement.distributions, statement.currency)
+                    if statement.allocationHolding.valuation()?.isStale() == true {
+                        Label("Stale valuation", systemImage: "clock.badge.exclamationmark").foregroundStyle(Color.orange)
+                    }
+                    Text("Return metrics require dated contributions, distributions and valuations.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Button("Remove statement", role: .destructive) { showRemove = true }
+                if let error { Text(error).foregroundStyle(.orange) }
+            }
+            .navigationTitle(statement.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog("Remove this saved statement?", isPresented: $showRemove, titleVisibility: .visible) {
+                Button("Remove statement", role: .destructive) {
+                    do {
+                        try store.removeAngelListSnapshot(id, owner: owner)
+                        dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }
+            }
+        } else {
+            ContentUnavailableView("Statement unavailable", systemImage: "doc.text")
+        }
+    }
+
+    private func balance(_ title: String, _ value: Decimal?, _ currency: String) -> some View {
+        LabeledContent(title, value: PrivateInput.money(value, currency: currency))
     }
 }
 
@@ -106,7 +180,7 @@ struct UnifiedPrivateAllocation: View {
     }
 
     private var privateHoldings: [PrivateHolding] {
-        store.state.holdings + store.providerHoldings.map(\.holding)
+        store.allocationHoldings
     }
 
     private var slices: [Slice] {
