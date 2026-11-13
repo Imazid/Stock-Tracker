@@ -71,7 +71,12 @@ struct StockCryptoTrackerApp: App {
         #endif
         let manager = SubscriptionManager.shared
         _subscriptionManager = StateObject(wrappedValue: manager)
-        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        var hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        #if DEBUG
+        if Self.isUITestFreshInstall, ProcessInfo.processInfo.arguments.contains("-UITestTradingFixture") {
+            hasCompletedOnboarding = true
+        }
+        #endif
         _showOnboarding = State(initialValue: !hasCompletedOnboarding)
 
         // Must be called once before any ad is loaded (see AdMobInitializer).
