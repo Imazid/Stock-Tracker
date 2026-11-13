@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, Select } from "@/components/ui/Field";
+import type { SplitActivity } from "@/lib/portfolio-splits";
 import { service } from "@/workspace/lib/backend";
 
 type Account = { id: string; name?: string; institution_name?: string; number?: string };
@@ -27,6 +28,15 @@ type Activity = {
 };
 type Page = { activities: Activity[]; omitted: number; nextOffset: number | null; snapshot?: string; syncedAt?: string };
 
+type ReviewMode = { imported: ReadonlySet<string>; canInclude: boolean } & (
+  { mode: "cash"; onInclude: (flow: BrokerCashFlow) => void } |
+  { mode: "splits"; selectedId?: string; onReview: (activity: SplitActivity) => void }
+);
+
+function isSplitActivity(activity: Activity): activity is Activity & SplitActivity {
+  return activity.label === "Stock split" || activity.label === "Reverse stock split";
+}
+
 function quantity(value: number | string, currency?: string | null) {
   return [new Intl.NumberFormat(undefined, { maximumFractionDigits: 12 }).format(Number(value)), currency].filter(Boolean).join(" ");
 }
@@ -35,13 +45,7 @@ export function conversionDetails(fx: HistoricalFx) {
   return `${quantity(fx.amount, fx.currency)} · ${fx.usd_per_unit} USD per ${fx.currency} · ECB ${fx.rate_date}`;
 }
 
-export function BrokerActivity({ start, end, imported, canInclude, onInclude }: {
-  start: string;
-  end: string;
-  imported: ReadonlySet<string>;
-  canInclude: boolean;
-  onInclude: (flow: BrokerCashFlow) => void;
-}) {
+export function BrokerActivity({ start, end, ...review }: { start: string; end: string } & ReviewMode) {
   const [accounts, setAccounts] = useState<Account[]>();
   const [accountId, setAccountId] = useState("");
   const [page, setPage] = useState<Page>();
@@ -82,7 +86,7 @@ export function BrokerActivity({ start, end, imported, canInclude, onInclude }: 
   }
 
   async function loadPage(offset: number, preferCached = true) {
-    if (!accountId || !start || end <= start || lookup) return;
+    if (!accountId || !start || end < start || lookup) return;
     setBusy(true);
     setError("");
     if (!offset) { setConversions({}); setFxError(undefined); }
@@ -104,15 +108,20 @@ export function BrokerActivity({ start, end, imported, canInclude, onInclude }: 
   }
 
   const nextOffset = page?.nextOffset ?? null;
+  const reviewSplits = review.mode === "splits";
+  const accountField = reviewSplits ? "split-broker-account" : "returns-broker-account";
+  const activities = reviewSplits ? page?.activities.filter(isSplitActivity) : page?.activities;
 
   return <fieldset className="space-y-3 rounded-md border border-border p-3">
-    <legend className="px-1 text-sm font-medium">Broker activity</legend>
-    <p className="text-xs text-text-2">Review reported activity for the selected dates. Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Check against transfers already entered from statements.</p>
+    <legend className="px-1 text-sm font-medium">{reviewSplits ? "Broker-reported splits" : "Broker activity"}</legend>
+    <p className="text-xs text-text-2">{reviewSplits
+      ? "Choose an event to bring its reference and reported date into the adjustment form. Confirm the holding, effective date and ratio against your statement."
+      : "Review reported activity for the selected dates. Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Check against transfers already entered from statements."}</p>
     {!accounts ? <Button size="sm" disabled={busy} onClick={() => void loadAccounts()}>Find linked accounts</Button>
       : accounts.length === 0 ? <p className="text-sm text-text-2">No linked brokerage accounts. <Link className="underline" href="/#settings">Open brokerage connections</Link></p>
       : <div className="flex flex-wrap items-end gap-2">
-        <Field label="Brokerage account" htmlFor="returns-broker-account">
-          <Select id="returns-broker-account" disabled={busy || Boolean(lookup)} value={accountId} onChange={(event) => { setAccountId(event.target.value); setPage(undefined); setError(""); setConversions({}); setFxError(undefined); }}>
+        <Field label="Brokerage account" htmlFor={accountField}>
+          <Select id={accountField} disabled={busy || Boolean(lookup)} value={accountId} onChange={(event) => { setAccountId(event.target.value); setPage(undefined); setError(""); setConversions({}); setFxError(undefined); }}>
             {accounts.map((account) => <option key={account.id} value={account.id}>
               {[account.name || account.institution_name || "Brokerage account", account.number?.slice(-4)].filter(Boolean).join(" · ")}
             </option>)}
@@ -127,16 +136,34 @@ export function BrokerActivity({ start, end, imported, canInclude, onInclude }: 
         <p className="text-xs text-text-2">Imported {new Date(page.syncedAt).toLocaleString()}</p>
         <Button size="sm" disabled={busy || Boolean(lookup)} onClick={() => void loadPage(0, false)}>Fetch from broker</Button>
       </div>}
-      <p className="text-xs text-text-2">SnapTrade refreshes activity daily. For foreign cash, you can look up an ECB reference rate or enter the USD amount from your statement.</p>
+      <p className="text-xs text-text-2">SnapTrade refreshes activity daily.{!reviewSplits && " For foreign cash, you can look up an ECB reference rate or enter the USD amount from your statement."}</p>
       {page.omitted > 0 && <p role="status" className="text-xs text-warn">{page.omitted} records had missing or unsupported data. Check your statement for complete activity.</p>}
-      {page.activities.length === 0 && <p className="text-sm text-text-2">No reported cash or corporate activity in this date range.</p>}
+      {activities?.length === 0 && <p className="text-sm text-text-2">{reviewSplits
+        ? nextOffset === null ? "No reported splits in this date range." : "No reported splits on the loaded pages. Load more activity to keep looking."
+        : "No reported cash or corporate activity in this date range."}</p>}
       <ul className="divide-y divide-border">
-        {page.activities.map((activity) => {
+        {activities?.map((activity) => {
+          const included = review.imported.has(activity.id);
+          if (review.mode === "splits") {
+            if (!isSplitActivity(activity)) return null;
+            const { id, date, label, symbol } = activity;
+            const selected = review.selectedId === id;
+            return <li key={id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <div className="min-w-0 [overflow-wrap:anywhere]">
+                <p className="text-sm">{label}{symbol && ` · ${symbol}`}</p>
+                <p className="text-xs text-text-2">Reported {date}</p>
+              </div>
+              <Button size="sm" disabled={busy || included || selected || !review.canInclude}
+                aria-label={included || selected ? undefined : `Review split ${symbol ?? "event"} reported ${date}`}
+                onClick={() => review.onReview({ id, date, label, symbol })}>
+                {included ? "Already recorded" : selected ? "Selected" : "Review split"}
+              </Button>
+            </li>;
+          }
           const foreign = activity.foreignCashFlow;
           const converted = conversions[activity.id];
           const cashFlow = activity.cashFlow ?? (foreign && converted
             ? { date: foreign.date, kind: foreign.kind, amount: converted.usdAmount, fx: converted.fx } : null);
-          const included = imported.has(activity.id);
           return <li key={activity.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
             <div>
               <p className="text-sm">{activity.label}{activity.symbol && ` · ${activity.symbol}`}</p>
@@ -149,11 +176,11 @@ export function BrokerActivity({ start, end, imported, canInclude, onInclude }: 
               {fxError?.id === activity.id && <p className="text-xs text-down" role="alert">{fxError.message} You can enter the USD amount manually.</p>}
             </div>
             {foreign && !cashFlow && activity.date > start && !included && <Button size="sm"
-              disabled={Boolean(lookup) || busy || !canInclude} onClick={() => void convert(activity)}>
+              disabled={Boolean(lookup) || busy || !review.canInclude} onClick={() => void convert(activity)}>
               {lookup === activity.id ? "Looking up rate…" : "Look up USD value"}
             </Button>}
-            {(cashFlow || included) && activity.date > start && <Button size="sm" disabled={included || !canInclude} aria-label={included ? "Already included" : `Include ${activity.label.toLowerCase()} on ${activity.date}`}
-              onClick={() => { if (cashFlow) onInclude({ ...cashFlow, snaptrade_id: activity.id }); }}>
+            {(cashFlow || included) && activity.date > start && <Button size="sm" disabled={included || !review.canInclude} aria-label={included ? "Already included" : `Include ${activity.label.toLowerCase()} on ${activity.date}`}
+              onClick={() => { if (cashFlow) review.onInclude({ ...cashFlow, snaptrade_id: activity.id }); }}>
               {included ? "Included" : "Include transfer"}
             </Button>}
           </li>;

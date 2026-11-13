@@ -196,7 +196,7 @@ function PeriodEditor({ userId, period, onClose, onSave }: { userId: string; per
         <Field label="Closing date" htmlFor="performance-end"><Input id="performance-end" type="date" min={start || "1900-01-01"} max="9999-12-31" required value={end} onChange={(event) => setEnd(event.target.value)} /></Field>
         <Field label="Closing value (USD)" htmlFor="performance-closing"><Input id="performance-closing" name="closing" type="number" min="0" max="9999999999999.99" step="0.01" required defaultValue={period?.closing_value_usd} /></Field>
       </div>
-      {start && end > start && <BrokerActivity key={`${start}/${end}`} start={start} end={end}
+      {start && end > start && <BrokerActivity key={`${start}/${end}`} mode="cash" start={start} end={end}
         imported={new Set(flows.flatMap((flow) => flow.snaptrade_id ? [flow.snaptrade_id] : []))} canInclude={flows.length < 366 && !saving}
         onInclude={(flow) => setFlows((current) => current.length >= 366 || current.some((existing) => existing.snaptrade_id === flow.snaptrade_id)
           ? current : [...current, { ...flow, id: uuid(), amount: String(flow.amount) }])} />}
