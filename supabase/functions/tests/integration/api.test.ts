@@ -429,6 +429,22 @@ apiTest("the scheduler fills waiting paper orders when the price arrives, and ne
   assert(await chainIntact(sql, person.id));
 });
 
+apiTest("each scheduler run prunes idempotency keys older than 30 days, and a replay inside that window still works", async (sql) => {
+  const person = await signUp("upkeep");
+  const ledgerID = await newPortfolio(person);
+  const placed = await api(person.token, { action: "placeOrder", order: order(ledgerID), fixture: prices() }, { "idempotency-key": "recent-key-0001" });
+  assertEquals(placed.status, 200, JSON.stringify(placed.error));
+  await sql`insert into public.trading_idempotency_keys ${sql({ user_id: person.id, key: "stale-key-0001", action: "placeOrder", status: 200, response: sql.json({ ok: true }), created_at: new Date(Date.now() - 31 * 86_400_000) })}`;
+
+  const ran = await schedule({ fixture: prices() });
+  assertEquals(ran.status, 200);
+  assert(ran.data.prunedIdempotencyKeys >= 1, JSON.stringify(ran.data));
+  assertEquals((await sql`select key from public.trading_idempotency_keys where user_id = ${person.id} order by key`).map((row) => row.key), ["recent-key-0001"]);
+  const replay = await api(person.token, { action: "placeOrder", order: order(ledgerID), fixture: prices() }, { "idempotency-key": "recent-key-0001" });
+  assertEquals([replay.headers.get("idempotent-replay"), replay.data.order.id], ["true", placed.data.order.id]);
+  assertEquals(await count(sql, "orders", person.id), 1);
+});
+
 // MARK: - Kill switch and the stronger sign-in
 
 apiTest("the kill switch stops agents at once; turning it off, loosening limits and live requests need the stronger sign-in", async (sql) => {
