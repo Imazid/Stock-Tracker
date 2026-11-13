@@ -222,14 +222,7 @@ final class PrivateMarketsFlowTests: XCTestCase {
     @MainActor
     func testProviderWithdrawalTimelineShowsSourceAndStatus() async throws {
         // Optional disposable fixture seeded by the application lifecycle integration.
-        let login = ProcessInfo.processInfo.environment["PRIVATE_LIFECYCLE_TEST_LOGIN"]
-        try XCTSkipUnless(login != nil, "Set PRIVATE_LIFECYCLE_TEST_LOGIN to a seeded disposable account.")
-        let credentials = try XCTUnwrap(login)
-        let host = "http://127.0.0.1:58533"
-        let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
-        app.terminate()
-        app.launchArguments += ["-SupabaseURLOverride", host, "-SupabaseAnonKeyOverride", key, "-UITestSignIn", credentials]
-        app.launch()
+        try launchWithLocalSession("PRIVATE_LIFECYCLE_TEST_SESSION")
         openPrivateMarkets()
         let investor = app.buttons["Investor profile & applications"]
         if !investor.isHittable { app.swipeUp() }
@@ -253,21 +246,20 @@ final class PrivateMarketsFlowTests: XCTestCase {
 
     @MainActor
     func testProviderExitShowsSettlementSourceAndRemainingUnits() async throws {
-        let login = ProcessInfo.processInfo.environment["PRIVATE_DISPOSITION_TEST_LOGIN"]
-        try XCTSkipUnless(login != nil, "Set PRIVATE_DISPOSITION_TEST_LOGIN to a seeded disposable account.")
-        let credentials = try XCTUnwrap(login)
-        let host = "http://127.0.0.1:58534"
-        let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
-        app.terminate()
-        app.launchArguments += ["-SupabaseURLOverride", host, "-SupabaseAnonKeyOverride", key, "-UITestSignIn", credentials]
-        app.launch()
+        try launchWithLocalSession("PRIVATE_DISPOSITION_TEST_SESSION")
         openPrivateMarkets()
         let portfolio = app.buttons["private.destination.briefcase"]
-        XCTAssertTrue(portfolio.waitForExistence(timeout: 10))
-        if !portfolio.isHittable { app.swipeUp() }
-        portfolio.tap()
-        let row = app.buttons["private.holding.providerRow"].firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 45))
+        let row = app.descendants(matching: .any)["private.holding.providerRow"].firstMatch
+        for _ in 0..<4 {
+            // Restoring a user resets the workspace navigation for the new account.
+            if portfolio.exists { portfolio.tap() }
+            if app.navigationBars["My Private Portfolio"].waitForExistence(timeout: 3) {
+                if row.waitForExistence(timeout: 5) { break }
+                if !portfolio.exists { app.swipeUp() }
+                if row.waitForExistence(timeout: 3) { break }
+            }
+        }
+        XCTAssertTrue(row.exists, app.debugDescription)
         for _ in 0..<3 where !row.isHittable { app.swipeUp() }
         XCTAssertTrue(row.isHittable)
         row.tap()
@@ -275,7 +267,20 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Exit source"].exists)
         XCTAssertTrue(app.staticTexts["Final sale receipt"].exists)
-        XCTAssertTrue(app.staticTexts["Remaining shares or units"].exists)
+        let remaining = app.staticTexts["Remaining shares or units"]
+        if !remaining.isHittable { app.swipeUp() }
+        XCTAssertTrue(remaining.exists)
+    }
+
+    @MainActor
+    private func launchWithLocalSession(_ variable: String) throws {
+        let session = ProcessInfo.processInfo.environment[variable]
+        try XCTSkipUnless(session != nil, "Set \(variable) to the access and refresh tokens of a seeded disposable account.")
+        let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+        app.terminate()
+        app.launchArguments += ["-SupabaseURLOverride", "http://127.0.0.1:58533", "-SupabaseAnonKeyOverride", key]
+        app.launchEnvironment["UITEST_LOCAL_SUPABASE_SESSION"] = try XCTUnwrap(session)
+        app.launch()
     }
 
     private func openPrivateMarkets() {

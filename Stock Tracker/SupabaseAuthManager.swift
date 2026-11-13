@@ -162,6 +162,21 @@ final class SupabaseAuthManager: NSObject, ObservableObject {
 
     // MARK: - Sign in with Email
 
+    #if DEBUG
+    func restoreTestSession(accessToken: String, refreshToken: String) async {
+        authState = .signingIn
+        do {
+            let session = try await withAccountDeadline {
+                try await SupabaseManager.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
+            }
+            cloudUser = session.user
+            authState = .signedIn
+        } catch {
+            fail(error, context: "Local test session")
+        }
+    }
+    #endif
+
     func signIn(email: String, password: String) async {
         guard authState != .signingIn else { return }
         guard await accountServiceReady() else { return }
