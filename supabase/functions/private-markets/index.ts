@@ -1,5 +1,6 @@
 import { AI_LIMITS, type AiProxyDeps } from "../_shared/ai/proxy.ts";
 import { authenticatedUserId, errorResponse, jsonResponse, readJson, serviceClient } from "../_shared/secure/edge.ts";
+import { timingSafeEqual } from "../_shared/secure/encoding.ts";
 import { open, parseKeyring, seal, type SealedSecret } from "../_shared/secure/envelope.ts";
 import { buildResearch, type Evidence, ResearchError } from "../_shared/private-markets/research.ts";
 import { currentStatus, type Discoverable, interpretDiscovery, matchDiscovery } from "../_shared/private-markets/discovery.ts";
@@ -89,6 +90,65 @@ function catalogue(admin: ReturnType<typeof serviceClient>) {
     .eq("round.share_classes.published", true).order("verified_at", { ascending: false }).order("id");
 }
 
+type Announcement = { title: string; significance: string; published_at: string; source_url: string; company: { name: string } };
+
+function announcementEvidence(item: Announcement, id: string): Evidence {
+  const title = item.company.name + ": " + item.title;
+  const summary = [
+    "Company: " + item.company.name, "Announcement: " + item.title,
+    "Published: " + item.published_at, item.significance,
+  ].join("\n");
+  return { id, title, text: summary.slice(0, 2_800) };
+}
+
+type DigestJob = {
+  job_id: string;
+  owner_id: string;
+  lease: string;
+  sources: { id: string; company: string; title: string; summary: string; published_at: string; url: string }[];
+};
+
+async function scheduledDigests(req: Request, admin: ReturnType<typeof serviceClient>) {
+  const secret = Deno.env.get("PRIVATE_MARKET_DIGEST_SECRET");
+  const supplied = req.headers.get("x-scheduler-secret");
+  const encoder = new TextEncoder();
+  if (!secret || !supplied || !timingSafeEqual(encoder.encode(supplied), encoder.encode(secret))) {
+    return errorResponse(401, "UNAUTHENTICATED", "Scheduler authorization required.");
+  }
+  const keyring = await keys();
+  const { data, error } = await admin.rpc("claim_private_market_digests");
+  if (error) throw error;
+  if (!Array.isArray(data)) throw new Error("Invalid scheduled research response");
+  const jobs = data as DigestJob[];
+  const question = "Summarise recent published announcements and identify what still needs verification.";
+  const results = await Promise.allSettled(jobs.map(async (job) => {
+    const evidence = job.sources.map((source, index) => announcementEvidence({
+      company: { name: source.company }, title: source.title, significance: source.summary,
+      published_at: source.published_at, source_url: source.url,
+    }, "O" + (index + 1)));
+    const report = await buildResearch(job.owner_id, question, evidence, "digest", aiDependencies(admin));
+    const sources = evidence.map(({ id, title }, index) => ({ id, title, url: job.sources[index].url }));
+    const payload = { ...report, id: job.job_id, sources, question, created_at: new Date().toISOString() };
+    const sealed = await seal(keyring, JSON.stringify(payload), context("report", job.owner_id, job.job_id));
+    const result = await admin.rpc("finish_private_market_digest", {
+      p_job: job.job_id, p_lease: job.lease, p_sources: job.sources, p_sealed: sealed,
+    });
+    if (result.error) throw result.error;
+    return result.data === true;
+  }));
+  for (const result of results) {
+    if (result.status === "rejected") {
+      const reason = result.reason;
+      console.error("private scheduled research failed", reason instanceof ResearchError ? reason.code : reason?.code ?? "UNKNOWN");
+    }
+  }
+  return jsonResponse(200, {
+    claimed: jobs.length,
+    saved: results.filter((result) => result.status === "fulfilled" && result.value).length,
+    failed: results.filter((result) => result.status === "rejected").length,
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return errorResponse(405, "METHOD_NOT_ALLOWED", "Use POST.");
   try {
@@ -104,6 +164,7 @@ Deno.serve(async (req) => {
       return errorResponse(400, "INVALID_REQUEST", "Send a JSON object under 24 KB.");
     }
 
+    if (body.action === "scheduled_digest") return await scheduledDigests(req, admin);
     if (body.action === "catalog") {
       const { data, error } = await catalogue(admin).range(0, 499);
       if (error) throw error;
@@ -123,13 +184,15 @@ Deno.serve(async (req) => {
     };
     switch (body.action) {
       case "monitor_settings": {
-        const { device_id: device, company_ids: companies, enabled, eligible_opportunities: eligible } = body;
+        const { device_id: device, company_ids: companies, enabled, eligible_opportunities: eligible, digest } = body;
         if (typeof device !== "string" || !uuid.test(device) || typeof enabled !== "boolean" || typeof eligible !== "boolean" ||
+          (digest !== undefined && typeof digest !== "boolean") ||
           !Array.isArray(companies) || companies.length > 250 || companies.some((id) => typeof id !== "string" || !uuid.test(id))) {
           return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Send a device identifier and up to 250 company identifiers.");
         }
         const { error } = await admin.rpc("configure_private_monitor", {
           p_user: userId, p_device: device, p_companies: companies, p_enabled: enabled, p_eligible: eligible,
+          ...(digest === undefined ? {} : { p_digest: digest }),
         });
         if (error?.code === "22023") return errorResponse(422, "MONITOR_SETTINGS_UNAVAILABLE", error.message);
         if (error) throw error;
@@ -284,10 +347,12 @@ Deno.serve(async (req) => {
         return jsonResponse(200, { excerpt });
       }
       case "documents":
-      case "reports": {
+      case "reports":
+      case "monitor_digests": {
         const table = body.action === "documents" ? "deal_documents" : "research_reports";
-        const { data, error } = await admin.from(table).select("id,title,created_at")
+        const list = admin.from(table).select("id,title,created_at")
           .eq("user_id", userId).order("created_at", { ascending: false }).limit(100);
+        const { data, error } = await (body.action === "monitor_digests" ? list.eq("kind", "monitor_digest") : list);
         if (error) throw error;
         return jsonResponse(200, { items: data });
       }
@@ -371,15 +436,14 @@ Deno.serve(async (req) => {
             .select("title,significance,published_at,source_url,company:private_companies!inner(name)")
             .eq("published", true).eq("company.published", true).lte("published_at", new Date().toISOString())
             .in("id", announcementIDs).order("published_at", { ascending: false })
-            .returns<{ title: string; significance: string; published_at: string; source_url: string; company: { name: string } }[]>();
+            .returns<Announcement[]>();
           if (error) throw error;
           if (data.length !== announcementIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published announcements are unavailable.");
           for (const item of data) {
             const id = `O${sources.length + 1}`;
-            const title = `${item.company.name}: ${item.title}`;
-            const summary = `Company: ${item.company.name}\nAnnouncement: ${item.title}\nPublished: ${item.published_at}\n${item.significance}`;
-            evidence.push({ id, title, text: summary.slice(0, 2_800) });
-            sources.push({ id, title, url: item.source_url });
+            const entry = announcementEvidence(item, id);
+            evidence.push(entry);
+            sources.push({ id, title: entry.title, url: item.source_url });
           }
         }
         const runId = crypto.randomUUID();

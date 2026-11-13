@@ -197,7 +197,7 @@ struct PrivateResearchWorkspace: View {
 
 }
 
-private struct PrivateSavedReportView: View {
+struct PrivateSavedReportView: View {
     let item: PrivateSavedItem
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var report: PrivateResearchReport?

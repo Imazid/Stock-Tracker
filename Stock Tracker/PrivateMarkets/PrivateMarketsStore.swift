@@ -232,6 +232,7 @@ final class PrivateMarketsStore: ObservableObject {
         var capitalReminders: Bool?
         var monitorEnabled: Bool?
         var monitorEligible: Bool?
+        var monitorDigest: Bool?
         var seenMonitorAlerts: [UUID]?
     }
 
@@ -451,11 +452,12 @@ final class PrivateMarketsStore: ObservableObject {
         await refreshMonitor(for: id)
     }
 
-    func setMonitor(enabled: Bool, eligible: Bool, owner: UUID) async throws {
+    func setMonitor(enabled: Bool, eligible: Bool, digest: Bool, owner: UUID) async throws {
         guard scope == owner else { throw CancellationError() }
         try change {
             $0.monitorEnabled = enabled
             $0.monitorEligible = enabled && eligible
+            $0.monitorDigest = enabled && digest
         }
         if !enabled { monitorAlerts = [] }
         queueMonitorSettings(for: owner)
@@ -499,6 +501,7 @@ final class PrivateMarketsStore: ObservableObject {
             "enabled": enabled,
             "device_id": Self.monitorDeviceID.uuidString,
             "eligible_opportunities": state.monitorEligible == true,
+            "digest": state.monitorDigest == true,
             "company_ids": enabled ? monitoredCompanies(in: state).map(\.uuidString) : [],
         ]
         monitorError = nil

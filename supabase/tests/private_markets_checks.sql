@@ -219,6 +219,48 @@ update public.investment_opportunities set verified_at = now() - interval '25 ho
 select case when count(*) = 1 and min(significance) like '%Current availability is unverified.%'
   then 'ok   inbox labels old offer availability as unverified' else 'FAIL stale offer presented as open' end
   from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001') where kind = 'open_round';
+-- Summaries have separate device consent and never include provider data.
+select case when count(*) = 0 then 'ok   alert monitoring does not consent to AI summaries' else 'FAIL unsolicited AI job' end
+  from public.claim_private_market_digests();
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010','a0000000-0000-0000-0000-000000000011']::uuid[],false,true,true);
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010','a0000000-0000-0000-0000-000000000011']::uuid[],false,true);
+create temporary table digest_claim as select * from public.claim_private_market_digests();
+select case when count(*) = 1 and min(owner_id::text) = 'a0000000-0000-0000-0000-000000000001'
+  and min(jsonb_array_length(sources)) = 1 and min(sources->0->>'url') = 'https://example.test/issuer-update'
+  then 'ok   summary claim includes only opted-in public announcements' else 'FAIL incorrect summary evidence' end
+  from digest_claim;
+select case when count(*) = 0 then 'ok   an active claim is never leased twice' else 'FAIL duplicate digest claim' end
+  from public.claim_private_market_digests();
+select case when not public.finish_private_market_digest(job_id,gen_random_uuid(),sources,'{}')
+  then 'ok   a stale lease cannot save a digest' else 'FAIL invalid lease saved' end from digest_claim;
+update public.corporate_actions set significance = 'Issuer clarification.' where source_url = 'https://example.test/issuer-update';
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   edited evidence invalidates the running digest' else 'FAIL stale evidence saved' end from digest_claim;
+update public.corporate_actions set significance = 'A sourced issuer update.' where source_url = 'https://example.test/issuer-update';
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010']::uuid[],false,true,false);
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   revoking consent prevents an in-flight digest from being saved' else 'FAIL digest saved after opt-out' end from digest_claim;
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010']::uuid[],false,true,true);
+reset role;
+update public.private_market_digest_jobs set next_attempt_at = now() - interval '1 second';
+set role service_role;
+create temporary table digest_retry as select * from public.claim_private_market_digests();
+select case when count(*) = 1 and bool_and(r.job_id = c.job_id and r.lease <> c.lease)
+  then 'ok   retries keep the same report ID and rotate the lease' else 'FAIL invalid retry' end from digest_retry r cross join digest_claim c;
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   the superseded claim cannot commit' else 'FAIL superseded claim saved' end from digest_claim;
+select case when public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   the current claim can save' else 'FAIL valid summary was not saved' end from digest_retry;
+select case when count(*) = 1 and min(kind) = 'monitor_digest'
+  then 'ok   summary is saved as a report owned by the subscriber' else 'FAIL incorrect report ownership' end
+  from public.research_reports where id in (select job_id from digest_retry)
+    and user_id = 'a0000000-0000-0000-0000-000000000001';
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   completion is idempotent' else 'FAIL completed digest saved twice' end from digest_retry;
 select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
   '{}'::uuid[],false,false);
 select case when count(*) = 2 then 'ok   one device may opt out without erasing another device inbox'
@@ -233,5 +275,8 @@ set role authenticated;
 select pg_temp.expect_error($q$select * from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001')$q$,
   '42501','app clients cannot read another account inbox directly');
 select pg_temp.expect_error($q$select public.run_private_market_monitor()$q$, '42501', 'app clients cannot invoke scheduled collection');
+select pg_temp.expect_error($q$select * from public.claim_private_market_digests()$q$, '42501', 'app clients cannot claim scheduled summaries');
+select pg_temp.expect_error($q$select * from public.private_market_digest_jobs$q$, '42501', 'app clients cannot read summary jobs');
+select pg_temp.expect_error($q$select public.invoke_private_market_digest()$q$, '42501', 'app clients cannot dispatch the summary worker');
 reset role;
 rollback;

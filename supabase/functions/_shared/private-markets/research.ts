@@ -152,7 +152,9 @@ function outputSchema(committee: boolean): Record<string, unknown> {
   return { type: "object", properties, required: Object.keys(properties), additionalProperties: false };
 }
 
-export async function buildResearch(userId: string, question: string, evidence: Evidence[], mode: "committee" | "question", deps: AiProxyDeps) {
+export async function buildResearch(
+  userId: string, question: string, evidence: Evidence[], mode: "committee" | "question" | "digest", deps: AiProxyDeps,
+) {
   async function ask(instruction: string, previous: Finding[] = []) {
     // The gateway caps each message. Source text is never passed as a system message.
     const messages: AiMessage[] = [
@@ -188,9 +190,18 @@ export async function buildResearch(userId: string, question: string, evidence: 
     }
   }
 
-  if (mode === "question") {
-    const answer = await validated("Answer the user's research question concisely.",
-      (text) => parseFinding(text, "Research answer", evidence));
+  if (mode !== "committee") {
+    const digest = mode === "digest";
+    const instruction = digest
+      ? "Summarise what each issuer published and any unresolved questions. Cite one line from every supplied source."
+      : "Answer the user's research question concisely.";
+    const answer = await validated(instruction, (text) => {
+      const finding = parseFinding(text, digest ? "Published company updates" : "Research answer", evidence);
+      if (digest && evidence.some((source) => !finding.evidence.some((citation) => citation.source === source.id))) {
+        throw new ResearchError(502, "INVALID_RESEARCH", "The summary did not cite every announcement.");
+      }
+      return finding;
+    });
     return { findings: [answer.finding], committee: null, models: [answer.model] };
   }
 

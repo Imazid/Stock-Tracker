@@ -179,6 +179,7 @@ struct PrivateUpdatesView: View {
     @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
     @State private var updates: [PrivateCompanyUpdate] = []
+    @State private var digests: [PrivateSavedItem] = []
     @State private var error: String?
     @State private var loading = false
     @State private var savingMonitor = false
@@ -197,6 +198,13 @@ struct PrivateUpdatesView: View {
                         set: { changeMonitor(enabled: true, eligible: $0) }))
                         .disabled(savingMonitor)
                         .accessibilityIdentifier("private.monitor.eligible")
+                    Toggle("Summarise new announcements daily", isOn: Binding(
+                        get: { store.state.monitorDigest == true },
+                        set: { changeMonitor(enabled: true, eligible: store.state.monitorEligible == true, digest: $0) }))
+                        .disabled(savingMonitor)
+                        .accessibilityIdentifier("private.monitor.digest")
+                    Text("Sends published announcements for tracked companies to the AI provider. Summaries use your daily research quota.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Text("Online monitoring shares the catalogue company IDs you track with your Stock Tracker account.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -221,6 +229,25 @@ struct PrivateUpdatesView: View {
                             Text(alert.significance)
                             if let url = alert.sourceUrl, url.privateSourceIsSafe { Link("Read source", destination: url) }
                             if let source = alert.sourceLabel { Text(source).font(.footnote).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+            }
+            if store.state.monitorDigest == true, auth.userId != nil {
+                Section("AI monitoring summaries") {
+                    if digests.isEmpty && !loading && !savingMonitor {
+                        Text("A summary appears after the next scheduled run with new announcements.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(digests) { item in
+                        NavigationLink {
+                            PrivateSavedReportView(item: item)
+                        } label: {
+                            VStack(alignment: .leading) {
+                                Text(item.title)
+                                Text(item.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -264,7 +291,11 @@ struct PrivateUpdatesView: View {
         }
         .navigationTitle("Company Updates")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
+        .task(id: auth.userId) {
+            updates = []
+            digests = []
+            await load()
+        }
         .refreshable { await load() }
     }
 
@@ -276,18 +307,32 @@ struct PrivateUpdatesView: View {
         do {
             await store.refreshProviderHoldings(for: id)
             await store.refreshMonitor(for: id)
-            updates = try await store.checkUpdates(for: id)
+            let refreshed = try await store.checkUpdates(for: id)
+            guard auth.userId == id else { return }
+            updates = refreshed
+            try await loadDigests(owner: id)
         }
         catch is CancellationError {
         } catch { self.error = error.localizedDescription }
     }
 
-    private func changeMonitor(enabled: Bool, eligible: Bool) {
+    private func loadDigests(owner: UUID) async throws {
+        guard auth.userId == owner, store.state.monitorDigest == true else { return }
+        let list: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("monitor_digests", expectedUserID: owner)
+        guard auth.userId == owner, store.state.monitorDigest == true else { return }
+        digests = list.items
+    }
+
+    private func changeMonitor(enabled: Bool, eligible: Bool, digest: Bool? = nil) {
         guard let owner = auth.userId else { return }
+        let summarise = digest ?? (store.state.monitorDigest == true)
         savingMonitor = true
         Task {
             defer { savingMonitor = false }
-            do { try await store.setMonitor(enabled: enabled, eligible: eligible, owner: owner) }
+            do {
+                try await store.setMonitor(enabled: enabled, eligible: eligible, digest: summarise, owner: owner)
+                try await loadDigests(owner: owner)
+            }
             catch is CancellationError { }
             catch { self.error = error.localizedDescription }
         }

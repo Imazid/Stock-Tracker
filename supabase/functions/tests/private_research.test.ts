@@ -77,3 +77,23 @@ Deno.test("provider failure is returned without generating a fake report", async
     fetch: () => Promise.resolve(new Response(null, { status: 503 })),
   }), ResearchError, "unavailable");
 });
+
+Deno.test("scheduled summaries retry when an announcement lacks a verified citation", async () => {
+  let requests = 0;
+  const evidence = [
+    { id: "O1", title: "Issuer announcement", text: "The issuer published its offer document." },
+    { id: "O2", title: "Trading update", text: "The issuer updated its public financing statement." },
+  ];
+  const result = await buildResearch("11111111-1111-1111-1111-111111111111", "Summarise published announcements", evidence, "digest", {
+    config: { openAIKey: "test" },
+    quota: { consume: () => Promise.resolve({ allowed: true, used: requests + 1 }) },
+    fetch: () => {
+      const citations = evidence.slice(0, ++requests).map((source) => ({ source: source.id, line: 1 }));
+      return Promise.resolve(Response.json({ choices: [{ message: { content: JSON.stringify({
+        ...finding, analysis: "The issuers published financing information.", evidence: citations,
+      }) } }] }));
+    },
+  });
+  assertEquals(requests, 2);
+  assertEquals(result.findings[0].evidence.map((citation) => citation.quote), evidence.map((source) => source.text));
+});
