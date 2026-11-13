@@ -55,7 +55,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - run: node --test src/lib/portfolio-movement.test.ts
+      - run: node --test src/lib/portfolio-movement.test.ts src/lib/csv.test.ts src/server/agent/agent-safety.test.ts
       - run: npx tsc --noEmit
       - run: npm run build
 
