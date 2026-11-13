@@ -575,7 +575,7 @@ final class EngineTests: XCTestCase {
             XCTAssertEqual(problems.count, 3)
         }
         XCTAssertThrowsError(try engine.createPaperPortfolio(name: "x", startingCash: 1, now: Fx.now))
-        XCTAssertThrowsError(try engine.createPaperPortfolio(name: "x", startingCash: 1_000, currency: "EUR", now: Fx.now))
+        XCTAssertThrowsError(try engine.createPaperPortfolio(name: "x", startingCash: 1_000, currency: "XYZ", now: Fx.now))
         XCTAssertTrue(engine.state.agents.isEmpty && engine.state.ledgers.isEmpty)
         XCTAssertTrue(engine.state.audit.events.isEmpty)
     }

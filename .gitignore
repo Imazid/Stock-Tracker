@@ -24,3 +24,6 @@ supabase/.branches/
 TradingCore/.build/
 TradingCore/.swiftpm/
 .build/
+
+# Agent worktrees
+.claude/worktrees/

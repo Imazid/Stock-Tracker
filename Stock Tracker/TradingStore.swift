@@ -334,6 +334,18 @@ final class TradingStore: ObservableObject {
         saveNow()
     }
 
+    // MARK: - Research
+
+    /// Plain facts about an instrument from real daily bars, with where they came from.
+    /// nil when the prices couldn't be loaded — never a guess.
+    func marketFacts(for instrument: Instrument) async -> (facts: [Evidence], source: String, asOf: Date)? {
+        guard let series = try? await data.bars(for: instrument, timeframe: .day, count: 260),
+              series.provenance.isRealMarketData || usesFixtureData else { return nil }
+        let bars = MarketCalendar.standard.completedBars(series, now: Date())
+        guard let last = bars.last else { return nil }
+        return (StrategyEvaluator.researchFacts(bars: bars), series.provenance.source, last.time)
+    }
+
     // MARK: - Backtests
 
     /// Replays a strategy over real history. Throws when prices can't be loaded or aren't real.
@@ -346,7 +358,7 @@ final class TradingStore: ObservableObject {
             throw TradingDataError.empty(snapshot.failures.values.first ?? spec.universe.map(\.symbol).joined(separator: ", "))
         }
         let benchmarkInstrument: Instrument = allCrypto ? .crypto("BTC", name: "Bitcoin")
-            : (spec.universe.first?.venue == .asx ? .asxStock("STW", name: "ASX 200 ETF") : .usETF("SPY", name: "S&P 500 ETF"))
+            : Self.benchmark(for: spec.universe.first?.venue ?? .us)
         let benchmark = try? await data.bars(for: benchmarkInstrument, timeframe: spec.timeframe, count: count)
         var config = BacktestConfig(agent: draft, paper: state.paperConfig)
         config.allowFixtureData = usesFixtureData
@@ -366,6 +378,25 @@ final class TradingStore: ObservableObject {
                             now: Date())
         }
         return result
+    }
+
+    /// A broad index fund on the same exchange, so a strategy is compared with simply
+    /// holding that market. If it can't be loaded the report just has no benchmark.
+    static func benchmark(for venue: Venue) -> Instrument {
+        switch venue {
+        case .us, .crypto: return .usETF("SPY", name: "S&P 500 ETF")
+        case .asx: return .listed("STW", name: "ASX 200 ETF", on: .asx, etf: true)
+        case .lse: return .listed("ISF", name: "FTSE 100 ETF", on: .lse, etf: true)
+        case .xetra: return .listed("EXS1", name: "DAX ETF", on: .xetra, etf: true)
+        case .euronextParis: return .listed("CAC", name: "CAC 40 ETF", on: .euronextParis, etf: true)
+        case .euronextAmsterdam: return .listed("IAEX", name: "AEX ETF", on: .euronextAmsterdam, etf: true)
+        case .six: return .listed("CSSMI", name: "SMI ETF", on: .six, etf: true)
+        case .tse: return .listed("1306", name: "TOPIX ETF", on: .tse, etf: true)
+        case .hkex: return .listed("2800", name: "Tracker Fund (Hang Seng)", on: .hkex, etf: true)
+        case .sgx: return .listed("ES3", name: "STI ETF", on: .sgx, etf: true)
+        case .krx: return .listed("069500", name: "KOSPI 200 ETF", on: .krx, etf: true)
+        case .nse: return .listed("NIFTYBEES", name: "Nifty 50 ETF", on: .nse, etf: true)
+        }
     }
 
     // MARK: - Saving

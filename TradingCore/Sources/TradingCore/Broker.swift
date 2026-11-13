@@ -99,7 +99,7 @@ public enum PaperBroker {
         displayName: "Paper trading",
         environment: .paper,
         countries: ["*"],
-        venues: [.us, .asx, .crypto],
+        venues: Venue.allCases,
         assetClasses: [.equity, .etf, .crypto],
         orderTypes: [.market, .limit, .stop, .stopLimit],
         timeInForce: [.day, .gtc, .ioc, .fok],
@@ -108,7 +108,8 @@ public enum PaperBroker {
         permissions: [.read, .trade],
         isExecutionEnabled: true,
         notes: [
-            "Simulated fills against live quotes. No order leaves this app.",
+            "Simulated fills against live quotes (delayed for markets outside the US). No order leaves this app.",
+            "Shares outside the US trade in whole units; Tokyo and Singapore in lots of 100. Exchange tick-size tables and Hong Kong board lots are not enforced.",
             "No leverage, margin, short selling or withdrawals."
         ]
     )
@@ -119,13 +120,24 @@ public enum PaperBroker {
             return InstrumentRules(quantityIncrement: 0.000_000_01, minQuantity: 0.000_000_01, minNotional: 1,
                                    priceIncrement: 0.01, fractionable: true)
         case .equity, .etf:
-            if instrument.venue == .asx {
-                // ASX trades whole shares.
-                return InstrumentRules(quantityIncrement: 1, minQuantity: 1, minNotional: 1,
-                                       priceIncrement: 0.005, fractionable: false)
+            func whole(lot: Double = 1, tick: Double) -> InstrumentRules {
+                InstrumentRules(quantityIncrement: lot, minQuantity: lot, minNotional: 1, priceIncrement: tick, fractionable: false)
             }
-            return InstrumentRules(quantityIncrement: 0.000_001, minQuantity: 0.000_001, minNotional: 1,
-                                   priceIncrement: 0.01, fractionable: true)
+            switch instrument.venue {
+            case .us, .crypto:
+                return InstrumentRules(quantityIncrement: 0.000_001, minQuantity: 0.000_001, minNotional: 1,
+                                       priceIncrement: 0.01, fractionable: true)
+            case .asx: return whole(tick: 0.005)
+            // Price steps are the finest each market uses; the full tick tables aren't modelled.
+            case .lse: return whole(tick: 0.0001)          // pounds (Yahoo quotes pence; converted)
+            case .xetra, .euronextParis, .euronextAmsterdam: return whole(tick: 0.001)
+            case .six: return whole(tick: 0.01)
+            case .tse: return whole(lot: 100, tick: 0.1)    // Tokyo trades in units of 100 shares
+            case .hkex: return whole(tick: 0.001)          // board lots vary by stock; not enforced
+            case .sgx: return whole(lot: 100, tick: 0.001)  // SGX board lot is 100 shares
+            case .krx: return whole(tick: 1)
+            case .nse: return whole(tick: 0.01)
+            }
         }
     }
 

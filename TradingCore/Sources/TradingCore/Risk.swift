@@ -52,7 +52,9 @@ public struct RiskPolicy: Codable, Hashable, Sendable {
 
     /// Sensible starting limits for a budget. Crypto gets wider spread, volatility and gap
     /// allowances because that market really is wider and jumpier.
-    public static func standard(budget: Double, maxPositionPct: Double = 10, crypto: Bool = false) -> RiskPolicy {
+    /// `currency` sets the liquidity floor to about US$1 million in local money.
+    public static func standard(budget: Double, maxPositionPct: Double = 10, crypto: Bool = false,
+                                currency: String = "USD") -> RiskPolicy {
         let position = min(max(maxPositionPct, 1), 100)
         return RiskPolicy(
             maxOrderNotional: Rounding.money(max(budget * position / 100, 1)),
@@ -63,7 +65,7 @@ public struct RiskPolicy: Codable, Hashable, Sendable {
             maxOpenPositions: 10,
             maxSpreadBps: crypto ? 100 : 50,
             maxQuoteAgeSeconds: crypto ? 300 : 900,
-            minAverageDollarVolume: 1_000_000,
+            minAverageDollarVolume: Currencies.liquidityFloor(currency),
             maxDailyVolatilityPct: crypto ? 15 : 8,
             cooldownSeconds: 300,
             maxPriceGapPct: crypto ? 8 : 5,
@@ -492,6 +494,8 @@ public enum RiskEngine {
         if ruleProblems.isEmpty {
             if !r.fractionable && intent.quantity != intent.quantity.rounded() {
                 ruleProblems.append("\(intent.instrument.symbol) trades in whole units only.")
+            } else if !r.fractionable && r.quantityIncrement > 1 && !Rounding.isMultiple(intent.quantity, of: r.quantityIncrement) {
+                ruleProblems.append("\(intent.instrument.symbol) trades in lots of \(Int(r.quantityIncrement)) shares.")
             } else if !Rounding.isMultiple(intent.quantity, of: r.quantityIncrement) {
                 ruleProblems.append("The quantity has more decimal places than \(intent.instrument.symbol) allows (step \(Rounding.string(r.quantityIncrement, increment: r.quantityIncrement))).")
             }
@@ -662,9 +666,9 @@ public enum RiskEngine {
         // 21. Liquidity / 22. volatility, from real daily bars.
         if let stats = c.stats {
             if stats.averageDollarVolume >= c.policy.minAverageDollarVolume {
-                add(.liquidity, .passed, "About \(compactText(stats.averageDollarVolume)) trades a day.")
+                add(.liquidity, .passed, "About \(NumberText.compactMoney(stats.averageDollarVolume, currency: intent.instrument.currency)) trades a day.")
             } else {
-                add(.liquidity, isBuy && byAgent ? .failed : .warning, "Only about \(compactText(stats.averageDollarVolume)) trades a day; the minimum is \(compactText(c.policy.minAverageDollarVolume)).")
+                add(.liquidity, isBuy && byAgent ? .failed : .warning, "Only about \(NumberText.compactMoney(stats.averageDollarVolume, currency: intent.instrument.currency)) trades a day; the minimum is \(NumberText.compactMoney(c.policy.minAverageDollarVolume, currency: intent.instrument.currency)).")
             }
             if !isBuy {
                 add(.volatility, .notApplicable, "Sells are always allowed.")

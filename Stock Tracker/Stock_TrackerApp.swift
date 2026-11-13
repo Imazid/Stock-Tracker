@@ -283,6 +283,8 @@ struct StockCryptoTrackerApp: App {
                     .environmentObject(alertManager)
                     .environmentObject(subscriptionManager)
                     .environmentObject(aiInsightService)
+                    .environmentObject(tradingStore)
+                    .environmentObject(tradingRouter)
                     .modifier(ThemeEnvironment(themeManager: themeManager))
             }
             .sheet(isPresented: $deepLinkAlerts) {

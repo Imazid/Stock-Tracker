@@ -414,7 +414,7 @@ public enum Backtester {
             "Orders are assumed to fill in full at the open. Real orders can fill at worse prices, in parts, or not at all.",
             "Stops are checked on bar closes, not inside the bar, so a real stop could trigger earlier or later.",
             spec.universe.contains { $0.assetClass != .crypto }
-                ? "Equity prices are adjusted for splits and dividends. Stocks that were delisted are not in the test, which flatters results."
+                ? "Share prices are adjusted for splits; dividends are not paid out as cash. Stocks that were delisted are not in the test, which flatters results."
                 : "Crypto trades every day, including weekends.",
             "Cash earns no interest. Tax is not included.",
             "The rules were not tuned on this data. Past results do not predict future returns."

@@ -13,11 +13,14 @@
 
 import SwiftUI
 import Combine
+import TradingCore
 
 // MARK: - Model
 
 enum SymbolMarket: String, Codable, CaseIterable, Sendable {
-    case us, asx, crypto
+    /// `intl`: London, Frankfurt, Paris, Amsterdam, Zurich, Tokyo, Hong Kong, Singapore,
+    /// Seoul and Mumbai listings, kept under their Yahoo symbol ("VOD.L", "7203.T").
+    case us, asx, crypto, intl
 }
 
 /// A search result, independent of whether we have a live quote for it yet.
@@ -32,6 +35,7 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
 
     var market: SymbolMarket {
         if kind == .crypto { return .crypto }
+        if exchange == "International" { return .intl }
         return exchange == "ASX" ? .asx : .us
     }
 
@@ -43,6 +47,7 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
         case .crypto: return "Crypto"
         case .asx:    return "ASX"
         case .us:     return "US"
+        case .intl:   return Venue.parse(yahooSymbol: symbol)?.venue.shortName ?? "Intl"
         }
     }
 
@@ -69,18 +74,20 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
     func matches(_ asset: Asset) -> Bool {
         guard asset.symbol.uppercased() == symbol.uppercased(), asset.kind == kind else { return false }
         guard kind == .stock else { return true }
+        if market == .intl { return asset.exchange == "International" }
         return QuoteService.isASX(asset) == (market == .asx)
     }
 }
 
 enum SymbolSearchScope: String, CaseIterable, Hashable {
-    case all, us, asx, crypto
+    case all, us, asx, intl, crypto
 
     var title: LocalizedStringKey {
         switch self {
         case .all:    return "All"
         case .us:     return "US"
         case .asx:    return "ASX"
+        case .intl:   return "Global"
         case .crypto: return "Crypto"
         }
     }
@@ -91,6 +98,7 @@ enum SymbolSearchScope: String, CaseIterable, Hashable {
         case .us:     return hit.market == .us
         case .asx:    return hit.market == .asx
         case .crypto: return hit.market == .crypto
+        case .intl:   return hit.market == .intl
         }
     }
 }
@@ -274,7 +282,11 @@ final class SymbolSearchModel: ObservableObject {
             if r.exchange == "ASX" {
                 return SymbolHit(symbol: r.symbol, name: r.name, kind: .stock, exchange: "ASX")
             }
-            // US listings only (the app quotes US via Alpaca); skip other markets.
+            // Exchanges the app can price through Yahoo and practice-trade: keep the suffixed symbol.
+            if let (venue, _) = Venue.parse(yahooSymbol: r.symbol), venue != .asx {
+                return SymbolHit(symbol: r.symbol.uppercased(), name: r.name, kind: .stock, exchange: "International")
+            }
+            // Other US listings only (the app quotes US via Alpaca); skip markets it can't price.
             guard r.currency.uppercased() == "USD", !r.symbol.contains("."),
                   usExchange(from: r.region) != nil else { return nil }
             return SymbolHit(symbol: r.symbol, name: r.name, kind: .stock, exchange: "US")
@@ -366,6 +378,8 @@ final class SymbolSearchModel: ObservableObject {
                 quote = try await APIService.shared.fetchCryptoPrice(id: hit.coinID)
             case .asx:
                 quote = try await APIService.shared.fetchYahooQuote(symbol: "\(hit.symbol).AX", name: hit.name)
+            case .intl:
+                quote = try await APIService.shared.fetchYahooQuote(symbol: hit.symbol, name: hit.name)
             case .us:
                 quote = try await APIService.shared.fetchStockQuote(symbol: hit.symbol)
             }

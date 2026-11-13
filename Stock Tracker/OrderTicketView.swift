@@ -283,7 +283,7 @@ struct OrderTicketView: View {
                 Spacer()
 
                 Picker("Enter as", selection: $entry) {
-                    Text(currency == "AUD" ? "A$" : "US$").tag(Entry.amount)
+                    Text(TradingFormat.symbol(currency).trimmingCharacters(in: .whitespaces)).tag(Entry.amount)
                     Text(instrument.assetClass == .crypto ? instrument.symbol : "Shares").tag(Entry.units)
                 }
                 .pickerStyle(.segmented)
@@ -293,7 +293,7 @@ struct OrderTicketView: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if entry == .amount {
-                    Text(currency == "AUD" ? "A$" : "US$").font(DS.money(22, weight: .medium)).foregroundStyle(theme.secondaryText)
+                    Text(TradingFormat.symbol(currency).trimmingCharacters(in: .whitespaces)).font(DS.money(22, weight: .medium)).foregroundStyle(theme.secondaryText)
                 }
                 TextField("0", text: $amountText)
                     .keyboardType(.decimalPad)
@@ -311,6 +311,15 @@ struct OrderTicketView: View {
                 .font(.footnote.monospacedDigit())
                 .foregroundStyle(theme.secondaryText)
                 .accessibilityIdentifier("ticket.conversion")
+
+            if !rules.fractionable {
+                Text(rules.quantityIncrement > 1
+                     ? "\(instrument.venue.displayName.capitalizedFirstLetter) shares trade in lots of \(Int(rules.quantityIncrement))."
+                     : "Whole shares only on the \(instrument.venue.displayName).")
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .accessibilityIdentifier("ticket.lotNote")
+            }
 
             quickChips
         }
@@ -336,7 +345,7 @@ struct OrderTicketView: View {
     private var quickChips: some View {
         HStack(spacing: DS.Space.s) {
             if side == .buy, entry == .amount {
-                ForEach([100.0, 500, 1_000], id: \.self) { value in
+                ForEach(Currencies.balanceChoices(currency).prefix(3).map { $0 / 10 }, id: \.self) { value in
                     chip(TradingFormat.money(value, currency).replacingOccurrences(of: ".00", with: "")) {
                         amountText = String(format: "%.0f", value)
                     }
@@ -687,7 +696,7 @@ struct PracticeSetupView: View {
     @State private var balance: Double = 10_000
     @State private var problem: String?
 
-    private let choices: [Double] = [5_000, 10_000, 25_000, 100_000]
+    private var choices: [Double] { Currencies.balanceChoices(currency) }
 
     var body: some View {
         ScrollView {
@@ -697,14 +706,16 @@ struct PracticeSetupView: View {
                     Text("Start with practice money")
                         .font(DS.display(.largeTitle))
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Practice trading uses pretend money against real, live prices. No real order is ever sent, and nothing you do here touches a bank or a broker.")
+                    Text(currency == "USD"
+                         ? "Practice trading uses pretend money against real, live prices. No real order is ever sent, and nothing you do here touches a bank or a broker."
+                         : "These shares trade in \(currency), so they're bought from a practice portfolio held in \(currency). Prices are real but delayed. No real order is ever sent.")
                         .font(.body)
                         .foregroundStyle(theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 VStack(alignment: .leading, spacing: DS.Space.m) {
-                    Text("Starting balance").font(.headline)
+                    Text(currency == "USD" ? "Starting balance" : "Starting balance in \(currency)").font(.headline)
                     ForEach(choices, id: \.self) { choice in
                         Button {
                             Haptics.select()
@@ -738,7 +749,7 @@ struct PracticeSetupView: View {
                 Button("Start practising") {
                     do {
                         let name = trading.practicePortfolios.isEmpty ? "Practice" : "Practice \(trading.practicePortfolios.count + 1)"
-                        let ledger = try trading.createPortfolio(name: currency == "AUD" ? "\(name) (A$)" : name,
+                        let ledger = try trading.createPortfolio(name: currency == "USD" ? name : "\(name) (\(currency))",
                                                                  startingCash: balance, currency: currency)
                         Haptics.success()
                         onCreated(ledger)
@@ -825,4 +836,8 @@ struct AssetTradeBar: View {
         let side: OrderSide
         var id: String { side.rawValue }
     }
+}
+
+private extension String {
+    var capitalizedFirstLetter: String { prefix(1).uppercased() + dropFirst() }
 }

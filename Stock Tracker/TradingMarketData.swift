@@ -65,9 +65,11 @@ nonisolated struct LiveMarketData: MarketDataProviding {
             series = try await usDailyBars(instrument, count: count)
         case .crypto:
             series = try await cryptoBars(instrument, timeframe: timeframe, count: count)
-        case .asx:
-            guard timeframe == .day else { throw TradingDataError.unsupported("Hourly bars aren't available for ASX shares.") }
-            series = try await asxDailyBars(instrument, count: count)
+        default:
+            guard timeframe == .day else {
+                throw TradingDataError.unsupported("Hourly bars aren't available for shares on the \(instrument.venue.displayName).")
+            }
+            series = try await exchangeDailyBars(instrument, count: count)
         }
         guard !series.bars.isEmpty else { throw TradingDataError.empty(instrument.symbol) }
         await cache.store(series, key: key)
@@ -102,7 +104,7 @@ nonisolated struct LiveMarketData: MarketDataProviding {
         var out: [String: Quote] = [:]
         let us = instruments.filter { $0.venue == .us }
         let crypto = instruments.filter { $0.venue == .crypto }
-        let asx = instruments.filter { $0.venue == .asx }
+        let listed = instruments.filter { $0.venue.yahooSuffix != nil }
         var firstError: Error?
         if !us.isEmpty {
             do { out.merge(try await usQuotes(us)) { a, _ in a } } catch { firstError = firstError ?? error }
@@ -110,8 +112,16 @@ nonisolated struct LiveMarketData: MarketDataProviding {
         if !crypto.isEmpty {
             do { out.merge(try await cryptoQuotes(crypto)) { a, _ in a } } catch { firstError = firstError ?? error }
         }
-        for instrument in asx {
-            do { out[instrument.id] = try await asxQuote(instrument) } catch { firstError = firstError ?? error }
+        await withTaskGroup(of: (String, Result<Quote, Error>).self) { group in
+            for instrument in listed {
+                group.addTask { (instrument.id, await Self.capture { try await self.exchangeQuote(instrument) }) }
+            }
+            for await (id, result) in group {
+                switch result {
+                case .success(let quote): out[id] = quote
+                case .failure(let error): firstError = firstError ?? error
+                }
+            }
         }
         if out.isEmpty, let firstError { throw firstError }
         return out
@@ -224,12 +234,37 @@ nonisolated struct LiveMarketData: MarketDataProviding {
         return bars
     }
 
-    // MARK: ASX (Yahoo Finance, about 20 minutes delayed, prices in AUD)
+    // MARK: Exchanges outside the US (Yahoo Finance, delayed, local currency)
 
-    private static let asxProvenance = DataProvenance.market("Yahoo Finance (ASX, delayed)", delaySeconds: 20 * 60)
+    /// How far behind each exchange Yahoo's free data runs. Overstating it only lets an older
+    /// quote count as fresh; the source label always says "delayed".
+    private static func delay(_ venue: Venue) -> Int {
+        switch venue {
+        case .asx, .tse, .krx: return 20 * 60
+        default: return 15 * 60
+        }
+    }
 
-    private func asxChart(_ instrument: Instrument, range: String) async throws -> [String: Any] {
-        let symbol = Self.clean(instrument.symbol) + ".AX"
+    private static func provenance(_ venue: Venue) -> DataProvenance {
+        .market("Yahoo Finance (\(venue.shortName), delayed)", delaySeconds: delay(venue))
+    }
+
+    /// Yahoo reports London prices in pence ("GBp"/"GBX") and a few others in minor units.
+    /// Returns the major currency and the factor that converts a quoted price into it.
+    static func normalisedCurrency(_ reported: String) -> (code: String, factor: Double) {
+        switch reported {
+        case "GBp", "GBX": return ("GBP", 0.01)
+        case "ZAc", "ZAC": return ("ZAR", 0.01)
+        case "ILA": return ("ILS", 0.01)
+        default: return (reported, 1)
+        }
+    }
+
+    /// One Yahoo chart call. Prices come back in the listing's own currency, converted from
+    /// minor units where needed — and refused if that isn't the currency we trade it in
+    /// (a dollar-quoted fund on the LSE, say), rather than silently mixed.
+    private func exchangeChart(_ instrument: Instrument, range: String) async throws -> (result: [String: Any], factor: Double) {
+        let symbol = Self.clean(instrument.yahooSymbol)
         guard let url = URL(string: "\(Self.yahoo)/v8/finance/chart/\(symbol)?interval=1d&range=\(range)") else {
             throw TradingDataError.empty(instrument.symbol)
         }
@@ -241,14 +276,18 @@ nonisolated struct LiveMarketData: MarketDataProviding {
         guard (200...299).contains(status) else { throw TradingDataError.http(status, "Yahoo Finance") }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let result = ((json["chart"] as? [String: Any])?["result"] as? [[String: Any]])?.first,
-              let meta = result["meta"] as? [String: Any], (meta["currency"] as? String) == "AUD" else {
+              let meta = result["meta"] as? [String: Any], let reported = meta["currency"] as? String else {
             throw TradingDataError.empty(instrument.symbol)
         }
-        return result
+        let (code, factor) = Self.normalisedCurrency(reported)
+        guard code == instrument.currency else {
+            throw TradingDataError.unsupported("\(instrument.symbol) is quoted in \(code) on the \(instrument.venue.displayName), not \(instrument.currency), so it can't be practice traded here.")
+        }
+        return (result, factor)
     }
 
-    private func asxDailyBars(_ instrument: Instrument, count: Int) async throws -> BarSeries {
-        let result = try await asxChart(instrument, range: count > 250 ? (count > 500 ? "5y" : "2y") : "1y")
+    private func exchangeDailyBars(_ instrument: Instrument, count: Int) async throws -> BarSeries {
+        let (result, factor) = try await exchangeChart(instrument, range: count > 250 ? (count > 500 ? "5y" : "2y") : "1y")
         guard let stamps = result["timestamp"] as? [Double] ?? (result["timestamp"] as? [Int])?.map(Double.init),
               let q = ((result["indicators"] as? [String: Any])?["quote"] as? [[String: Any]])?.first else {
             throw TradingDataError.empty(instrument.symbol)
@@ -259,22 +298,28 @@ nonisolated struct LiveMarketData: MarketDataProviding {
         for i in stamps.indices {
             guard i < o.count, i < h.count, i < l.count, i < c.count,
                   let open = o[i], let high = h[i], let low = l[i], let close = c[i] else { continue }
-            bars.append(Bar(time: Date(timeIntervalSince1970: stamps[i]), open: open, high: high, low: low, close: close,
-                            volume: i < v.count ? (v[i] ?? 0) : 0))
+            bars.append(Bar(time: Date(timeIntervalSince1970: stamps[i]), open: open * factor, high: high * factor,
+                            low: low * factor, close: close * factor, volume: i < v.count ? (v[i] ?? 0) : 0))
         }
+        // Volume is the home exchange's own, which undercounts a stock that also trades on
+        // other venues — a conservative figure for a liquidity floor.
         return BarSeries(instrument: instrument, timeframe: .day, bars: Array(bars.suffix(count)),
-                         provenance: Self.asxProvenance, fetchedAt: Date())
+                         provenance: Self.provenance(instrument.venue), fetchedAt: Date())
     }
 
-    private func asxQuote(_ instrument: Instrument) async throws -> Quote {
-        let result = try await asxChart(instrument, range: "5d")
+    private func exchangeQuote(_ instrument: Instrument) async throws -> Quote {
+        let (result, factor) = try await exchangeChart(instrument, range: "5d")
         guard let meta = result["meta"] as? [String: Any], let last = meta["regularMarketPrice"] as? Double, last > 0,
               let stamp = meta["regularMarketTime"] as? Double ?? (meta["regularMarketTime"] as? Int).map(Double.init) else {
             throw TradingDataError.empty(instrument.symbol)
         }
-        return Quote(instrumentID: instrument.id, last: last, time: Date(timeIntervalSince1970: stamp),
-                     provenance: Self.asxProvenance,
+        return Quote(instrumentID: instrument.id, last: last * factor, time: Date(timeIntervalSince1970: stamp),
+                     provenance: Self.provenance(instrument.venue),
                      dayVolume: (meta["regularMarketVolume"] as? Double) ?? (meta["regularMarketVolume"] as? Int).map(Double.init))
+    }
+
+    private static func capture<T>(_ body: () async throws -> T) async -> Result<T, Error> {
+        do { return .success(try await body()) } catch { return .failure(error) }
     }
 
     // MARK: Plumbing
@@ -352,8 +397,13 @@ extension Instrument {
         case .stock:
             if QuoteService.isASX(asset) {
                 self = .asxStock(symbol, name: asset.name)
+            } else if let (venue, bare) = Venue.parse(yahooSymbol: asset.symbol), venue != .asx {
+                // "VOD.L", "7203.T": a listing on an exchange outside the US.
+                let known = UniverseCatalog.instrument(symbol: bare, preferring: venue)
+                self = .listed(bare, name: asset.name == asset.symbol ? (known?.name ?? bare) : asset.name, on: venue,
+                               etf: known?.venue == venue && known?.assetClass == .etf)
             } else if asset.exchange == "International" {
-                return nil
+                return nil      // an exchange the practice simulator doesn't cover
             } else if let known = UniverseCatalog.instrument(symbol: symbol, preferring: .us), known.venue == .us {
                 self = Instrument(symbol: symbol, name: asset.name, assetClass: known.assetClass, venue: .us)
             } else {
@@ -364,10 +414,21 @@ extension Instrument {
 
     /// The app asset for this instrument, for logos, detail pages and search.
     nonisolated var asAsset: Asset {
-        Asset(symbol: symbol, name: name, price: 0, change: 0, changePercent: 0, volume: 0,
-              kind: assetClass == .crypto ? .crypto : .stock,
-              exchange: venue == .asx ? "ASX" : (venue == .crypto ? "Crypto" : "US"))
+        switch venue {
+        case .us, .crypto:
+            return Asset(symbol: symbol, name: name, price: 0, change: 0, changePercent: 0, volume: 0,
+                         kind: assetClass == .crypto ? .crypto : .stock, exchange: venue == .crypto ? "Crypto" : "US")
+        case .asx:
+            return Asset(symbol: symbol, name: name, price: 0, change: 0, changePercent: 0, volume: 0, kind: .stock, exchange: "ASX")
+        default:
+            // The rest of the app prices these through Yahoo by their suffixed symbol.
+            return Asset(symbol: yahooSymbol, name: name, price: 0, change: 0, changePercent: 0, volume: 0,
+                         kind: .stock, exchange: "International")
+        }
     }
+
+    /// The symbol the logo service knows ("BHP.AX", "VOD.L", "BTCUSD" handled by TickerLogo).
+    nonisolated var logoSymbol: String { venue == .us || venue == .crypto || venue == .asx ? symbol : yahooSymbol }
 }
 
 #if DEBUG
@@ -385,7 +446,7 @@ nonisolated struct FixtureMarketData: MarketDataProviding {
         let now = Date()
         var days: [Date] = []
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: instrument.venue == .asx ? "Australia/Sydney" : (instrument.venue == .crypto ? "UTC" : "America/New_York"))!
+        cal.timeZone = MarketCalendar.standard.timeZone(instrument.venue)
         var day = cal.startOfDay(for: now)
         while days.count < count {
             day = cal.date(byAdding: .day, value: -1, to: day)!

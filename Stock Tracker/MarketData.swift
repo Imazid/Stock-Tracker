@@ -109,6 +109,9 @@ final class MarketData: ObservableObject {
     // MARK: - Constants
 
     static let supportedCurrencies = ["USD", "AUD", "EUR", "GBP", "JPY", "CAD"]
+    /// Every currency a followed listing can be quoted in, so Yahoo prices convert to USD
+    /// correctly (London, Zurich, Hong Kong, Singapore, Seoul and Mumbai included).
+    static let quoteCurrencies = ["AUD", "EUR", "GBP", "JPY", "CAD", "CHF", "HKD", "SGD", "KRW", "INR"]
 
     // MARK: - Computed Portfolio Metrics
 
@@ -604,7 +607,7 @@ final class MarketData: ObservableObject {
     // MARK: - Exchange Rates
 
     func updateExchangeRate() async {
-        let currencies = MarketData.supportedCurrencies.filter { $0 != "USD" }
+        let currencies = MarketData.quoteCurrencies
         let rates = await quoteService.fetchExchangeRates(for: currencies)
         for (code, rate) in rates {
             exchangeRates[code] = rate

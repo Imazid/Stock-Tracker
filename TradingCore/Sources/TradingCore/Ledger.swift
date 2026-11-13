@@ -113,10 +113,11 @@ public struct Ledger: Codable, Identifiable, Sendable {
         positions.first { $0.id == instrumentID }
     }
 
-    /// The ledger's trading day: Sydney for an AUD book, New York otherwise.
+    /// The ledger's trading day, counted in its currency's home market (Sydney for AUD,
+    /// London for GBP, Tokyo for JPY…; New York for USD).
     public static func dayKey(for date: Date, currency: String) -> String {
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: currency == "AUD" ? "Australia/Sydney" : "America/New_York")!
+        cal.timeZone = Currencies.timeZone(currency)
         let c = cal.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }

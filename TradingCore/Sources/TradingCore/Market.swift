@@ -6,23 +6,132 @@ public enum AssetClass: String, Codable, CaseIterable, Sendable {
     case equity, etf, crypto
 }
 
+public enum MarketRegion: String, Codable, CaseIterable, Sendable {
+    case americas, europe, asiaPacific, crypto
+
+    public var displayName: String {
+        switch self {
+        case .americas: return "Americas"
+        case .europe: return "Europe"
+        case .asiaPacific: return "Asia-Pacific"
+        case .crypto: return "Crypto"
+        }
+    }
+}
+
 /// Where an instrument trades. It decides the trading calendar and the currency.
 public enum Venue: String, Codable, CaseIterable, Sendable {
     case us, asx, crypto
+    case lse, xetra, euronextParis, euronextAmsterdam, six
+    case tse, hkex, sgx, krx, nse
 
     public var currency: String {
         switch self {
         case .us, .crypto: return "USD"
         case .asx: return "AUD"
+        case .lse: return "GBP"
+        case .xetra, .euronextParis, .euronextAmsterdam: return "EUR"
+        case .six: return "CHF"
+        case .tse: return "JPY"
+        case .hkex: return "HKD"
+        case .sgx: return "SGD"
+        case .krx: return "KRW"
+        case .nse: return "INR"
         }
     }
 
+    /// Reads after "The": "The London market is closed."
     public var displayName: String {
         switch self {
         case .us: return "US market"
         case .asx: return "ASX"
         case .crypto: return "Crypto"
+        case .lse: return "London market"
+        case .xetra: return "Frankfurt market (Xetra)"
+        case .euronextParis: return "Paris market"
+        case .euronextAmsterdam: return "Amsterdam market"
+        case .six: return "Swiss market"
+        case .tse: return "Tokyo market"
+        case .hkex: return "Hong Kong market"
+        case .sgx: return "Singapore market"
+        case .krx: return "Korean market"
+        case .nse: return "Indian market (NSE)"
         }
+    }
+
+    /// The badge shown next to a ticker.
+    public var shortName: String {
+        switch self {
+        case .us: return "US"
+        case .asx: return "ASX"
+        case .crypto: return "Crypto"
+        case .lse: return "LSE"
+        case .xetra: return "XETRA"
+        case .euronextParis: return "PARIS"
+        case .euronextAmsterdam: return "AMS"
+        case .six: return "SIX"
+        case .tse: return "TSE"
+        case .hkex: return "HKEX"
+        case .sgx: return "SGX"
+        case .krx: return "KRX"
+        case .nse: return "NSE"
+        }
+    }
+
+    public var country: String {
+        switch self {
+        case .us: return "United States"
+        case .asx: return "Australia"
+        case .crypto: return "Global"
+        case .lse: return "United Kingdom"
+        case .xetra: return "Germany"
+        case .euronextParis: return "France"
+        case .euronextAmsterdam: return "Netherlands"
+        case .six: return "Switzerland"
+        case .tse: return "Japan"
+        case .hkex: return "Hong Kong"
+        case .sgx: return "Singapore"
+        case .krx: return "South Korea"
+        case .nse: return "India"
+        }
+    }
+
+    public var region: MarketRegion {
+        switch self {
+        case .us: return .americas
+        case .crypto: return .crypto
+        case .lse, .xetra, .euronextParis, .euronextAmsterdam, .six: return .europe
+        case .asx, .tse, .hkex, .sgx, .krx, .nse: return .asiaPacific
+        }
+    }
+
+    /// The suffix Yahoo Finance puts on a listing here ("VOD.L", "7203.T"); nil for venues
+    /// priced elsewhere (US stocks and crypto come from Alpaca).
+    public var yahooSuffix: String? {
+        switch self {
+        case .us, .crypto: return nil
+        case .asx: return ".AX"
+        case .lse: return ".L"
+        case .xetra: return ".DE"
+        case .euronextParis: return ".PA"
+        case .euronextAmsterdam: return ".AS"
+        case .six: return ".SW"
+        case .tse: return ".T"
+        case .hkex: return ".HK"
+        case .sgx: return ".SI"
+        case .krx: return ".KS"
+        case .nse: return ".NS"
+        }
+    }
+
+    /// The venue and bare ticker behind a Yahoo symbol: "VOD.L" → (.lse, "VOD").
+    public static func parse(yahooSymbol: String) -> (venue: Venue, symbol: String)? {
+        let upper = yahooSymbol.uppercased()
+        for venue in Venue.allCases {
+            guard let suffix = venue.yahooSuffix, upper.hasSuffix(suffix), upper.count > suffix.count else { continue }
+            return (venue, String(upper.dropLast(suffix.count)))
+        }
+        return nil
     }
 }
 
@@ -74,6 +183,15 @@ public struct Instrument: Codable, Hashable, Identifiable, Sendable {
     public static func crypto(_ symbol: String, name: String = "") -> Instrument {
         Instrument(symbol: symbol, name: name, assetClass: .crypto, venue: .crypto)
     }
+
+    /// A share or fund listed on an exchange outside the US.
+    public static func listed(_ symbol: String, name: String = "", on venue: Venue, etf: Bool = false) -> Instrument {
+        Instrument(symbol: symbol, name: name, assetClass: etf ? .etf : .equity, venue: venue)
+    }
+
+    /// The symbol Yahoo Finance knows this listing by ("VOD.L"); the bare symbol where Yahoo
+    /// isn't the price source.
+    public var yahooSymbol: String { symbol + (venue.yahooSuffix ?? "") }
 }
 
 /// What an execution venue will accept for one instrument. Advertised by the broker

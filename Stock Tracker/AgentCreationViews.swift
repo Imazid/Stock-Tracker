@@ -480,7 +480,7 @@ struct AgentDraftEditor: View {
                 HStack {
                     Text("Practice budget").font(.subheadline).foregroundStyle(theme.secondaryText)
                     Spacer()
-                    Text(currency == "AUD" ? "A$" : "US$").foregroundStyle(theme.secondaryText)
+                    Text(TradingFormat.symbol(currency).trimmingCharacters(in: .whitespaces)).foregroundStyle(theme.secondaryText)
                     TextField("10000", text: $budgetText)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
@@ -507,7 +507,8 @@ struct AgentDraftEditor: View {
             if draft.spec.kind == .dca {
                 stepper("Buy each time", value: Binding(get: { draft.spec.dca?.amountPerBuy ?? 100 },
                                                         set: { draft.spec.dca?.amountPerBuy = $0; draft.spec.sizing.value = $0 }),
-                        range: 10...100_000, step: 10, prefix: currency == "AUD" ? "A$" : "US$", suffix: "", id: "dcaAmount")
+                        range: 10...10_000_000, step: currency == "JPY" || currency == "KRW" ? 1_000 : 10,
+                        prefix: TradingFormat.symbol(currency), suffix: "", id: "dcaAmount")
                 stepper("Every", value: Binding(get: { Double(draft.spec.dca?.intervalBars ?? 5) },
                                                  set: { draft.spec.dca?.intervalBars = Int($0) }),
                         range: 1...60, step: 1, suffix: " trading days", id: "dcaInterval")

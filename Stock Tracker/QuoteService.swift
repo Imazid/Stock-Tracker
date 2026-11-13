@@ -108,7 +108,7 @@ final class QuoteService: QuoteServiceProtocol {
 
         // US: one batched Alpaca request instead of one per symbol (they ran one after
         // another: ten holdings = ten round trips before anything updated).
-        let usIndices = updated.indices.filter { !isASXStock(updated[$0]) }
+        let usIndices = updated.indices.filter { !isASXStock(updated[$0]) && updated[$0].exchange != "International" }
         var batch: [String: Asset]?
         if usIndices.count > 1 {
             batch = try? await api.fetchStockQuotes(symbols: usIndices.map { updated[$0].symbol })
@@ -125,7 +125,9 @@ final class QuoteService: QuoteServiceProtocol {
         }
 
         // ASX (Yahoo), a lone US symbol, or the batch failing: one request each, concurrently.
-        let singles = updated.indices.filter { batch == nil || isASXStock(updated[$0]) }
+        let singles = updated.indices.filter {
+            batch == nil || isASXStock(updated[$0]) || updated[$0].exchange == "International"
+        }
         await withTaskGroup(of: (Int, Asset?).self) { group in
             for index in singles {
                 let current = updated[index]
@@ -134,6 +136,10 @@ final class QuoteService: QuoteServiceProtocol {
                         if self.isASXStock(current) {
                             let yahooSymbol = Self.finnhubASXSymbol(for: current.symbol)
                             return (index, try await self.api.fetchYahooQuote(symbol: yahooSymbol, name: current.name))
+                        }
+                        // London, Frankfurt, Tokyo… are priced by Yahoo under their suffixed symbol.
+                        if current.exchange == "International" {
+                            return (index, try await self.api.fetchYahooQuote(symbol: current.symbol, name: current.name))
                         }
                         return (index, try await self.api.fetchStockQuote(symbol: current.symbol))
                     } catch {

@@ -19,6 +19,7 @@
 
 import Foundation
 import OSLog
+import TradingCore
 
 // MARK: - Trading hours
 
@@ -36,7 +37,13 @@ struct TradingHours: Sendable {
     static func forAsset(_ asset: Asset) -> TradingHours? {
         if asset.kind == .crypto { return nil }
         if QuoteService.isASX(asset) { return .asx }
-        if asset.exchange == "International" { return nil }
+        if asset.exchange == "International" {
+            // Listings the trading calendar knows (London, Tokyo…) get their real hours;
+            // anything else is shown as a continuous series.
+            guard let (venue, _) = Venue.parse(yahooSymbol: asset.symbol),
+                  let hours = MarketCalendar.standard.regularHours(venue) else { return nil }
+            return TradingHours(timeZone: hours.timeZone, openMinute: hours.open, closeMinute: hours.close)
+        }
         return .us
     }
 

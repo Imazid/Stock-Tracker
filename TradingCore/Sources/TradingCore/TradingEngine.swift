@@ -26,7 +26,8 @@ public struct TradingEngine: Sendable {
 
     // MARK: - Paper portfolios
 
-    public static let budgetRange: ClosedRange<Double> = 100...10_000_000
+    /// The practice budget range in US dollars. Other currencies: `Currencies.budgetRange`.
+    public static let budgetRange: ClosedRange<Double> = Currencies.budgetRange("USD")
 
     @discardableResult
     public mutating func createPaperPortfolio(name: String, startingCash: Double, currency: String = "USD",
@@ -34,10 +35,12 @@ public struct TradingEngine: Sendable {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         var problems: [String] = []
         if clean.isEmpty || clean.count > 40 { problems.append("Give the portfolio a name of up to 40 characters.") }
-        if !(startingCash.isFinite && Self.budgetRange.contains(startingCash)) {
-            problems.append("The starting balance must be between 100 and 10,000,000.")
+        let range = Currencies.budgetRange(currency)
+        if !Currencies.isSupported(currency) {
+            problems.append("Practice portfolios can be held in \(Currencies.supported.joined(separator: ", ")).")
+        } else if !(startingCash.isFinite && range.contains(startingCash)) {
+            problems.append("The starting balance must be between \(NumberText.money(range.lowerBound, currency: currency)) and \(NumberText.money(range.upperBound, currency: currency)).")
         }
-        if !["USD", "AUD"].contains(currency) { problems.append("Paper portfolios are held in USD or AUD.") }
         guard problems.isEmpty else { throw TradingError.invalid(problems) }
         let ledger = Ledger(name: clean, kind: .manualPaper, currency: currency, startingCash: startingCash, createdAt: now)
         state.ledgers.append(ledger)
@@ -129,9 +132,10 @@ public struct TradingEngine: Sendable {
         if !(5...10_080).contains(draft.schedule.intervalMinutes) {
             problems.append("An agent can run between every 5 minutes and once a week.")
         }
+        let range = Currencies.budgetRange(draft.currency)
         if draft.mode == .paper, draft.attachToLedgerID == nil,
-           !(draft.budget.isFinite && Self.budgetRange.contains(draft.budget)) {
-            problems.append("The budget must be between 100 and 10,000,000.")
+           !(draft.budget.isFinite && range.contains(draft.budget)) {
+            problems.append("The budget must be between \(NumberText.money(range.lowerBound, currency: draft.currency)) and \(NumberText.money(range.upperBound, currency: draft.currency)).")
         }
         if draft.spec.followsLedgerPositions && draft.attachToLedgerID == nil && draft.mode == .paper {
             problems.append("Choose the portfolio this agent should watch.")

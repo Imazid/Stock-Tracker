@@ -87,9 +87,14 @@ public enum StrategyParser {
             understood.append("Assets: \(universeNote)")
         }
 
-        // 3. Money and percentages.
+        // 3. Money and percentages. Amounts are in the currency the assets trade in.
+        let currency = spec.universe.first?.currency ?? "USD"
+        func money(_ x: Double) -> String { Self.money(x, currency: currency) }
+        if currency != "USD" {
+            assumptions.append("These assets trade in \(currency), so the agent's practice money is held in \(currency).")
+        }
         let amounts = dollarAmounts(in: text)
-        var budget = 10_000.0
+        var budget = Currencies.defaultBudget(currency)
         if let largest = amounts.max() {
             if spec.kind == .dca, amounts.count >= 2, let smallest = amounts.min(), smallest < largest {
                 budget = largest
@@ -164,7 +169,8 @@ public enum StrategyParser {
         }
 
         var policy = RiskPolicy.standard(budget: budget, maxPositionPct: maxPositionPct,
-                                         crypto: !spec.universe.isEmpty && spec.universe.allSatisfy { $0.assetClass == .crypto })
+                                         crypto: !spec.universe.isEmpty && spec.universe.allSatisfy { $0.assetClass == .crypto },
+                                         currency: currency)
         for edit in policyEdits { edit(&policy) }
 
         let draft = AgentDraft(name: name, templateID: templateID, mode: mode, spec: spec, budget: budget,
@@ -208,7 +214,9 @@ public enum StrategyParser {
             assumptions.append("Live trading isn't available, so this is set up as paper trading.")
         }
         if mode == .paper && envelope.spec.kind == .research { mode = .researchOnly }
-        let budget = min(max(envelope.budget ?? 10_000, TradingEngine.budgetRange.lowerBound), TradingEngine.budgetRange.upperBound)
+        let currency = envelope.spec.universe.first?.currency ?? "USD"
+        let range = Currencies.budgetRange(currency)
+        let budget = min(max(envelope.budget ?? Currencies.defaultBudget(currency), range.lowerBound), range.upperBound)
         let draft = AgentDraft(name: String(envelope.name.prefix(40)), mode: mode, spec: envelope.spec, budget: budget,
                                maxPositionPct: min(max(envelope.maxPositionPct ?? 10, 1), 100),
                                reviewEachPaperTrade: envelope.reviewEachPaperTrade ?? false,
@@ -222,6 +230,18 @@ public enum StrategyParser {
     // MARK: - Reading the text
 
     private static let themes: [(words: [String], label: String, list: [Instrument])] = [
+        (["uk stock", "uk share", "british", "ftse", "london"], "UK blue chips", UniverseCatalog.ukBlueChips),
+        (["german", "dax", "frankfurt"], "German blue chips", UniverseCatalog.germanBlueChips),
+        (["european", "europe", "euro stoxx", "eurozone"], "European blue chips", UniverseCatalog.euroBlueChips),
+        (["french", "cac 40", "paris"], "French blue chips", UniverseCatalog.frenchBlueChips),
+        (["dutch", "amsterdam", "netherlands"], "Dutch blue chips", UniverseCatalog.dutchBlueChips),
+        (["swiss", "switzerland", "zurich"], "Swiss blue chips", UniverseCatalog.swissBlueChips),
+        (["japan", "japanese", "nikkei", "topix", "tokyo"], "Japanese blue chips", UniverseCatalog.japanBlueChips),
+        (["hong kong", "hang seng", "chinese stock", "china stock"], "Hong Kong blue chips", UniverseCatalog.hongKongBlueChips),
+        (["singapore", "sti "], "Singapore blue chips", UniverseCatalog.singaporeBlueChips),
+        (["korea", "korean", "kospi"], "Korean blue chips", UniverseCatalog.koreaBlueChips),
+        (["india", "indian", "nifty", "sensex"], "Indian blue chips", UniverseCatalog.indiaBlueChips),
+        (["asian", "asia"], "Japanese blue chips", UniverseCatalog.japanBlueChips),
         (["semiconductor", "chip stock", "chipmaker", "chip maker"], "semiconductor stocks", UniverseCatalog.semiconductors),
         (["technology", "tech stock", "tech compan", "big tech", "tech sector"], "technology stocks", UniverseCatalog.technology),
         (["bank", "financial"], "financial stocks", UniverseCatalog.financials),
@@ -236,7 +256,17 @@ public enum StrategyParser {
         "bitcoin": "BTC", "ethereum": "ETH", "ether": "ETH", "solana": "SOL", "dogecoin": "DOGE", "cardano": "ADA",
         "apple": "AAPL", "microsoft": "MSFT", "nvidia": "NVDA", "alphabet": "GOOGL", "google": "GOOGL",
         "amazon": "AMZN", "meta": "META", "tesla": "TSLA", "netflix": "NFLX", "broadcom": "AVGO",
-        "s&p 500": "SPY", "s&p500": "SPY", "sp500": "SPY", "nasdaq": "QQQ"
+        "s&p 500": "SPY", "s&p500": "SPY", "sp500": "SPY", "nasdaq": "QQQ",
+        "toyota": "7203", "sony": "6758", "nintendo": "7974", "softbank": "9984", "tencent": "0700",
+        "alibaba": "9988", "lvmh": "MC", "asml": "ASML", "nestle": "NESN", "nestlé": "NESN", "novartis": "NOVN",
+        "astrazeneca": "AZN", "siemens": "SIE", "samsung": "005930", "reliance": "RELIANCE", "infosys": "INFY",
+        "unilever": "ULVR", "vodafone": "VOD", "barclays": "BARC", "hsbc": "HSBA", "dbs": "D05", "airbus": "AIR"
+    ]
+    /// Names whose listing is outside the US: these resolve on their home exchange.
+    private static let homeVenue: [String: Venue] = [
+        "7203": .tse, "6758": .tse, "7974": .tse, "9984": .tse, "0700": .hkex, "9988": .hkex, "MC": .euronextParis,
+        "ASML": .euronextAmsterdam, "NESN": .six, "NOVN": .six, "AZN": .lse, "SIE": .xetra, "005930": .krx,
+        "RELIANCE": .nse, "INFY": .nse, "ULVR": .lse, "VOD": .lse, "BARC": .lse, "HSBA": .lse, "D05": .sgx, "AIR": .euronextParis
     ]
 
     /// Words in capitals that are not tickers.
@@ -245,6 +275,11 @@ public enum StrategyParser {
         "I", "A", "AN", "THE", "AND", "OR", "TO", "IT", "IN", "ON", "OF", "MY", "ME", "IF", "AT", "BY", "FOR",
         "BUY", "SELL", "HOLD", "CREATE", "PAPER", "LIVE", "STOP", "LOSS", "ALL", "NYSE", "NASDAQ", "CEO", "IPO", "PE", "UK", "EU"
     ]
+
+    /// The known instruments a sentence mentions, by ticker, name or theme.
+    public static func instruments(in text: String) -> [Instrument] {
+        universe(in: text).instruments
+    }
 
     static func universe(in text: String) -> (instruments: [Instrument], unknown: [String], note: String) {
         let lower = text.lowercased()
@@ -272,7 +307,7 @@ public enum StrategyParser {
             // "meta" alone is too common a word fragment to trust ("metadata").
             if word == "meta", !containsWord("meta", in: lower) { continue }
             if word == "ether", lower.contains("ethereum") { continue }
-            if let instrument = UniverseCatalog.instrument(symbol: symbol) { add(instrument) }
+            if let instrument = UniverseCatalog.instrument(symbol: symbol, preferring: homeVenue[symbol]) { add(instrument) }
         }
         if !out.isEmpty { labels.append(out.map(\.symbol).joined(separator: ", ")) }
 
@@ -396,11 +431,11 @@ public enum StrategyParser {
         return ns.substring(with: match.range(at: group))
     }
 
-    private static func money(_ x: Double) -> String {
+    private static func money(_ x: Double, currency: String = "USD") -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = x == x.rounded() ? 0 : 2
+        formatter.maximumFractionDigits = x == x.rounded() ? 0 : Currencies.decimals(currency)
         formatter.locale = Locale(identifier: "en_US")
-        return "$" + (formatter.string(from: NSNumber(value: x)) ?? String(format: "%.0f", x))
+        return Currencies.symbol(currency) + (formatter.string(from: NSNumber(value: x)) ?? String(format: "%.0f", x))
     }
 }

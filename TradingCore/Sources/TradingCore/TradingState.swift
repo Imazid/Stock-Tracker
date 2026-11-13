@@ -60,8 +60,11 @@ public struct AgentDraft: Codable, Sendable {
         !spec.universe.isEmpty && spec.universe.allSatisfy { $0.assetClass == .crypto }
     }
 
+    /// The currency the agent's money is held in: that of the assets it trades.
+    public var currency: String { spec.universe.first?.currency ?? "USD" }
+
     public var resolvedPolicy: RiskPolicy {
-        riskPolicy ?? .standard(budget: budget, maxPositionPct: maxPositionPct, crypto: isCryptoOnly)
+        riskPolicy ?? .standard(budget: budget, maxPositionPct: maxPositionPct, crypto: isCryptoOnly, currency: currency)
     }
 }
 

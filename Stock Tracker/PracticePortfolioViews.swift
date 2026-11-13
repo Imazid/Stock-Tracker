@@ -375,7 +375,7 @@ struct OrderRowView: View {
         let value = order.filledQuantity > 0 ? order.filledNotional : order.quantity * order.referencePrice
         AdaptiveQuoteRow {
             HStack(spacing: DS.Space.m) {
-                TickerLogo(symbol: order.instrument.symbol, kind: order.instrument.assetClass == .crypto ? .crypto : .stock,
+                TickerLogo(symbol: order.instrument.logoSymbol, kind: order.instrument.assetClass == .crypto ? .crypto : .stock,
                            exchange: order.instrument.venue == .asx ? "ASX" : "", size: 36)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(order.side == .buy ? "Buy" : "Sell") \(order.instrument.symbol) · \(order.type.displayName)")
@@ -497,7 +497,7 @@ struct InstrumentPickerView: View {
             HStack {
                 InstrumentLabel(instrument: instrument)
                 Spacer()
-                Text(instrument.venue == .asx ? "ASX" : (instrument.assetClass == .crypto ? "Crypto" : (instrument.assetClass == .etf ? "ETF" : "US")))
+                Text(instrument.assetClass == .crypto ? "Crypto" : (instrument.assetClass == .etf ? "\(instrument.venue.shortName) ETF" : instrument.venue.shortName))
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
             }

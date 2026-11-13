@@ -55,12 +55,81 @@ public enum UniverseCatalog {
         .asxStock("WES", name: "Wesfarmers"), .asxStock("MQG", name: "Macquarie Group")
     ]
 
+    public static let ukBlueChips: [Instrument] = [
+        .listed("AZN", name: "AstraZeneca", on: .lse), .listed("SHEL", name: "Shell", on: .lse),
+        .listed("HSBA", name: "HSBC Holdings", on: .lse), .listed("ULVR", name: "Unilever", on: .lse),
+        .listed("BP", name: "BP", on: .lse), .listed("GSK", name: "GSK", on: .lse),
+        .listed("RIO", name: "Rio Tinto", on: .lse), .listed("BARC", name: "Barclays", on: .lse),
+        .listed("LLOY", name: "Lloyds Banking Group", on: .lse), .listed("VOD", name: "Vodafone", on: .lse)
+    ]
+    public static let germanBlueChips: [Instrument] = [
+        .listed("SAP", name: "SAP", on: .xetra), .listed("SIE", name: "Siemens", on: .xetra),
+        .listed("ALV", name: "Allianz", on: .xetra), .listed("DTE", name: "Deutsche Telekom", on: .xetra),
+        .listed("MBG", name: "Mercedes-Benz Group", on: .xetra), .listed("BMW", name: "BMW", on: .xetra),
+        .listed("BAS", name: "BASF", on: .xetra), .listed("ADS", name: "Adidas", on: .xetra)
+    ]
+    public static let frenchBlueChips: [Instrument] = [
+        .listed("MC", name: "LVMH", on: .euronextParis), .listed("OR", name: "L'Oréal", on: .euronextParis),
+        .listed("TTE", name: "TotalEnergies", on: .euronextParis), .listed("SAN", name: "Sanofi", on: .euronextParis),
+        .listed("AIR", name: "Airbus", on: .euronextParis), .listed("BNP", name: "BNP Paribas", on: .euronextParis)
+    ]
+    public static let dutchBlueChips: [Instrument] = [
+        .listed("ASML", name: "ASML Holding", on: .euronextAmsterdam), .listed("INGA", name: "ING Groep", on: .euronextAmsterdam),
+        .listed("AD", name: "Ahold Delhaize", on: .euronextAmsterdam), .listed("HEIA", name: "Heineken", on: .euronextAmsterdam),
+        .listed("PRX", name: "Prosus", on: .euronextAmsterdam)
+    ]
+    /// The largest euro-listed companies across Frankfurt, Paris and Amsterdam (one currency).
+    public static let euroBlueChips: [Instrument] = [
+        .listed("ASML", name: "ASML Holding", on: .euronextAmsterdam), .listed("SAP", name: "SAP", on: .xetra),
+        .listed("MC", name: "LVMH", on: .euronextParis), .listed("SIE", name: "Siemens", on: .xetra),
+        .listed("TTE", name: "TotalEnergies", on: .euronextParis), .listed("ALV", name: "Allianz", on: .xetra),
+        .listed("OR", name: "L'Oréal", on: .euronextParis), .listed("AIR", name: "Airbus", on: .euronextParis)
+    ]
+    public static let swissBlueChips: [Instrument] = [
+        .listed("NESN", name: "Nestlé", on: .six), .listed("NOVN", name: "Novartis", on: .six),
+        .listed("ROG", name: "Roche", on: .six), .listed("UBSG", name: "UBS Group", on: .six),
+        .listed("ABBN", name: "ABB", on: .six)
+    ]
+    public static let japanBlueChips: [Instrument] = [
+        .listed("7203", name: "Toyota Motor", on: .tse), .listed("6758", name: "Sony Group", on: .tse),
+        .listed("8306", name: "Mitsubishi UFJ Financial", on: .tse), .listed("9984", name: "SoftBank Group", on: .tse),
+        .listed("6861", name: "Keyence", on: .tse), .listed("7974", name: "Nintendo", on: .tse)
+    ]
+    public static let hongKongBlueChips: [Instrument] = [
+        .listed("0700", name: "Tencent Holdings", on: .hkex), .listed("9988", name: "Alibaba Group", on: .hkex),
+        .listed("0005", name: "HSBC Holdings", on: .hkex), .listed("1299", name: "AIA Group", on: .hkex),
+        .listed("3690", name: "Meituan", on: .hkex), .listed("0388", name: "Hong Kong Exchanges and Clearing", on: .hkex)
+    ]
+    public static let singaporeBlueChips: [Instrument] = [
+        .listed("D05", name: "DBS Group", on: .sgx), .listed("O39", name: "OCBC", on: .sgx),
+        .listed("U11", name: "United Overseas Bank", on: .sgx), .listed("Z74", name: "Singtel", on: .sgx)
+    ]
+    public static let koreaBlueChips: [Instrument] = [
+        .listed("005930", name: "Samsung Electronics", on: .krx), .listed("000660", name: "SK hynix", on: .krx),
+        .listed("035420", name: "NAVER", on: .krx), .listed("005380", name: "Hyundai Motor", on: .krx)
+    ]
+    public static let indiaBlueChips: [Instrument] = [
+        .listed("RELIANCE", name: "Reliance Industries", on: .nse), .listed("TCS", name: "Tata Consultancy Services", on: .nse),
+        .listed("HDFCBANK", name: "HDFC Bank", on: .nse), .listed("INFY", name: "Infosys", on: .nse),
+        .listed("ICICIBANK", name: "ICICI Bank", on: .nse)
+    ]
+
+    /// Lists by home market, for browsing.
+    public static let byVenue: [(venue: Venue, instruments: [Instrument])] = [
+        (.us, technology + otherUS), (.asx, asxBlueChips), (.lse, ukBlueChips), (.xetra, germanBlueChips),
+        (.euronextParis, frenchBlueChips), (.euronextAmsterdam, dutchBlueChips), (.six, swissBlueChips),
+        (.tse, japanBlueChips), (.hkex, hongKongBlueChips), (.sgx, singaporeBlueChips), (.krx, koreaBlueChips),
+        (.nse, indiaBlueChips), (.crypto, cryptoMajors + otherCrypto)
+    ]
+
     /// Every instrument the catalog knows, US and crypto first.
     public static let all: [Instrument] = {
         var seen = Set<String>()
         var out: [Instrument] = []
         for list in [technology, semiconductors, financials, healthcare, energy, otherUS, broadETFs, balancedETFs,
-                     otherETFs, cryptoMajors, otherCrypto, asxBlueChips] {
+                     otherETFs, cryptoMajors, otherCrypto, asxBlueChips, ukBlueChips, germanBlueChips, frenchBlueChips,
+                     dutchBlueChips, swissBlueChips, japanBlueChips, hongKongBlueChips, singaporeBlueChips,
+                     koreaBlueChips, indiaBlueChips] {
             for instrument in list where seen.insert(instrument.id).inserted { out.append(instrument) }
         }
         return out
@@ -91,9 +160,14 @@ public struct AgentTemplate: Identifiable, Sendable {
     public var needsExistingPortfolio: Bool
     public var build: @Sendable ([Instrument]) -> StrategySpec
 
-    public func draft(universe: [Instrument]? = nil, budget: Double = 10_000) -> AgentDraft {
-        AgentDraft(name: name, templateID: id, mode: defaultMode, spec: build(universe ?? defaultUniverse),
-                   budget: budget, maxPositionPct: maxPositionPct, schedule: schedule, author: .template)
+    /// A draft for this template. The budget defaults to a sensible amount in the currency
+    /// the chosen assets trade in.
+    public func draft(universe: [Instrument]? = nil, budget: Double? = nil) -> AgentDraft {
+        let spec = build(universe ?? defaultUniverse)
+        let currency = spec.universe.first?.currency ?? "USD"
+        return AgentDraft(name: name, templateID: id, mode: defaultMode, spec: spec,
+                          budget: budget ?? Currencies.defaultBudget(currency), maxPositionPct: maxPositionPct,
+                          schedule: schedule, author: .template)
     }
 }
 

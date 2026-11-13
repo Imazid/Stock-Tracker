@@ -22,9 +22,28 @@ import TradingCore
 // MARK: - Text
 
 enum TradingFormat {
-    /// "US$1,234.56" / "A$1,234.56" — an amount already in `currency`.
+    /// The prefix for amounts in `currency`. US and Australian dollars are always told apart.
+    static func symbol(_ currency: String) -> String {
+        switch currency {
+        case "USD": return "US$"
+        case "CAD": return "C$"
+        default: return Currencies.symbol(currency)
+        }
+    }
+
+    /// "US$1,234.56", "£1,234.56", "¥1,234,567" — an amount already in `currency`.
     static func money(_ value: Double, _ currency: String) -> String {
-        value.formattedPrice(in: currency, rates: [:])
+        number(value, decimals: Currencies.decimals(currency), currency: currency)
+    }
+
+    private static func number(_ value: Double, decimals: Int, currency: String) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.minimumFractionDigits = decimals
+        formatter.maximumFractionDigits = decimals
+        let body = formatter.string(from: NSNumber(value: Rounding.round(abs(value), places: decimals))) ?? String(format: "%.\(decimals)f", abs(value))
+        return (value < 0 ? "-" : "") + symbol(currency) + body
     }
 
     /// "+US$12.40" / "−US$3.10".
@@ -34,10 +53,9 @@ enum TradingFormat {
 
     /// A price can need more than two decimals (crypto under a dollar, ASX half-cents).
     static func price(_ value: Double, _ currency: String) -> String {
-        if value > 0, value < 1 {
-            let symbol = currency == "AUD" ? "A$" : (currency == "USD" ? "US$" : currency + " ")
-            return symbol + String(format: "%.4f", value)
-        }
+        if value > 0, value < 1 { return number(value, decimals: 4, currency: currency) }
+        // Yen and won prices still show their fraction when there is one (a 0.1-yen tick).
+        if Currencies.decimals(currency) == 0, value != value.rounded() { return number(value, decimals: 1, currency: currency) }
         return money(value, currency)
     }
 
@@ -299,7 +317,7 @@ struct InstrumentLabel: View {
 
     var body: some View {
         HStack(spacing: DS.Space.m) {
-            TickerLogo(symbol: instrument.symbol, kind: instrument.assetClass == .crypto ? .crypto : .stock,
+            TickerLogo(symbol: instrument.logoSymbol, kind: instrument.assetClass == .crypto ? .crypto : .stock,
                        exchange: instrument.venue == .asx ? "ASX" : "", size: logoSize)
             VStack(alignment: .leading, spacing: 2) {
                 Text(instrument.symbol).font(.body.weight(.semibold)).foregroundStyle(theme.primaryText)

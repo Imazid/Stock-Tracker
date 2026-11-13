@@ -401,7 +401,20 @@ public enum NumberText {
     }
 
     public static func money(_ x: Double, currency: String = "USD") -> String {
-        let symbol = currency == "AUD" ? "A$" : (currency == "USD" ? "$" : "\(currency) ")
-        return symbol + String(format: "%.2f", x)
+        let sign = x < 0 ? "-" : ""
+        let places = Currencies.decimals(currency)
+        return sign + Currencies.symbol(currency) + String(format: "%.\(places)f", Rounding.round(abs(x), places: places))
+    }
+
+    /// "$1.2M", "¥150M".
+    public static func compactMoney(_ x: Double, currency: String) -> String {
+        let symbol = Currencies.symbol(currency)
+        switch abs(x) {
+        case 1e12...: return symbol + String(format: "%.1fT", x / 1e12)
+        case 1e9...: return symbol + String(format: "%.1fB", x / 1e9)
+        case 1e6...: return symbol + String(format: "%.1fM", x / 1e6)
+        case 1e3...: return symbol + String(format: "%.0fK", x / 1e3)
+        default: return symbol + String(format: "%.0f", x)
+        }
     }
 }
