@@ -10,6 +10,7 @@ import { Notice } from "@/components/ui/Notice";
 import { type AssistantTurn, toolLabel, useAssistant } from "@/hooks/assistant";
 import { getJSON } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { useSession } from "@/lib/session";
 
 export const SUGGESTIONS = [
   "How has BHP done over the last year compared with the ASX 200?",
@@ -73,21 +74,36 @@ function Turn({ turn }: { turn: AssistantTurn }) {
 interface Status { assistant: boolean; accounts: boolean }
 
 /** The chat itself; `compact` for the side panel, full size for the AI Workspace page. */
-export function AssistantChat({ compact = false, company }: { compact?: boolean; company?: { instrumentId: string; symbol: string; section: string } }) {
+export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
+  compact?: boolean;
+  company?: { instrumentId: string; symbol: string; section: string };
+  reportRequest?: number;
+}) {
   const { turns, busy, send, stop, reset } = useAssistant(company?.instrumentId, company?.section);
-  const suggestions = company ? [
-    `Write a source-backed investment research report on ${company.symbol}, covering business, performance, finances, valuation, risks, recent filings, earnings and peers. Cite the evidence and mark missing datasets.`,
+  const reportPrompt = company
+    ? `Write a source-backed investment research report on ${company.symbol}, covering business, performance, finances, valuation, risks, recent filings, earnings and peers. Cite the evidence and mark missing datasets.`
+    : undefined;
+  const suggestions = reportPrompt ? [
+    reportPrompt,
     "How has operating cash flow changed over the last five years?",
     "What do the latest reported results show about profitability and financial risk?",
   ] : SUGGESTIONS;
   const [draft, setDraft] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
+  const session = useSession();
+  const lastReportRequest = useRef(0);
   const status = useQuery({ queryKey: ["status"], queryFn: () => getJSON<Status>("/api/status"), staleTime: 60_000 });
 
   useEffect(() => {
     if (!turns.length) return;
     bottom.current?.scrollIntoView({ block: "end" });
   }, [turns]);
+
+  useEffect(() => {
+    if (!reportPrompt || reportRequest <= lastReportRequest.current || !status.data || busy || session.status === "loading") return;
+    lastReportRequest.current = reportRequest;
+    if (status.data.assistant && (!status.data.accounts || session.status === "signedIn")) void send(reportPrompt);
+  }, [busy, reportPrompt, reportRequest, send, session.status, status.data]);
 
   const submit = (text: string) => {
     if (!text.trim()) return;

@@ -4,7 +4,7 @@
 
 Open **Markets** and search for a ticker, a company name, a venue-qualified ticker such as `ASX:BHP`, or an identifier such as `CIK:320193`. The existing instrument page keeps the chart, watchlist and order ticket. Company intelligence adds financials, valuation, earnings, ownership, news and filings, options, peer comparison and a company-scoped assistant.
 
-**Research Everything** opens a structured report backed by the datasets that answered. The report works without a model key. **Generate AI research report** asks the existing assistant to interpret the evidence. The company conversation can search listings, market data, datasets and original filing text. It has no order tools. The iOS stock detail can open the same report in a native sheet and link to the web dashboard.
+**Research Everything** opens a structured report backed by the datasets that answered. The evidence report works without a model key. When AI is configured and accessible to the user, the action also starts a company-scoped synthesis. **Generate AI research report** remains available in the empty chat. The company conversation can search listings, market data, datasets and original filing text. It has no order tools. The iOS stock detail can open the same report in a native sheet and link to the web dashboard.
 
 ## Deployment
 

@@ -363,6 +363,7 @@ export function CompanyResearch({ id, symbol, overview, overviewError, retryOver
   const [tab, setTab] = useState<ResearchSection>("overview");
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [reportRequest, setReportRequest] = useState(0);
   const switchTab = (item: Tab) => {
     if (item === "ai") setAssistantOpen((open) => !open);
     else setTab(item);
@@ -370,7 +371,13 @@ export function CompanyResearch({ id, symbol, overview, overviewError, retryOver
   return <section aria-label="Company intelligence" className="mt-6 min-w-0 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="text-lg font-semibold tracking-tight">Company intelligence</h2>
-      <Button size="sm" variant="primary" onClick={() => { setReportOpen((open) => !open); setAssistantOpen(true); }} aria-expanded={reportOpen}>Research Everything</Button>
+      <Button size="sm" variant="primary" onClick={() => {
+        setReportOpen(!reportOpen);
+        if (!reportOpen) {
+          setAssistantOpen(true);
+          if (reportRequest === 0) setReportRequest(1);
+        }
+      }} aria-expanded={reportOpen}>Research Everything</Button>
     </div>
     <nav aria-label="Company research sections" className="flex flex-wrap gap-1 rounded-xl border border-border bg-surface p-1.5">
       {([...RESEARCH_SECTIONS, "ai"] as Tab[]).map((item) => <button key={item} type="button" aria-pressed={item === "ai" ? assistantOpen : tab === item}
@@ -387,7 +394,7 @@ export function CompanyResearch({ id, symbol, overview, overviewError, retryOver
         {assistantOpen ? <div className="flex items-center justify-between gap-2 px-1 pb-2"><h3 className="font-medium">{symbol} research</h3>
           <Button size="sm" variant="ghost" onClick={() => setAssistantOpen(false)}>Collapse</Button></div> : null}
         <div className="flex h-[34rem] min-h-0">
-          <AssistantChat company={{ instrumentId: id, symbol, section: tab }} />
+          <AssistantChat company={{ instrumentId: id, symbol, section: tab }} reportRequest={reportRequest} />
         </div>
       </aside>
     </div>
