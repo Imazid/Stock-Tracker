@@ -198,8 +198,14 @@ function code(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((line) => line.replace(/^\s*\/\/.*$/, "").replace(/\s\/\/ .*$/, "")).join("\n");
 }
 
+// The provider order path (broker-orders / broker-connections and the shared code under
+// _shared/brokers, _shared/oms, _shared/vault) is allowed to reach a provider's order API —
+// Alpaca paper today, behind the platform gate. It has its own boundary test
+// (oms_boundaries.test.ts), which also proves that nothing on the practice path imports it.
+const PROVIDER_PATH = /^(broker-orders|broker-connections|_shared\/(brokers|oms|vault))\//;
+
 Deno.test("the server's code can't place a real order or ask a model", async () => {
-  const files = await sources(new URL("../", import.meta.url));
+  const files = (await sources(new URL("../", import.meta.url))).filter((file) => !PROVIDER_PATH.test(file.path));
   assert(files.length >= 30, `only ${files.length} source files found`);
 
   // Every address the code can call.
