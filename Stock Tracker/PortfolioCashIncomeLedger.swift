@@ -341,7 +341,8 @@ private struct CashIncomeEditor: View {
     @ViewBuilder
     private var brokerLookup: some View {
         Section {
-            Toggle("Find payments in linked accounts", isOn: $lookup)
+            Button(lookup ? "Hide brokerage lookup" : "Find payments in linked accounts") { lookup.toggle() }
+                .accessibilityIdentifier("portfolio.cashIncome.brokerLookup")
             if lookup {
                 DatePicker("First broker payment date", selection: $brokerStart, in: CashIncomeDay.first...Date(), displayedComponents: .date)
                 DatePicker("Last broker payment date", selection: $brokerEnd, in: CashIncomeDay.first...Date(), displayedComponents: .date)

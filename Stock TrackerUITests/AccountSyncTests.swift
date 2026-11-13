@@ -199,8 +199,11 @@ final class AccountSyncTests: XCTestCase {
         if ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_INCOME_BROKER"] == "1" {
             reveal(add)
             add.tap()
-            app.switches["Find payments in linked accounts"].firstMatch.tap()
+            let lookup = app.buttons["portfolio.cashIncome.brokerLookup"].firstMatch
+            reveal(lookup)
+            lookup.tap()
             let find = app.buttons["Find linked accounts"].firstMatch
+            XCTAssertTrue(find.waitForExistence(timeout: 5))
             reveal(find)
             find.tap()
             let load = app.buttons["Load broker activity"].firstMatch
