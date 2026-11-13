@@ -54,23 +54,23 @@ that applies with or without the practice migration.
 
 | Brief section | Status | Where |
 |---|---|---|
-| §3 Unified dashboard (stocks + crypto, AUD default, FX explicit) | iPhone: **Done** (USD stored, display currency). Web: in progress | `MarketData`, `FXRates`; `web/` |
+| §3 Unified dashboard (stocks + crypto, AUD default, FX explicit) | iPhone: **Done** (USD stored, display currency). Web: overview with markets and watchlist **Done**; web portfolio page **Not started** (shows "Soon") | `MarketData`, `FXRates`; `web/src/app` |
 | §3 Portfolio analytics (TWR/MWR, benchmarks, cost basis) | Cost basis, realised/unrealised, benchmark on iPhone **Done**; TWR/MWR **Not started** | `PortfolioTabViews`, `PriceHistoryService` |
 | §4 Provider-agnostic connections | Contract + capability registry **Done**; Alpaca + Coinbase adapters **Built, needs credentials** (66 mocked-HTTP tests; never run against a real account); `broker-connections` function (connect/sync/revoke) **Built, needs credentials** | `_shared/brokers/`, `broker-connections/`, `docs/trading/provider-adapters.md` |
 | §4 Encrypted credentials | **Done** (AES-256-GCM envelope, key ring, binding, rotation; no client can read the table) | `_shared/vault/`, migration `20261113180000` |
 | §4 Reliability (retry, backoff, idempotent ingest, reconcile) | Adapters: retries on reads only, unknown submits never retried; idempotent fill keys **Done**; WebSocket streams **Not started** | `_shared/brokers/http.ts`, `broker_fills` unique key |
-| §5 Markets, search, charts, indicators | iPhone **Done**. Web: in progress (lightweight-charts; indicators from the shared engine) | `web/` |
-| §5 Watchlists | iPhone **Done**; web on the same table, in progress | `watchlist_assets` |
-| §6 Agent workspace, multi-agent | iPhone agents + copilot (practice) **Done** in the other effort; web AI workspace **Not started** | `AgentsTabView`, `CopilotView` |
+| §5 Markets, search, charts, indicators | iPhone **Done**. Web **Done** and verified with live data (US, ASX, LSE, TSE, crypto): candles/line/area, volume, SMA/EMA/Bollinger, RSI/MACD from the shared engine, provenance chips on every price | `web/src/app/markets`, `web/src/server/market` |
+| §5 Watchlists | iPhone **Done**; web on the same table **Built, needs a hosted project** (one list: multiple named lists need a schema change) | `watchlist_assets` |
+| §6 Agent workspace, multi-agent | iPhone agents + copilot (practice) **Done** in the other effort. Web AI Workspace (`/ai` + side panel) **Built, needs an API key**: 8 read/prepare tools, sources with times, untrusted-data wrapping, never places orders; tools verified on live data, safety tests pass; no live model turn has run. Web Agent Studio **Not started** | `web/src/server/agent`, `web/src/app/ai` |
 | §6 AI security (untrusted retrieved content, no model-placed orders) | Practice: LLMs never decide trades (`StrategyParser.decodeDraft`, validator). OMS: an agent can only *draft*; approval requires the owner's session; the adapter is reachable only through `execute.ts` | `TradingCore`, `_shared/oms/` |
-| §7 Strategy builder (typed DSL, no generated code) | **Done** in TradingCore (`StrategySpec` JSON + validator); TS parser/backtester port in progress | `_shared/studio/` |
+| §7 Strategy builder (typed DSL, no generated code) | **Done** in TradingCore; TS port **Done** (31 tests); web Strategy Studio **Done** (plain-English → spec, rule editor, validation; versions kept in the browser — no strategies table yet) | `_shared/studio/`, `web/src/app/strategies` |
 | §8 Paper trading | **Simulation only, Done** (iPhone; server in the other effort). Provider-hosted paper (Alpaca paper) via OMS: **Gated** (`provider_paper_execution`) | `PaperBroker`; `_shared/oms/` |
-| §9 Backtesting | Swift **Done**; TS port in progress | `Backtester.swift`, `_shared/studio/backtester.ts` |
+| §9 Backtesting | Swift **Done**; TS port + web backtests on real history **Done** (identical inputs gave an identical result fingerprint); results not stored server-side yet | `Backtester.swift`, `_shared/studio/backtester.ts`, `web/src/app/api/backtests` |
 | §10 Controlled live execution | OMS lifecycle, immutable intent hash, approvals, step-up, idempotency, reconciliation **Done**; live: **Gated** (DB CHECK constraints + gate + adapter refusal) | `_shared/oms/`, migration |
 | §11 Risk engine + kill switch | Practice: 24-check engine + kill switch **Done**. Provider orders: the same engine on a provider-built ledger plus restricted symbols, crypto cap, cash reserve, price-deviation guard; reserving orders counted; re-run under a per-user lock at submit; kill switch blocks manual provider orders too **Done** | `_shared/trading/risk.ts`, `_shared/oms/risk.ts`, `execute.ts` |
 | §12 Data model | Practice tables (other effort); provider tables **Done** (see §5 below) | migrations |
 | §13 API | `broker-connections` / `broker-orders` **Built, needs a hosted project** (type-checked; PgOmsStore proven on a throwaway Postgres; HTTP layer not yet run end to end) | `_shared/oms/api.ts`, `broker-orders/`, `broker-connections/` |
-| §14 Premium UI | iPhone redesign **Done**; web in progress | |
+| §14 Premium UI | iPhone redesign **Done**; web shell **Done** (12-section sidebar, ⌘K, dark/light, PRACTICE badge on every page; Portfolio, Agent Studio, Paper Trading, Activity shown as "Soon"); phone-width layout not checked in a browser | `web/src/components` |
 | §15 Security / threat model | `THREAT_MODEL.md` | |
 | §16 Australian regulation | `REGULATORY_REVIEW.md` (decisions) + `docs/trading/regulatory-au.md` (research, other effort) | |
 | §17 Observability | Structured logs in functions; OMS events append-only; metrics/alerting **Not started** | |
@@ -116,10 +116,10 @@ that applies with or without the practice migration.
 |---|---|---|---|
 | 0 Audit | This plan, threat model, regulatory review | Docs in `docs/`, reviewed by owner | Done (this branch) |
 | 1 Foundation | Adapter contract, OMS core, vault, gates, migration | Deno + SQL tests green; negative controls fail when a safeguard is removed | Done |
-| 2 Providers + data | Alpaca/Coinbase adapters; `broker-connections`; web markets/charts/watchlists | Adapter tests with mocked HTTP; web routes return labelled real data | In progress |
-| 3 Agents (web) | AI workspace with read-only tools, source-backed answers, prompt-injection tests | Eval suite in repo; agents can't reach order submission | Not started |
-| 4 Strategies + simulation | TS parser/backtester port; web Strategy Studio + backtests | Port tests mirror Swift cases; identical inputs → identical results | In progress |
-| 5 Trading + risk | `broker-orders` function; risk mapping for provider accounts; reconciliation scheduler | End-to-end against mocked Alpaca paper: draft → risk → approve → submit → fill; all failure journeys of brief §18 | In progress |
+| 2 Providers + data | Alpaca/Coinbase adapters; `broker-connections`; web markets/charts/watchlists | Adapter tests with mocked HTTP; web routes return labelled real data | Done (needs credentials / hosted project to run for real) |
+| 3 Agents (web) | AI workspace with read-only tools, source-backed answers, prompt-injection tests | Safety tests in repo; agents can't reach order submission; live-model eval suite still to write and run (billed) | Built; live run blocked on an API key |
+| 4 Strategies + simulation | TS parser/backtester port; web Strategy Studio + backtests | Port tests mirror Swift cases; identical inputs → identical results | Done (web paper trading waits on a hosted trading-api) |
+| 5 Trading + risk | `broker-orders` function; risk mapping for provider accounts; reconciliation scheduler | End-to-end against mocked Alpaca paper: draft → risk → approve → submit → fill; all failure journeys of brief §18 | Pipeline + store done and tested; HTTP end to end and the scheduler not yet |
 | 6 Release readiness | Hosted backend, monitoring, deployment docs, accessibility pass | Owner sign-off; `REGULATORY_REVIEW.md` items answered before any live gate | Blocked on owner/legal |
 
 ## 7. Known gaps and follow-ups (found while integrating, 2026-11-13)
@@ -136,6 +136,9 @@ that applies with or without the practice migration.
 - **Coinbase reconciliation** can only search the 500 most recent orders by client order id (the API
   has no lookup by client id).
 - **No scheduler yet** for provider reconciliation or fill sync; both run on request.
+- **Web market-data adapters** (`web/src/server/market`) duplicate part of `_shared/market`; merge into one.
+- **Assistant runs aren't persisted** (no AgentRun/AgentToolEvent tables for the web assistant); turns are logged only in the browser.
+- **The ported strategy parser** maps "buy ETH when RSI drops below 30" to the crypto trend template rather than RSI rules (Swift behaviour, carried over; the screen lists the assumption).
 
 ## 8. Externally blocked
 
