@@ -1,0 +1,69 @@
+import { csvField } from "@/lib/csv";
+import { serverSupabase } from "@/lib/supabase/server";
+import { jsonError } from "@/server/http/respond";
+import { calculateLots, lotNumber, sydneyDate, UNIT_DECIMALS } from "@/server/portfolio/lots";
+import { transactionPages, type TransactionRow } from "@/server/portfolio/transactions";
+
+const disclaimer = "Preliminary USD FIFO records for review. This report does not calculate tax. Verify actual lots, transaction-date AUD values, transfers, corporate actions and missing transactions. Trades with identical timestamps use sales before purchases. Open lots are based on recorded transactions.";
+const columns = [
+  "Record type", "Holding ID", "Ticker", "Exchange", "Asset type", "Transaction ID", "Transaction time (UTC)", "Transaction date (Sydney)",
+  "Purchase ID", "Purchase time (UTC)", "Quantity", "Purchase cost (USD)", "Purchase fees (USD)",
+  "Sale proceeds (USD)", "Sale fees (USD)", "Estimated FIFO result (USD)", "Report note",
+];
+
+function day(value: string | null) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < "1900-01-01" || value > "9998-12-31") return null;
+  const time = Date.parse(value + "T00:00:00Z");
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value ? value : null;
+}
+
+export async function GET(request: Request) {
+  const db = await serverSupabase();
+  if (!db) return jsonError(503, "unavailable", "Accounts are unavailable.");
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) return jsonError(401, "unauthenticated", "Sign in to export your lot report.");
+
+  const query = new URL(request.url).searchParams;
+  const start = day(query.get("from"));
+  const end = day(query.get("through"));
+  if ((query.has("from") && !start) || (query.has("through") && !end) || (start && end && start > end)) {
+    return jsonError(400, "invalid_date_range", "Choose valid dates in chronological order.");
+  }
+
+  const transactions: TransactionRow[] = [];
+  // Sydney midnight is earlier than UTC midnight. The query uses a broad UTC
+  // cutoff and the calculation applies the exact Sydney day.
+  const before = end ? new Date(Date.parse(end + "T00:00:00Z") + 86_400_000).toISOString() : undefined;
+  try {
+    for await (const page of transactionPages(db, user.id, request.signal, before)) transactions.push(...page);
+  } catch {
+    return jsonError(503, "unavailable", "Couldn’t export your lot report. Try again.");
+  }
+
+  const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
+  const records = [
+    columns.map(csvField).join(","),
+    [csvField("Report information"), ...Array(columns.length - 2).fill(""), csvField(`${disclaimer} ${period}`)].join(","),
+  ];
+  for (const row of calculateLots(transactions, start ?? undefined, end ?? undefined)) {
+    const transaction = row.transaction;
+    const holding = transaction.portfolio_holdings;
+    const text = [
+      row.kind, transaction.holding_id, holding?.asset_symbol ?? null, holding?.asset_exchange ?? null,
+      holding?.asset_kind ?? null, transaction.id, transaction.transaction_date, sydneyDate(transaction.transaction_date), row.purchase?.id ?? null,
+      row.purchase?.transaction_date ?? null,
+    ].map(csvField);
+    const numbers = [
+      lotNumber(row.units, UNIT_DECIMALS), lotNumber(row.purchaseCost, 2), lotNumber(row.purchaseFee, 2),
+      lotNumber(row.saleProceeds, 2), lotNumber(row.saleFee, 2), lotNumber(row.result, 2),
+    ];
+    records.push([...text, ...numbers, csvField(row.note ?? null)].join(","));
+  }
+  return new Response(records.join("\r\n") + "\r\n", {
+    headers: {
+      "Cache-Control": "private, no-store",
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": 'attachment; filename="stock-tracker-preliminary-fifo-lots-usd.csv"',
+    },
+  });
+}
