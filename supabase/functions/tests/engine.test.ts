@@ -245,18 +245,20 @@ Deno.test("a large order fills in parts and is tracked across them", () => {
 });
 
 Deno.test("refused orders are recorded as rejected and move no money", () => {
-  const { engine } = play("refused orders are recorded");
-  const [tooBig, short, noQuote, reused] = engine.state.orders;
+  const { engine, recorder } = play("refused orders are recorded");
+  const [tooBig, short, noQuote] = engine.state.orders;
   assertEquals([tooBig.status, short.status, noQuote.status], ["rejected", "rejected", "rejected"]);
   assert(tooBig.statusNote!.includes("only $1000.00 is available"));
   assertEquals(kinds(engine).filter((kind) => kind === "orderRejected").length, 3);
-  // As in the Swift core, a refused order's id is not remembered, so the same id can be
-  // sent again and accepted — leaving two records with one client order id. The engine is
-  // kept identical to Swift here; the server closes the gap by treating every recorded
-  // order's id as used (see persistence), which the database's unique key also demands.
-  assertEquals([reused.clientOrderID, reused.status], [tooBig.clientOrderID, "filled"]);
-  assertEquals(engine.state.fills.length, 1);
-  assertEquals(engine.state.ledgers[0].cash, Rounding.money(1_000 - fillGross(engine.state.fills[0])));
+  // A client order id is spent whatever happened to it: sent again after a refusal, it is
+  // refused without a second record (one id, one row — what the database's unique key demands).
+  const log = recorder.dump(engine).log as { step: string; value: Record<string, unknown> }[];
+  const again = log.find((entry) => entry.step === "same id after a refusal")!.value;
+  assertEquals([again.accepted, again.order], [false, undefined]);
+  assertEquals(engine.state.orders.length, 3);
+  assertEquals(new Set(engine.state.orders.map((order) => order.clientOrderID)).size, 3);
+  assertEquals(engine.state.fills.length, 0);
+  assertEquals(engine.state.ledgers[0].cash, 1_000);
 });
 
 Deno.test("no position can go negative and cash can't either", () => {

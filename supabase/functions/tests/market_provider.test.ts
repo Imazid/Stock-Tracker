@@ -22,6 +22,7 @@ import { AlpacaDataProvider, type AlpacaDataProviderOptions } from "../_shared/m
 import { CoinGeckoVolumeSource, type CoinGeckoVolumeSourceOptions } from "../_shared/market/coingecko.ts";
 import { FixtureDataProvider } from "../_shared/market/fixture.ts";
 import { providerFromEnv } from "../_shared/market/index.ts";
+import { CachedVolumeSource, memoryVolumeStore } from "../_shared/market/volume_cache.ts";
 import { type MarketDataProvider, parseVenueTime, ProviderError, snapshot } from "../_shared/market/provider.ts";
 
 const KEY_ID = "test-key-id";
@@ -1578,6 +1579,78 @@ Deno.test("providerFromEnv: the CoinGecko volume source is always wired in; its 
   }
 });
 
+Deno.test("providerFromEnv: with a store, CoinGecko is asked once a day per coin", async () => {
+  const { fetch: fake, calls } = recorder(() => json(geckoRows));
+  const store = memoryVolumeStore();
+  const { provider } = providerFromEnv(envOf(KEYS), { fetch: fake, volumeStore: store });
+  assert(provider !== null && provider.dollarVolume !== undefined);
+
+  assertEquals(await provider.dollarVolume([BTC, AAPL], NOW), { "crypto:BTC": 33_235_034_316 });
+  assertEquals(await provider.dollarVolume([BTC], NOW + HOUR), { "crypto:BTC": 33_235_034_316 });
+  assertEquals(await provider.dollarVolume([BTC], NOW + DAY - 1), { "crypto:BTC": 33_235_034_316 });
+  assertEquals(calls.length, 1, "within the day the stored figure is used");
+  assertEquals(store.entries.get("crypto:BTC"), { value: 33_235_034_316, at: NOW, source: "CoinGecko" });
+
+  assertEquals(await provider.dollarVolume([BTC], NOW + DAY + 1), { "crypto:BTC": 33_235_034_316 });
+  assertEquals(calls.length, 2, "after a day it is fetched again");
+  assertEquals(store.entries.get("crypto:BTC")!.at, NOW + DAY + 1);
+});
+
+Deno.test("volume cache: fresh figures are used, missing or stale ones are asked for, unknown stays unknown", async () => {
+  const ETH = cryptoAsset("ETH", "Ethereum"), SOL = cryptoAsset("SOL", "Solana");
+  const asked: string[][] = [];
+  let answer: Record<string, number> = {};
+  const source = {
+    dollarVolume: (instruments: Instrument[]) => {
+      asked.push(instruments.map((instrument) => instrument.symbol));
+      return Promise.resolve(answer);
+    },
+  };
+  const store = memoryVolumeStore();
+  store.entries.set("crypto:BTC", { value: 5e10, at: NOW - HOUR, source: "CoinGecko" });
+  store.entries.set("crypto:ETH", { value: 2e10, at: NOW - DAY - 1, source: "CoinGecko" });     // a day and a millisecond old
+  const cached = new CachedVolumeSource(source, store);
+
+  // BTC from the store; ETH (stale) and SOL (never seen) are asked for. The source's junk is dropped.
+  answer = { "crypto:ETH": 2.5e10, "crypto:SOL": 0, "crypto:DOGE": 9e9, "crypto:BTC": 1 };
+  assertEquals(await cached.dollarVolume([BTC, ETH, SOL, BTC], NOW), { "crypto:BTC": 5e10, "crypto:ETH": 2.5e10 });
+  assertEquals(asked, [["ETH", "SOL"]]);
+  assertEquals(store.entries.get("crypto:ETH"), { value: 2.5e10, at: NOW, source: "CoinGecko" });
+  assertEquals(store.entries.has("crypto:SOL"), false, "a zero is not a figure");
+  assertEquals(store.entries.has("crypto:DOGE"), false, "nothing that wasn't asked for is stored");
+  assertEquals(store.entries.get("crypto:BTC")!.value, 5e10, "a fresh figure isn't replaced by the source's stray answer");
+
+  // Everything fresh: the source isn't asked at all.
+  asked.length = 0;
+  assertEquals(await cached.dollarVolume([BTC, ETH], NOW + MINUTE), { "crypto:BTC": 5e10, "crypto:ETH": 2.5e10 });
+  assertEquals(asked, []);
+  assertEquals(await cached.dollarVolume([], NOW), {});
+
+  // An older write never replaces a newer figure.
+  await store.write({ "crypto:ETH": 1 }, NOW - MINUTE, "CoinGecko");
+  assertEquals(store.entries.get("crypto:ETH")!.value, 2.5e10);
+});
+
+Deno.test("volume cache: a broken store or source means asking directly, never a made-up figure", async () => {
+  const live = { dollarVolume: () => Promise.resolve({ "crypto:BTC": 4e10 }) };
+  const events: Record<string, unknown>[] = [];
+  const unreadable = { read: () => Promise.reject(new Error("db down")), write: () => Promise.reject(new Error("db down")) };
+  assertEquals(await new CachedVolumeSource(live, unreadable, { log: (event) => events.push(event) }).dollarVolume([BTC], NOW), { "crypto:BTC": 4e10 });
+  assertEquals(events.map((event) => event.event), ["volume_cache_read_failed", "volume_cache", "volume_cache_write_failed"]);
+  assert(!JSON.stringify(events).includes("db down"), "store errors aren't logged verbatim");
+
+  // The store hands back junk: ignored.
+  const junk = { read: () => Promise.resolve({ "crypto:BTC": -1 } as Record<string, number>), write: () => Promise.resolve() };
+  assertEquals(await new CachedVolumeSource(live, junk).dollarVolume([BTC], NOW), { "crypto:BTC": 4e10 });
+
+  // The source fails: only what was fresh in the store comes back.
+  const failing = { dollarVolume: () => Promise.reject(new Error("429")) };
+  const store = memoryVolumeStore();
+  assertEquals(await new CachedVolumeSource(failing, store).dollarVolume([BTC], NOW), {});
+  store.entries.set("crypto:BTC", { value: 3e10, at: NOW - HOUR, source: "CoinGecko" });
+  assertEquals(await new CachedVolumeSource(failing, store).dollarVolume([BTC], NOW), { "crypto:BTC": 3e10 });
+});
+
 Deno.test("providerFromEnv: without both keys, market data isn't configured", () => {
   const cases: Record<string, string>[] = [
     {},
@@ -1597,7 +1670,7 @@ Deno.test("providerFromEnv: without both keys, market data isn't configured", ()
 // The guard: this layer reads market data and can do nothing else.
 
 Deno.test("source guard: no trading host, no order or account path, no write method, no clock", async () => {
-  const sources = ["provider.ts", "alpaca.ts", "coingecko.ts", "fixture.ts", "index.ts"];
+  const sources = ["provider.ts", "alpaca.ts", "coingecko.ts", "fixture.ts", "index.ts", "volume_cache.ts"];
   const hosts = new Set<string>();
   for (const name of sources) {
     const text = await Deno.readTextFile(new URL(`../_shared/market/${name}`, import.meta.url));

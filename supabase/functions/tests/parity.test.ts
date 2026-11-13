@@ -8,7 +8,9 @@ import { agentModeDisplayName, AGENT_MODES, modeIsLive, modePlacesOrders, modePr
 import { appendAudit, AUDIT_KINDS, auditKindTitle, canonical, genesisHash, lastHash, makeAuditLog, nextSequence, verifyAudit } from "../_shared/trading/audit.ts";
 import { LiveVenues, PaperBroker, type PaperBrokerConfig } from "../_shared/trading/broker.ts";
 import * as Calendar from "../_shared/trading/calendar.ts";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { catalogInstruments } from "../_shared/trading/catalog.ts";
+import { ExchangeHolidays } from "../_shared/trading/exchange_holidays.ts";
 import { manualPolicy } from "../_shared/trading/engine.ts";
 import { decideAt, decideDCA, PreparedSeries, rebalanceTrades, researchFacts } from "../_shared/trading/evaluator.ts";
 import * as Ledgers from "../_shared/trading/ledger.ts";
@@ -94,6 +96,40 @@ Deno.test("venues, listings and snapshot liquidity match the Swift core", async 
     m.check(`stats: ${c.name}`, Calendar.snapshotStats({ series: c.series, quotes: {}, failures: {}, dollarVolume: c.dollarVolume }, c.now), c.out);
   }
   m.assertNone(40);
+});
+
+Deno.test("the international holiday tables are the Swift tables, day for day", async () => {
+  // The calendar vectors sample instants, so a single missing holiday could slip past them.
+  // This reads ExchangeHolidays.swift itself and compares every closure, early close and
+  // covered-year range.
+  const swift = await Deno.readTextFile(new URL("../../../TradingCore/Sources/TradingCore/ExchangeHolidays.swift", import.meta.url));
+  const literal = (name: string): string => {
+    const start = swift.indexOf("= [", swift.indexOf(`static let ${name}`)) + 2;
+    let depth = 0;
+    for (let i = start; i < swift.length; i++) {
+      if (swift[i] === "[") depth += 1;
+      if (swift[i] === "]" && --depth === 0) return swift.slice(start, i + 1);
+    }
+    throw new Error(`can't read ${name}`);
+  };
+  const entries = (text: string) => [...text.matchAll(/"(\w+)":\s*\[([^\]]*)\]/g)].map((m) => [m[1], m[2]] as const);
+  const closures = Object.fromEntries(entries(literal("closures")).map(([venue, body]) => [venue, [...body.matchAll(/"(\d{4}-\d{2}-\d{2})"/g)].map((m) => m[1])]));
+  const early = Object.fromEntries(entries(literal("earlyCloses")).map(([venue, body]) =>
+    [venue, Object.fromEntries([...body.matchAll(/"(\d{4}-\d{2}-\d{2})":\s*"(\d{2}:\d{2})"/g)].map((m) => [m[1], m[2]]))]));
+  const covered = Object.fromEntries([...literal("coveredYears").matchAll(/"(\w+)":\s*(\d{4})\.\.\.(\d{4})/g)]
+    .map((m) => [m[1], { lowerBound: Number(m[2]), upperBound: Number(m[3]) }]));
+  assert(Object.keys(closures).length >= 10 && Object.values(closures).flat().length > 150, "the Swift tables were read");
+  assertEquals(ExchangeHolidays.closures, closures);
+  assertEquals(ExchangeHolidays.earlyCloses, early);
+  assertEquals(ExchangeHolidays.coveredYears, covered);
+  // And the calendar uses them: a listed closure is not a trading day, an early close ends the day early.
+  assertEquals(Calendar.isTradingDay("tse", Date.parse("2026-11-23T03:00:00Z")), false, "Labour Thanksgiving Day in Tokyo");
+  assertEquals(Calendar.isTradingDay("lse", Date.parse("2026-12-28T12:00:00Z")), false, "Boxing Day observed in London");
+  // Hong Kong: 09:30–12:00 and 13:00–16:00 local (UTC+8).
+  assertEquals(Calendar.isOpen("hkex", Date.parse("2026-12-24T05:30:00Z")), false, "closed after noon on Christmas Eve (a half day)");
+  assertEquals(Calendar.isOpen("hkex", Date.parse("2026-12-23T05:30:00Z")), true, "open at the same time on an ordinary day");
+  assertEquals(Calendar.isOpen("hkex", Date.parse("2026-12-23T04:30:00Z")), false, "…except over lunch");
+  assertEquals(Calendar.coversDate("euronextParis", Date.parse("2026-06-01T12:00:00Z")), false, "Euronext's half days aren't published");
 });
 
 Deno.test("market calendar matches the Swift core", async () => {
@@ -277,8 +313,8 @@ Deno.test("the paper broker matches the Swift core", async () => {
   m.check("paper capabilities", PaperBroker.capabilities, v.capabilities.paper);
   m.check("live venues", LiveVenues.all, v.capabilities.live);
   for (const venue of LiveVenues.all) if (venue.isExecutionEnabled) throw new Error(`${venue.adapterID} must not be able to execute`);
-  for (const [instrument, notional, first, config, out] of v.fee) {
-    m.check(`fee ${instrument.symbol} ${notional} ${first} ${config}`, PaperBroker.fee(instrument, notional, first, configs[config]), out);
+  for (const [instrument, notional, first, config, side, out] of v.fee) {
+    m.check(`fee ${instrument.symbol} ${side} ${notional} ${first} ${config}`, PaperBroker.fee(instrument, side, notional, first, configs[config]), out);
   }
   for (const c of v.executionPrice) {
     const quote: Quote = c.quote;

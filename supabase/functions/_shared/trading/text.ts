@@ -156,8 +156,9 @@ export const NumberText = {
   },
 };
 
+/** "0.0%", never "-0.0%" (RiskEngine.percentText). */
 export function percentText(x: number): string {
-  return `${cFixed(x, 1)}%`;
+  return `${cFixed(x === 0 ? 0 : x, 1)}%`;
 }
 
 export function durationText(seconds: number): string {

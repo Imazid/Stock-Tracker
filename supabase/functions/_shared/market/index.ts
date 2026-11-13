@@ -9,18 +9,22 @@
 import { AlpacaDataProvider } from "./alpaca.ts";
 import { CoinGeckoVolumeSource } from "./coingecko.ts";
 import { type FixtureData, FixtureDataProvider } from "./fixture.ts";
-import type { MarketDataProvider } from "./provider.ts";
+import type { DollarVolumeSource, MarketDataProvider } from "./provider.ts";
+import { CachedVolumeSource, type VolumeStore } from "./volume_cache.ts";
 
 export * from "./provider.ts";
 export { AlpacaDataProvider, type AlpacaDataProviderOptions } from "./alpaca.ts";
 export { CoinGeckoVolumeSource, type CoinGeckoVolumeSourceOptions } from "./coingecko.ts";
 export { type FixtureData, FixtureDataProvider, type FixtureQuote, type FixtureSeries } from "./fixture.ts";
+export { CachedVolumeSource, memoryVolumeStore, VOLUME_TTL_MS, type VolumeStore } from "./volume_cache.ts";
 
 export interface ProviderFromEnvOptions {
   /** Canned data a caller asked to run on (from a request body). Honoured only with the flag. */
   fixture?: unknown;
   log?: (event: Record<string, unknown>) => void;
   fetch?: typeof fetch;
+  /** Where CoinGecko's traded-value figures are kept for a day. Without one, every snapshot asks again. */
+  volumeStore?: VolumeStore;
 }
 
 export interface ProviderChoice {
@@ -49,7 +53,10 @@ export function providerFromEnv(env: (name: string) => string | undefined, optio
   const secret = (env("ALPACA_DATA_SECRET") ?? "").trim();
   if (keyId !== "" && secret !== "") {
     // Always wired: the key only raises CoinGecko's rate limit, the lookup works without it.
-    const volumeSource = new CoinGeckoVolumeSource({ apiKey: env("COINGECKO_API_KEY"), fetch: options.fetch, log: options.log });
+    const coinGecko = new CoinGeckoVolumeSource({ apiKey: env("COINGECKO_API_KEY"), fetch: options.fetch, log: options.log });
+    const volumeSource: DollarVolumeSource = options.volumeStore
+      ? new CachedVolumeSource(coinGecko, options.volumeStore, { name: "CoinGecko", log: options.log })
+      : coinGecko;
     return { provider: new AlpacaDataProvider({ keyId, secret, fetch: options.fetch, log: options.log, volumeSource }), allowFixtureData };
   }
 

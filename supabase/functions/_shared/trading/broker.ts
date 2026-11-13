@@ -14,6 +14,7 @@ import {
   remainingQuantity, type TimeInForce,
 } from "./orders.ts";
 import * as Rounding from "./rounding.ts";
+import { cFixed } from "./text.ts";
 
 export type BrokerPermission = "read" | "trade";
 export type BrokerEnvironment = "paper" | "sandbox" | "live";
@@ -94,7 +95,8 @@ const paperCapabilities: BrokerCapabilities = {
   isExecutionEnabled: true,
   notes: [
     "Simulated fills against live quotes (delayed for markets outside the US). No order leaves this app.",
-    "Shares outside the US trade in whole units; Tokyo and Singapore in lots of 100. Exchange tick-size tables and Hong Kong board lots are not enforced.",
+    "Shares outside the US trade in whole units; Tokyo shares in units of 100. Exchange tick-size tables and the per-stock board lots of Hong Kong and Singapore are not enforced.",
+    "Transaction taxes are charged where they are definite: UK stamp duty 0.5% and the French transaction tax 0.4% on buys, Hong Kong stamp duty 0.1% and Indian STT 0.1% on both sides, the Korean securities tax 0.20% on sells. They are applied to every share on that exchange, which overcharges the exempt ones (foreign-incorporated UK listings, French companies under €1bn).",
     "No leverage, margin, short selling or withdrawals.",
   ],
 };
@@ -113,9 +115,11 @@ function rules(instrument: Instrument): InstrumentRules {
     case "lse": return whole(0.0001); // pounds (Yahoo quotes pence; converted)
     case "xetra": case "euronextParis": case "euronextAmsterdam": return whole(0.001);
     case "six": return whole(0.01);
-    case "tse": return whole(0.1, 100); // Tokyo trades in units of 100 shares
+    // Tokyo trades domestic shares in units of 100; funds set their own units.
+    case "tse": return instrument.assetClass === "etf" ? whole(0.1) : whole(0.1, 100);
     case "hkex": return whole(0.001); // board lots vary by stock; not enforced
-    case "sgx": return whole(0.001, 100); // SGX board lot is 100 shares
+    // Since 5 Oct 2026 SGX lots depend on price (100, 10 or 1, reviewed quarterly); not enforced.
+    case "sgx": return whole(0.001);
     case "krx": return whole(1);
     case "nse": return whole(0.01);
   }
@@ -128,10 +132,51 @@ function quantityText(quantity: number, instrument: Instrument): string {
   return text.replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function fee(instrument: Instrument, notional: number, isFirstFillOfOrder: boolean, config: PaperBrokerConfig): number {
-  if (instrument.assetClass === "crypto") return Rounding.money(notional * config.cryptoFeeBps / 10_000);
-  const flat = isFirstFillOfOrder ? config.equityFeePerOrder : 0;
-  return Rounding.money(flat + notional * config.equityFeeBps / 10_000);
+/** Commission plus any transaction tax. */
+function fee(instrument: Instrument, side: OrderSide, notional: number, isFirstFillOfOrder: boolean, config: PaperBrokerConfig): number {
+  let commission: number;
+  if (instrument.assetClass === "crypto") {
+    commission = Rounding.money(notional * config.cryptoFeeBps / 10_000);
+  } else {
+    const flat = isFirstFillOfOrder ? config.equityFeePerOrder : 0;
+    commission = Rounding.money(flat + notional * config.equityFeeBps / 10_000);
+  }
+  return Rounding.money(commission + tax(instrument, side, notional));
+}
+
+/** The transaction tax rate in basis points for one side of a trade (0 where none applies). */
+function taxBps(instrument: Instrument, side: OrderSide): number {
+  const { venue, assetClass } = instrument;
+  if (venue === "lse" && assetClass === "equity" && side === "buy") return 50; // UK stamp duty (SDRT)
+  if (venue === "euronextParis" && assetClass === "equity" && side === "buy") return 40; // French financial transaction tax
+  if (venue === "hkex" && assetClass === "equity") return 10; // Hong Kong stamp duty, each side
+  if (venue === "krx" && assetClass === "equity" && side === "sell") return 20; // Korean securities transaction tax incl. rural tax
+  if (venue === "nse" && assetClass === "equity") return 10; // Indian STT on delivery trades
+  if (venue === "nse" && assetClass === "etf" && side === "sell") return 0.1;
+  return 0;
+}
+
+/** The tax on a trade. Hong Kong rounds stamp duty up to the next whole dollar. */
+function tax(instrument: Instrument, side: OrderSide, notional: number): number {
+  const bps = taxBps(instrument, side);
+  if (!(bps > 0 && notional > 0)) return 0;
+  const raw = notional * bps / 10_000;
+  return instrument.venue === "hkex" ? Math.ceil(raw) : Rounding.money(raw);
+}
+
+/** One line naming the tax on this side of a trade, for order screens. */
+function taxNote(instrument: Instrument, side: OrderSide): string | undefined {
+  const bps = taxBps(instrument, side);
+  if (!(bps > 0)) return undefined;
+  const rate = `${cFixed(bps / 100, bps >= 1 ? 1 : 3)}%`;
+  switch (instrument.venue) {
+    case "lse": return `Includes UK stamp duty of ${rate} on purchases.`;
+    case "euronextParis": return `Includes the French financial transaction tax of ${rate} on purchases.`;
+    case "hkex": return `Includes Hong Kong stamp duty of ${rate}, rounded up to a whole dollar.`;
+    case "krx": return `Includes Korea's securities transaction tax of ${rate} on sales.`;
+    case "nse": return `Includes India's securities transaction tax of ${rate}.`;
+    default: return undefined;
+  }
 }
 
 /**
@@ -195,7 +240,7 @@ function match(order: Order, quote: Quote, marketOpen: boolean, now: number, con
 
   const filledBefore = order.filledQuantity;
   const notional = Rounding.money(available * marketPrice);
-  const charged = fee(order.instrument, notional, filledBefore === 0, config);
+  const charged = fee(order.instrument, order.side, notional, filledBefore === 0, config);
   const complete = remaining - available <= r.quantityIncrement * 1e-3;
   const status: OrderStatus = complete ? "filled" : order.timeInForce === "ioc" ? "canceled" : "partiallyFilled";
   const notes: string[] = [];
@@ -219,7 +264,9 @@ function expiry(timeInForce: TimeInForce, venue: Venue, placedAt: number): numbe
 }
 
 /** The built-in simulator. It fills against real quotes with a spread, fees and partial fills. */
-export const PaperBroker = { adapterID: "paper", capabilities: paperCapabilities, rules, quantityText, fee, executionPrice, match, expiry };
+export const PaperBroker = {
+  adapterID: "paper", capabilities: paperCapabilities, rules, quantityText, fee, taxBps, tax, taxNote, executionPrice, match, expiry,
+};
 
 // MARK: - Live venues (described, not switched on)
 
