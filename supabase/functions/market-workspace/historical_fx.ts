@@ -1,30 +1,17 @@
-import { compare, div, isDecimal, isZero, mul, round } from "../_shared/decimal.ts";
+import { compare, isZero, mul, round } from "../_shared/decimal.ts";
+import { ECB_FIRST_DATE, ECB_LOOKBACK_DAYS, ecbRate, ecbURL, isoDay, offsetDay, parseECBObservations, validISODay } from "../_shared/fx/ecb.ts";
 import { HttpError } from "../_shared/server/http.ts";
 
-const LOOKBACK_DAYS = 7;
 const MAX_AMOUNT = "9999999999999.99";
-const DAY = 86_400_000;
-const MIN_DATE = "1999-01-04";
 
 type Reference = { date: string; usdPerUnit: string };
 type CacheEntry = { expires: number; pending: Promise<Reference> };
 const cache = new Map<string, CacheEntry>();
 
-function isoDate(timestamp: number) {
-  return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function validDate(date: unknown): date is string {
-  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
-  const time = Date.parse(date + "T00:00:00Z");
-  return Number.isFinite(time) && isoDate(time) === date;
-}
-
 async function readReference(currency: string, date: string, request: typeof fetch): Promise<Reference> {
-  const from = isoDate(Date.parse(date + "T00:00:00Z") - LOOKBACK_DAYS * DAY);
-  const keys = currency === "EUR" ? "USD" : `USD+${currency}`;
-  const url = new URL(`https://data-api.ecb.europa.eu/service/data/EXR/D.${keys}.EUR.SP00.A`);
-  url.search = new URLSearchParams({ startPeriod: from, endPeriod: date, format: "csvdata", detail: "dataonly" }).toString();
+  const from = offsetDay(date, -ECB_LOOKBACK_DAYS);
+  const currencies = currency === "EUR" ? ["USD"] : ["USD", currency];
+  const url = ecbURL(currencies, from, date);
 
   let csv: string;
   try {
@@ -39,28 +26,12 @@ async function readReference(currency: string, date: string, request: typeof fet
     throw new HttpError(503, "fx_unavailable", "Historical exchange rates are temporarily unavailable.");
   }
 
-  const [header, ...rows] = csv.trim().split(/\r?\n/);
-  if (csv.length > 16_384 || header !== "KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE") {
+  const observations = csv.length <= 16_384 ? parseECBObservations(csv, currencies, from, date) : undefined;
+  if (!observations) {
     throw new HttpError(502, "invalid_fx_data", "The ECB returned an unreadable exchange-rate response.");
   }
-  const days = new Map<string, Map<string, string>>();
-  for (const row of rows) {
-    const [key, frequency, code, denominator, type, suffix, day, value] = row.split(",");
-    if (frequency !== "D" || denominator !== "EUR" || type !== "SP00" || suffix !== "A" ||
-      key !== `EXR.D.${code}.EUR.SP00.A` || (code !== "USD" && code !== currency) ||
-      !validDate(day) || day < MIN_DATE || day < from || day > date || !isDecimal(value) || value.length > 18 || isZero(value)) continue;
-    const observations = days.get(day) ?? new Map<string, string>();
-    observations.set(code, value);
-    days.set(day, observations);
-  }
-  for (const day of [...days.keys()].sort().reverse()) {
-    const observations = days.get(day)!;
-    const dollars = observations.get("USD");
-    const units = currency === "EUR" ? "1" : observations.get(currency);
-    if (!dollars || !units) continue;
-    const rate = round(div(dollars, units, 13), 12);
-    if (!isZero(rate) && compare(rate, "1000000000000") < 0) return { date: day, usdPerUnit: rate };
-  }
+  const result = ecbRate(observations, currency, "USD", date);
+  if (result) return { date: result.date, usdPerUnit: result.rate };
   throw new HttpError(404, "no_fx_rate", "No ECB reference rate is available within seven days of this date.");
 }
 
@@ -87,7 +58,7 @@ export async function historicalCashConversion(
   if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency) || currency === "USD") {
     throw new HttpError(422, "invalid_fx_currency", "Select a non-USD currency code.");
   }
-  if (!validDate(date) || date < MIN_DATE || date > isoDate(now)) {
+  if (!validISODay(date) || date < ECB_FIRST_DATE || date > isoDay(now)) {
     throw new HttpError(422, "invalid_fx_date", "Enter a historical date from 4 January 1999.");
   }
   if (typeof amount !== "string" || !/^(?:0|[1-9]\d{0,12})(?:\.\d{1,8})?$/.test(amount) || isZero(amount) || compare(amount, MAX_AMOUNT) > 0) {
