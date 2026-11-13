@@ -69,8 +69,12 @@ export interface AdapterContext {
   now?: () => number;
   /** Request timeout in ms (default 10s). */
   timeoutMs?: number;
-  /** Set only by the order system after the platform's live gate passed. Money-moving calls
-   *  (submit / replace / cancel) refuse `live` without it. */
+  /**
+   * Defence in depth. In the `live` environment every call that can move money (submit,
+   * replace, cancel) is refused with `environment_refused` unless this is exactly `true`.
+   * Only the order-management layer sets it, after the platform's live gate, the person's
+   * approval and the risk engine have all passed. Reads ignore it.
+   */
   allowLive?: boolean;
 }
 
