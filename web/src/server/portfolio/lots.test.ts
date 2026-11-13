@@ -24,6 +24,25 @@ test("snapshot and unknown-cost units stay in FIFO order without producing a bas
   assert.deepEqual(calculateLots([snapshot]).map(row => [row.kind, row.purchaseCost]), [["Position record", undefined]]);
 });
 
+test("AUD calculations use acquisition and disposal rates, original fees and exact allocated cents", () => {
+  const bought = { ...trade("bought", "2026-01-01T00:00:00Z", "Buy", 3, 60),
+    trade_provenance: { source: "manual_trade" as const, currency: "USD", unitPrice: 60, fees: 0.03 } };
+  const partial = { ...trade("partial", "2026-01-06T00:00:00Z", "Sell", 1, 60),
+    trade_provenance: { source: "manual_trade" as const, currency: "USD", unitPrice: 60, fees: 0 } };
+  const sale = { ...trade("sale", "2026-01-07T00:00:00Z", "Sell", 2, 60),
+    trade_provenance: { source: "manual_trade" as const, currency: "USD", unitPrice: 60, fees: 0 } };
+  const transactions = [bought, partial, sale];
+  const rates = new Map([["bought", "1.5"], ["sale", "1.6"]]);
+  const [row] = calculateLots(transactions, "2026-01-07", undefined, rates);
+  assert.deepEqual(row.aud, { purchaseCost: 18000n, purchaseFee: 3n, saleProceeds: 19200n, saleFee: 0n, result: 1197n });
+  assert.equal(row.result, 0n);
+  const [missing] = calculateLots([bought, { ...sale, trade_provenance: { ...sale.trade_provenance, fees: undefined } }],
+    undefined, undefined, rates);
+  assert.equal(missing.aud?.saleProceeds, 19200n);
+  assert.equal(missing.aud?.saleFee, undefined);
+  assert.equal(missing.aud?.result, undefined);
+});
+
 test("FIFO retains acquisition IDs and allocates each cent exactly across sales and remaining units", () => {
   const result = calculateLots([
     trade("sale", "2026-07-04T00:00:00Z", "Sell", 4, 20, 0.05),

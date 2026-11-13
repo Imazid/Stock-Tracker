@@ -1,6 +1,7 @@
 import { csvField } from "@/lib/csv";
 import { serverSupabase } from "@/lib/supabase/server";
 import { jsonError } from "@/server/http/respond";
+import { audReferences, type AudReference } from "@/server/portfolio/aud-rates";
 import { calculateLots, lotNumber, sydneyDate, UNIT_DECIMALS } from "@/server/portfolio/lots";
 import { tradeSource, transactionPages, type TransactionRow } from "@/server/portfolio/transactions";
 
@@ -11,6 +12,22 @@ const columns = [
   "Sale proceeds (USD)", "Sale fees (USD)", "Estimated FIFO result (USD)", "Report note", "Transaction record source", "Purchase record source",
 ];
 const noteColumn = columns.indexOf("Report note");
+const audColumns = [
+  "Purchase cost (AUD)", "Purchase fees (AUD)", "Sale proceeds (AUD)", "Sale fees (AUD)", "Estimated FIFO result (AUD)",
+  "Purchase input currency", "Purchase FX (AUD per input currency unit)", "Purchase FX observation date", "Purchase FX source",
+  "Sale input currency", "Sale FX (AUD per input currency unit)", "Sale FX observation date", "Sale FX source",
+];
+const audDisclosure = "AUD figures use original amounts. Foreign amounts use the latest common ECB observation on or before each Sydney trade date within seven days. ECB reference rates are indicative. AUD input uses a rate of one. Blank fields indicate unavailable source amounts or rates. The AUD result requires both prices and fees.";
+
+function referenceFields(references: ReadonlyMap<string, AudReference>, trade?: TransactionRow) {
+  const reference = trade && references.get(trade.id);
+  return [
+    csvField(trade?.trade_provenance?.currency ?? null),
+    reference && "rate" in reference ? reference.rate : "",
+    csvField(reference && "date" in reference ? reference.date : null),
+    csvField(reference?.source ?? null),
+  ];
+}
 
 function day(value: string | null) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < "1900-01-01" || value > "9998-12-31") return null;
@@ -25,6 +42,10 @@ export async function GET(request: Request) {
   if (!user) return jsonError(401, "unauthenticated", "Sign in to export your lot report.");
 
   const query = new URL(request.url).searchParams;
+  const currency = query.get("currency") ?? "USD";
+  if (currency !== "USD" && currency !== "AUD") {
+    return jsonError(400, "invalid_currency", "Choose USD or AUD for your report.");
+  }
   const start = day(query.get("from"));
   const end = day(query.get("through"));
   if ((query.has("from") && !start) || (query.has("through") && !end) || (start && end && start > end)) {
@@ -41,13 +62,31 @@ export async function GET(request: Request) {
     return jsonError(503, "unavailable", "Couldn’t export your lot report. Try again.");
   }
 
+  const includesAud = currency === "AUD";
+  let rows = calculateLots(transactions, start ?? undefined, end ?? undefined);
+  let references: ReadonlyMap<string, AudReference> = new Map();
+  if (includesAud) {
+    const trades = new Map<string, TransactionRow>();
+    for (const { transaction, purchase } of rows) {
+      if (transaction.type === "Sell") trades.set(transaction.id, transaction);
+      if (purchase) trades.set(purchase.id, purchase);
+    }
+    references = await audReferences([...trades.values()], request.signal);
+    const rates = new Map<string, string>();
+    for (const [id, reference] of references) {
+      if ("rate" in reference) rates.set(id, reference.rate);
+    }
+    rows = calculateLots(transactions, start ?? undefined, end ?? undefined, rates);
+  }
+  const reportColumns = includesAud ? [...columns, ...audColumns] : columns;
   const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
+  const information = includesAud ? `${disclaimer} ${audDisclosure} ${period}` : `${disclaimer} ${period}`;
   const records = [
-    columns.map(csvField).join(","),
-    columns.map((_, index) => index === 0 ? csvField("Report information")
-      : index === noteColumn ? csvField(`${disclaimer} ${period}`) : "").join(","),
+    reportColumns.map(csvField).join(","),
+    reportColumns.map((_, index) => index === 0 ? csvField("Report information")
+      : index === noteColumn ? csvField(information) : "").join(","),
   ];
-  for (const row of calculateLots(transactions, start ?? undefined, end ?? undefined)) {
+  for (const row of rows) {
     const transaction = row.transaction;
     const holding = transaction.portfolio_holdings;
     const text = [
@@ -59,16 +98,23 @@ export async function GET(request: Request) {
       lotNumber(row.units, UNIT_DECIMALS), lotNumber(row.purchaseCost, 2), lotNumber(row.purchaseFee, 2),
       lotNumber(row.saleProceeds, 2), lotNumber(row.saleFee, 2), lotNumber(row.result, 2),
     ];
-    records.push([...text, ...numbers, csvField(row.note ?? null),
+    const cells = [...text, ...numbers, csvField(row.note ?? null),
       csvField(tradeSource(transaction.trade_provenance)),
       csvField(row.purchase ? tradeSource(row.purchase.trade_provenance) : null),
-    ].join(","));
+    ];
+    if (includesAud) {
+      cells.push(...[row.aud?.purchaseCost, row.aud?.purchaseFee, row.aud?.saleProceeds, row.aud?.saleFee, row.aud?.result]
+        .map((value) => lotNumber(value, 2)),
+        ...referenceFields(references, row.purchase),
+        ...referenceFields(references, transaction.type === "Sell" ? transaction : undefined));
+    }
+    records.push(cells.join(","));
   }
   return new Response(records.join("\r\n") + "\r\n", {
     headers: {
       "Cache-Control": "private, no-store",
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": 'attachment; filename="stock-tracker-preliminary-fifo-lots-usd.csv"',
+      "Content-Disposition": `attachment; filename="stock-tracker-preliminary-fifo-lots-${includesAud ? "aud" : "usd"}.csv"`,
     },
   });
 }
