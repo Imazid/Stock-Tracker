@@ -14,6 +14,7 @@ const columns = [
 ];
 const noteColumn = columns.indexOf("Report note");
 const splitColumns = ["Split ID", "Split effective date (Sydney)", "Split new shares", "Split old shares", "Split statement reference"];
+const brokerSplitColumns = ["SnapTrade activity reference", "SnapTrade reported date", "SnapTrade reported activity", "SnapTrade reported symbol"];
 const audColumns = [
   "Purchase cost (AUD)", "Purchase fees (AUD)", "Sale proceeds (AUD)", "Sale fees (AUD)", "Estimated FIFO result (AUD)",
   "Purchase input currency", "Purchase FX (AUD per input currency unit)", "Purchase FX observation date", "Purchase FX source",
@@ -101,7 +102,11 @@ export async function GET(request: Request) {
     }
     rows = calculateLots(transactions, start ?? undefined, end ?? undefined, rates, splits);
   }
-  const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...(splits.length ? splitColumns : [])];
+  const actionColumns = [
+    ...(splits.length ? splitColumns : []),
+    ...(splits.some((split) => split.snaptrade_activity_id) ? brokerSplitColumns : []),
+  ];
+  const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...actionColumns];
   const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
   const information = includesAud ? `${disclaimer} ${audDisclosure} ${period}` : `${disclaimer} ${period}`;
   const records = [
@@ -120,12 +125,16 @@ export async function GET(request: Request) {
         "Exchange": holding?.asset_exchange ?? null,
         "Asset type": holding?.asset_kind ?? null,
         "Report note": row.note,
-        "Transaction record source": "Broker statement entry",
+        "Transaction record source": split.snaptrade_activity_id ? "Statement entry with reviewed SnapTrade reference" : "Broker statement entry",
         "Split ID": split.id,
         "Split effective date (Sydney)": split.effective_date,
         "Split new shares": split.new_shares,
         "Split old shares": split.old_shares,
         "Split statement reference": split.statement_reference || null,
+        "SnapTrade activity reference": split.snaptrade_activity_id,
+        "SnapTrade reported date": split.snaptrade_activity_date,
+        "SnapTrade reported activity": split.snaptrade_activity_label,
+        "SnapTrade reported symbol": split.snaptrade_activity_symbol,
       };
       records.push(reportColumns.map((column) => csvField(fields[column] ?? null)).join(","));
       continue;
@@ -151,7 +160,7 @@ export async function GET(request: Request) {
         ...referenceFields(references, row.purchase),
         ...referenceFields(references, transaction.type === "Sell" ? transaction : undefined));
     }
-    if (splits.length) cells.push(...splitColumns.map(() => ""));
+    cells.push(...actionColumns.map(() => ""));
     records.push(cells.join(","));
   }
   return new Response(records.join("\r\n") + "\r\n", {
