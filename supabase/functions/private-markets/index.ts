@@ -389,13 +389,16 @@ Deno.serve(async (req) => {
         const pageSize = 20;
         const { data, error } = await admin.from("private_holdings")
           .select("id,name,asset_class,currency,company_id,units,ownership_percent,committed_amount,settled_amount," +
-            "settled_on,settlement_source,confirmed_at,commitment:investment_commitments!inner(provider,provider_reference,status)," +
-            "marks:valuation_history(id,value,valued_on,source,methodology)," +
+            "settled_on,settlement_source,confirmed_at,remaining_units,last_disposition_on,disposition_revision_at,exit_source," +
+            "commitment:investment_commitments!inner(provider,provider_reference,status)," +
+            "marks:valuation_history(id,value,valued_on,source,methodology,provider_event_at)," +
             "calls:capital_calls(id,amount,due_on,settled_on,source)," +
-            "distributions(id,amount,received_on,source)")
+            "distributions(id,amount,received_on,source)," +
+            "dispositions:private_holding_dispositions(id,sold_units,net_proceeds,disposed_cost,settled_on,source)")
           .eq("user_id", userId).eq("commitment.user_id", userId).eq("commitment.status", "confirmed")
           .not("confirmed_at", "is", null).not("settled_amount", "is", null)
           .eq("marks.user_id", userId).eq("calls.user_id", userId).eq("distributions.user_id", userId)
+          .eq("dispositions.user_id", userId).eq("dispositions.reversed", false)
           .order("id").range(offset, offset + pageSize)
           .order("valued_on", { referencedTable: "marks", ascending: false })
           .order("provider_event_at", { referencedTable: "marks", ascending: false, nullsFirst: false })
@@ -403,8 +406,11 @@ Deno.serve(async (req) => {
           .order("due_on", { referencedTable: "calls", ascending: false }).order("id", { referencedTable: "calls" })
           .order("received_on", { referencedTable: "distributions", ascending: false })
           .order("id", { referencedTable: "distributions" })
+          .order("settled_on", { referencedTable: "dispositions", ascending: false })
+          .order("provider_event_at", { referencedTable: "dispositions", ascending: false })
+          .order("id", { referencedTable: "dispositions" })
           .limit(101, { referencedTable: "marks" }).limit(101, { referencedTable: "calls" })
-          .limit(101, { referencedTable: "distributions" });
+          .limit(101, { referencedTable: "distributions" }).limit(101, { referencedTable: "dispositions" });
         if (error) throw error;
         return jsonResponse(200, {
           holdings: data.slice(0, pageSize),

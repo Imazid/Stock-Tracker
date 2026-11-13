@@ -61,16 +61,20 @@ struct PrivateHoldingsView: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(holding.name).font(.headline)
                                 Text(holding.assetClass.rawValue).font(.footnote).foregroundStyle(.secondary)
-                                if let mark = holding.valuation() {
+                                if position.hasExited {
+                                    Text("Exited · Provider confirmed").font(.subheadline)
+                                } else if let mark = holding.valuation() {
                                     Text(PrivateInput.money(mark.value, currency: holding.currency) +
                                          (mark.isStale() ? " · Stale valuation" : " · Dated valuation"))
                                         .font(.subheadline.monospacedDigit())
                                         .foregroundStyle(mark.isStale() ? Color.orange : Color.primary)
                                 } else {
-                                    Text("Carrying value unavailable").font(.footnote).foregroundStyle(.secondary)
+                                    Text(position.dispositionRevisionAt == nil ? "Carrying value unavailable" : "Updated valuation needed")
+                                        .font(.footnote).foregroundStyle(.secondary)
                                 }
                             }
                         }
+                        .accessibilityIdentifier("private.holding.providerRow")
                     }
                     if store.loadingProviderHoldings { ProgressView("Checking provider records") }
                     if let error = store.providerError { Text(error).foregroundStyle(.secondary) }
@@ -453,28 +457,42 @@ struct PrivateHoldingDetail: View {
 
     private func overview(_ holding: PrivateHolding) -> some View {
         Section("Ownership") {
-            Text(providerRecord ? "Provider-confirmed ownership · Illiquid" : "Self-reported holding · Illiquid")
+            Text(providerPosition?.hasExited == true ? "Exited · Provider confirmed" :
+                 providerRecord ? "Provider-confirmed ownership · Illiquid" : "Self-reported holding · Illiquid")
                 .font(.footnote).foregroundStyle(.secondary)
             LabeledContent("Asset class", value: holding.assetClass.rawValue)
             if let position = providerPosition {
                 LabeledContent("Provider reference", value: position.commitment.providerReference)
                 LabeledContent("Ownership confirmed", value: position.confirmedAt.formatted(date: .abbreviated, time: .omitted))
                 LabeledContent("Opening settled capital", value: PrivateInput.money(position.settledAmount, currency: holding.currency))
+                if let original = position.units, position.lastDispositionOn != nil {
+                    LabeledContent("Original shares or units", value: original.formatted())
+                }
+                if position.hasExited, let date = position.lastDispositionOn, let source = position.exitSource {
+                    LabeledContent("Exit settled", value: date.formatted(date: .abbreviated, time: .omitted))
+                    LabeledContent("Exit source", value: source)
+                }
                 if !position.hasCompleteActivity {
                     Text("Only recent provider activity is available.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if let units = holding.units { LabeledContent("Shares or units", value: units.formatted()) }
+            if let units = holding.units {
+                LabeledContent(holding.latestDispositionOn == nil ? "Shares or units" : "Remaining shares or units",
+                               value: units.formatted())
+            }
             if let percent = holding.ownershipPercent { LabeledContent("Ownership", value: (percent / 100).formatted(.percent)) }
             if !holding.shareClass.isEmpty { LabeledContent("Share class", value: holding.shareClass) }
             if let end = holding.lockupUntil { LabeledContent("Lock-up ends", value: end.formatted(date: .abbreviated, time: .omitted)) }
             if let mark = holding.valuation() {
                 LabeledContent("Latest carrying value", value: PrivateInput.money(mark.value, currency: holding.currency))
-                Text(mark.isStale() ? "Stale valuation · \(mark.date.formatted(date: .abbreviated, time: .omitted))" :
-                        "As of \(mark.date.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.footnote).foregroundStyle(mark.isStale() ? Color.orange : Color.secondary)
+                if providerPosition?.hasExited != true {
+                    Text(mark.isStale() ? "Stale valuation · \(mark.date.formatted(date: .abbreviated, time: .omitted))" :
+                            "As of \(mark.date.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.footnote).foregroundStyle(mark.isStale() ? Color.orange : Color.secondary)
+                }
             } else {
-                LabeledContent("Latest carrying value", value: "Unavailable")
+                LabeledContent("Latest carrying value",
+                               value: holding.dispositionRevisionAt == nil ? "Unavailable" : "Updated valuation needed")
             }
         }
     }
@@ -490,7 +508,8 @@ struct PrivateHoldingDetail: View {
             LabeledContent("Total gain or loss", value: PrivateInput.money(metrics.netGain, currency: holding.currency))
             LabeledContent("Realized gain on sales", value: PrivateInput.money(metrics.realizedGain, currency: holding.currency))
             LabeledContent("Unrealized gain", value: PrivateInput.money(metrics.unrealizedGain, currency: holding.currency))
-            LabeledContent(holding.assetClass.isFund ? "TVPI" : "MOIC", value: multiple(metrics.multiple))
+            LabeledContent(holding.assetClass.isFund && !holding.cashFlows.contains(where: { $0.kind == .sale }) ? "TVPI" : "MOIC",
+                           value: multiple(metrics.multiple))
             if holding.assetClass.isFund { LabeledContent("DPI", value: multiple(metrics.dpi)) }
             LabeledContent("XIRR", value: metrics.xirr?.formatted(.percent.precision(.fractionLength(1))) ?? "Unavailable")
         }
@@ -651,6 +670,14 @@ private struct PrivateCashFlowRow: View {
                 .font(.footnote).foregroundStyle(.secondary)
             if flow.settled, let due = flow.originalDueDate {
                 Text("Originally due \(due.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let units = flow.disposedUnits {
+                LabeledContent("Shares or units sold", value: units.formatted())
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let cost = flow.disposedCost {
+                LabeledContent("Cost basis", value: PrivateInput.money(cost, currency: holding.currency))
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if isEditable && !flow.settled { Button("Record as paid") { confirmPayment = true }.buttonStyle(.borderless) }

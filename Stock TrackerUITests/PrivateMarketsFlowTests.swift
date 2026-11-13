@@ -251,6 +251,33 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(help.waitForExistence(timeout: 8), app.debugDescription)
     }
 
+    @MainActor
+    func testProviderExitShowsSettlementSourceAndRemainingUnits() async throws {
+        let login = ProcessInfo.processInfo.environment["PRIVATE_DISPOSITION_TEST_LOGIN"]
+        try XCTSkipUnless(login != nil, "Set PRIVATE_DISPOSITION_TEST_LOGIN to a seeded disposable account.")
+        let credentials = try XCTUnwrap(login)
+        let host = "http://127.0.0.1:58534"
+        let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+        app.terminate()
+        app.launchArguments += ["-SupabaseURLOverride", host, "-SupabaseAnonKeyOverride", key, "-UITestSignIn", credentials]
+        app.launch()
+        openPrivateMarkets()
+        let portfolio = app.buttons["private.destination.briefcase"]
+        XCTAssertTrue(portfolio.waitForExistence(timeout: 10))
+        if !portfolio.isHittable { app.swipeUp() }
+        portfolio.tap()
+        let row = app.buttons["private.holding.providerRow"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 45))
+        for _ in 0..<3 where !row.isHittable { app.swipeUp() }
+        XCTAssertTrue(row.isHittable)
+        row.tap()
+        let status = app.staticTexts["Exited · Provider confirmed"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Exit source"].exists)
+        XCTAssertTrue(app.staticTexts["Final sale receipt"].exists)
+        XCTAssertTrue(app.staticTexts["Remaining shares or units"].exists)
+    }
+
     private func openPrivateMarkets() {
         let tabs = app.tabBars.firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 12))

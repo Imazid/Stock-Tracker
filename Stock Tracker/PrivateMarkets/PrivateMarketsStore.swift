@@ -277,7 +277,7 @@ final class PrivateMarketsStore: ObservableObject {
     var angelListSnapshots: [PrivateFundSnapshot] { state.angelListSnapshots ?? [] }
 
     var allocationHoldings: [PrivateHolding] {
-        PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.map(\.holding),
+        PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.filter { !$0.hasExited }.map(\.holding),
                                        snapshots: angelListSnapshots)
     }
 
