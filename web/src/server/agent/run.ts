@@ -5,7 +5,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { asToolResult, runTool, type ToolContext, type ToolName, TOOLS } from "./tools.ts";
-import type { AgentSource } from "./tools-schema.ts";
+import { COMPANY_RESEARCH_TOOLS, type AgentSource } from "./tools-schema.ts";
 
 export const MODEL = "claude-opus-5-5";
 const MAX_TOOL_ROUNDS = 8;
@@ -29,6 +29,11 @@ const tools: Anthropic.Tool[] = TOOLS.map((t) => ({ ...t, eager_input_streaming:
 export async function runTurn(history: ChatTurn[], ctx: ToolContext, emit: (event: AgentEvent) => void, signal: AbortSignal): Promise<void> {
   const client = new Anthropic();
   const messages: Anthropic.MessageParam[] = history.map((t) => ({ role: t.role, content: t.content }));
+  if (ctx.company) {
+    const current = messages.at(-1)!;
+    current.content = `Active company listing: ${ctx.company.instrumentId}. Active research section: ${ctx.company.section}.\n\n${current.content}`;
+  }
+  const activeTools = ctx.company ? tools.filter((tool) => COMPANY_RESEARCH_TOOLS.has(tool.name)) : tools;
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let jsonRetries = 0;
 
@@ -42,7 +47,7 @@ export async function runTurn(history: ChatTurn[], ctx: ToolContext, emit: (even
         output_config: { effort: "medium" },
         // Frozen system prompt + fixed tool list = a stable, cacheable prefix.
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-        tools,
+        tools: activeTools,
         messages,
         // If a safety classifier declines, the API retries on a fallback model in the same call.
         betas: ["server-side-fallback-2026-07-01"],
@@ -86,7 +91,9 @@ export async function runTurn(history: ChatTurn[], ctx: ToolContext, emit: (even
     messages.push({ role: "assistant", content: message.content as Anthropic.MessageParam["content"] });
     const results = await Promise.all(toolUses.map(async (use) => {
       emit({ type: "tool", id: use.id, name: use.name, status: "running" });
-      const outcome = await runTool(use.name, use.input, ctx);
+      const outcome = !ctx.company || COMPANY_RESEARCH_TOOLS.has(use.name)
+        ? await runTool(use.name, use.input, ctx)
+        : { data: { error: "This conversation is scoped to company research." }, isError: true };
       emit({ type: "tool", id: use.id, name: use.name, status: outcome.isError ? "error" : "done" });
       if (outcome.sources?.length) emit({ type: "sources", items: outcome.sources });
       if (outcome.card) emit({ type: "card", card: outcome.card });

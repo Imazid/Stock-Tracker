@@ -56,39 +56,39 @@ struct PortfolioPerformanceChart: View {
 
         VStack(alignment: .leading, spacing: DS.Space.m) {
             VStack(alignment: centered ? .center : .leading, spacing: DS.Space.m) {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(theme.secondaryText)
-                .padding(.bottom, -DS.Space.s)
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(.bottom, -DS.Space.s)
 
-            Text(hidesValues ? "••••••" : marketData.formatPrice(shown))
-                .font(DS.money(40, weight: .bold))
-                .foregroundStyle(theme.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .contentTransition(.numericText())
-                .motionSafeAnimation(selection == nil && !hidesValues ? DS.quick : nil, value: live)
-                .accessibilityIdentifier("\(accessibilityID).value")
+                Text(hidesValues ? "••••••" : marketData.formatPrice(shown))
+                    .font(DS.money(40, weight: .bold))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .contentTransition(.numericText())
+                    .motionSafeAnimation(selection == nil && !hidesValues ? DS.quick : nil, value: live)
+                    .accessibilityIdentifier("\(accessibilityID).value")
 
-            VStack(alignment: .leading, spacing: 6) {
-                if let changePct {
-                    changeLine(percent: changePct, amount: change,
-                               label: selection.map { Text(range.scrubLabel(for: $0.date)) } ?? Text(range.periodLabel))
-                } else {
-                    HStack(spacing: DS.Space.s) {
-                        if chartPhase == .loading {
-                            SkeletonBlock(width: 116, height: 18)
-                                .loadingSkeleton("Loading portfolio return")
-                        } else {
-                            Text("—").foregroundStyle(theme.secondaryText)
+                VStack(alignment: .leading, spacing: 6) {
+                    if let changePct {
+                        changeLine(percent: changePct, amount: change,
+                                   label: selection.map { Text(range.scrubLabel(for: $0.date)) } ?? Text(range.periodLabel))
+                    } else {
+                        HStack(spacing: DS.Space.s) {
+                            if chartPhase == .loading {
+                                SkeletonBlock(width: 116, height: 18)
+                                    .loadingSkeleton("Loading portfolio return")
+                            } else {
+                                Text("—").foregroundStyle(theme.secondaryText)
+                            }
+                            Text(range.periodLabel).font(.subheadline).foregroundStyle(theme.secondaryText)
                         }
-                        Text(range.periodLabel).font(.subheadline).foregroundStyle(theme.secondaryText)
+                        .frame(minHeight: 24)
                     }
-                    .frame(minHeight: 24)
-                }
-                if showsTodayLine && range != .oneDay && selection == nil {
-                    changeLine(percent: marketData.dailyProfitLossPercent, amount: daily, label: Text("Today"))
-                }
+                    if showsTodayLine && range != .oneDay && selection == nil {
+                        changeLine(percent: marketData.dailyProfitLossPercent, amount: daily, label: Text("Today"))
+                    }
             }
             .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
 

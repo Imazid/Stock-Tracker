@@ -5,6 +5,8 @@
 // development without Supabase it runs signed-out with public market data only.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { RESEARCH_SECTIONS, type ResearchSection } from "@/lib/research-types";
+import { parseInstrumentID } from "@/server/market/instruments";
 import { supabaseConfigured } from "@/lib/env";
 import { serverSupabase } from "@/lib/supabase/server";
 import { type AgentEvent, type ChatTurn, runTurn } from "@/server/agent/run";
@@ -50,10 +52,18 @@ export async function POST(request: Request) {
 
   let history: ChatTurn[];
   let shareAccountContext = false;
+  let company: { instrumentId: string; section: string } | undefined;
   try {
-    const body: unknown = await request.json();
+    const body = await request.json();
     history = decodeHistory(body);
-    shareAccountContext = (body as { shareAccountContext?: unknown }).shareAccountContext === true;
+    shareAccountContext = body.shareAccountContext === true;
+    if (body.company !== undefined) {
+      const { instrumentId, section } = body.company ?? {};
+      if (typeof instrumentId !== "string" || !RESEARCH_SECTIONS.includes(section as ResearchSection)) throw new Error("Choose a company research context.");
+      const instrument = parseInstrumentID(instrumentId);
+      if (instrument.venue === "crypto") throw new Error("Choose a company or fund listing.");
+      company = { instrumentId: `${instrument.venue}:${instrument.symbol}`, section };
+    }
   } catch (error) {
     return jsonError(400, "invalid", error instanceof Error ? error.message : "Bad request.");
   }
@@ -71,8 +81,8 @@ export async function POST(request: Request) {
         }
       };
       try {
-        const context = { supabase: shareAccountContext ? supabase ?? undefined : undefined,
-          signedIn: shareAccountContext && signedIn, now: Date.now() };
+        const context = { supabase: shareAccountContext && !company ? supabase ?? undefined : undefined,
+          signedIn: shareAccountContext && !company && signedIn, company, now: Date.now() };
         if (anthropicConfigured) await runTurn(history, context, emit, abort.signal);
         else if (openAIKey) await runOpenAITurn(openAIKey, history, context, emit, abort.signal);
       } catch (error) {

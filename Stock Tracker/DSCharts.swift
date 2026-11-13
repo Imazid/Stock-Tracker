@@ -438,7 +438,12 @@ struct DSRangePicker: View {
                         .fixedSize()
                         .padding(.horizontal, DS.Space.xs)
                         .frame(maxWidth: .infinity, minHeight: 32)
-                        .background(Capsule().fill(isOn ? tint.opacity(0.15) : .clear))
+                        .background {
+                            if isOn {
+                                Capsule().fill(tint.opacity(0.15))
+                                    .matchedGeometryEffect(id: "range", in: chip)
+                            }
+                        }
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
                 }

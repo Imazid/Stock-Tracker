@@ -210,7 +210,8 @@ struct Theme {
     }
 
     var skeletonFill: Color {
-        isDark ? Color.white.opacity(0.13) : Color.black.opacity(0.10)    }
+        isDark ? Color.white.opacity(0.13) : Color.black.opacity(0.10)
+    }
 
     var separator: Color {
         Color(UIColor.separator)
