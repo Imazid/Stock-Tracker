@@ -132,11 +132,17 @@ struct MarketsTabView: View {
             .padding(.bottom, DS.Space.s)
             .accessibilityIdentifier("markets.section")
 
-            switch router.marketsSection {
-            case .watchlist: AppleStocksWatchlistView()
-            case .search: StockSearchView()
-            case .news: NewsView()
+            ZStack {
+                Group {
+                    switch router.marketsSection {
+                    case .watchlist: AppleStocksWatchlistView()
+                    case .search: StockSearchView()
+                    case .news: NewsView()
+                    }
+                }
+                .transition(.opacity)
             }
+            .motionSafeAnimation(DS.quick, value: router.marketsSection)
         }
         .dsScreenBackground()
     }

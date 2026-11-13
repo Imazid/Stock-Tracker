@@ -18,6 +18,9 @@ import SwiftUI
 import UIKit
 
 enum Motion {
+    static let feedback = Animation.easeOut(duration: 0.16)
+    static let reveal = Animation.easeOut(duration: 0.26)
+
     /// Decorative motion is allowed (checked live, so Reduce Motion applies at once).
     static var isEnabled: Bool {
         #if DEBUG
@@ -32,18 +35,17 @@ enum Motion {
 
 private struct StaggeredAppear: ViewModifier {
     let index: Int
-    @State private var shown = !Motion.isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = false
 
     func body(content: Content) -> some View {
-        content
-            .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 14)
+        let visible = shown || reduceMotion || !Motion.isEnabled || index >= 6
+        return content
+            .opacity(visible ? 1 : 0)
+            .offset(y: visible ? 0 : 6)
             .onAppear {
-                guard !shown else { return }
-                guard Motion.isEnabled else { shown = true; return }
-                // Only the first screenful cascades; later rows just arrive.
-                let delay = index < 10 ? Double(index) * 0.045 : 0
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.86).delay(delay)) { shown = true }
+                guard !visible else { shown = true; return }
+                withAnimation(Motion.reveal.delay(Double(index) * 0.022)) { shown = true }
             }
     }
 }
@@ -58,22 +60,32 @@ extension View {
 private struct PriceFlash: ViewModifier {
     let value: Double
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tint: Color = .clear
-    @State private var strength: Double = 0
+    @State private var pulse = 0
 
     func body(content: Content) -> some View {
         content
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(tint.opacity(0.22 * strength))
-                    .padding(.horizontal, -4)
-                    .padding(.vertical, -2)
-            )
+            .background {
+                if !reduceMotion && Motion.isEnabled {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(tint.opacity(0.14))
+                        .keyframeAnimator(initialValue: 0.0, trigger: pulse) { highlight, strength in
+                            highlight.opacity(strength)
+                        } keyframes: { _ in
+                            MoveKeyframe(1.0)
+                            LinearKeyframe(1.0, duration: 0.08)
+                            CubicKeyframe(0.0, duration: 0.65)
+                        }
+                        .padding(.horizontal, -4)
+                        .padding(.vertical, -2)
+                }
+            }
             .onChange(of: value) { old, new in
-                guard Motion.isEnabled, old > 0, new > 0, abs(new - old) > old * 1e-7 else { return }
+                guard !reduceMotion, Motion.isEnabled, old > 0, new > 0,
+                      old.isFinite, new.isFinite, abs(new - old) > old * 1e-7 else { return }
                 tint = new > old ? theme.positiveColor : theme.negativeColor
-                strength = 1
-                withAnimation(.easeOut(duration: 1.1).delay(0.15)) { strength = 0 }
+                pulse += 1
             }
     }
 }
@@ -86,18 +98,51 @@ extension View {
 // MARK: - Scroll card motion
 
 extension View {
-    /// Cards settle in as they scroll onto the screen and ease back as they leave.
-    @ViewBuilder
-    func scrollCardMotion() -> some View {
-        if Motion.isEnabled {
-            scrollTransition(.interactive, axis: .vertical) { content, phase in
-                content
-                    .scaleEffect(phase.isIdentity ? 1 : 0.96, anchor: .center)
-                    .opacity(phase.isIdentity ? 1 : 0.55)
-            }
-        } else {
-            self
+    /// Adds a slight scale change at the scroll edges.
+    func scrollCardMotion() -> some View { modifier(ScrollCardMotion()) }
+}
+
+private struct ScrollCardMotion: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let enabled = !reduceMotion && Motion.isEnabled
+        content.scrollTransition(.interactive, axis: .vertical) { view, phase in
+            view.scaleEffect(enabled && !phase.isIdentity ? 0.99 : 1)
         }
+    }
+}
+
+private struct ChartPlotReveal<Key: Equatable>: ViewModifier {
+    let key: Key
+    let isScrubbing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var replay = 0
+
+    func body(content: Content) -> some View {
+        let enabled = !reduceMotion && Motion.isEnabled
+        return content
+            .mask(alignment: .leading) {
+                GeometryReader { geometry in
+                    Rectangle()
+                        .keyframeAnimator(initialValue: 1.0, trigger: replay) { mask, progress in
+                            mask.frame(width: geometry.size.width * (enabled && !isScrubbing ? progress : 1))
+                        } keyframes: { _ in
+                            MoveKeyframe(0.0)
+                            CubicKeyframe(1.0, duration: 0.42)
+                        }
+                }
+            }
+            .onChange(of: key, initial: true) {
+                if enabled { replay += 1 }
+            }
+    }
+}
+
+extension View {
+    /// Reveals the plot while its axes stay in place.
+    func chartPlotReveal<Key: Equatable>(_ key: Key, isScrubbing: Bool) -> some View {
+        modifier(ChartPlotReveal(key: key, isScrubbing: isScrubbing))
     }
 }
 
@@ -110,24 +155,26 @@ struct CelebrationCheck: View {
     var foreground: Color = .black
     var background: Color = .white
 
-    @State private var popped = !Motion.isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var popped = false
     @State private var ring = false
 
     var body: some View {
-        ZStack {
+        let enabled = !reduceMotion && Motion.isEnabled
+        let visible = popped || !enabled
+        return ZStack {
             Circle()
                 .strokeBorder(background.opacity(0.6), lineWidth: 2)
                 .frame(width: size, height: size)
                 .scaleEffect(ring ? 1.9 : 1)
-                .opacity(ring ? 0 : (popped ? 0.8 : 0))
+                .opacity(enabled && popped && !ring ? 0.6 : 0)
             Image(systemName: "checkmark")
                 .font(.system(size: size * 0.44, weight: .bold))
                 .foregroundStyle(foreground)
-                .symbolEffect(.bounce, options: .nonRepeating, value: popped)
                 .frame(width: size, height: size)
                 .background(Circle().fill(background))
-                .scaleEffect(popped ? 1 : 0.5)
-                .opacity(popped ? 1 : 0)
+                .scaleEffect(visible ? 1 : 0.82)
+                .opacity(visible ? 1 : 0)
         }
         .accessibilityHidden(true)
         .onAppear { if trigger { play() } }
@@ -135,11 +182,11 @@ struct CelebrationCheck: View {
     }
 
     private func play() {
-        guard Motion.isEnabled else { popped = true; return }
+        guard !reduceMotion, Motion.isEnabled else { popped = true; return }
         popped = false
         ring = false
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.62)) { popped = true }
-        withAnimation(.easeOut(duration: 0.9).delay(0.12)) { ring = true }
+        withAnimation(DS.spring) { popped = true }
+        withAnimation(.easeOut(duration: 0.55).delay(0.08)) { ring = true }
     }
 }
 
@@ -159,6 +206,7 @@ struct ConfettiBurst: View {
         let width: Double, height: Double, colorIndex: Int
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pieces: [Piece] = []
     @State private var start: Date?
     private static let duration = 3.0
@@ -171,9 +219,9 @@ struct ConfettiBurst: View {
     ]
 
     var body: some View {
-        TimelineView(.animation(paused: start == nil)) { context in
+        TimelineView(.animation(paused: start == nil || reduceMotion)) { context in
             Canvas { canvas, size in
-                guard let start else { return }
+                guard !reduceMotion, let start else { return }
                 let t = context.date.timeIntervalSince(start)
                 let ox = origin.x * size.width, oy = origin.y * size.height
                 for piece in pieces {
@@ -202,11 +250,12 @@ struct ConfettiBurst: View {
         .accessibilityHidden(true)
         .onAppear { if trigger > 0 { fire() } }
         .onChange(of: trigger) { _, _ in fire() }
+        .onChange(of: reduceMotion) { _, reduced in if reduced { start = nil } }
     }
 
     private func fire() {
-        guard Motion.isEnabled else { return }
-        pieces = (0..<130).map { _ in
+        guard !reduceMotion, Motion.isEnabled else { return }
+        pieces = (0..<72).map { _ in
             // A fan pointing up (−90°), spread ±70°, so pieces arc out to both sides.
             Piece(angle: -.pi / 2 + .random(in: -1.22...1.22), speed: .random(in: 520...1_150),
                   delay: .random(in: 0...0.12), spin: .random(in: -1.4...1.4), wobble: .random(in: 0...6),

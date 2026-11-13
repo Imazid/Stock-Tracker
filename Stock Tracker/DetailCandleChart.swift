@@ -21,6 +21,7 @@ struct DetailCandleChart: View {
     var dateText: (Date) -> String
     var selection: Binding<Candle?>? = nil
     var onRetry: (() -> Void)? = nil
+    var range: TimeRange? = nil
 
     @Environment(\.theme) private var theme
     @State private var rawX: Double?
@@ -51,8 +52,9 @@ struct DetailCandleChart: View {
         ZStack {
             if data.count >= 2 {
                 chart(data)
+                    .chartPlotStyle { $0.chartPlotReveal(range, isScrubbing: rawX != nil) }
                     .opacity(phase == .loading ? 0.45 : 1)
-                    .animation(DS.quick, value: phase == .loading)
+                    .motionSafeAnimation(DS.quick, value: phase == .loading)
                 if phase == .loading { ProgressView().controlSize(.small) }
             } else {
                 placeholder
@@ -60,6 +62,10 @@ struct DetailCandleChart: View {
         }
         .frame(height: height)
         .accessibilityIdentifier("chart.candles")
+        .onChange(of: range) {
+            rawX = nil
+            selection?.wrappedValue = nil
+        }
         .onChange(of: rawX) { _, x in
             guard let x, !data.isEmpty else { selection?.wrappedValue = nil; return }
             let i = min(max(Int(x.rounded()), 0), data.count - 1)
@@ -71,10 +77,7 @@ struct DetailCandleChart: View {
     private var placeholder: some View {
         switch phase {
         case .loading:
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(theme.subtleFill)
-                .overlay(ProgressView().controlSize(.small))
-                .accessibilityLabel("Loading candles")
+            ChartLoadingSkeleton(label: "Loading candlesticks")
         case .failed(let message):
             note(title: "Candles unavailable", detail: message)
         case .loaded:

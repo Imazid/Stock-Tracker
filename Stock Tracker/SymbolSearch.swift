@@ -445,37 +445,40 @@ struct SymbolSearchView: View {
     }
 
     var body: some View {
-        content
-            .dsScreenBackground()
-            .searchable(text: $model.query,
-                        placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: mode == .add ? "Add a stock, ETF or crypto" : "Stocks, ETFs and crypto")
-            .searchScopes($model.scope, activation: .onSearchPresentation) {
-                ForEach(SymbolSearchScope.allCases, id: \.self) { Text($0.title).tag($0) }
+        ZStack {
+            content.transition(.opacity)
+        }
+        .motionSafeAnimation(DS.quick, value: model.phase)
+        .dsScreenBackground()
+        .searchable(text: $model.query,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: mode == .add ? "Add a stock, ETF or crypto" : "Stocks, ETFs and crypto")
+        .searchScopes($model.scope, activation: .onSearchPresentation) {
+            ForEach(SymbolSearchScope.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .searchPresentationToolbarBehavior(.avoidHidingContent)
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
+        .sheet(item: $detailAsset) { asset in
+            AppleStocksDetailView(stock: detailedStock(from: asset), asset: asset, position: nil)
+        }
+        .sheet(isPresented: $showLimitPaywall) {
+            PaywallView(requiredTier: .pro, featureName: "More watchlist items")
+                .environmentObject(subscriptionManager)
+        }
+        .overlay(alignment: .bottom) {
+            if let notice {
+                Text(notice)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(theme.invertedPrimaryText)
+                    .padding(.horizontal, DS.Space.l)
+                    .padding(.vertical, DS.Space.m)
+                    .background(Capsule().fill(theme.primaryText))
+                    .padding(.bottom, DS.Space.xl)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityIdentifier("search.notice")
             }
-            .searchPresentationToolbarBehavior(.avoidHidingContent)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .sheet(item: $detailAsset) { asset in
-                AppleStocksDetailView(stock: detailedStock(from: asset), asset: asset, position: nil)
-            }
-            .sheet(isPresented: $showLimitPaywall) {
-                PaywallView(requiredTier: .pro, featureName: "More watchlist items")
-                    .environmentObject(subscriptionManager)
-            }
-            .overlay(alignment: .bottom) {
-                if let notice {
-                    Text(notice)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(theme.invertedPrimaryText)
-                        .padding(.horizontal, DS.Space.l)
-                        .padding(.vertical, DS.Space.m)
-                        .background(Capsule().fill(theme.primaryText))
-                        .padding(.bottom, DS.Space.xl)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .accessibilityIdentifier("search.notice")
-                }
-            }
+        }
     }
 
     @ViewBuilder
@@ -747,10 +750,11 @@ struct SymbolResultRow: View {
                     .font(.system(size: 24, weight: .regular))
                     .foregroundStyle(isInWatchlist ? DS.accent : theme.secondaryText)
                     .contentTransition(.symbolEffect(.replace))
+                    .motionSafeAnimation(DS.quick, value: isInWatchlist)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressableButtonStyle())
             .accessibilityLabel(isInWatchlist ? "Remove \(hit.symbol) from \(listName)" : "Add \(hit.symbol) to \(listName)")
             .accessibilityIdentifier("\(rowIdentifier).toggle")
         }
@@ -763,7 +767,11 @@ struct SymbolResultRow: View {
             QuoteNumbers(price: marketData.formatPrice(quote.price), percent: quote.changePercent,
                          stacked: stacked, priceFont: .subheadline.weight(.semibold).monospacedDigit())
         } else if isLoadingQuote {
-            ProgressView().controlSize(.small)
+            VStack(alignment: .trailing, spacing: 4) {
+                SkeletonBlock(width: 55, height: 13)
+                SkeletonBlock(width: 42, height: 11)
+            }
+            .skeletonPulse()
         }
     }
 

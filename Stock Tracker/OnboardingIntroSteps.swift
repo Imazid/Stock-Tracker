@@ -136,7 +136,7 @@ private struct LogoField: View {
     var body: some View {
         // GeometryReader pins the width so the (very wide) rows can't stretch the page.
         GeometryReader { proxy in
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || !Motion.isEnabled)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             VStack(spacing: gap) {
                 ForEach(Array(Self.rows.enumerated()), id: \.offset) { index, row in

@@ -152,7 +152,7 @@ struct DetailHeaderChart: View {
         HStack(alignment: .center) {
             MoneyText(text: live.price > 0 ? format.money(shown) : "—", size: 44)
                 .contentTransition(.numericText(value: shown))
-                .animation(scrubbed == nil && scrubbedCandle == nil ? DS.quick : nil, value: shown)
+                .motionSafeAnimation(scrubbed == nil && scrubbedCandle == nil ? DS.quick : nil, value: live.price)
                 .accessibilityIdentifier("detail.price")
             Spacer(minLength: DS.Space.s)
             if kind.isStock || kind == .index {
@@ -269,6 +269,7 @@ struct DetailHeaderChart: View {
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: isCandle ? "chart.xyaxis.line" : "chart.bar.xaxis")
+                    .contentTransition(.symbolEffect(.replace))
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
                     .frame(width: 44, height: 44)
@@ -357,7 +358,8 @@ struct DetailHeaderChart: View {
                 valueText: { format.money($0) },
                 dateText: { scrubText($0) },
                 selection: $scrubbedCandle,
-                onRetry: { model.loadCandles(force: true) }
+                onRetry: { model.loadCandles(force: true) },
+                range: model.candlesRange
             )
         } else {
             DSPriceChart(
@@ -372,7 +374,8 @@ struct DetailHeaderChart: View {
                 dateText: { scrubText($0) },
                 selection: $scrubbed,
                 onRetry: { model.loadChart(force: true) },
-                accessibilityID: "detail.chart"
+                accessibilityID: "detail.chart",
+                range: model.pointsRange
             )
         }
     }

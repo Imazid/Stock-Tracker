@@ -714,16 +714,19 @@ struct OrderTicketView: View {
             glyph = "clock"
             tint = theme.primaryText
         }
-        // Centred, Coinbase-style: the outcome in a glowing glass circle, then what happened.
         return VStack(spacing: DS.Space.m) {
-            ZStack {
-                Circle().fill(tint.opacity(0.22)).frame(width: 120, height: 120).blur(radius: 24)
-                Image(systemName: glyph)
-                    .font(.system(size: 40, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 88, height: 88)
-                    .glassEffect(.regular.tint(tint.opacity(0.18)), in: .circle)
+            Group {
+                if result.isAccepted && status == .filled {
+                    CelebrationCheck(trigger: true, size: 72, foreground: theme.background, background: tint)
+                } else {
+                    Image(systemName: glyph)
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 72, height: 72)
+                        .glassEffect(.regular.tint(tint.opacity(0.18)), in: .circle)
+                }
             }
+            .frame(height: 92)
             .padding(.bottom, DS.Space.s)
             .accessibilityHidden(true)
             Text(title).font(DS.display(.title)).multilineTextAlignment(.center)

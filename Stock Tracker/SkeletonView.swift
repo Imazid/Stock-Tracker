@@ -5,52 +5,26 @@
 
 import SwiftUI
 
-// MARK: - Shimmer Modifier (phase-based, properly animated)
+// MARK: - Loading motion
 
-struct ShimmerEffect: ViewModifier {
-    @State private var phase: CGFloat = -1
-    @Environment(\.colorScheme) var colorScheme
+private struct SkeletonPulse: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        content.overlay(
-            GeometryReader { geo in
-                let w = geo.size.width
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear,                         location: max(0, phase - 0.25)),
-                        // Clamped so stops stay ordered while phase runs from -1.
-                        .init(color: highlightColor.opacity(0.55),   location: min(max(phase, 0), 1)),
-                        .init(color: .clear,                         location: min(1, phase + 0.25)),
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: w * 2.5)
-                .offset(x: (phase - 0.5) * w * 2.5 - w * 0.75)
-            }
-            .mask(content)
-        )
-        .onAppear {
-            phase = -1
-            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                phase = 1
+        if reduceMotion || !Motion.isEnabled {
+            content
+        } else {
+            content.phaseAnimator([1.0, 0.7]) { view, opacity in
+                view.opacity(opacity)
+            } animation: { _ in
+                .easeInOut(duration: 0.95)
             }
         }
-    }
-
-    private var highlightColor: Color {
-        colorScheme == .dark ? Color.white : Color.white
     }
 }
 
 extension View {
-    func shimmer() -> some View {
-        modifier(ShimmerEffect())
-    }
-    // Keep legacy alias
-    func shimmering() -> some View {
-        modifier(ShimmerEffect())
-    }
+    func skeletonPulse() -> some View { modifier(SkeletonPulse()) }
 }
 
 // MARK: - Skeleton Building Blocks
@@ -65,7 +39,8 @@ struct SkeletonBlock: View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .fill(fillColor)
             .frame(width: width, height: height)
-            .shimmer()
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
     }
 
     private var fillColor: Color {
@@ -83,7 +58,33 @@ struct SkeletonCircle: View {
         Circle()
             .fill(colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.07))
             .frame(width: size, height: size)
-            .shimmer()
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Placeholder for a chart that has yet to receive its first series.
+struct ChartLoadingSkeleton: View {
+    var label: LocalizedStringKey = "Loading chart"
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<3) { _ in
+                HStack(spacing: DS.Space.s) {
+                    Rectangle()
+                        .fill(theme.secondaryText.opacity(0.14))
+                        .frame(height: 1)
+                    SkeletonBlock(width: 26, height: 6)
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .padding(.horizontal, DS.Space.m)
+        .skeletonPulse()
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
     }
 }
 
@@ -111,6 +112,7 @@ struct WatchlistRowSkeleton: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(colorScheme == .dark ? Color(UIColor.secondarySystemBackground) : Color(red: 0.953, green: 0.937, blue: 0.910))
         )
+        .skeletonPulse()
     }
 }
 
@@ -139,6 +141,7 @@ struct NewsHeroSkeleton: View {
         }
         .background(colorScheme == .dark ? Color(UIColor.secondarySystemBackground) : Color(red: 0.953, green: 0.937, blue: 0.910))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .skeletonPulse()
     }
 }
 
@@ -163,6 +166,7 @@ struct NewsCompactSkeleton: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(colorScheme == .dark ? Color(UIColor.secondarySystemBackground) : Color(red: 0.953, green: 0.937, blue: 0.910))
         )
+        .skeletonPulse()
     }
 }
 
@@ -189,6 +193,7 @@ struct HoldingRowSkeleton: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(colorScheme == .dark ? Color(UIColor.secondarySystemBackground) : Color(red: 0.953, green: 0.937, blue: 0.910))
         )
+        .skeletonPulse()
     }
 }
 
@@ -243,17 +248,9 @@ struct SearchRowSkeleton: View {
 struct StaggeredSkeletonList<S: View>: View {
     let count: Int
     let skeleton: () -> S
-    @State private var appeared = false
-
     var body: some View {
-        ForEach(0..<count, id: \.self) { i in
-            skeleton()
-                .opacity(appeared ? 1 : 0)
-                .animation(
-                    .easeOut(duration: 0.3).delay(Double(i) * 0.07),
-                    value: appeared
-                )
+        ForEach(0..<count, id: \.self) { index in
+            skeleton().staggeredAppear(index)
         }
-        .onAppear { appeared = true }
     }
 }

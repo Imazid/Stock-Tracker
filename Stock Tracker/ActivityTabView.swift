@@ -70,12 +70,19 @@ struct ActivityTabView: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("activity.section")
+                    .sensoryFeedback(.selection, trigger: section)
 
-                    switch section {
-                    case .orders: ordersList
-                    case .decisions: decisionsList
-                    case .audit: auditList
+                    ZStack(alignment: .topLeading) {
+                        Group {
+                            switch section {
+                            case .orders: ordersList
+                            case .decisions: decisionsList
+                            case .audit: auditList
+                            }
+                        }
+                        .transition(.opacity)
                     }
+                    .motionSafeAnimation(DS.quick, value: section)
                 }
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.top, DS.Space.s)

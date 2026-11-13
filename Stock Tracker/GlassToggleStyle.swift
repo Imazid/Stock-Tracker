@@ -49,7 +49,7 @@ struct GlassToggleStyle: ToggleStyle {
             .frame(width: trackWidth, height: trackHeight)
             .contentShape(Rectangle())
             .onTapGesture {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                dsAnimate {
                     configuration.isOn.toggle()
                 }
             }

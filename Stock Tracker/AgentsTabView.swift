@@ -48,9 +48,10 @@ struct AgentsTabView: View {
                             primaryTitle: "Create an agent",
                             primaryAction: { router.createAgent() }
                         )
+                        .staggeredAppear(0)
                         .accessibilityIdentifier("agents.empty")
                     } else {
-                        statusRow
+                        statusRow.staggeredAppear(0)
                         group("Needs attention", attention)
                         group("Running", running)
                         group("Paused", paused)

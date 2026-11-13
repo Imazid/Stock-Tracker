@@ -10,7 +10,7 @@ import UIKit
 
 /// Wraps `withAnimation` checking reduce-motion preference
 func motionSafeWithAnimation<Result>(_ animation: Animation? = .default, _ body: () throws -> Result) rethrows -> Result {
-    if UIAccessibility.isReduceMotionEnabled {
+    if !Motion.isEnabled {
         return try body()
     } else {
         return try withAnimation(animation, body)
@@ -24,11 +24,7 @@ struct MotionSafeAnimationModifier<V: Equatable>: ViewModifier {
     let value: V
 
     func body(content: Content) -> some View {
-        if reduceMotion {
-            content
-        } else {
-            content.animation(animation, value: value)
-        }
+        content.animation(reduceMotion || !Motion.isEnabled ? nil : animation, value: value)
     }
 }
 

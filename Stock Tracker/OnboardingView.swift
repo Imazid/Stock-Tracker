@@ -154,7 +154,7 @@ struct SegmentedProgress: View {
                     .frame(height: 4)
             }
         }
-        .animation(DS.spring, value: index)
+        .motionSafeAnimation(DS.spring, value: index)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(index + 1) of \(count)")
     }

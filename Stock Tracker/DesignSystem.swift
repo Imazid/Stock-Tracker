@@ -65,7 +65,7 @@ enum DS {
 
     /// Short, un-bouncy spring for state changes.
     static let spring = Animation.spring(response: 0.28, dampingFraction: 0.88)
-    static let quick = Animation.easeOut(duration: 0.18)
+    static let quick = Motion.feedback
 
     /// Large money/number style: SF Pro with tabular digits (Coinbase / Fey numbers).
     static func money(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
@@ -91,30 +91,28 @@ enum Haptics {
 /// `withAnimation` that degrades to no animation under Reduce Motion.
 @MainActor
 func dsAnimate(_ animation: Animation? = nil, _ body: () -> Void) {
-    if UIAccessibility.isReduceMotionEnabled {
-        body()
-    } else {
-        withAnimation(animation ?? DS.spring, body)
-    }
+    motionSafeWithAnimation(animation ?? DS.spring, body)
 }
 
 // MARK: - Button styles
 
 /// Subtle press feedback for any tappable surface.
 struct PressableButtonStyle: ButtonStyle {
-    var scale: CGFloat = 0.97
+    var scale: CGFloat = 0.985
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion && Motion.isEnabled ? scale : 1)
             .opacity(configuration.isPressed ? 0.9 : 1)
-            .animation(DS.quick, value: configuration.isPressed)
+            .motionSafeAnimation(DS.quick, value: configuration.isPressed)
     }
 }
 
 /// Full-width primary action: accent-tinted Liquid Glass with white text.
 struct PrimaryPillButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -123,8 +121,8 @@ struct PrimaryPillButtonStyle: ButtonStyle {
             .foregroundStyle(DS.primaryLabel)
             .glassEffect(.regular.tint(DS.primaryFill).interactive(isEnabled), in: .capsule)
             .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(DS.quick, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion && Motion.isEnabled ? 0.985 : 1)
+            .motionSafeAnimation(DS.quick, value: configuration.isPressed)
             .contentShape(Capsule())
     }
 }
@@ -133,6 +131,7 @@ struct PrimaryPillButtonStyle: ButtonStyle {
 struct SecondaryPillButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -141,8 +140,8 @@ struct SecondaryPillButtonStyle: ButtonStyle {
             .foregroundStyle(theme.primaryText)
             .glassEffect(.regular.interactive(isEnabled), in: .capsule)
             .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(DS.quick, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion && Motion.isEnabled ? 0.985 : 1)
+            .motionSafeAnimation(DS.quick, value: configuration.isPressed)
             .contentShape(Capsule())
     }
 }
@@ -219,7 +218,7 @@ struct TickerLogo: View {
         .task(id: url) {
             guard let url, LogoImageCache.shared.cached(url) == nil else { return }
             let image = await LogoImageCache.shared.load(url)
-            withAnimation(DS.quick) { loaded = image }
+            dsAnimate(DS.quick) { loaded = image }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
@@ -330,6 +329,7 @@ struct QuoteNumbers: View {
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .contentTransition(.numericText())
+            .motionSafeAnimation(DS.quick, value: price)
         if stacked {
             HStack(spacing: DS.Space.s) {
                 priceText

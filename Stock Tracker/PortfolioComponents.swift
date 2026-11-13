@@ -247,6 +247,7 @@ struct DSSegmentBar<Value: Hashable>: View {
     var identifier: (Value) -> String = { "\($0)" }
 
     @Environment(\.theme) private var theme
+    @Namespace private var indicator
 
     var body: some View {
         HStack(spacing: 2) {
@@ -263,13 +264,16 @@ struct DSSegmentBar<Value: Hashable>: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity, minHeight: 36)
-                        .background(
-                            Capsule().fill(isOn ? theme.cardBackground : .clear)
-                                .shadow(color: .black.opacity(isOn ? 0.06 : 0), radius: 2, y: 1)
-                        )
-                        .contentShape(Capsule())
+                        .background {
+                            if isOn {
+                                Capsule().fill(theme.cardBackground)
+                                    .matchedGeometryEffect(id: "selection", in: indicator)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableButtonStyle())
                 .accessibilityIdentifier(identifier(option))
                 .accessibilityAddTraits(isOn ? .isSelected : [])
             }

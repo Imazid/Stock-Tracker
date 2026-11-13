@@ -94,7 +94,7 @@ struct StockCryptoTrackerApp: App {
                         authManager.useBiometrics = UserDefaults.standard.bool(forKey: "useBiometrics")
                         authManager.isAuthenticated = true
                         OnboardingHandoff.applyPending(to: marketData)
-                        withAnimation(.easeInOut(duration: 0.5)) {
+                        dsAnimate(Motion.reveal) {
                             showOnboarding = false
                         }
                         requestTrackingConsentLater()
@@ -141,7 +141,7 @@ struct StockCryptoTrackerApp: App {
                         Spacer()
                     }
                     .zIndex(10)
-                    .animation(.easeInOut, value: networkMonitor.isConnected)
+                    .transition(.opacity)
                 }
 
                 if isLaunching {
@@ -150,6 +150,7 @@ struct StockCryptoTrackerApp: App {
                         .transition(.opacity)
                 }
             }
+            .motionSafeAnimation(DS.quick, value: networkMonitor.isConnected)
             .modifier(ThemeEnvironment(themeManager: themeManager))
             .onAppear {
                 // Wire external managers into MarketData for price alerts & notifications

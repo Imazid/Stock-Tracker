@@ -168,7 +168,7 @@ struct AppleStocksWatchlistView: View {
             .refreshable { await marketData.refreshFromAPI() }
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom) {
-                if isEditing { editBar }
+                if isEditing { editBar.transition(.opacity) }
             }
             .onChange(of: marketData.activeWatchlistIndex) { _, _ in
                 selection.removeAll()
@@ -376,7 +376,7 @@ struct AppleStocksWatchlistView: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableButtonStyle())
         .accessibilityLabel("\(title), \(count)")
         .accessibilityAddTraits(isOn ? .isSelected : [])
         .accessibilityIdentifier("watchlist.filter.\(f.rawValue)")

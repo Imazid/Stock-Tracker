@@ -35,17 +35,8 @@ struct SplashView: View {
             }
         }
         .onAppear {
-            if UIAccessibility.isReduceMotionEnabled {
-                symbolOpacity = 1
-                textOpacity = 1
-            } else {
-                withAnimation(.easeIn(duration: 0.6)) {
-                    symbolOpacity = 1
-                }
-                withAnimation(.easeIn(duration: 0.6).delay(0.2)) {
-                    textOpacity = 1
-                }
-            }
+            dsAnimate(Motion.reveal) { symbolOpacity = 1 }
+            dsAnimate(Motion.reveal.delay(0.08)) { textOpacity = 1 }
         }
     }
 }

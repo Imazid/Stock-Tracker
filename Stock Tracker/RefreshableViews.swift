@@ -171,12 +171,13 @@ struct LoadingOverlay: View {
 
 struct RefreshButtonStyle: ButtonStyle {
     let isRefreshing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .rotationEffect(.degrees(isRefreshing ? 360 : 0))
-            .animation(
-                isRefreshing ? .linear(duration: 1).repeatForever(autoreverses: false) : .default,
+            .rotationEffect(.degrees(isRefreshing && !reduceMotion && Motion.isEnabled ? 360 : 0))
+            .motionSafeAnimation(
+                isRefreshing ? .linear(duration: 1).repeatForever(autoreverses: false) : DS.quick,
                 value: isRefreshing
             )
             .opacity(configuration.isPressed ? 0.7 : 1.0)

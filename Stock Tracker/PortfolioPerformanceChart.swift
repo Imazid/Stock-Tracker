@@ -61,7 +61,7 @@ struct PortfolioPerformanceChart: View {
 
                 MoneyText(text: hidesValues ? "••••••" : marketData.formatPrice(shown), size: centered ? 50 : 44)
                     .contentTransition(.numericText())
-                    .animation(DS.quick, value: shown)
+                    .motionSafeAnimation(scrubbed == nil && !hidesValues ? DS.quick : nil, value: live)
                     .accessibilityIdentifier("\(accessibilityID).value")
 
                 VStack(alignment: centered ? .center : .leading, spacing: 6) {
@@ -86,7 +86,8 @@ struct PortfolioPerformanceChart: View {
                 dateText: { range.scrubLabel(for: $0) },
                 selection: $scrubbed,
                 onRetry: { Task { await load(force: true) } },
-                accessibilityID: accessibilityID
+                accessibilityID: accessibilityID,
+                range: loadedRange
             )
             .padding(.horizontal, -4)
 

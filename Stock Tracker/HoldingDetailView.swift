@@ -22,6 +22,7 @@ struct HoldingDetailView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @AppStorage("portfolioValueHidden") private var valueHidden = false
+    @State private var loadedChartRange: TimeRange?
     @AppStorage("holdingChartRange") private var rangeRaw = TimeRange.oneMonth.rawValue
 
     @State private var points: [PricePoint] = []
@@ -182,6 +183,7 @@ struct HoldingDetailView: View {
             Text(marketData.formatPrice(shown))
                 .font(DS.money(34, weight: .bold))
                 .contentTransition(.numericText())
+                .motionSafeAnimation(scrubbed == nil ? DS.quick : nil, value: asset.price)
                 .accessibilityIdentifier("holding.price")
             if noLive {
                 Label("No live price — showing the last known price", systemImage: "exclamationmark.circle")
@@ -211,7 +213,8 @@ struct HoldingDetailView: View {
                 dateText: { range.scrubLabel(for: $0) },
                 selection: $scrubbed,
                 onRetry: { Task { await loadChart(h.asset, force: true) } },
-                accessibilityID: "holding.chart"
+                accessibilityID: "holding.chart",
+                range: loadedChartRange
             )
             .padding(.horizontal, -4)
             DSRangePicker(options: DSRangePicker.standard,
@@ -369,6 +372,7 @@ struct HoldingDetailView: View {
             let history = try await PriceHistoryService.shared.history(for: asset, range: range, forceRefresh: force)
             guard !Task.isCancelled else { return }
             points = PriceHistoryService.appendingLive(history, price: asset.price)
+            loadedChartRange = range
             phase = .loaded
         } catch {
             guard !Task.isCancelled else { return }

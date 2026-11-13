@@ -204,7 +204,7 @@ struct AIAgentView: View {
                         .padding()
                         .onAppear { scrollProxy = proxy }
                         .onChange(of: messages.count) { _ in
-                            withAnimation { proxy.scrollTo(messages.last?.id, anchor: .bottom) }
+                            dsAnimate(DS.quick) { proxy.scrollTo(messages.last?.id, anchor: .bottom) }
                         }
                     }
                 }

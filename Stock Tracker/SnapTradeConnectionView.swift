@@ -48,7 +48,7 @@ struct SnapTradeConnectionView: View {
                     }
                 }
                 .padding(DS.Space.gutter)
-                .animation(DS.spring, value: vm.hasLinkedAccounts)
+                .motionSafeAnimation(DS.spring, value: vm.hasLinkedAccounts)
             }
             .dsScreenBackground()
             .overlay { if vm.isLoading { loadingOverlay } }

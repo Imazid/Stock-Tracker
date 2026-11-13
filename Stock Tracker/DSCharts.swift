@@ -100,19 +100,11 @@ struct DSPriceChart: View {
     var selection: Binding<DSChartPoint?>? = nil
     var onRetry: (() -> Void)? = nil
     var accessibilityID: String = "chart.price"
+    var range: TimeRange? = nil
 
     @Environment(\.theme) private var theme
     /// Raw x under the finger, in the plotted unit (index, or seconds since reference date).
     @State private var rawX: Double?
-    /// 0…1 of the plot drawn so far: the line draws in from the left when a series
-    /// first shows or the range changes (live ticks keep the same series, so no replay).
-    @State private var reveal: CGFloat = 1
-
-    private var revealKey: String {
-        guard points.count >= 2, let first = points.first else { return "empty" }
-        return "\(first.date.timeIntervalSinceReferenceDate)|\(accessibilityID)"
-    }
-
     // MARK: Derived
 
     private var reference: Double? { baseline ?? points.first?.value }
@@ -164,7 +156,7 @@ struct DSPriceChart: View {
             if points.count >= 2 {
                 chart
                     .opacity(phase == .loading ? 0.45 : 1)
-                    .animation(DS.quick, value: phase == .loading)
+                    .motionSafeAnimation(DS.quick, value: phase == .loading)
             } else {
                 placeholder
             }
@@ -174,10 +166,9 @@ struct DSPriceChart: View {
         }
         .frame(height: height)
         .accessibilityIdentifier(accessibilityID)
-        .onChange(of: revealKey, initial: true) { _, key in
-            guard key != "empty", Motion.isEnabled else { reveal = 1; return }
-            reveal = 0
-            withAnimation(.easeOut(duration: 0.75)) { reveal = 1 }
+        .onChange(of: range) {
+            rawX = nil
+            selection?.wrappedValue = nil
         }
         .onChange(of: activeIndex) { _, index in
             selection?.wrappedValue = index.map { points[$0] }
@@ -191,10 +182,7 @@ struct DSPriceChart: View {
     private var placeholder: some View {
         switch phase {
         case .loading:
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(theme.subtleFill)
-                .overlay(ProgressView().controlSize(.small))
-                .accessibilityLabel("Loading chart")
+            ChartLoadingSkeleton()
         case .failed(let message):
             chartNote(icon: "chart.line.downtrend.xyaxis", title: "Chart unavailable", detail: message, retry: onRetry)
         case .loaded:
@@ -317,11 +305,7 @@ struct DSPriceChart: View {
         .chartXAxis(.hidden)
         // Only the plot draws in; the y-axis labels stay put.
         .chartPlotStyle { plot in
-            plot.mask(alignment: .leading) {
-                GeometryReader { geo in
-                    Rectangle().frame(width: geo.size.width * reveal)
-                }
-            }
+            plot.chartPlotReveal(range, isScrubbing: rawX != nil)
         }
         .chartYAxis {
             if showsYAxis {
@@ -453,9 +437,10 @@ struct DSRangePicker: View {
                                     .matchedGeometryEffect(id: "chip", in: chip)
                             }
                         }
-                        .contentShape(Capsule())
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableButtonStyle())
                 .accessibilityLabel(option.accessibilityName)
                 .accessibilityAddTraits(isOn ? .isSelected : [])
             }

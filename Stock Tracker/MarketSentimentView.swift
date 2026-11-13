@@ -85,7 +85,7 @@ struct MarketSentimentView: View {
             .font(.headline.weight(.semibold))
             .foregroundColor(sentiment.tintColor)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .animation(.easeInOut, value: sentiment)
+            .motionSafeAnimation(Motion.reveal, value: sentiment)
     }
 
     // MARK: - Sentiment Bar
@@ -98,7 +98,7 @@ struct MarketSentimentView: View {
                     .frame(height: 7)
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: sentiment)
+        .motionSafeAnimation(Motion.reveal, value: sentiment)
     }
 
     private func segmentFill(index: Int) -> Color {
@@ -119,7 +119,7 @@ struct MarketSentimentView: View {
     private var statusLine: some View {
         HStack(spacing: 6) {
             if session == .open {
-                PulsingMarketDot(session: session)
+                MarketSessionDot(session: session)
                     .transition(.scale.combined(with: .opacity))
             }
 
@@ -129,7 +129,7 @@ struct MarketSentimentView: View {
 
             Spacer()
         }
-        .animation(.easeInOut(duration: 0.3), value: session)
+        .motionSafeAnimation(DS.quick, value: session)
     }
 
     private var formattedStatusText: String {
@@ -201,35 +201,17 @@ struct MarketSentimentView: View {
     }
 }
 
-// MARK: - PulsingMarketDot
+// MARK: - MarketSessionDot
 
-struct PulsingMarketDot: View {
+struct MarketSessionDot: View {
     let session: MarketSession
-    @State private var isPulsing = false
-
     var body: some View {
-        ZStack {
-            if session == .open {
-                Circle()
-                    .fill(session.color.opacity(0.35))
-                    .frame(width: 14, height: 14)
-                    .scaleEffect(isPulsing ? 1.6 : 1.0)
-                    .opacity(isPulsing ? 0.0 : 0.8)
-                    .animation(
-                        .easeInOut(duration: 1.2).repeatForever(autoreverses: false),
-                        value: isPulsing
-                    )
-            }
-            Circle()
-                .fill(session.color)
-                .frame(width: 7, height: 7)
-        }
-        .onAppear {
-            if session == .open { isPulsing = true }
-        }
-        .onChange(of: session) { _, newSession in
-            isPulsing = newSession == .open
-        }
+        Circle()
+            .fill(session.color)
+            .frame(width: 7, height: 7)
+            .frame(width: 14, height: 14)
+            .motionSafeAnimation(DS.quick, value: session)
+            .accessibilityHidden(true)
     }
 }
 

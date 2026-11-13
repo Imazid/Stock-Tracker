@@ -90,7 +90,7 @@ struct OnboardingPortfolioStep: View {
                     .accessibilityIdentifier("onboarding.continue")
             }
         }
-        .animation(DS.spring, value: holdings.count)
+        .motionSafeAnimation(DS.spring, value: holdings.count)
         .sheet(item: $sheet) { source in
             Group {
                 switch source {
