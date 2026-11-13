@@ -469,8 +469,7 @@ final class PrivateMarketsStore: ObservableObject {
             monitorAlerts = []
             remotePushActive = false
         }
-        queueMonitorSettings(for: owner)
-        await refreshMonitor(for: owner)
+        try await queueMonitorSettings(for: owner)?.value
     }
 
     private static var pushEnvironment: String? {
@@ -486,8 +485,9 @@ final class PrivateMarketsStore: ObservableObject {
         try change { $0.notify = enabled }
         if !enabled { remotePushActive = false }
         if state.monitorEnabled == true {
-            queueMonitorSettings(for: owner)
-            await refreshMonitor(for: owner)
+            await refreshPushPermission(for: owner)
+            guard scope == owner else { throw CancellationError() }
+            try await queueMonitorSettings(for: owner)?.value
         }
     }
 

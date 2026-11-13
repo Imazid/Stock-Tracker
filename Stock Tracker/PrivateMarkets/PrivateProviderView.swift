@@ -183,6 +183,7 @@ struct PrivateUpdatesView: View {
     @State private var error: String?
     @State private var loading = false
     @State private var savingMonitor = false
+    @State private var savingNotifications = false
 
     var body: some View {
         List {
@@ -210,7 +211,7 @@ struct PrivateUpdatesView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 Toggle("Notify me about company updates", isOn: Binding(
                     get: { store.state.notify }, set: setNotifications))
-                    .disabled(auth.userId == nil)
+                    .disabled(auth.userId == nil || savingNotifications)
                 Text(store.remotePushActive ? "Push notifications are active on this device." :
                     "Device notifications appear when iOS permits the app to refresh.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -297,6 +298,11 @@ struct PrivateUpdatesView: View {
             digests = []
             await load()
         }
+        .task(id: store.state.monitorEnabled) {
+            if let owner = auth.userId, store.state.monitorEnabled == true {
+                await store.refreshMonitor(for: owner)
+            }
+        }
         .refreshable { await load() }
     }
 
@@ -332,7 +338,7 @@ struct PrivateUpdatesView: View {
             defer { savingMonitor = false }
             do {
                 try await store.setMonitor(enabled: enabled, eligible: eligible, digest: summarise, owner: owner)
-                try await loadDigests(owner: owner)
+                if digest == true { try await loadDigests(owner: owner) }
             }
             catch is CancellationError { }
             catch { self.error = error.localizedDescription }
@@ -341,7 +347,9 @@ struct PrivateUpdatesView: View {
 
     private func setNotifications(_ enabled: Bool) {
         guard let userID = auth.userId else { return }
+        savingNotifications = true
         Task {
+            defer { savingNotifications = false }
             do {
                 if enabled {
                     let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
