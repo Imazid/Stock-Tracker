@@ -46,9 +46,11 @@ struct CompanyResearchView: View {
                                             .font(.body.monospacedDigit())
                                         Text("Period ended \(fact.end) · Filed \(fact.evidence.publishedAt ?? "date unavailable")")
                                             .font(.caption).foregroundStyle(.secondary)
+                                            .accessibilityIdentifier("companyResearch.filingDate")
                                         ForEach(Array((fact.inputs ?? [fact.evidence]).enumerated()), id: \.offset) { index, source in
                                             Link(fact.inputs == nil ? source.provider : "Source filing \(index + 1)", destination: source.url)
                                                 .font(.caption)
+                                                .accessibilityIdentifier("companyResearch.filingSource")
                                         }
                                     }
                                 }

@@ -507,6 +507,7 @@ private extension Int {
 
 struct PrivacyView: View {
     @Environment(\.theme) private var theme
+    @AppStorage("aiPortfolioContextEnabled") private var includePortfolioContext = false
 
     var body: some View {
         List {
@@ -528,6 +529,14 @@ struct PrivacyView: View {
                 DataProcessorRow(name: "Supabase", purpose: "Your account and sync", dataSent: "Email and the lists you sync", link: "https://supabase.com/privacy")
                 DataProcessorRow(name: "Google AdMob", purpose: "Ads on the Free plan", dataSent: "Device and ad-interaction data; the advertising identifier only if you allow tracking", link: "https://policies.google.com/privacy")
             } header: { Text("Services we use") } footer: { Text("Tap a service to read its privacy policy.") }
+
+            Section {
+                Toggle("Share portfolio summary with AI", isOn: $includePortfolioContext)
+            } header: {
+                Text("AI assistant")
+            } footer: {
+                Text("When enabled, the assistant and generated insights can send your tracked symbols, agent names and relevant portfolio data to Google Gemini or OpenAI. You can turn this off at any time.")
+            }
 
             Section("Permissions") {
                 InfoRow2(title: "Notifications", value: "Alerts & summaries")

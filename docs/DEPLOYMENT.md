@@ -59,11 +59,11 @@ constraints and can't be switched on by an UPDATE.
 ```
 cd web
 cp .env.example .env.local     # fill NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY,
-                               # market-data keys, ANTHROPIC_API_KEY for the AI workspace
+                               # market-data keys, ANTHROPIC_API_KEY or OPENAI_API_KEY for the AI workspace
 npm ci && npm run build && npm start
 ```
 On Vercel: import the repo with `web/` as the root directory and set the same variables. Server-only
-keys (`ALPACA_*`, `ANTHROPIC_API_KEY`) must not start with `NEXT_PUBLIC_`.
+keys (`ALPACA_*`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) must not start with `NEXT_PUBLIC_`.
 
 ## 4. Local development
 

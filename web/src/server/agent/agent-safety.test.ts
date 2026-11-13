@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SYSTEM_PROMPT } from "./prompt.ts";
-import { asToolResult, clean, TOOL_NAMES, TOOLS } from "./tools-schema.ts";
+import { asToolResult, canUseTool, clean, scopedHistory, TOOL_NAMES, TOOLS } from "./tools-schema.ts";
 
 test("no tool can move money or touch an order", () => {
   assert.deepEqual(TOOLS.map((t) => t.name), [...TOOL_NAMES]);
@@ -38,4 +38,16 @@ test("the system prompt states the rules and is a stable cache prefix", () => {
     assert.match(SYSTEM_PROMPT, rule);
   }
   assert.doesNotMatch(SYSTEM_PROMPT, /\d{4}-\d{2}-\d{2}/, "no dates in the cached prefix");
+});
+
+test("company research tools and listing context are the same for either AI provider", () => {
+  const context = { signedIn: false, now: 0, company: { instrumentId: "us:AAPL", section: "financials" } };
+  assert.deepEqual(TOOL_NAMES.filter((name) => canUseTool(name, context)), [
+    "search_instruments", "get_quote", "get_price_history", "get_company_research", "get_company_dataset", "search_filing_text",
+  ]);
+  const history = [{ content: "Earlier question" }, { content: "Summarize the filings." }];
+  assert.deepEqual(scopedHistory(history, context).map(({ content }) => content), [
+    "Earlier question", "Active company listing: us:AAPL. Active research section: financials.\n\nSummarize the filings.",
+  ]);
+  assert.equal(history[1].content, "Summarize the filings.");
 });

@@ -12,7 +12,9 @@ const nextConfig: NextConfig = {
   // Cache Components / Partial Prefetching are off on purpose: every page here reads
   // per-request data (session cookies, live quotes) and nothing should be prerendered with
   // a price baked into it.
-  turbopack: { root: repoRoot },
+  turbopack: {
+    root: repoRoot,
+  },
   outputFileTracingRoot: repoRoot,
   poweredByHeader: false,
   async headers() {

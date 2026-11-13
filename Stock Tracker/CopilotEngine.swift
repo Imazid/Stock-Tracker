@@ -408,8 +408,9 @@ final class CopilotEngine: ObservableObject {
             return CopilotMessage(isUser: false, text: "I can help with your pending trades, portfolio concentration, why an agent did or didn't trade, creating an agent, backtests and limit changes. Free-form questions use an AI model, which needs a Pro plan and has a daily limit.")
         }
         didUseModel()
-        let agents = trading.agents.map { "\($0.name) (\($0.mode.displayName), \($0.statusText))" }.joined(separator: "; ")
-        let watch = marketData?.watchlist.prefix(20).map(\.symbol).joined(separator: ", ") ?? ""
+        let includeContext = UserDefaults.standard.bool(forKey: "aiPortfolioContextEnabled")
+        let agents = includeContext ? trading.agents.map { "\($0.name) (\($0.mode.displayName), \($0.statusText))" }.joined(separator: "; ") : ""
+        let watch = includeContext ? marketData?.watchlist.prefix(20).map(\.symbol).joined(separator: ", ") ?? "" : ""
         let system = """
         You are the copilot inside an investing app with practice (paper) trading and rule-based trading agents. \
         You cannot place, change or cancel orders, and you must never claim that you did. \

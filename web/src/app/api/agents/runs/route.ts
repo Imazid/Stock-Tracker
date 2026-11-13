@@ -1,7 +1,7 @@
 // POST /api/agents/runs — one research-assistant turn, streamed as NDJSON (AgentEvent per line).
 // Body: { messages: { role: "user" | "assistant", content: string }[] } (last one from the user).
 //
-// Needs ANTHROPIC_API_KEY on the server and a signed-in person (each turn costs money); in local
+// Needs a configured AI provider on the server and a signed-in person (each turn costs money); in local
 // development without Supabase it runs signed-out with public market data only.
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -10,6 +10,8 @@ import { parseInstrumentID } from "@/server/market/instruments";
 import { supabaseConfigured } from "@/lib/env";
 import { serverSupabase } from "@/lib/supabase/server";
 import { type AgentEvent, type ChatTurn, runTurn } from "@/server/agent/run";
+import { runOpenAITurn } from "@/server/agent/openai";
+import type { ToolContext } from "@/server/agent/tools-schema";
 import { jsonError, rateLimited } from "@/server/http/respond";
 
 export const runtime = "nodejs";
@@ -34,8 +36,10 @@ function decodeHistory(body: unknown): ChatTurn[] {
 export async function POST(request: Request) {
   const limited = rateLimited(request, 12);
   if (limited) return limited;
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    return jsonError(503, "feature_disabled", "The assistant isn't configured on this server (ANTHROPIC_API_KEY is not set).");
+  const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  const openAIKey = process.env.OPENAI_API_KEY;
+  if (!anthropicConfigured && !openAIKey) {
+    return jsonError(503, "feature_disabled", "The assistant is unavailable on this site.");
   }
   const supabase = await serverSupabase();
   let signedIn = false;
@@ -48,17 +52,21 @@ export async function POST(request: Request) {
   }
 
   let history: ChatTurn[];
-  let company: { instrumentId: string; section: string } | undefined;
+  let company: ToolContext["company"];
+  let shareAccountContext = false;
   try {
-    const body = await request.json();
+    const body = await request.json() as { company?: { instrumentId?: unknown; section?: unknown }; shareAccountContext?: unknown };
     history = decodeHistory(body);
     if (body.company !== undefined) {
       const { instrumentId, section } = body.company ?? {};
-      if (typeof instrumentId !== "string" || !RESEARCH_SECTIONS.includes(section as ResearchSection)) throw new Error("Choose a company research context.");
+      if (typeof instrumentId !== "string" || typeof section !== "string" || !RESEARCH_SECTIONS.includes(section as ResearchSection)) {
+        throw new Error("Choose a company research context.");
+      }
       const instrument = parseInstrumentID(instrumentId);
       if (instrument.venue === "crypto") throw new Error("Choose a company or fund listing.");
       company = { instrumentId: `${instrument.venue}:${instrument.symbol}`, section };
     }
+    shareAccountContext = !company && body.shareAccountContext === true;
   } catch (error) {
     return jsonError(400, "invalid", error instanceof Error ? error.message : "Bad request.");
   }
@@ -76,7 +84,10 @@ export async function POST(request: Request) {
         }
       };
       try {
-        await runTurn(history, { supabase: supabase ?? undefined, signedIn, company, now: Date.now() }, emit, abort.signal);
+        const context: ToolContext = { supabase: shareAccountContext ? supabase ?? undefined : undefined,
+          signedIn: shareAccountContext && signedIn, company, now: Date.now() };
+        if (anthropicConfigured) await runTurn(history, context, emit, abort.signal);
+        else if (openAIKey) await runOpenAITurn(openAIKey, history, context, emit, abort.signal);
       } catch (error) {
         if (error instanceof Anthropic.RateLimitError) emit({ type: "error", code: "rate_limited", message: "The assistant is busy. Try again in a minute." });
         else if (error instanceof Anthropic.AuthenticationError) emit({ type: "error", code: "feature_disabled", message: "The assistant's API key was refused." });

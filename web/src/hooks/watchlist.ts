@@ -6,8 +6,8 @@
 // resurrect a removed symbol.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type Instrument, makeInstrument, parseYahooSymbol, venueShortName, yahooSymbol } from "@engine/market.ts";
-import { toView } from "@/lib/instrument-view";
+import { makeInstrument, venueShortName, yahooSymbol } from "@engine/market.ts";
+import { rowToInstrument, toView } from "@/lib/instrument-view";
 import type { InstrumentView } from "@/lib/market-types";
 import { useSession } from "@/lib/session";
 import { browserSupabase } from "@/lib/supabase/client";
@@ -25,15 +25,6 @@ export interface WatchItem {
   rowId: string;
   instrument: InstrumentView;
   addedAt: string;
-}
-
-export function rowToInstrument(row: Pick<Row, "symbol" | "name" | "kind" | "exchange">): Instrument {
-  const symbol = row.symbol.toUpperCase();
-  if (row.kind === "Crypto") return makeInstrument(symbol, "crypto", "crypto", row.name);
-  if ((row.exchange ?? "").toUpperCase() === "ASX" || symbol.endsWith(".AX")) return makeInstrument(symbol.replace(/\.AX$/, ""), "equity", "asx", row.name);
-  const parsed = parseYahooSymbol(symbol);
-  if (parsed) return makeInstrument(parsed.symbol, "equity", parsed.venue, row.name);
-  return makeInstrument(symbol, "equity", "us", row.name);
 }
 
 /** The row shape the iPhone app reads back: bare US/ASX tickers, Yahoo-suffixed elsewhere. */

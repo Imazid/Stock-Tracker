@@ -27,7 +27,11 @@ export async function POST(request: Request) {
   } catch {
     return jsonError(400, "invalid", "Send a valid practice request.");
   }
-  if (typeof input?.action !== "string" || !allowed.has(input.action) || "fixture" in input) {
+  const order = input?.order as { mode?: unknown } | undefined;
+  const draft = input?.draft as { mode?: unknown } | undefined;
+  if (typeof input?.action !== "string" || !allowed.has(input.action) || "fixture" in input ||
+      (order?.mode !== undefined && order.mode !== "paper") ||
+      (draft?.mode !== undefined && draft.mode !== "paper")) {
     return jsonError(400, "invalid", "This practice action is unavailable.");
   }
 

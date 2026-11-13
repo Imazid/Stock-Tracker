@@ -31,6 +31,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_filing_text: "Searching the original filing",
   get_watchlist: "Reading your watchlist",
   get_portfolio: "Reading your portfolio",
+  explain_portfolio_movement: "Calculating portfolio movement",
   draft_strategy: "Drafting a strategy",
   run_backtest: "Running a backtest",
   prepare_order_ticket: "Preparing an order ticket",
@@ -50,7 +51,7 @@ export function useAssistant(instrumentId?: string, section?: string) {
   const update = (fn: (turn: AssistantTurn) => AssistantTurn) =>
     setTurns((all) => (all.length === 0 ? all : [...all.slice(0, -1), fn(all[all.length - 1])]));
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, shareAccountContext: boolean) => {
     const message = text.trim();
     if (!message || busy) return;
     const history = [...turns.filter((t) => t.text.trim() !== "" && !t.error), { role: "user" as const, text: message }]
@@ -67,7 +68,11 @@ export function useAssistant(instrumentId?: string, section?: string) {
       const response = await fetch("/api/agents/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history.slice(-39).filter((turn, index) => index !== 0 || turn.role === "user"), company: instrumentId && section ? { instrumentId, section } : undefined }),
+        body: JSON.stringify({
+          messages: history.slice(-39).filter((turn, index) => index !== 0 || turn.role === "user"),
+          shareAccountContext: !instrumentId && shareAccountContext,
+          company: instrumentId && section ? { instrumentId, section } : undefined,
+        }),
         signal: abort.signal,
       });
       if (!response.ok || !response.body) {

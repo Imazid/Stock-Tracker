@@ -18,6 +18,7 @@ export const TOOL_NAMES = [
   "search_filing_text",
   "get_watchlist",
   "get_portfolio",
+  "explain_portfolio_movement",
   "draft_strategy",
   "run_backtest",
   "prepare_order_ticket",
@@ -80,6 +81,11 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: obj({}, []),
   },
   {
+    name: "explain_portfolio_movement",
+    description: "Calculate how market price moves contributed to synced open holdings, with per-currency totals, quote times and data coverage. Use this when asked what moved the portfolio.",
+    input_schema: obj({}, []),
+  },
+  {
     name: "draft_strategy",
     description: "Turn a plain-English strategy description into the app's structured strategy (rules on completed bars, sizing, protections), listing what was understood, what was assumed and any unrecognised symbols. The result is a draft for the person to edit in Strategy Studio.",
     input_schema: obj({ description: { type: "string" } }, ["description"]),
@@ -110,11 +116,20 @@ export const TOOLS: Anthropic.Tool[] = [
 ];
 
 /** What a tool sends back to the UI besides the model: sources to list, and cards to render. */
+export interface AgentSource {
+  label: string;
+  source: string;
+  observedAt?: string;
+  status?: string;
+  instrumentId?: string;
+  url?: string;
+}
+
 export interface ToolOutcome {
   /** JSON-serialisable data for the model. */
   data: unknown;
   isError?: boolean;
-  sources?: { label: string; source: string; observedAt?: string; status?: string; url?: string }[];
+  sources?: AgentSource[];
   card?: { kind: "strategy" | "order_ticket" | "backtest"; title: string; href: string; payload: unknown };
 }
 
@@ -124,6 +139,19 @@ export interface ToolContext {
   supabase?: SupabaseClient;
   signedIn: boolean;
   now: number;
+}
+
+const companyTools = new Set(["search_instruments", "get_quote", "get_price_history", "get_company_research", "get_company_dataset", "search_filing_text"]);
+
+export function canUseTool(name: string, ctx: ToolContext): boolean {
+  return !ctx.company || companyTools.has(name);
+}
+
+export function scopedHistory<T extends { content: string }>(history: T[], ctx: ToolContext): T[] {
+  if (!ctx.company || !history.length) return history;
+  const current = history[history.length - 1];
+  const { instrumentId, section } = ctx.company;
+  return [...history.slice(0, -1), { ...current, content: `Active company listing: ${instrumentId}. Active research section: ${section}.\n\n${current.content}` }];
 }
 
 // MARK: - Untrusted text

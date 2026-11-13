@@ -59,7 +59,11 @@ function Turn({ turn }: { turn: AssistantTurn }) {
           <summary className="cursor-pointer select-none">Sources ({turn.sources.length})</summary>
           <ul className="mt-1 space-y-0.5">
             {turn.sources.map((s, i) => (
-              <li key={i}>{s.url ? <a href={s.url} target="_blank" rel="noreferrer" className="text-primary-fg hover:underline">{s.label}</a> : s.label} · {s.source}{s.observedAt ? ` · ${new Date(s.observedAt).toLocaleString()}` : ""}{s.status ? ` · ${s.status.replace("_", "-")}` : ""}</li>
+              <li key={i}>
+                {s.url ? <a href={s.url} target="_blank" rel="noreferrer" className="text-primary-fg hover:underline">{s.label}</a>
+                  : s.instrumentId ? <Link className="underline" href={`/markets/${encodeURIComponent(s.instrumentId)}`}>{s.label}</Link> : s.label}
+                {" · "}{s.source}{s.observedAt ? ` · ${new Date(s.observedAt).toLocaleString()}` : ""}{s.status ? ` · ${s.status.replace("_", "-")}` : ""}
+              </li>
             ))}
           </ul>
         </details>
@@ -89,6 +93,7 @@ export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
     "What do the latest reported results show about profitability and financial risk?",
   ] : SUGGESTIONS;
   const [draft, setDraft] = useState("");
+  const [shareAccountContext, setShareAccountContext] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const session = useSession();
   const lastReportRequest = useRef(0);
@@ -102,13 +107,13 @@ export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
   useEffect(() => {
     if (!reportPrompt || reportRequest <= lastReportRequest.current || !status.data || busy || session.status === "loading") return;
     lastReportRequest.current = reportRequest;
-    if (status.data.assistant && (!status.data.accounts || session.status === "signedIn")) void send(reportPrompt);
+    if (status.data.assistant && (!status.data.accounts || session.status === "signedIn")) void send(reportPrompt, false);
   }, [busy, reportPrompt, reportRequest, send, session.status, status.data]);
 
   const submit = (text: string) => {
     if (!text.trim()) return;
     setDraft("");
-    void send(text);
+    void send(text, shareAccountContext);
   };
 
   const unavailable = status.data && !status.data.assistant;
@@ -118,7 +123,7 @@ export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
       <div className={cn("min-h-0 flex-1 space-y-4 overflow-y-auto", compact ? "p-4" : "p-5")} aria-live="polite">
         {unavailable ? (
           <Notice tone="warn" title="The assistant isn't switched on for this site">
-            The server needs an <code className="rounded bg-surface px-1">ANTHROPIC_API_KEY</code>{status.data?.accounts ? "" : " and accounts (Supabase) configured"}. Nothing here answers until then.
+            This site needs a configured AI provider{status.data?.accounts ? "" : " and sign-in"} before you can send messages.
           </Notice>
         ) : null}
         {turns.length === 0 ? (
@@ -147,6 +152,11 @@ export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
           submit(draft);
         }}
       >
+        {!company ? <label className="mb-2 flex items-start gap-2 text-xs text-text-2">
+          <input type="checkbox" className="mt-0.5 accent-primary" checked={shareAccountContext} disabled={busy || unavailable}
+            onChange={(event) => { setShareAccountContext(event.target.checked); reset(); }} />
+          <span>Share holdings and watchlist with the AI provider for this conversation</span>
+        </label> : null}
         <label htmlFor={company ? "company-assistant-input" : compact ? "assistant-input-panel" : "assistant-input"} className="sr-only">Message the assistant</label>
         <div className="flex items-end gap-2">
           <textarea

@@ -5,6 +5,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { asToolResult, runTool, type ToolContext, type ToolName, TOOLS } from "./tools.ts";
+import { canUseTool, scopedHistory, type AgentSource } from "./tools-schema.ts";
 
 export const MODEL = "claude-opus-5-5";
 const MAX_TOOL_ROUNDS = 8;
@@ -12,7 +13,7 @@ const MAX_TOOL_ROUNDS = 8;
 export type AgentEvent =
   | { type: "text"; delta: string }
   | { type: "tool"; id: string; name: string; status: "running" | "done" | "error"; summary?: string }
-  | { type: "sources"; items: { label: string; source: string; observedAt?: string; status?: string; url?: string }[] }
+  | { type: "sources"; items: AgentSource[] }
   | { type: "card"; card: { kind: string; title: string; href: string; payload: unknown } }
   | { type: "done"; stopReason: string; usage: { input: number; output: number; cacheRead: number; cacheWrite: number } }
   | { type: "error"; code: string; message: string };
@@ -27,13 +28,8 @@ const tools: Anthropic.Tool[] = TOOLS.map((t) => ({ ...t, eager_input_streaming:
 
 export async function runTurn(history: ChatTurn[], ctx: ToolContext, emit: (event: AgentEvent) => void, signal: AbortSignal): Promise<void> {
   const client = new Anthropic();
-  const messages: Anthropic.MessageParam[] = history.map((t) => ({ role: t.role, content: t.content }));
-  if (ctx.company) {
-    const current = messages.at(-1)!;
-    current.content = `Active company listing: ${ctx.company.instrumentId}. Active research section: ${ctx.company.section}.\n\n${current.content}`;
-  }
-  const companyTools = new Set(["search_instruments", "get_quote", "get_price_history", "get_company_research", "get_company_dataset", "search_filing_text"]);
-  const activeTools = ctx.company ? tools.filter((tool) => companyTools.has(tool.name)) : tools;
+  const messages: Anthropic.MessageParam[] = scopedHistory(history, ctx).map((t) => ({ role: t.role, content: t.content }));
+  const activeTools = tools.filter((tool) => canUseTool(tool.name, ctx));
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let jsonRetries = 0;
 
@@ -91,7 +87,7 @@ export async function runTurn(history: ChatTurn[], ctx: ToolContext, emit: (even
     messages.push({ role: "assistant", content: message.content as Anthropic.MessageParam["content"] });
     const results = await Promise.all(toolUses.map(async (use) => {
       emit({ type: "tool", id: use.id, name: use.name, status: "running" });
-      const outcome = !ctx.company || companyTools.has(use.name)
+      const outcome = canUseTool(use.name, ctx)
         ? await runTool(use.name, use.input, ctx)
         : { data: { error: "This conversation is scoped to company research." }, isError: true };
       emit({ type: "tool", id: use.id, name: use.name, status: outcome.isError ? "error" : "done" });
