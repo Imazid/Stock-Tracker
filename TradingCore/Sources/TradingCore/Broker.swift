@@ -109,7 +109,8 @@ public enum PaperBroker {
         isExecutionEnabled: true,
         notes: [
             "Simulated fills against live quotes (delayed for markets outside the US). No order leaves this app.",
-            "Shares outside the US trade in whole units; Tokyo and Singapore in lots of 100. Exchange tick-size tables and Hong Kong board lots are not enforced.",
+            "Shares outside the US trade in whole units; Tokyo shares in units of 100. Exchange tick-size tables and the per-stock board lots of Hong Kong and Singapore are not enforced.",
+            "Transaction taxes are charged where they are definite: UK stamp duty 0.5% and the French transaction tax 0.4% on buys, Hong Kong stamp duty 0.1% and Indian STT 0.1% on both sides, the Korean securities tax 0.20% on sells. They are applied to every share on that exchange, which overcharges the exempt ones (foreign-incorporated UK listings, French companies under €1bn).",
             "No leverage, margin, short selling or withdrawals."
         ]
     )
@@ -132,9 +133,11 @@ public enum PaperBroker {
             case .lse: return whole(tick: 0.0001)          // pounds (Yahoo quotes pence; converted)
             case .xetra, .euronextParis, .euronextAmsterdam: return whole(tick: 0.001)
             case .six: return whole(tick: 0.01)
-            case .tse: return whole(lot: 100, tick: 0.1)    // Tokyo trades in units of 100 shares
+            // Tokyo trades domestic shares in units of 100; funds set their own units.
+            case .tse: return instrument.assetClass == .etf ? whole(tick: 0.1) : whole(lot: 100, tick: 0.1)
             case .hkex: return whole(tick: 0.001)          // board lots vary by stock; not enforced
-            case .sgx: return whole(lot: 100, tick: 0.001)  // SGX board lot is 100 shares
+            // Since 5 Oct 2026 SGX lots depend on price (100, 10 or 1, reviewed quarterly); not enforced.
+            case .sgx: return whole(tick: 0.001)
             case .krx: return whole(tick: 1)
             case .nse: return whole(tick: 0.01)
             }
@@ -146,14 +149,53 @@ public enum PaperBroker {
         RiskEngine.quantityText(quantity, rules(for: instrument))
     }
 
-    public static func fee(for instrument: Instrument, notional: Double, isFirstFillOfOrder: Bool,
+    /// Commission plus any transaction tax.
+    public static func fee(for instrument: Instrument, side: OrderSide, notional: Double, isFirstFillOfOrder: Bool,
                            config: PaperBrokerConfig) -> Double {
+        let commission: Double
         switch instrument.assetClass {
         case .crypto:
-            return Rounding.money(notional * config.cryptoFeeBps / 10_000)
+            commission = Rounding.money(notional * config.cryptoFeeBps / 10_000)
         case .equity, .etf:
             let flat = isFirstFillOfOrder ? config.equityFeePerOrder : 0
-            return Rounding.money(flat + notional * config.equityFeeBps / 10_000)
+            commission = Rounding.money(flat + notional * config.equityFeeBps / 10_000)
+        }
+        return Rounding.money(commission + tax(for: instrument, side: side, notional: notional))
+    }
+
+    /// The transaction tax rate in basis points for one side of a trade (0 where none applies).
+    public static func taxBps(for instrument: Instrument, side: OrderSide) -> Double {
+        switch (instrument.venue, instrument.assetClass, side) {
+        case (.lse, .equity, .buy): return 50              // UK stamp duty (SDRT)
+        case (.euronextParis, .equity, .buy): return 40    // French financial transaction tax
+        case (.hkex, .equity, _): return 10                // Hong Kong stamp duty, each side
+        case (.krx, .equity, .sell): return 20             // Korean securities transaction tax incl. rural tax
+        case (.nse, .equity, _): return 10                 // Indian STT on delivery trades
+        case (.nse, .etf, .sell): return 0.1
+        default: return 0
+        }
+    }
+
+    /// The tax on a trade. Hong Kong rounds stamp duty up to the next whole dollar.
+    public static func tax(for instrument: Instrument, side: OrderSide, notional: Double) -> Double {
+        let bps = taxBps(for: instrument, side: side)
+        guard bps > 0, notional > 0 else { return 0 }
+        let raw = notional * bps / 10_000
+        return instrument.venue == .hkex ? raw.rounded(.up) : Rounding.money(raw)
+    }
+
+    /// One line naming the tax on this side of a trade, for order screens.
+    public static func taxNote(for instrument: Instrument, side: OrderSide) -> String? {
+        let bps = taxBps(for: instrument, side: side)
+        guard bps > 0 else { return nil }
+        let rate = String(format: bps >= 1 ? "%.1f%%" : "%.3f%%", bps / 100)
+        switch instrument.venue {
+        case .lse: return "Includes UK stamp duty of \(rate) on purchases."
+        case .euronextParis: return "Includes the French financial transaction tax of \(rate) on purchases."
+        case .hkex: return "Includes Hong Kong stamp duty of \(rate), rounded up to a whole dollar."
+        case .krx: return "Includes Korea's securities transaction tax of \(rate) on sales."
+        case .nse: return "Includes India's securities transaction tax of \(rate)."
+        default: return nil
         }
     }
 
@@ -234,7 +276,7 @@ public enum PaperBroker {
 
         let filledBefore = order.filledQuantity
         let notional = Rounding.money(available * marketPrice)
-        let fee = fee(for: order.instrument, notional: notional, isFirstFillOfOrder: filledBefore == 0, config: config)
+        let fee = fee(for: order.instrument, side: order.side, notional: notional, isFirstFillOfOrder: filledBefore == 0, config: config)
         let complete = order.remainingQuantity - available <= rules.quantityIncrement * 1e-3
         let status: OrderStatus
         if complete { status = .filled }

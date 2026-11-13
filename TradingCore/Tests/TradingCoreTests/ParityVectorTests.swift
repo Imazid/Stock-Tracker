@@ -1153,8 +1153,10 @@ final class ParityVectorTests: XCTestCase {
             for notional in [0, 0.5, 1, 99.99, 100, 1_000.01, 12_345.67, 790.12] as [Double] {
                 for first in [true, false] {
                     for (name, config) in [("standard", standard), ("charged", charged)] {
-                        fee.append([J(instrument), notional, first, name,
-                                    PaperBroker.fee(for: instrument, notional: notional, isFirstFillOfOrder: first, config: config)] as [Any])
+                        for side in [OrderSide.buy, .sell] {
+                            fee.append([J(instrument), notional, first, name, side.rawValue,
+                                        PaperBroker.fee(for: instrument, side: side, notional: notional, isFirstFillOfOrder: first, config: config)] as [Any])
+                        }
                     }
                 }
             }

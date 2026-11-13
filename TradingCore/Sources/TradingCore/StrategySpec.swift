@@ -386,7 +386,7 @@ public enum StrategyValidator {
             guard let rebalance = spec.rebalance else { error("A rebalancing strategy needs target weights."); break }
             let ids = Set(spec.universe.map(\.id))
             if rebalance.targets.isEmpty { error("Add at least one target weight.") }
-            for (id, weight) in rebalance.targets {
+            for (id, weight) in rebalance.targets.sorted(by: { $0.key < $1.key }) {
                 if !ids.contains(id) { error("Target \(id) isn't in the asset list.") }
                 if !(weight.isFinite && weight > 0 && weight <= 100) { error("Each target weight must be between 0 and 100%.") }
             }

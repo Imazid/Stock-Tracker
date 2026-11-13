@@ -210,10 +210,11 @@ public enum Backtester {
         var fees = 0.0
         let slip = config.slippageBps / 10_000
 
-        func fee(_ instrument: Instrument, _ notional: Double) -> Double {
-            instrument.assetClass == .crypto
+        func fee(_ instrument: Instrument, _ side: OrderSide, _ notional: Double) -> Double {
+            let commission = instrument.assetClass == .crypto
                 ? Rounding.money(notional * config.cryptoFeeBps / 10_000)
                 : Rounding.money(config.equityFeePerOrder + notional * config.equityFeeBps / 10_000)
+            return Rounding.money(commission + PaperBroker.tax(for: instrument, side: side, notional: notional))
         }
         func equity() -> Double {
             cash + holdings.reduce(0.0) { $0 + $1.value.quantity * (lastClose[$1.key] ?? $1.value.entryPrice) }
@@ -240,13 +241,14 @@ public enum Backtester {
                 case .buy:
                     let price = open * (1 + slip)
                     var notional = min(order.notional ?? 0, config.maxOrderNotional)
-                    let feeRate = instrument.assetClass == .crypto ? config.cryptoFeeBps / 10_000 : config.equityFeeBps / 10_000
+                    let feeRate = (instrument.assetClass == .crypto ? config.cryptoFeeBps : config.equityFeeBps) / 10_000
+                        + PaperBroker.taxBps(for: instrument, side: .buy) / 10_000
                     let flat = instrument.assetClass == .crypto ? 0 : config.equityFeePerOrder
                     notional = min(notional, max((cash - flat) / (1 + feeRate), 0))
                     let quantity = Rounding.floor(notional / price, increment: rules.quantityIncrement)
                     let gross = Rounding.money(quantity * price)
                     guard quantity >= rules.minQuantity, gross >= rules.minNotional else { continue }
-                    let cost = fee(instrument, gross)
+                    let cost = fee(instrument, .buy, gross)
                     cash = Rounding.money(cash - gross - cost)
                     fees += cost
                     if var held = holdings[id] {
@@ -268,7 +270,7 @@ public enum Backtester {
                     guard quantity > 0 else { continue }
                     let closing = held.quantity - quantity <= 1e-9
                     let gross = Rounding.money(quantity * price)
-                    let cost = fee(instrument, gross)
+                    let cost = fee(instrument, .sell, gross)
                     let costRemoved = closing ? held.costBasis : Rounding.money(held.costBasis / held.quantity * quantity)
                     cash = Rounding.money(cash + gross - cost)
                     fees += cost
@@ -409,7 +411,7 @@ public enum Backtester {
         let assumptions = [
             "Signals use completed \(barName) bars only. An order decided on one bar's close trades at the next bar's open.",
             String(format: "Every fill gives up %.0f bps of price as slippage.", config.slippageBps),
-            String(format: "Fees: equities %@ per order plus %.0f bps; crypto %.0f bps.",
+            String(format: "Fees: equities %@ per order plus %.0f bps; crypto %.0f bps. Transaction taxes (UK, France, Hong Kong, Korea, India) are included.",
                    NumberText.money(config.equityFeePerOrder), config.equityFeeBps, config.cryptoFeeBps),
             "Orders are assumed to fill in full at the open. Real orders can fill at worse prices, in parts, or not at all.",
             "Stops are checked on bar closes, not inside the bar, so a real stop could trigger earlier or later.",
