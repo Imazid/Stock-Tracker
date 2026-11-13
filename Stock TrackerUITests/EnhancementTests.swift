@@ -73,7 +73,9 @@ final class EnhancementTests: XCTestCase {
         // The press goes through the app's screen coordinates, which don't wait on SpringBoard.
         // The tap can't: with the menu up, XCUITest brings the app forward before a coordinate
         // gesture, closing the menu — so "Search" is still tapped as SpringBoard's (one wait).
-        let iconPoint = app.coordinate(withNormalizedOffset: .zero)
+        // SpringBoard's coordinate space: an app-space coordinate can bring the app forward
+        // first (seen on the iOS 27.0 sim, 2026-11-13), and the press then lands in the app.
+        let iconPoint = springboard.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: target.frame.midX, dy: target.frame.midY))
         iconPoint.press(forDuration: 1.5)
         let search = springboard.buttons["Search"]
