@@ -35,11 +35,17 @@ export function TicketView() {
   const path = useOrderPath(instrument);
   const [side, setSide] = useState<"buy" | "sell">(params.get("side") === "sell" ? "sell" : "buy");
   const [connectionID, setConnectionID] = useState<string>("");
-  const [type, setType] = useState<BrokerOrderType>("market");
+  // A ticket the assistant prepared arrives as query parameters; it only fills the form.
+  const prefill = (key: string) => {
+    const v = params.get(key);
+    return v !== null && DECIMAL.test(v) ? v : "";
+  };
+  const fromAssistant = params.get("origin") === "assistant";
+  const [type, setType] = useState<BrokerOrderType>(params.get("type") === "limit" ? "limit" : "market");
   const [tif, setTif] = useState<BrokerTimeInForce>("day");
-  const [sizeMode, setSizeMode] = useState<"quantity" | "notional">("quantity");
-  const [size, setSize] = useState("");
-  const [limit, setLimit] = useState("");
+  const [sizeMode, setSizeMode] = useState<"quantity" | "notional">(prefill("notional") ? "notional" : "quantity");
+  const [size, setSize] = useState(prefill("quantity") || prefill("notional"));
+  const [limit, setLimit] = useState(prefill("limit"));
   const [stop, setStop] = useState("");
   const [key] = useState(newIdempotencyKey);
 
@@ -93,6 +99,11 @@ export function TicketView() {
         <h1 className="text-xl font-semibold tracking-tight">Order ticket · {instrument.symbol}</h1>
         <Badge tone="warn">{connection.environment.toUpperCase()} — no real money</Badge>
       </div>
+      {fromAssistant ? (
+        <Notice className="mb-4" title="Filled in by the assistant">
+          Check every field. Nothing has been sent: reviewing drafts the order, the risk engine checks it, and only you can approve it.
+        </Notice>
+      ) : null}
       <Card>
         <CardHeader title={q ? money(q.last, q.currency) : "No live price"} subtitle={q ? <SourceLine source={q.source} currency={q.currency} observedAt={q.observedAt} stale={q.stale} staleReason={q.staleReason} /> : undefined}
           actions={quote.data ? <MarketChip market={quote.data.market} /> : null} />

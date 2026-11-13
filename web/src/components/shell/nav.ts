@@ -16,7 +16,7 @@ export const NAV: NavItem[] = [
   { href: "/markets", label: "Markets", icon: LineChart },
   { href: "/portfolio", label: "Portfolio", icon: Wallet, soon: "Synced holdings and performance aren't in the web app yet." },
   { href: "/watchlists", label: "Watchlists", icon: ListChecks },
-  { href: "/ai", label: "AI Workspace", icon: BrainCircuit, soon: "The research assistant isn't in the web app yet." },
+  { href: "/ai", label: "AI Workspace", icon: BrainCircuit },
   { href: "/agents", label: "Agent Studio", icon: Bot, soon: "Agents run in the iPhone app today; the web studio isn't built yet." },
   { href: "/strategies", label: "Strategies", icon: FlaskConical },
   { href: "/paper", label: "Paper Trading", icon: Workflow, soon: "Practice trading runs in the iPhone app; the web version waits for the trading API." },

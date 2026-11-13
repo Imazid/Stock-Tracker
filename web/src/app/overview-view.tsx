@@ -50,7 +50,7 @@ function PulseCard({ id, label }: { id: string; label: string }) {
   );
 }
 
-interface Status { accounts: boolean; alpacaData: boolean; coingeckoKey: boolean; assistant: boolean; assistantKey: boolean; liveTrading: boolean }
+interface Status { accounts: boolean; alpacaData: boolean; coingeckoKey: boolean; assistant: boolean; liveTrading: boolean }
 
 function SetupCard() {
   const { data } = useQuery({ queryKey: ["status"], queryFn: () => getJSON<Status>("/api/status"), staleTime: 300_000 });
