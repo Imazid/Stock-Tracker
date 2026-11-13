@@ -19,3 +19,8 @@ website/.env.local
 # Supabase CLI local state
 supabase/.temp/
 supabase/.branches/
+
+# Swift package build output
+TradingCore/.build/
+TradingCore/.swiftpm/
+.build/

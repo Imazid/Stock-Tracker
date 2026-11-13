@@ -1,0 +1,310 @@
+import Foundation
+
+// MARK: - Instruments
+
+public enum AssetClass: String, Codable, CaseIterable, Sendable {
+    case equity, etf, crypto
+}
+
+/// Where an instrument trades. It decides the trading calendar and the currency.
+public enum Venue: String, Codable, CaseIterable, Sendable {
+    case us, asx, crypto
+
+    public var currency: String {
+        switch self {
+        case .us, .crypto: return "USD"
+        case .asx: return "AUD"
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .us: return "US market"
+        case .asx: return "ASX"
+        case .crypto: return "Crypto"
+        }
+    }
+}
+
+public struct Instrument: Codable, Hashable, Identifiable, Sendable {
+    public var symbol: String
+    public var name: String
+    public var assetClass: AssetClass
+    public var venue: Venue
+    public var currency: String
+
+    public var id: String { "\(venue.rawValue):\(symbol)" }
+
+    public init(symbol: String, name: String = "", assetClass: AssetClass, venue: Venue, currency: String? = nil) {
+        self.symbol = symbol.uppercased()
+        self.name = name.isEmpty ? symbol.uppercased() : name
+        self.assetClass = assetClass
+        self.venue = venue
+        self.currency = currency ?? venue.currency
+    }
+
+    /// Lenient decoding, so a hand-written or AI-drafted strategy can give just a symbol and
+    /// an asset class. Anything left out is filled in from what was given.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let symbol = try c.decode(String.self, forKey: .symbol).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let assetClass = try c.decodeIfPresent(AssetClass.self, forKey: .assetClass)
+        let venue = try c.decodeIfPresent(Venue.self, forKey: .venue)
+        let known = UniverseCatalog.instrument(symbol: symbol, preferring: venue)
+        let resolvedClass = assetClass ?? known?.assetClass ?? .equity
+        let resolvedVenue = venue ?? known?.venue ?? (resolvedClass == .crypto ? .crypto : .us)
+        self.init(symbol: symbol,
+                  name: try c.decodeIfPresent(String.self, forKey: .name) ?? known?.name ?? "",
+                  assetClass: resolvedClass, venue: resolvedVenue,
+                  currency: try c.decodeIfPresent(String.self, forKey: .currency))
+    }
+
+    public static func usStock(_ symbol: String, name: String = "") -> Instrument {
+        Instrument(symbol: symbol, name: name, assetClass: .equity, venue: .us)
+    }
+
+    public static func usETF(_ symbol: String, name: String = "") -> Instrument {
+        Instrument(symbol: symbol, name: name, assetClass: .etf, venue: .us)
+    }
+
+    public static func asxStock(_ symbol: String, name: String = "") -> Instrument {
+        Instrument(symbol: symbol, name: name, assetClass: .equity, venue: .asx)
+    }
+
+    public static func crypto(_ symbol: String, name: String = "") -> Instrument {
+        Instrument(symbol: symbol, name: name, assetClass: .crypto, venue: .crypto)
+    }
+}
+
+/// What an execution venue will accept for one instrument. Advertised by the broker
+/// adapter, never assumed by the caller.
+public struct InstrumentRules: Codable, Hashable, Sendable {
+    public var quantityIncrement: Double
+    public var minQuantity: Double
+    public var minNotional: Double
+    public var priceIncrement: Double
+    public var fractionable: Bool
+
+    public init(quantityIncrement: Double, minQuantity: Double, minNotional: Double,
+                priceIncrement: Double, fractionable: Bool) {
+        self.quantityIncrement = quantityIncrement
+        self.minQuantity = minQuantity
+        self.minNotional = minNotional
+        self.priceIncrement = priceIncrement
+        self.fractionable = fractionable
+    }
+}
+
+// MARK: - Market data
+
+public enum Timeframe: String, Codable, CaseIterable, Sendable {
+    case hour, day
+
+    public var seconds: TimeInterval {
+        switch self {
+        case .hour: return 3_600
+        case .day: return 86_400
+        }
+    }
+
+    public var barName: String { self == .day ? "daily" : "hourly" }
+}
+
+/// Where a number came from. Trading code only accepts `market`; fixtures exist for
+/// tests and are refused everywhere else, and `synthetic` is refused always.
+public struct DataProvenance: Codable, Hashable, Sendable {
+    public enum Kind: String, Codable, Sendable { case market, fixture, synthetic }
+
+    public var kind: Kind
+    public var source: String
+    /// How far behind the exchange the feed runs (0 = real time).
+    public var delaySeconds: Int
+
+    public init(kind: Kind, source: String, delaySeconds: Int = 0) {
+        self.kind = kind
+        self.source = source
+        self.delaySeconds = delaySeconds
+    }
+
+    public static func market(_ source: String, delaySeconds: Int = 0) -> DataProvenance {
+        DataProvenance(kind: .market, source: source, delaySeconds: delaySeconds)
+    }
+
+    public static func fixture(_ name: String) -> DataProvenance {
+        DataProvenance(kind: .fixture, source: name)
+    }
+
+    public static let synthetic = DataProvenance(kind: .synthetic, source: "synthetic")
+
+    public var isRealMarketData: Bool { kind == .market }
+}
+
+public struct Bar: Codable, Hashable, Sendable {
+    /// Start of the bar.
+    public var time: Date
+    public var open: Double
+    public var high: Double
+    public var low: Double
+    public var close: Double
+    public var volume: Double
+
+    public init(time: Date, open: Double, high: Double, low: Double, close: Double, volume: Double) {
+        self.time = time
+        self.open = open
+        self.high = high
+        self.low = low
+        self.close = close
+        self.volume = volume
+    }
+
+    public var isValid: Bool {
+        [open, high, low, close].allSatisfy { $0.isFinite && $0 > 0 }
+            && high >= low && volume.isFinite && volume >= 0
+    }
+}
+
+public struct BarSeries: Codable, Sendable {
+    public var instrument: Instrument
+    public var timeframe: Timeframe
+    /// Oldest first.
+    public var bars: [Bar]
+    public var provenance: DataProvenance
+    public var fetchedAt: Date
+
+    public init(instrument: Instrument, timeframe: Timeframe, bars: [Bar],
+                provenance: DataProvenance, fetchedAt: Date) {
+        self.instrument = instrument
+        self.timeframe = timeframe
+        self.bars = bars.filter(\.isValid).sorted { $0.time < $1.time }
+        self.provenance = provenance
+        self.fetchedAt = fetchedAt
+    }
+}
+
+public struct Quote: Codable, Hashable, Sendable {
+    public var instrumentID: String
+    public var last: Double
+    public var bid: Double?
+    public var ask: Double?
+    /// When the venue produced this price (not when we fetched it).
+    public var time: Date
+    public var provenance: DataProvenance
+    /// Units traded so far today, when the feed reports it.
+    public var dayVolume: Double?
+
+    public init(instrumentID: String, last: Double, bid: Double? = nil, ask: Double? = nil,
+                time: Date, provenance: DataProvenance, dayVolume: Double? = nil) {
+        self.instrumentID = instrumentID
+        self.last = last
+        self.bid = bid
+        self.ask = ask
+        self.time = time
+        self.provenance = provenance
+        self.dayVolume = dayVolume
+    }
+
+    /// A usable bid and ask: both present, positive and not crossed.
+    public var hasTwoSidedMarket: Bool {
+        guard let bid, let ask else { return false }
+        return bid > 0 && ask > 0 && ask >= bid
+    }
+
+    public var mid: Double {
+        guard hasTwoSidedMarket, let bid, let ask else { return last }
+        return (bid + ask) / 2
+    }
+
+    /// Spread in basis points of the mid; nil without a two-sided market.
+    public var spreadBps: Double? {
+        guard hasTwoSidedMarket, let bid, let ask, mid > 0 else { return nil }
+        return (ask - bid) / mid * 10_000
+    }
+
+    public func age(at now: Date) -> TimeInterval { now.timeIntervalSince(time) }
+}
+
+/// Liquidity and volatility of an instrument, measured from real daily bars.
+public struct InstrumentStats: Codable, Hashable, Sendable {
+    public var averageDollarVolume: Double
+    /// Standard deviation of daily returns, in percent.
+    public var dailyVolatilityPct: Double
+
+    public init(averageDollarVolume: Double, dailyVolatilityPct: Double) {
+        self.averageDollarVolume = averageDollarVolume
+        self.dailyVolatilityPct = dailyVolatilityPct
+    }
+
+    /// From the last `lookback` completed daily bars; nil when there are too few.
+    public static func measure(_ bars: [Bar], lookback: Int = 20) -> InstrumentStats? {
+        guard bars.count >= lookback + 1 else { return nil }
+        let window = Array(bars.suffix(lookback + 1))
+        let dollarVolume = window.suffix(lookback).map { $0.close * $0.volume }.reduce(0, +) / Double(lookback)
+        var returns: [Double] = []
+        for i in 1..<window.count where window[i - 1].close > 0 {
+            returns.append(window[i].close / window[i - 1].close - 1)
+        }
+        guard returns.count >= 2 else { return nil }
+        let mean = returns.reduce(0, +) / Double(returns.count)
+        let variance = returns.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(returns.count - 1)
+        return InstrumentStats(averageDollarVolume: dollarVolume, dailyVolatilityPct: variance.squareRoot() * 100)
+    }
+}
+
+/// Everything an agent run or an order needs to know about the market, gathered up front
+/// so the decision code itself never touches the network.
+public struct MarketSnapshot: Sendable {
+    public var series: [String: BarSeries]
+    public var quotes: [String: Quote]
+    /// Instruments whose data could not be loaded, with the reason. Nothing trades on these.
+    public var failures: [String: String]
+
+    public init(series: [String: BarSeries] = [:], quotes: [String: Quote] = [:], failures: [String: String] = [:]) {
+        self.series = series
+        self.quotes = quotes
+        self.failures = failures
+    }
+}
+
+/// Supplies real market data. Implementations throw when a source fails — they never
+/// substitute an invented series.
+public protocol MarketDataProviding: Sendable {
+    func bars(for instrument: Instrument, timeframe: Timeframe, count: Int) async throws -> BarSeries
+    func quote(for instrument: Instrument) async throws -> Quote
+}
+
+public extension MarketDataProviding {
+    /// Bars and quotes for a set of instruments. Failures are recorded, not thrown, so one
+    /// missing symbol doesn't stop the rest — it just can't be traded.
+    func snapshot(for instruments: [Instrument], timeframe: Timeframe, barCount: Int) async -> MarketSnapshot {
+        var snapshot = MarketSnapshot()
+        await withTaskGroup(of: (Instrument, Result<BarSeries, Error>, Result<Quote, Error>).self) { group in
+            for instrument in instruments {
+                group.addTask {
+                    async let bars = Result { try await self.bars(for: instrument, timeframe: timeframe, count: barCount) }
+                    async let quote = Result { try await self.quote(for: instrument) }
+                    return (instrument, await bars, await quote)
+                }
+            }
+            for await (instrument, bars, quote) in group {
+                switch bars {
+                case .success(let series): snapshot.series[instrument.id] = series
+                case .failure(let error): snapshot.failures[instrument.id] = "Price history unavailable: \(error.localizedDescription)"
+                }
+                switch quote {
+                case .success(let q): snapshot.quotes[instrument.id] = q
+                case .failure(let error):
+                    if snapshot.failures[instrument.id] == nil {
+                        snapshot.failures[instrument.id] = "Live quote unavailable: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+        return snapshot
+    }
+}
+
+private extension Result where Failure == Error {
+    init(_ body: () async throws -> Success) async {
+        do { self = .success(try await body()) } catch { self = .failure(error) }
+    }
+}
