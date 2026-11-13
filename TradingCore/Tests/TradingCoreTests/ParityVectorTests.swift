@@ -1487,6 +1487,33 @@ final class ParityVectorTests: XCTestCase {
                                     "kinds": AuditKind.allCases.map { [$0.rawValue, $0.title] }])
     }
 
+    /// The other direction: an audit trail written by the server (the TypeScript engine, hashed
+    /// again by the database trigger) must verify with this package's own rule.
+    ///
+    /// Skipped unless `SERVER_AUDIT_CHAIN` names a file exported by the local-stack test
+    /// `supabase/functions/tests/integration/api.test.ts` (run with `TRADING_AUDIT_EXPORT`).
+    func testServerAuditChainVerifies() throws {
+        guard let path = ProcessInfo.processInfo.environment["SERVER_AUDIT_CHAIN"], !path.isEmpty else {
+            throw XCTSkip("Set SERVER_AUDIT_CHAIN to an audit trail exported by the server's integration test.")
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let log = try TradingCodec.decoder().decode(AuditLog.self, from: data)
+        XCTAssertGreaterThanOrEqual(log.events.count, 6, "the end-to-end run writes at least six events")
+        XCTAssertEqual(log.verify(), AuditVerification(isIntact: true, brokenAtSequence: nil, eventCount: log.events.count))
+        XCTAssertEqual(log.events.first?.previousHash, AuditLog.genesisHash)
+        XCTAssertEqual(log.events.map(\.sequence), Array(1...log.events.count))
+        XCTAssertTrue(log.events.allSatisfy { $0.mode == nil || $0.mode == .paper }, "nothing live happened on the server")
+
+        // And the rule still bites on the server's data: change one word in the middle and it says where.
+        var tampered = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var events = try XCTUnwrap(tampered["events"] as? [[String: Any]])
+        let target = events.count / 2
+        events[target]["summary"] = (events[target]["summary"] as? String ?? "") + " (edited)"
+        tampered["events"] = events
+        let edited = try TradingCodec.decoder().decode(AuditLog.self, from: JSONSerialization.data(withJSONObject: tampered))
+        XCTAssertEqual(edited.verify(), AuditVerification(isIntact: false, brokenAtSequence: target + 1, eventCount: events.count))
+    }
+
     // MARK: Engine scenarios
 
     /// Runs the engine through whole stories and records the state it ends in. The server
