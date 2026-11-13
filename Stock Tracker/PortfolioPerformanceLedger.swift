@@ -28,10 +28,13 @@ private struct PerformancePeriod: Decodable, Identifiable {
     let opening_value_usd: Decimal
     let closing_value_usd: Decimal
     let external_flows: [PerformanceFlow]
+    let transfer_values_usd: [String: Decimal]?
     let deposits_usd: Decimal
     let withdrawals_usd: Decimal
     let investment_change_usd: Decimal
     let return_pct: Decimal?
+    let time_weighted_return_pct: Decimal?
+    let money_weighted_return_pct: Decimal?
 }
 
 private struct PerformancePeriodWrite: Encodable {
@@ -42,6 +45,7 @@ private struct PerformancePeriodWrite: Encodable {
     let opening_value_usd: Decimal
     let closing_value_usd: Decimal
     let external_flows: [PerformanceFlow]
+    let transfer_values_usd: [String: Decimal]
 }
 
 private struct PerformanceSummary: Decodable {
@@ -50,6 +54,8 @@ private struct PerformanceSummary: Decodable {
     let periods: Int
     let investment_change_usd: Decimal
     let return_pct: Decimal?
+    let time_weighted_return_pct: Decimal?
+    let money_weighted_return_pct: Decimal?
 }
 
 private func performanceDateFormatter() -> DateFormatter {
@@ -99,15 +105,15 @@ struct PortfolioPerformanceLedger: View {
                         .font(.footnote)
                         .foregroundStyle(theme.secondaryText)
                 } else {
-                    Text("Returns use Modified Dietz with end-of-day cash flows.")
+                    Text("Time-weighted return uses transfer-day valuations. Money-weighted return uses the size and dates of transfers. All returns cover the displayed period.")
                         .font(.footnote)
                         .foregroundStyle(theme.secondaryText)
                     if let summary, summary.periods > 1 {
-                        Text("Latest continuous return").font(.subheadline.weight(.semibold))
+                        Text("Latest continuous returns").font(.subheadline.weight(.semibold))
                         Text("\(summary.starts_on) to \(summary.ends_on) · \(summary.periods) periods")
                             .font(.caption).foregroundStyle(theme.secondaryText)
                         result("Investment change", summary.investment_change_usd.formatted(.currency(code: "USD")))
-                        result("Return", formattedReturn(summary.return_pct))
+                        returnRows(summary.time_weighted_return_pct, summary.money_weighted_return_pct, summary.return_pct)
                     }
                     if periods.count > 100 {
                         Text("Showing the 100 most recent periods.").font(.caption)
@@ -152,8 +158,15 @@ struct PortfolioPerformanceLedger: View {
             result("Deposits", period.deposits_usd.formatted(.currency(code: "USD")))
             result("Withdrawals", period.withdrawals_usd.formatted(.currency(code: "USD")))
             result("Investment change", period.investment_change_usd.formatted(.currency(code: "USD")))
-            result("Period return", formattedReturn(period.return_pct))
+            returnRows(period.time_weighted_return_pct, period.money_weighted_return_pct, period.return_pct)
         }
+    }
+
+    @ViewBuilder
+    private func returnRows(_ timeWeighted: Decimal?, _ moneyWeighted: Decimal?, _ dietz: Decimal?) -> some View {
+        result("Time-weighted return", formattedReturn(timeWeighted))
+        result("Money-weighted return", formattedReturn(moneyWeighted))
+        result("Modified Dietz return", formattedReturn(dietz))
     }
 
     private func result(_ title: String, _ value: String) -> some View {
@@ -180,7 +193,7 @@ struct PortfolioPerformanceLedger: View {
                 .execute()
                 .value
             async let summaries: [PerformanceSummary] = SupabaseManager.client.from("portfolio_performance_summary")
-                .select("starts_on,ends_on,periods,investment_change_usd,return_pct")
+                .select("starts_on,ends_on,periods,investment_change_usd,return_pct,time_weighted_return_pct,money_weighted_return_pct")
                 .eq("user_id", value: userId.uuidString)
                 .execute()
                 .value
@@ -222,6 +235,14 @@ private struct PerformancePeriodEditor: View {
     @State private var opening: String
     @State private var closing: String
     @State private var transfers: [Transfer]
+    @State private var transferValues: [String: String]
+
+    private var valuationDates: [String] {
+        let formatter = performanceDateFormatter()
+        let lower = formatter.string(from: start)
+        let upper = formatter.string(from: end)
+        return Set(transfers.map { formatter.string(from: $0.date) }.filter { $0 > lower && $0 < upper }).sorted()
+    }
     @State private var saving = false
     @State private var error: String?
 
@@ -235,6 +256,7 @@ private struct PerformancePeriodEditor: View {
         _end = State(initialValue: period.flatMap { formatter.date(from: $0.ends_on) } ?? Date())
         _opening = State(initialValue: period?.opening_value_usd.description ?? "")
         _closing = State(initialValue: period?.closing_value_usd.description ?? "")
+        _transferValues = State(initialValue: period?.transfer_values_usd?.mapValues(\.description) ?? [:])
         _transfers = State(initialValue: period?.external_flows.compactMap { flow in
             guard let date = formatter.date(from: flow.date) else { return nil }
             return Transfer(date: date, kind: flow.kind, amount: flow.amount.description)
@@ -273,6 +295,21 @@ private struct PerformancePeriodEditor: View {
                     Text("External transfers")
                 } footer: {
                     Text("Purchases, sales, reinvested income and transfers between these accounts stay inside the portfolio.")
+                }
+                if !valuationDates.isEmpty {
+                    Section {
+                        ForEach(valuationDates, id: \.self) { date in
+                            TextField("Value after transfers on \(date) (USD)", text: Binding(
+                                get: { transferValues[date] ?? "" },
+                                set: { transferValues[date] = $0 }
+                            ))
+                            .keyboardType(.decimalPad)
+                        }
+                    } header: {
+                        Text("Transfer-day valuations")
+                    } footer: {
+                        Text("For time-weighted return, enter the total value including cash after all transfers on each date. The closing value covers transfers on the closing date.")
+                    }
                 }
                 if let error {
                     Text(error).foregroundStyle(.red)
@@ -321,8 +358,17 @@ private struct PerformancePeriodEditor: View {
             }
             flows.append(PerformanceFlow(date: date, kind: transfer.kind, amount: amount))
         }
+        var values: [String: Decimal] = [:]
+        for date in valuationDates {
+            guard let input = transferValues[date], !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            guard let value = usd(input) else {
+                error = "Check the transfer-day valuations and enter amounts in USD."
+                return
+            }
+            values[date] = value
+        }
         let row = PerformancePeriodWrite(id: id, user_id: userId, starts_on: startsOn, ends_on: endsOn,
-            opening_value_usd: openingValue, closing_value_usd: closingValue, external_flows: flows)
+            opening_value_usd: openingValue, closing_value_usd: closingValue, external_flows: flows, transfer_values_usd: values)
         saving = true
         defer { saving = false }
         do {
