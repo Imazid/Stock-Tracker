@@ -114,6 +114,8 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 
 ## 7. Known gaps and follow-ups (found while integrating, 2026-11-13)
 
+- The web lot report applies user-entered stock splits and reverse splits from broker statements. Each adjustment is scoped to one holding and effective before trades dated that Sydney day. USD and AUD acquisition costs remain attached to their original lots. Fractional cash payments, transfers and other corporate actions still need separate records.
+
 - The synced transaction CSV includes original amounts when recorded and labels the USD bookkeeping multiplier as an app reference or fallback rate. FIFO records keep position snapshots and purchases with missing costs in quantity order and leave their basis blank. The optional AUD export uses recorded currency amounts and the latest common ECB observation on or before each Sydney trade date within seven days. It includes the rate and observation date. Original AUD inputs require no FX lookup. Existing USD-only rows retain empty source amounts. Broker execution FX and missing historical amounts require additional source records.
 
 - **Engine port lag — resolved.** The TS port caught up with core `b0d2f19` (calendars, lots,

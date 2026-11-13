@@ -1,9 +1,10 @@
 import type { TransactionRow } from "./transactions.ts";
+import type { StockSplit } from "../../lib/portfolio-splits.ts";
 
 type Amounts = { gross?: bigint; fee?: bigint };
 type Lot = { purchase: TransactionRow; units: bigint; usd: Amounts; aud: Amounts };
 type Holding = { lots: Lot[]; next: number; invalid: boolean };
-export type LotRow = {
+type TradeLotRow = {
   kind: "Sale match" | "Unmatched sale" | "Open lot" | "Archived holding lot" | "Invalid transaction" | "Position record";
   transaction: TransactionRow;
   purchase?: TransactionRow;
@@ -22,6 +23,7 @@ export type LotRow = {
   };
   note?: string;
 };
+export type LotRow = TradeLotRow | { kind: "Stock split" | "Reverse stock split"; split: StockSplit; note: string };
 
 const sydneyDates = new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Sydney", year: "numeric", month: "2-digit", day: "2-digit" });
 
@@ -93,24 +95,50 @@ export function lotNumber(value: bigint | undefined, scale: number) {
   return (negative ? "-" : "") + digits.slice(0, -scale) + (fraction ? "." + fraction : "");
 }
 
-export function calculateLots(transactions: TransactionRow[], start?: string, end?: string, audRates?: ReadonlyMap<string, string>) {
+export function calculateLots(transactions: TransactionRow[], start?: string, end?: string, audRates?: ReadonlyMap<string, string>): TradeLotRow[];
+export function calculateLots(transactions: TransactionRow[], start: string | undefined, end: string | undefined,
+  audRates: ReadonlyMap<string, string> | undefined, splits: readonly StockSplit[]): LotRow[];
+export function calculateLots(transactions: TransactionRow[], start?: string, end?: string, audRates?: ReadonlyMap<string, string>,
+  splits: readonly StockSplit[] = []): LotRow[] {
   const rows: LotRow[] = [];
   const holdings = new Map<string, Holding>();
-  const sorted = transactions.map((transaction) => ({ transaction, time: transactionTime(transaction.transaction_date) }))
+  const sorted = transactions.map((transaction) => ({ transaction, date: sydneyDate(transaction.transaction_date),
+    time: transactionTime(transaction.transaction_date) }))
     .sort((a, b) => a.time.milliseconds - b.time.milliseconds ||
       a.time.subMillisecond - b.time.subMillisecond ||
       Number(b.transaction.type === "Sell") - Number(a.transaction.type === "Sell") ||
       a.transaction.id.localeCompare(b.transaction.id));
-  for (const { transaction } of sorted) {
-    const date = sydneyDate(transaction.transaction_date);
+  const datedSplits = splits.filter((split) => !end || split.effective_date <= end)
+    .sort((a, b) => a.effective_date.localeCompare(b.effective_date) || a.id.localeCompare(b.id));
+  // A common integer unit per holding makes ratios such as 1 for 3 exact
+  // internally. On the effective day the conversion factor changes. Original
+  // lot costs, fees and acquisition dates stay attached to the same units.
+  const factors = new Map<string, bigint>();
+  for (const split of datedSplits) {
+    factors.set(split.holding_id, (factors.get(split.holding_id) ?? 1n) * BigInt(split.new_shares));
+  }
+  let nextSplit = 0;
+  function applySplits(through: string) {
+    while (nextSplit < datedSplits.length && datedSplits[nextSplit].effective_date <= through) {
+      const split = datedSplits[nextSplit++];
+      const factor = factors.get(split.holding_id) ?? 1n;
+      factors.set(split.holding_id, factor / BigInt(split.new_shares) * BigInt(split.old_shares));
+      rows.push({
+        kind: split.new_shares > split.old_shares ? "Stock split" : "Reverse stock split",
+        split, note: "Statement adjustment effective before trades dated that day.",
+      });
+    }
+  }
+  for (const { transaction, date } of sorted) {
     if (date && end && date > end) continue;
+    if (date) applySplits(date);
     const holding = holdings.get(transaction.holding_id) ?? { lots: [], next: 0, invalid: false };
     holdings.set(transaction.holding_id, holding);
     const visible = date && (!start || date >= start);
-    const units = scaled(transaction.shares);
+    const tradeUnits = scaled(transaction.shares);
     const price = scaled(transaction.price_per_share);
     const fees = scaled(transaction.fees);
-    if (!date || !units || price === undefined || fees === undefined || !["Buy", "Sell"].includes(transaction.type)) {
+    if (!date || !tradeUnits || price === undefined || fees === undefined || !["Buy", "Sell"].includes(transaction.type)) {
       holding.invalid = true;
       rows.push({
         kind: "Invalid transaction", transaction,
@@ -118,14 +146,16 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       });
       continue;
     }
-    const gross = roundedDivide(units * price * 100n, UNIT_SCALE * UNIT_SCALE);
+    const factor = factors.get(transaction.holding_id) ?? 1n;
+    const units = tradeUnits * factor;
+    const gross = roundedDivide(tradeUnits * price * 100n, UNIT_SCALE * UNIT_SCALE);
     const fee = roundedDivide(fees * 100n, UNIT_SCALE);
     const rate = audRates?.get(transaction.id);
-    const aud = audAmounts(transaction, units, scaled(rate));
+    const aud = audAmounts(transaction, tradeUnits, scaled(rate));
     if (holding.invalid) {
       if (transaction.type === "Sell") {
         rows.push({
-          kind: "Unmatched sale", transaction, units, saleProceeds: gross, saleFee: fee,
+          kind: "Unmatched sale", transaction, units: tradeUnits, saleProceeds: gross, saleFee: fee,
           aud: { saleProceeds: aud.gross, saleFee: aud.fee }, note: "An earlier transaction in this holding needs review.",
         });
       }
@@ -139,10 +169,12 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     }
 
     let remaining = units;
+    let displayedRemaining = tradeUnits;
     const usd = { gross, fee };
     while (remaining > 0n && holding.next < holding.lots.length) {
       const lot = holding.lots[holding.next];
       const matched = remaining < lot.units ? remaining : lot.units;
+      const displayed = roundedDivide(matched * displayedRemaining, remaining);
       const purchase = takeAmounts(lot.usd, matched, lot.units);
       const sale = takeAmounts(usd, matched, remaining);
       const audPurchase = takeAmounts(lot.aud, matched, lot.units);
@@ -150,7 +182,8 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       if (visible) {
         const usdResult = result(purchase, sale);
         rows.push({
-          kind: usdResult === undefined ? "Unmatched sale" : "Sale match", transaction, purchase: lot.purchase, units: matched,
+          kind: usdResult === undefined ? "Unmatched sale" : "Sale match", transaction, purchase: lot.purchase,
+          units: displayed,
           purchaseCost: purchase.gross, purchaseFee: purchase.fee, saleProceeds: sale.gross, saleFee: sale.fee,
           result: usdResult, note: usdResult === undefined ? "These units need an acquisition record with the trade date and cost." : undefined,
           aud: { purchaseCost: audPurchase.gross, purchaseFee: audPurchase.fee, saleProceeds: audSale.gross,
@@ -158,19 +191,21 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
         });
       }
       remaining -= matched;
+      displayedRemaining -= displayed;
       lot.units -= matched;
       if (lot.units === 0n) holding.next++;
     }
     if (remaining > 0n) {
       rows.push({
-        kind: "Unmatched sale", transaction, units: remaining, saleProceeds: usd.gross, saleFee: usd.fee,
+        kind: "Unmatched sale", transaction, units: displayedRemaining, saleProceeds: usd.gross, saleFee: usd.fee,
         aud: { saleProceeds: aud.gross, saleFee: aud.fee },
         note: "The ledger has insufficient earlier purchases for this quantity.",
       });
     }
   }
 
-  for (const { lots, next, invalid } of holdings.values()) {
+  applySplits(end ?? "9998-12-31");
+  for (const [holdingId, { lots, next, invalid }] of holdings) {
     if (invalid) continue;
     for (const lot of lots.slice(next)) {
       const archived = lot.purchase.portfolio_holdings?.deleted_at;
@@ -179,7 +214,7 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       rows.push({
         kind: lot.usd.gross === undefined ? "Position record" : needsReview ? "Archived holding lot" : "Open lot",
         transaction: lot.purchase, purchase: lot.purchase,
-        units: lot.units, purchaseCost: lot.usd.gross, purchaseFee: lot.usd.fee,
+        units: roundedDivide(lot.units, factors.get(holdingId) ?? 1n), purchaseCost: lot.usd.gross, purchaseFee: lot.usd.fee,
         aud: { purchaseCost: lot.aud.gross, purchaseFee: lot.aud.fee },
         note: lot.usd.gross === undefined ? "Use an acquisition record with the trade date and cost to establish basis for these units."
           : needsReview ? "The holding was archived. Check your iPhone and broker records for a closing trade or removal." : undefined,

@@ -4,8 +4,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Field, Input, Select } from "@/components/ui/Field";
+import { StockSplits } from "./stock-splits";
 
-export function LotReport() {
+export function LotReport({ userId }: { userId: string }) {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [currency, setCurrency] = useState("USD");
@@ -71,6 +72,7 @@ export function LotReport() {
           {downloading ? "Preparing download…" : "Download preliminary lot CSV"}
         </Button>
       </form>
+      <StockSplits userId={userId} />
     </Card>
   );
 }

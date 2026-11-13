@@ -2,10 +2,54 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { calculateLots, lotNumber, sydneyDate, UNIT_DECIMALS } from "./lots.ts";
 import type { TransactionRow } from "./transactions.ts";
+import type { StockSplit } from "../../lib/portfolio-splits.ts";
 
 function trade(id: string, date: string, type: string, shares: number, price: number, fees = 0, holding = "first"): TransactionRow {
   return { id, holding_id: holding, transaction_date: date, type, shares, price_per_share: price, fees, portfolio_holdings: null };
 }
+
+function split(id: string, date: string, newShares: number, oldShares: number, holding = "first"): StockSplit {
+  return { id, holding_id: holding, effective_date: date, new_shares: newShares, old_shares: oldShares,
+    updated_at: date, statement_reference: "Statement", portfolio_holdings: null };
+}
+
+test("applies a split at Sydney day start, preserving dates, AUD and USD costs, fees and other holdings", () => {
+  const provenance = { source: "manual_trade" as const, currency: "AUD", unitPrice: 10, fees: 2 };
+  const purchase = { ...trade("purchase", "2026-06-25T00:00:00Z", "Buy", 2, 6.5, 1.3), trade_provenance: provenance };
+  const before = { ...trade("before", "2026-06-30T13:59:59.999999Z", "Sell", 1, 12), trade_provenance: { ...provenance, unitPrice: 20, fees: 0 } };
+  const after = { ...trade("after", "2026-06-30T14:00:00Z", "Sell", 3, 4), trade_provenance: { ...provenance, unitPrice: 7, fees: 0 } };
+  const other = trade("other", "2026-06-26T00:00:00Z", "Buy", 2, 12, 0, "other");
+  const rows = calculateLots([purchase, before, after, other], "2026-07-01", "2026-07-01",
+    new Map([["purchase", "1"], ["after", "1"]]), [split("split", "2026-07-01", 4, 1)]);
+  assert.deepEqual(rows.map(row => row.kind), ["Stock split", "Sale match", "Open lot", "Open lot"]);
+  const [, sale, open, unaffected] = rows;
+  assert.ok(!("split" in sale) && !("split" in open) && !("split" in unaffected));
+  assert.equal(sale.purchase?.transaction_date, purchase.transaction_date);
+  assert.equal(lotNumber(sale.units, UNIT_DECIMALS), "3");
+  assert.deepEqual([sale.purchaseCost, sale.purchaseFee, open.purchaseCost, open.purchaseFee], [488n, 49n, 162n, 16n]);
+  assert.equal(sale.aud?.result, 1275n);
+  assert.equal(open.aud?.purchaseCost, 250n);
+  assert.equal(lotNumber(open.units, UNIT_DECIMALS), "1");
+  assert.equal(lotNumber(unaffected.units, UNIT_DECIMALS), "2");
+});
+
+test("reverse split fractions match exactly across lots and as-of reports exclude later actions", () => {
+  const trades = [trade("a", "2026-06-25T00:00:00Z", "Buy", 1, 2),
+    trade("b", "2026-06-26T00:00:00Z", "Buy", 2, 3),
+    trade("sale", "2026-07-02T00:00:00Z", "Sell", 1, 15)];
+  const adjustments = [split("reverse", "2026-07-01", 1, 3), split("forward", "2026-07-03", 4, 1)];
+  const rows = calculateLots(trades, undefined, "2026-07-02", undefined, adjustments);
+  assert.deepEqual(rows.map(row => row.kind), ["Reverse stock split", "Sale match", "Sale match"]);
+  const [, first, second] = rows;
+  assert.ok(!("split" in first) && !("split" in second));
+  assert.equal(first.units! + second.units!, 1_000_000_000_000_000_000n);
+  assert.deepEqual([first.purchaseCost, second.purchaseCost, first.saleProceeds, second.saleProceeds], [200n, 600n, 500n, 1000n]);
+  const old = calculateLots(trades, undefined, "2026-06-30", undefined, adjustments);
+  assert.deepEqual(old.map(row => "split" in row ? row.kind : lotNumber(row.units, UNIT_DECIMALS)), ["1", "2"]);
+  const latest = calculateLots(trades.slice(0, 2), undefined, undefined, undefined, adjustments);
+  assert.deepEqual(latest.map(row => "split" in row ? row.kind : lotNumber(row.units, UNIT_DECIMALS)),
+    ["Reverse stock split", "Stock split", "1.333333333333333333", "2.666666666666666667"]);
+});
 
 test("snapshot and unknown-cost units stay in FIFO order without producing a basis", () => {
   const snapshot = { ...trade("snapshot", "2026-06-29T00:00:00Z", "Buy", 2, 12),
