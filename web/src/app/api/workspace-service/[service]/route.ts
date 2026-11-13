@@ -37,7 +37,7 @@ export async function POST(request: Request, context: {params: Promise<{service:
   }
   if (service === "brokerage") {
     const input = parsed as {operation?: string; params?: {connectionType?: string}};
-    const operations = ["status", "registerUser", "loginLink", "listBrokerages", "listAccounts", "accountPositions"];
+    const operations = ["status", "registerUser", "loginLink", "listBrokerages", "listAccounts", "accountPositions", "accountActivities"];
     if (!operations.includes(input.operation ?? "") || (input.operation === "loginLink" && input.params?.connectionType !== "read")) {
       return failure("The web workspace supports read-only brokerage connections.", 403);
     }
