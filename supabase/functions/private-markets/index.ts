@@ -5,6 +5,7 @@ import { open, parseKeyring, seal, type SealedSecret } from "../_shared/secure/e
 import { buildResearch, type Evidence, ResearchError } from "../_shared/private-markets/research.ts";
 import { currentStatus, type Discoverable, interpretDiscovery, matchDiscovery } from "../_shared/private-markets/discovery.ts";
 import { ApnsSender, pushEnvironment, type PushEnvironment, validDeviceToken } from "../_shared/private-markets/apns.ts";
+import { advancellCompany, type IssuerNotice, IssuerNewsError, readIssuerNews } from "../_shared/private-markets/issuer-news.ts";
 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -204,6 +205,35 @@ function sessionId(req: Request): string | null {
   } catch { return null; }
 }
 
+async function scheduledIssuerNews(admin: ReturnType<typeof serviceClient>) {
+  const { data, error } = await admin.rpc("claim_private_issuer_news");
+  if (error) throw error;
+  if (!Array.isArray(data)) throw new Error("Invalid issuer newsroom claim");
+  const [job] = data as { company: string; token: string; etag: string | null }[];
+  if (!job) return jsonResponse(200, { checked: false, written: 0 });
+  if (job.company !== advancellCompany) throw new Error("Unknown newsroom");
+
+  let notices: IssuerNotice[] = [];
+  let etag = job.etag;
+  let failure: string | null = null;
+  let delay: number | null = null;
+  try {
+    const result = await readIssuerNews(etag);
+    notices = result.notices;
+    etag = result.etag;
+    if (result.failures) failure = "NEWSROOM_PARTIAL";
+  } catch (error) {
+    failure = error instanceof IssuerNewsError ? error.code : "NEWSROOM_UNREACHABLE";
+    delay = error instanceof IssuerNewsError ? error.retryAfterSeconds ?? null : null;
+  }
+  const result = await admin.rpc("finish_private_issuer_news", {
+    p_company: job.company, p_token: job.token, p_etag: etag, p_notices: notices,
+    p_error: failure, p_retry_seconds: delay,
+  });
+  if (result.error) throw result.error;
+  return jsonResponse(failure && notices.length === 0 ? 503 : 200, { checked: true, written: result.data, failure });
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return errorResponse(405, "METHOD_NOT_ALLOWED", "Use POST.");
   try {
@@ -219,9 +249,11 @@ Deno.serve(async (req) => {
       return errorResponse(400, "INVALID_REQUEST", "Send a JSON object under 24 KB.");
     }
 
-    if (body.action === "scheduled_digest" || body.action === "scheduled_push") {
+    if (body.action === "scheduled_digest" || body.action === "scheduled_push" || body.action === "scheduled_issuer_news") {
       if (!schedulerAuthorized(req)) return errorResponse(401, "UNAUTHENTICATED", "Scheduler authorization required.");
-      return body.action === "scheduled_digest" ? await scheduledDigests(admin) : await scheduledPush(admin);
+      if (body.action === "scheduled_digest") return await scheduledDigests(admin);
+      if (body.action === "scheduled_push") return await scheduledPush(admin);
+      return await scheduledIssuerNews(admin);
     }
     if (body.action === "catalog") {
       const { data, error } = await catalogue(admin).range(0, 499);
@@ -304,7 +336,7 @@ Deno.serve(async (req) => {
         }
         if (!ids.length) return jsonResponse(200, { updates: [] });
         const { data, error } = await admin.from("corporate_actions")
-          .select("id,title,significance,source_url,published_at,company:private_companies!inner(name)")
+          .select("id,title,significance,source_url,source_label,published_at,company:private_companies!inner(name)")
           .eq("published", true).eq("company.published", true).lte("published_at", new Date().toISOString())
           .in("company_id", ids).order("published_at", { ascending: false }).limit(100);
         if (error) throw error;

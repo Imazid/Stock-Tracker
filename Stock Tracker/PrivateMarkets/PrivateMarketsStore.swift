@@ -137,6 +137,7 @@ struct PrivateCompanyUpdate: Decodable, Identifiable {
     let significance: String
     let kind: String?
     let sourceUrl: URL
+    let sourceLabel: String?
     let publishedAt: Date
     let company: Company
 }

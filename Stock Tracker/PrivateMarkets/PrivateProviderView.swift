@@ -286,6 +286,7 @@ struct PrivateUpdatesView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                         Text(item.significance)
                         if item.sourceUrl.privateSourceIsSafe { Link("Read source", destination: item.sourceUrl) }
+                        if let source = item.sourceLabel { Text(source).font(.footnote).foregroundStyle(.secondary) }
                     }
                 }
                 if let error { Text(error).foregroundStyle(Color.orange) }
