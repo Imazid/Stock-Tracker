@@ -8,11 +8,12 @@ import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { rowToInstrument } from "@/hooks/watchlist";
 import { getJSON } from "@/lib/api";
 import { money, plainNumber } from "@/lib/format";
-import { toView } from "@/lib/instrument-view";
+import { rowToInstrument, toView } from "@/lib/instrument-view";
 import type { QuoteResponse } from "@/lib/market-types";
+import { portfolioMovement } from "@/lib/portfolio-movement";
+import { MovementCard } from "./movement-card";
 import { useSession } from "@/lib/session";
 import { browserSupabase } from "@/lib/supabase/client";
 
@@ -75,10 +76,12 @@ export function PortfolioView() {
   });
   const quotes = new Map(ids.map((id, index) => [id, prices[index]]));
   const snapshots = portfolio.data?.snapshots ?? [];
+  const movement = portfolioMovement(holdings, (id) => quotes.get(id)?.data?.quote);
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <PageHeader title="Portfolio" description="Holdings and saved valuations synced from Stock Tracker on iPhone." />
+      <PageHeader title="Portfolio" description="Holdings and saved valuations synced from Stock Tracker on iPhone."
+        actions={userId && <a className="text-sm text-primary-fg underline" href="/api/portfolio/transactions">Export transactions CSV</a>} />
       {session.status === "unconfigured" ? (
         <Card><EmptyState title="Accounts are unavailable" /></Card>
       ) : session.status === "signedOut" ? (
@@ -91,6 +94,7 @@ export function PortfolioView() {
           actions={<Button onClick={() => void portfolio.refetch()}>Retry</Button>} /></Card>
       ) : (
         <>
+          {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={prices.some((price) => price.isPending)} />}
           <Card>
             <CardHeader title="Holdings" subtitle="Position values use the trading currency. Average costs are recorded in USD." />
             {portfolio.data?.truncated && <p role="status" className="px-4 pb-3 text-xs text-warn">Showing the first 200 holdings.</p>}

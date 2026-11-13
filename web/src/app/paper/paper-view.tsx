@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { OrderPreview } from "@engine/state.ts";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -25,6 +25,7 @@ export function PaperView() {
   const [quantity, setQuantity] = useState("");
   const [review, setReview] = useState<{ preview: OrderPreview; order: Record<string, unknown>; key: string }>();
   const [feedback, setFeedback] = useState("");
+  const createAttempt = useRef<{ fingerprint: string; key: string } | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const results = useSearch(asset ? "" : search);
   const accounts = query.data?.ledgers.filter((ledger) => ledger.kind === "manualPaper") ?? [];
@@ -58,16 +59,20 @@ export function PaperView() {
             <form className="grid gap-3 border-t border-border p-4 sm:grid-cols-[1fr_1fr_auto]" onSubmit={(event) => {
               event.preventDefault();
               void perform(async () => {
-                const result = await practiceCall<{ ledger: { id: string } }>("createPortfolio",
-                  { name: portfolioName.trim(), startingCash: Number(startingCash), currency }, uuid());
+                const draft = { name: portfolioName.trim(), startingCash: Number(startingCash), currency };
+                const fingerprint = JSON.stringify(draft);
+                const key = createAttempt.current?.fingerprint === fingerprint ? createAttempt.current.key : uuid();
+                createAttempt.current = { fingerprint, key };
+                const result = await practiceCall<{ ledger: { id: string } }>("createPortfolio", draft, key);
+                createAttempt.current = undefined;
+                await query.refetch();
                 setPortfolioId(result.ledger.id);
                 setReview(undefined);
                 setPortfolioName("");
-                await query.refetch();
               });
             }}>
               <Field label="Portfolio name" htmlFor="practice-name"><Input id="practice-name" value={portfolioName} required maxLength={60} onChange={(e) => setPortfolioName(e.target.value)} /></Field>
-              <Field label="Starting cash" htmlFor="practice-cash"><Input id="practice-cash" type="number" min="1" max="10000000" value={startingCash} required onChange={(e) => setStartingCash(e.target.value)} /></Field>
+              <Field label="Starting cash" htmlFor="practice-cash"><Input id="practice-cash" type="number" min="1" max="10000000" step="0.01" value={startingCash} required onChange={(e) => setStartingCash(e.target.value)} /></Field>
               <Field label="Currency" htmlFor="practice-currency"><select id="practice-currency" className="h-9 rounded-lg border border-border bg-surface-2 px-2" value={currency} onChange={(e) => setCurrency(e.target.value)}><option>USD</option><option>AUD</option></select></Field>
               <Button type="submit" disabled={busy || !portfolioName.trim()}>Create practice portfolio</Button>
             </form>

@@ -13,11 +13,16 @@ export function Segmented<T extends string>({ options, value, onChange, label, s
         const enabled = options.filter((o) => !o.disabled);
         const i = enabled.findIndex((o) => o.value === value);
         const next = enabled[(i + (e.key === "ArrowRight" ? 1 : enabled.length - 1)) % enabled.length];
-        if (next) onChange(next.value);
+        if (next) {
+          const target = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]:not(:disabled)')]
+            .find((button) => button.value === next.value);
+          target?.focus();
+          onChange(next.value);
+        }
         e.preventDefault();
       }}>
       {options.map((o) => (
-        <button key={o.value} type="button" role="radio" aria-checked={o.value === value} disabled={o.disabled}
+        <button key={o.value} type="button" value={o.value} role="radio" aria-checked={o.value === value} disabled={o.disabled}
           tabIndex={o.value === value ? 0 : -1}
           onClick={() => onChange(o.value)}
           className={cn("rounded-md font-medium transition-colors disabled:opacity-40",

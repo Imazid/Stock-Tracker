@@ -14,12 +14,6 @@ const nextConfig: NextConfig = {
   // a price baked into it.
   turbopack: {
     root: repoRoot,
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
   },
   outputFileTracingRoot: repoRoot,
   poweredByHeader: false,

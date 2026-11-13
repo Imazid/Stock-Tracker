@@ -28,6 +28,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_price_history: "Reading price history",
   get_watchlist: "Reading your watchlist",
   get_portfolio: "Reading your portfolio",
+  explain_portfolio_movement: "Calculating portfolio movement",
   draft_strategy: "Drafting a strategy",
   run_backtest: "Running a backtest",
   prepare_order_ticket: "Preparing an order ticket",
@@ -47,7 +48,7 @@ export function useAssistant() {
   const update = (fn: (turn: AssistantTurn) => AssistantTurn) =>
     setTurns((all) => (all.length === 0 ? all : [...all.slice(0, -1), fn(all[all.length - 1])]));
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, shareAccountContext: boolean) => {
     const message = text.trim();
     if (!message || busy) return;
     const history = [...turns.filter((t) => t.text.trim() !== "" && !t.error), { role: "user" as const, text: message }]
@@ -64,7 +65,7 @@ export function useAssistant() {
       const response = await fetch("/api/agents/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history.slice(-40) }),
+        body: JSON.stringify({ messages: history.slice(-40), shareAccountContext }),
         signal: abort.signal,
       });
       if (!response.ok || !response.body) {
