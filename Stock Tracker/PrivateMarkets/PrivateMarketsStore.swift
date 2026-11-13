@@ -334,6 +334,26 @@ final class PrivateMarketsStore: ObservableObject {
         }
     }
 
+    func updateOwnershipEvidence(for holdingID: UUID, owner: UUID, documentID: UUID?) throws {
+        guard scope == owner, state.holdings.contains(where: { $0.id == holdingID }) else { throw CancellationError() }
+        try change { next in
+            guard let index = next.holdings.firstIndex(where: { $0.id == holdingID }) else { return }
+            next.holdings[index].ownershipEvidenceID = documentID
+            next.holdings[index].ownershipReviewedOn = documentID == nil ? nil : .now
+        }
+    }
+
+    func removeOwnershipEvidence(_ documentID: UUID, owner: UUID) throws {
+        guard scope == owner else { throw CancellationError() }
+        guard state.holdings.contains(where: { $0.ownershipEvidenceID == documentID }) else { return }
+        try change { next in
+            for index in next.holdings.indices where next.holdings[index].ownershipEvidenceID == documentID {
+                next.holdings[index].ownershipEvidenceID = nil
+                next.holdings[index].ownershipReviewedOn = nil
+            }
+        }
+    }
+
     func toggleFollow(_ deal: PrivateDeal) throws {
         guard state.follows.count < 100 || state.follows.contains(where: { $0.id == deal.company.id }) else {
             throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [NSLocalizedDescriptionKey: "Your watchlist can hold up to 100 companies."])
@@ -349,19 +369,24 @@ final class PrivateMarketsStore: ObservableObject {
 
     func checkUpdates(for userID: UUID) async throws -> [PrivateCompanyUpdate] {
         guard scope == userID, storageError == nil else { return [] }
-        let companyIDs = state.follows.map(\.id) + providerHoldings.compactMap(\.companyId)
+        let companyIDs = state.follows.map(\.id) + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId)
         var seen = Set<UUID>()
-        let ids = companyIDs.filter { seen.insert($0).inserted }.prefix(100).map(\.uuidString)
+        let ids = companyIDs.filter { seen.insert($0).inserted }.map(\.uuidString)
         guard !ids.isEmpty else { return [] }
-        let response: PrivateMarketsAPI.Updates = try await PrivateMarketsAPI.request(
-            "updates", ["company_ids": ids], expectedUserID: userID)
+        var updates: [PrivateCompanyUpdate] = []
+        for start in stride(from: 0, to: ids.count, by: 100) {
+            let response: PrivateMarketsAPI.Updates = try await PrivateMarketsAPI.request(
+                "updates", ["company_ids": Array(ids[start..<min(start + 100, ids.count)])], expectedUserID: userID)
+            updates.append(contentsOf: response.updates)
+        }
         try Task.checkCancellation()
         guard scope == userID else { return [] }
+        updates.sort { $0.publishedAt > $1.publishedAt }
         if state.notify, !deliveringUpdates {
             deliveringUpdates = true
             defer { deliveringUpdates = false }
             let now = Date.now
-            let fresh = response.updates.filter {
+            let fresh = updates.filter {
                 now.timeIntervalSince($0.publishedAt) < 7 * 86_400 && !state.seenUpdates.contains($0.id)
             }
             var delivered: [UUID] = []
@@ -384,7 +409,7 @@ final class PrivateMarketsStore: ObservableObject {
                 try change { $0.seenUpdates = Array(($0.seenUpdates + delivered).suffix(300)) }
             }
         }
-        return response.updates
+        return updates
     }
 
     func checkUpdatesInBackground() async {

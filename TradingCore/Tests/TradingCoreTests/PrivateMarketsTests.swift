@@ -3,6 +3,23 @@ import XCTest
 @testable import TradingCore
 
 final class PrivateMarketsTests: XCTestCase {
+    func testOwnershipEvidenceRoundTripsAndLegacyHoldingsStillDecode() throws {
+        let companyID = UUID()
+        let evidenceID = UUID()
+        let date = Date(timeIntervalSince1970: 100_000)
+        let holding = PrivateHolding(name: "Venture Fund", assetClass: .ventureFund, currency: "AUD",
+                                     catalogueCompanyID: companyID, ownershipEvidenceID: evidenceID, ownershipReviewedOn: date)
+        let data = try JSONEncoder().encode(holding)
+        XCTAssertEqual(try JSONDecoder().decode(PrivateHolding.self, from: data), holding)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        for field in ["catalogueCompanyID", "ownershipEvidenceID", "ownershipReviewedOn"] { legacy.removeValue(forKey: field) }
+        let decoded = try JSONDecoder().decode(PrivateHolding.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(decoded.id, holding.id)
+        XCTAssertNil(decoded.catalogueCompanyID)
+        XCTAssertNil(decoded.ownershipEvidenceID)
+        XCTAssertNil(decoded.ownershipReviewedOn)
+    }
+
     func testDilutionAndInvalidRoundTerms() {
         XCTAssertEqual(PrivateMath.ownership(investment: 5_000, postMoney: 1_000_000,
                                              nextRoundPostMoney: 2_000_000, nextRoundRaise: 500_000), Decimal(string: "0.00375"))

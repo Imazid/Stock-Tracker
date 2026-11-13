@@ -1,4 +1,5 @@
 import SwiftUI
+import TradingCore
 import UserNotifications
 
 struct PrivateInvestorView: View {
@@ -199,10 +200,11 @@ struct PrivateUpdatesView: View {
                 }
                 if auth.userId == nil {
                     Text("Sign in from Account to check followed companies.")
-                } else if store.state.follows.isEmpty && store.providerHoldings.isEmpty && !loading {
-                    Text("Follow a company from its opportunity page.")
+                } else if store.state.follows.isEmpty && store.providerHoldings.isEmpty &&
+                            !store.state.holdings.contains(where: { $0.catalogueCompanyID != nil }) && !loading {
+                    Text("Follow a company or link a manual holding to a catalogue company.")
                 } else if updates.isEmpty && !loading {
-                    Text("No verified updates are published for your followed companies or provider holdings.")
+                    Text("No verified updates are published for the companies you track.")
                 }
                 let announcements = updates.filter { $0.kind == "announcement" }
                 if !announcements.isEmpty {

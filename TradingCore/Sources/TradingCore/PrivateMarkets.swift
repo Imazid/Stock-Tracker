@@ -69,13 +69,17 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
     public var ownershipPercent: Decimal?
     public var shareClass: String
     public var lockupUntil: Date?
+    public var catalogueCompanyID: UUID?
+    public var ownershipEvidenceID: UUID?
+    public var ownershipReviewedOn: Date?
     public var valuations: [PrivateValuation]
     public var cashFlows: [PrivateCashFlow]
 
     public init(
         id: UUID = UUID(), name: String, assetClass: PrivateAssetClass, currency: String, commitment: Decimal? = nil,
         units: Decimal? = nil, ownershipPercent: Decimal? = nil, shareClass: String = "", lockupUntil: Date? = nil,
-        valuations: [PrivateValuation] = [], cashFlows: [PrivateCashFlow] = []
+        valuations: [PrivateValuation] = [], cashFlows: [PrivateCashFlow] = [], catalogueCompanyID: UUID? = nil,
+        ownershipEvidenceID: UUID? = nil, ownershipReviewedOn: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -86,6 +90,9 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
         self.ownershipPercent = ownershipPercent
         self.shareClass = shareClass
         self.lockupUntil = lockupUntil
+        self.catalogueCompanyID = catalogueCompanyID
+        self.ownershipEvidenceID = ownershipEvidenceID
+        self.ownershipReviewedOn = ownershipReviewedOn
         self.valuations = valuations
         self.cashFlows = cashFlows
     }

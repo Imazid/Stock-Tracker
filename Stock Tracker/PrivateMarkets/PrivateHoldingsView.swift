@@ -182,6 +182,9 @@ private struct PrivateHoldingEditor: View {
     @State private var units: String
     @State private var ownership: String
     @State private var shareClass: String
+    @State private var catalogueCompanyID: UUID?
+    @State private var companies: [PrivateDeal.Company] = []
+    @State private var catalogueError: String?
     @State private var locked: Bool
     @State private var lockup: Date
     @State private var error: String?
@@ -196,6 +199,7 @@ private struct PrivateHoldingEditor: View {
         _units = State(initialValue: text(holding?.units))
         _ownership = State(initialValue: text(holding?.ownershipPercent))
         _shareClass = State(initialValue: holding?.shareClass ?? "")
+        _catalogueCompanyID = State(initialValue: holding?.catalogueCompanyID)
         _locked = State(initialValue: holding?.lockupUntil != nil)
         _lockup = State(initialValue: holding?.lockupUntil ?? .now)
     }
@@ -221,7 +225,27 @@ private struct PrivateHoldingEditor: View {
                     Toggle("Has a lock-up date", isOn: $locked)
                     if locked { DatePicker("Lock-up ends", selection: $lockup, displayedComponents: .date) }
                 }
+                if !companies.isEmpty || catalogueCompanyID != nil {
+                    Picker("Company to monitor", selection: $catalogueCompanyID) {
+                        Text("None").tag(nil as UUID?)
+                        ForEach(companies) { company in Text(company.name).tag(Optional(company.id)) }
+                        if let catalogueCompanyID, !companies.contains(where: { $0.id == catalogueCompanyID }) {
+                            Text("Previously linked company").tag(Optional(catalogueCompanyID))
+                        }
+                    }
+                }
+                if let catalogueError { Text(catalogueError).font(.footnote).foregroundStyle(.secondary) }
                 if let error { Text(error).foregroundStyle(Color.orange) }
+            }
+            .task {
+                do {
+                    let catalogue: PrivateMarketsAPI.Catalog = try await PrivateMarketsAPI.request("catalog")
+                    try Task.checkCancellation()
+                    var seen = Set<UUID>()
+                    companies = catalogue.deals.map(\.company).filter { seen.insert($0.id).inserted }
+                        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                } catch is CancellationError {
+                } catch { catalogueError = "The company catalogue is unavailable." }
             }
             .navigationTitle(holding == nil ? "Add Private Holding" : "Edit Private Holding")
             .navigationBarTitleDisplayMode(.inline)
@@ -246,10 +270,16 @@ private struct PrivateHoldingEditor: View {
             error = "Enter a name and valid ownership and commitment amounts."
             return
         }
+        let evidenceStillApplies = holding?.name == trimmedName && holding?.assetClass == kind && holding?.currency == currency &&
+            holding?.commitment == committed && holding?.units == parsedUnits && holding?.ownershipPercent == percent &&
+            holding?.shareClass == shareClass
         let updated = PrivateHolding(id: holding?.id ?? UUID(), name: trimmedName, assetClass: kind, currency: currency,
                                      commitment: committed, units: parsedUnits, ownershipPercent: percent,
                                      shareClass: shareClass, lockupUntil: locked ? lockup : nil,
-                                     valuations: holding?.valuations ?? [], cashFlows: holding?.cashFlows ?? [])
+                                     valuations: holding?.valuations ?? [], cashFlows: holding?.cashFlows ?? [],
+                                     catalogueCompanyID: catalogueCompanyID,
+                                     ownershipEvidenceID: evidenceStillApplies ? holding?.ownershipEvidenceID : nil,
+                                     ownershipReviewedOn: evidenceStillApplies ? holding?.ownershipReviewedOn : nil)
         do {
             try store.save(updated)
             dismiss()
@@ -259,6 +289,7 @@ private struct PrivateHoldingEditor: View {
 
 struct PrivateHoldingDetail: View {
     @EnvironmentObject private var store: PrivateMarketsStore
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.dismiss) private var dismiss
     let id: UUID
     var providerRecord = false
@@ -280,6 +311,13 @@ struct PrivateHoldingDetail: View {
         if let holding = providerRecord ? providerPosition?.holding : store.state.holdings.first(where: { $0.id == id }) {
             List {
                 overview(holding)
+                if !providerRecord, let owner = auth.userId {
+                    Section("Ownership evidence") {
+                        NavigationLink(holding.ownershipEvidenceID == nil ? "Link a Deal Room excerpt" : "Review linked ownership evidence") {
+                            PrivateOwnershipEvidenceView(holding: holding, owner: owner)
+                        }
+                    }
+                }
                 if providerPosition?.canCalculatePerformance != false {
                     performance(holding)
                 } else {

@@ -183,6 +183,7 @@ private struct PrivateDiscoveryView: View {
     let groupCompanies: Bool
     let sortByDeadline: Bool
 
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
     @State private var watchlistError: String?
     @State private var search = ""
@@ -228,6 +229,11 @@ private struct PrivateDiscoveryView: View {
             Section {
                 Toggle("Following", isOn: $following)
                 Button { showFilters = true } label: { Label("Filters", systemImage: "line.3.horizontal.decrease") }
+                if auth.userId != nil {
+                    NavigationLink { PrivateDiscoverySearchView() } label: {
+                        Label("Search the catalogue with AI", systemImage: "sparkle.magnifyingglass")
+                    }
+                }
             }
             Section(groupCompanies ? "Companies" : "Opportunities") {
                 if loading {
@@ -332,6 +338,107 @@ private struct PrivateDiscoveryView: View {
         Picker(label, selection: selection) {
             Text("Any").tag("")
             ForEach(Set(values).sorted(), id: \.self) { Text($0.capitalized).tag($0) }
+        }
+    }
+}
+
+private struct PrivateDiscoverySearchView: View {
+    private struct Results: Decodable {
+        struct Criteria: Decodable {
+            let countries, sectors, categories, statuses, eligibility, providers, unsupported: [String]
+            let stages: [String]?
+            let company, currency: String
+            let maxMinimum, maxValuation: Decimal
+            let disclosedTraction: Bool
+        }
+        let criteria: Criteria
+        let deals: [PrivateDeal]
+        let matchedCount: Int
+        let scannedAll: Bool
+    }
+
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var question = ""
+    @State private var answer: Results?
+    @State private var submitted: String?
+    @State private var error: String?
+    @State private var searchTask: Task<Void, Never>?
+
+    var body: some View {
+        List {
+            Section("Catalogue search") {
+                TextField("Ask about a company, stage or sector", text: $question, axis: .vertical)
+                    .lineLimit(2...4)
+                    .accessibilityIdentifier("private.discover.question")
+                Button("Australian healthcare startups currently raising for retail investors") {
+                    question = "Find Australian healthcare startups currently raising through retail-accessible platforms."
+                }
+                .font(.footnote)
+                Button("Search published opportunities", action: search)
+                    .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || question.utf16.count > 600 || searchTask != nil)
+                if searchTask != nil { ProgressView("Checking published opportunities") }
+                if let error { Text(error).foregroundStyle(.secondary) }
+            }
+            if let answer {
+                Section("Interpreted filters") {
+                    if let submitted { Text(submitted).font(.footnote).foregroundStyle(.secondary) }
+                    filters(answer.criteria)
+                }
+                Section("Published results") {
+                    if !answer.criteria.unsupported.isEmpty {
+                        Text("Refine the highlighted filters to search the catalogue.")
+                    } else if answer.deals.isEmpty {
+                        Text("No published opportunities match these filters.")
+                    }
+                    if !answer.scannedAll { Text("This search checked the 500 most recently verified records.").font(.footnote) }
+                    if answer.matchedCount > answer.deals.count {
+                        Text("Showing \(answer.deals.count) of \(answer.matchedCount) matches.").font(.footnote)
+                    }
+                    ForEach(answer.deals) { deal in
+                        NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateDealRow(deal: deal) }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Catalogue Search")
+        .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { searchTask?.cancel() }
+    }
+
+    @ViewBuilder
+    private func filters(_ criteria: Results.Criteria) -> some View {
+        let lists = [
+            ("Country", criteria.countries), ("Sector", criteria.sectors), ("Category", criteria.categories), ("Stage", criteria.stages ?? []),
+            ("Status", criteria.statuses), ("Eligibility", criteria.eligibility), ("Source", criteria.providers),
+        ]
+        ForEach(lists.filter { !$0.1.isEmpty }, id: \.0) { label, values in
+            LabeledContent(label, value: values.joined(separator: ", "))
+        }
+        if !criteria.company.isEmpty { LabeledContent("Company", value: criteria.company) }
+        if !criteria.currency.isEmpty { LabeledContent("Currency", value: criteria.currency) }
+        if criteria.maxMinimum > 0 { LabeledContent("Maximum minimum investment", value: criteria.maxMinimum.formatted()) }
+        if criteria.maxValuation > 0 { LabeledContent("Maximum valuation", value: criteria.maxValuation.formatted()) }
+        if criteria.disclosedTraction { Text("Disclosed traction required") }
+        ForEach(criteria.unsupported, id: \.self) { Label($0, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
+    }
+
+    private func search() {
+        guard let owner = auth.userId, searchTask == nil else { return }
+        let query = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        answer = nil
+        error = nil
+        searchTask = Task {
+            defer { searchTask = nil }
+            do {
+                let result: Results = try await PrivateMarketsAPI.request("discover", ["question": query], expectedUserID: owner)
+                try Task.checkCancellation()
+                guard auth.userId == owner else { return }
+                submitted = query
+                answer = result
+            } catch is CancellationError {
+            } catch {
+                if auth.userId == owner { self.error = error.localizedDescription }
+            }
         }
     }
 }

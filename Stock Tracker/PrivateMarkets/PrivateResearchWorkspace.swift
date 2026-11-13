@@ -2,6 +2,7 @@ import PDFKit
 import SwiftUI
 import TradingCore
 import UniformTypeIdentifiers
+import Vision
 
 struct PrivateResearchWorkspace: View {
     let deals: [PrivateDeal]
@@ -83,11 +84,14 @@ struct PrivateResearchWorkspace: View {
                         NavigationLink(item.title) { PrivateSavedReportView(item: item) }
                             .swipeActions {
                                 Button("Delete", role: .destructive) {
+                                    guard let owner = auth.userId else { return }
                                     Task {
                                         do {
-                                            try await PrivateMarketsAPI.send("delete_report", ["id": item.id.uuidString])
+                                            try await PrivateMarketsAPI.send("delete_report", ["id": item.id.uuidString], expectedUserID: owner)
+                                            guard auth.userId == owner else { return }
                                             reports.removeAll { $0.id == item.id }
                                             if result?.id == item.id { result = nil }
+                                        } catch is CancellationError {
                                         } catch { self.error = error.localizedDescription }
                                     }
                                 }
@@ -129,13 +133,14 @@ struct PrivateResearchWorkspace: View {
     }
 
     private func load() async {
-        guard auth.userId != nil else { return }
+        guard let owner = auth.userId else { return }
         loading = true
         defer { loading = false }
         do {
-            let documentList: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("documents")
-            let reportList: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("reports")
+            let documentList: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("documents", expectedUserID: owner)
+            let reportList: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("reports", expectedUserID: owner)
             try Task.checkCancellation()
+            guard auth.userId == owner else { return }
             documents = documentList.items
             reports = reportList.items
             selectedDocuments.formIntersection(documents.map(\.id))
@@ -144,6 +149,7 @@ struct PrivateResearchWorkspace: View {
     }
 
     private func run(_ mode: String) {
+        guard let owner = auth.userId else { return }
         let fields: [String: Any] = [
             "mode": mode, "question": question, "document_ids": selectedDocuments.map(\.uuidString),
             "opportunity_ids": selectedDeals.map(\.uuidString), "ai_consent": consent,
@@ -154,28 +160,32 @@ struct PrivateResearchWorkspace: View {
         runTask = Task {
             defer { busy = false }
             do {
+                let report: PrivateResearchReport
                 if mode == "committee" {
-                    result = try await runCommittee(fields)
+                    report = try await runCommittee(fields, owner: owner)
                 } else {
-                    result = try await PrivateMarketsAPI.request("research", fields)
+                    report = try await PrivateMarketsAPI.request("research", fields, expectedUserID: owner)
                 }
+                try Task.checkCancellation()
+                guard auth.userId == owner else { return }
+                result = report
                 await load()
             } catch is CancellationError {
             } catch { self.error = error.localizedDescription }
         }
     }
 
-    private func runCommittee(_ fields: [String: Any]) async throws -> PrivateResearchReport {
+    private func runCommittee(_ fields: [String: Any], owner: UUID) async throws -> PrivateResearchReport {
         struct Started: Decodable { let id: UUID }
         struct Status: Decodable { let status: String; let failureMessage: String? }
         var request = fields
         request["background"] = true
-        let run: Started = try await PrivateMarketsAPI.request("research", request)
+        let run: Started = try await PrivateMarketsAPI.request("research", request, expectedUserID: owner)
         let target = ["id": run.id.uuidString]
         for _ in 0..<60 {
             try await Task.sleep(for: .seconds(3))
-            let progress: Status = try await PrivateMarketsAPI.request("research_status", target)
-            if progress.status == "complete" { return try await PrivateMarketsAPI.request("report", target) }
+            let progress: Status = try await PrivateMarketsAPI.request("research_status", target, expectedUserID: owner)
+            if progress.status == "complete" { return try await PrivateMarketsAPI.request("report", target, expectedUserID: owner) }
             if progress.status == "failed", let message = progress.failureMessage {
                 throw SecureBackend.FunctionError(status: 502, code: "COMMITTEE_UNAVAILABLE", message: message)
             }
@@ -189,6 +199,7 @@ struct PrivateResearchWorkspace: View {
 
 private struct PrivateSavedReportView: View {
     let item: PrivateSavedItem
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var report: PrivateResearchReport?
     @State private var error: String?
 
@@ -208,7 +219,14 @@ private struct PrivateSavedReportView: View {
             }
         }
         .task {
-            do { report = try await PrivateMarketsAPI.request("report", ["id": item.id.uuidString]) }
+            guard let owner = auth.userId else { return }
+            do {
+                let response: PrivateResearchReport = try await PrivateMarketsAPI.request(
+                    "report", ["id": item.id.uuidString], expectedUserID: owner)
+                try Task.checkCancellation()
+                if auth.userId == owner { report = response }
+            } catch is CancellationError {
+            }
             catch { self.error = error.localizedDescription }
         }
     }
@@ -331,6 +349,7 @@ private struct PrivateScenarioCalculator: View {
 
 struct PrivateDealRoom: View {
     @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
     @State private var items: [PrivateSavedItem] = []
     @State private var loading = false
     @State private var adding = false
@@ -357,10 +376,14 @@ struct PrivateDealRoom: View {
                         }
                             .swipeActions {
                                 Button("Delete", role: .destructive) {
+                                    guard let owner = auth.userId else { return }
                                     Task {
                                         do {
-                                            try await PrivateMarketsAPI.send("delete_document", ["id": item.id.uuidString])
+                                            try await PrivateMarketsAPI.send("delete_document", ["id": item.id.uuidString], expectedUserID: owner)
+                                            guard auth.userId == owner else { return }
                                             items.removeAll { $0.id == item.id }
+                                            try store.removeOwnershipEvidence(item.id, owner: owner)
+                                        } catch is CancellationError {
                                         } catch { self.error = error.localizedDescription }
                                     }
                                 }
@@ -386,13 +409,14 @@ struct PrivateDealRoom: View {
     }
 
     private func load() async {
-        guard auth.userId != nil else { return }
+        guard let owner = auth.userId else { return }
         loading = true
         error = nil
         defer { loading = false }
         do {
-            let response: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("documents")
+            let response: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("documents", expectedUserID: owner)
             try Task.checkCancellation()
+            guard auth.userId == owner else { return }
             items = response.items
         } catch is CancellationError {
         } catch { self.error = error.localizedDescription }
@@ -401,6 +425,7 @@ struct PrivateDealRoom: View {
 
 private struct PrivateExcerptView: View {
     let item: PrivateSavedItem
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var excerpt: String?
     @State private var error: String?
 
@@ -419,10 +444,12 @@ private struct PrivateExcerptView: View {
         .navigationTitle(item.title)
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            guard let owner = auth.userId else { return }
             struct Response: Decodable { let excerpt: String }
             do {
-                let response: Response = try await PrivateMarketsAPI.request("document", ["id": item.id.uuidString])
+                let response: Response = try await PrivateMarketsAPI.request("document", ["id": item.id.uuidString], expectedUserID: owner)
                 try Task.checkCancellation()
+                guard auth.userId == owner else { return }
                 excerpt = response.excerpt
             } catch is CancellationError {
             } catch {
@@ -432,12 +459,121 @@ private struct PrivateExcerptView: View {
     }
 }
 
+struct PrivateOwnershipEvidenceView: View {
+    let holding: PrivateHolding
+    let owner: UUID
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var items: [PrivateSavedItem] = []
+    @State private var loading = true
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            if let current = store.state.holdings.first(where: { $0.id == holding.id }), let id = current.ownershipEvidenceID {
+                Section("Linked evidence") {
+                    NavigationLink("Open ownership excerpt") {
+                        review(id: id, title: "Ownership excerpt", reviewed: current.ownershipReviewedOn)
+                    }
+                    Button("Unlink excerpt", role: .destructive) { update(nil) }
+                }
+            }
+            Section("Choose an excerpt") {
+                if loading { ProgressView("Loading your Deal Room") }
+                else if items.isEmpty { Text("Add an authorized ownership excerpt in Deal Room first.") }
+                ForEach(items) { item in
+                    NavigationLink(item.title) { review(id: item.id, title: item.title, reviewed: nil) }
+                }
+            }
+            if let error { Text(error).foregroundStyle(.secondary) }
+        }
+        .navigationTitle("Ownership Evidence")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func review(id: UUID, title: String, reviewed: Date?) -> some View {
+        PrivateOwnershipReviewView(id: id, title: title, owner: owner, reviewed: reviewed) {
+            try store.updateOwnershipEvidence(for: holding.id, owner: owner, documentID: id)
+        }
+    }
+
+    private func update(_ documentID: UUID?) {
+        do { try store.updateOwnershipEvidence(for: holding.id, owner: owner, documentID: documentID) }
+        catch { self.error = error.localizedDescription }
+    }
+
+    private func load() async {
+        loading = true
+        error = nil
+        defer { loading = false }
+        do {
+            let response: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("documents", expectedUserID: owner)
+            try Task.checkCancellation()
+            if auth.userId == owner { items = response.items }
+        } catch is CancellationError {
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct PrivateOwnershipReviewView: View {
+    let id: UUID
+    let title: String
+    let owner: UUID
+    let reviewed: Date?
+    let attach: () throws -> Void
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var excerpt: String?
+    @State private var acknowledged = false
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            if let excerpt {
+                Section("Excerpt") { Text(excerpt).textSelection(.enabled) }
+                Section("Review") {
+                    if let reviewed {
+                        LabeledContent("Reviewed by you", value: reviewed.formatted(date: .abbreviated, time: .omitted))
+                    }
+                    Toggle("I checked the excerpt against this holding", isOn: $acknowledged)
+                    Text("Your review records supporting evidence for a self-reported holding.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Button("Save evidence review") {
+                        do { try attach(); dismiss() }
+                        catch { self.error = error.localizedDescription }
+                    }
+                    .disabled(!acknowledged)
+                }
+            } else if error == nil {
+                ProgressView("Opening excerpt")
+            }
+            if let error { Text(error).foregroundStyle(.secondary) }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            struct Document: Decodable { let excerpt: String }
+            do {
+                let response: Document = try await PrivateMarketsAPI.request("document", ["id": id.uuidString], expectedUserID: owner)
+                try Task.checkCancellation()
+                if auth.userId == owner { excerpt = response.excerpt }
+            } catch is CancellationError {
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+}
+
 private struct PrivateExcerptEditor: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var excerpt = ""
     @State private var authorized = false
     @State private var importing = false
+    @State private var extraction: Task<Void, Never>?
+    @State private var usedOCR = false
     @State private var saving = false
     @State private var error: String?
 
@@ -447,7 +583,12 @@ private struct PrivateExcerptEditor: View {
                 TextField("Document and page or section", text: $title)
                 TextField("Text excerpt", text: $excerpt, axis: .vertical).lineLimit(6...12)
                 Text("\(excerpt.utf16.count) / 4,500 characters").font(.footnote).foregroundStyle(.secondary)
-                Button("Extract text from PDF or text file") { importing = true }
+                Button("Extract text from PDF or text file") { importing = true }.disabled(extraction != nil || saving)
+                if extraction != nil { ProgressView("Extracting text on this device") }
+                if usedOCR {
+                    Text("Review the recognized text against the scan before saving, especially dates and amounts.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Toggle("I have permission to store this excerpt", isOn: $authorized)
                 Text("Only the selected text is saved. Remove personal identifiers and confidential material outside your permission.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -460,58 +601,112 @@ private struct PrivateExcerptEditor: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save", action: save)
-                        .disabled(!authorized || saving || !(40...4_500).contains(excerpt.utf16.count) ||
+                        .disabled(!authorized || saving || extraction != nil || !(40...4_500).contains(excerpt.utf16.count) ||
                                   title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.utf16.count > 160)
                 }
             }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .plainText]) { result in
-                Task { await readFile(result) }
+                extraction = Task {
+                    defer { extraction = nil }
+                    await readFile(result)
+                }
             }
+            .onDisappear { extraction?.cancel() }
         }
     }
 
     private func readFile(_ result: Result<URL, Error>) async {
         do {
             let url = try result.get()
-            let (name, text) = try await Task.detached(priority: .userInitiated) {
-                let granted = url.startAccessingSecurityScopedResource()
-                defer { if granted { url.stopAccessingSecurityScopedResource() } }
-                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
-                guard let size, size <= 10 * 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
-                let text: String
-                if url.pathExtension.lowercased() == "pdf" {
-                    guard let pdf = PDFDocument(url: url), !pdf.isLocked else { throw CocoaError(.fileReadNoPermission) }
-                    var pages: [String] = []
-                    var length = 0
-                    for index in 0..<min(pdf.pageCount, 50) {
-                        guard let page = pdf.page(at: index)?.string else { continue }
-                        let part = "[Page \(index + 1)]\n" + page
-                        pages.append(part)
-                        length += part.utf16.count
-                        if length >= 4_500 { break }
-                    }
-                    text = pages.joined(separator: "\n\n")
-                } else {
-                    text = try String(contentsOf: url, encoding: .utf8)
-                }
-                return (url.deletingPathExtension().lastPathComponent, String(decoding: text.utf16.prefix(4_500), as: UTF16.self))
-            }.value
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CocoaError(.fileReadCorruptFile) }
-            if title.isEmpty { title = String(name.prefix(160)) }
-            excerpt = text
+            let worker = Task.detached(priority: .userInitiated) { try PrivateExcerptImport.read(url) }
+            let imported = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            try Task.checkCancellation()
+            if title.isEmpty { title = String(imported.name.prefix(160)) }
+            excerpt = imported.text
+            usedOCR = imported.usedOCR
             authorized = false
             error = nil
-        } catch { self.error = "No readable text was extracted. Use an unlocked PDF under 10 MB with selectable text or paste a permitted excerpt." }
+        } catch is CancellationError {
+        } catch {
+            self.error = "No readable text was extracted. Use an unlocked PDF or UTF-8 file under 10 MB, or paste an excerpt."
+        }
     }
 
     private func save() {
+        guard let owner = auth.userId else { return }
         saving = true
         Task {
             defer { saving = false }
             do {
-                try await PrivateMarketsAPI.send("save_document", ["title": title, "excerpt": excerpt, "authorized": authorized])
+                try await PrivateMarketsAPI.send("save_document", ["title": title, "excerpt": excerpt, "authorized": authorized],
+                                                 expectedUserID: owner)
                 dismiss()
+            } catch is CancellationError {
             } catch { self.error = error.localizedDescription }
         }
+    }
+}
+
+private enum PrivateExcerptImport {
+    nonisolated static func read(_ url: URL) throws -> (name: String, text: String, usedOCR: Bool) {
+        let granted = url.startAccessingSecurityScopedResource()
+        defer { if granted { url.stopAccessingSecurityScopedResource() } }
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        guard let size, size <= 10 * 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+        try Task.checkCancellation()
+        let name = url.deletingPathExtension().lastPathComponent
+        var text = ""
+        var usedOCR = false
+        if url.pathExtension.lowercased() == "pdf" {
+            guard let pdf = PDFDocument(url: url), !pdf.isLocked else { throw CocoaError(.fileReadNoPermission) }
+            var scansAttempted = 0
+            for index in 0..<min(pdf.pageCount, 50) {
+                try Task.checkCancellation()
+                guard let page = pdf.page(at: index) else { continue }
+                var extracted = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if extracted.isEmpty, scansAttempted < 8, let reference = page.pageRef {
+                    scansAttempted += 1
+                    extracted = (try? recognize(reference)) ?? ""
+                    usedOCR = usedOCR || !extracted.isEmpty
+                }
+                if !extracted.isEmpty {
+                    if !text.isEmpty { text += "\n\n" }
+                    text += "[Page \(index + 1)]\n" + extracted
+                }
+                if text.utf16.count >= 4_500 { break }
+            }
+        } else {
+            text = try String(contentsOf: url, encoding: .utf8)
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+        return (name, String(decoding: text.utf16.prefix(4_500), as: UTF16.self), usedOCR)
+    }
+
+    nonisolated private static func recognize(_ page: CGPDFPage) throws -> String {
+        let box = page.getBoxRect(.cropBox)
+        guard box.width.isFinite, box.height.isFinite, box.width > 0, box.height > 0 else { return "" }
+        let rotated = page.rotationAngle % 180 != 0
+        let size = rotated ? CGSize(width: box.height, height: box.width) : box.size
+        let scale = 2_400 / max(size.width, size.height)
+        let width = max(1, Int((size.width * scale).rounded()))
+        let height = max(1, Int((size.height * scale).rounded()))
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        guard let canvas = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                     bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return "" }
+        canvas.setFillColor(gray: 1, alpha: 1)
+        canvas.fill(rect)
+        canvas.concatenate(page.getDrawingTransform(.cropBox, rect: rect, rotate: 0, preserveAspectRatio: true))
+        canvas.drawPDFPage(page)
+        guard let image = canvas.makeImage() else { return "" }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 }

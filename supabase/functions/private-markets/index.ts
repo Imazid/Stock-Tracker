@@ -1,7 +1,8 @@
-import { AI_LIMITS } from "../_shared/ai/proxy.ts";
+import { AI_LIMITS, type AiProxyDeps } from "../_shared/ai/proxy.ts";
 import { authenticatedUserId, errorResponse, jsonResponse, readJson, serviceClient } from "../_shared/secure/edge.ts";
 import { open, parseKeyring, seal, type SealedSecret } from "../_shared/secure/envelope.ts";
 import { buildResearch, type Evidence, ResearchError } from "../_shared/private-markets/research.ts";
+import { currentStatus, type Discoverable, interpretDiscovery, matchDiscovery } from "../_shared/private-markets/discovery.ts";
 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -14,11 +15,14 @@ type CatalogDeal = {
   provider: string;
   category: string;
   status: string;
+  verified_at: string;
   minimum: number | null;
   eligibility: string;
   jurisdictions: string[];
   round: {
     stage: string;
+    closes_at: string | null;
+    verified_at: string;
     raised: number | null;
     target: number | null;
     valuation: number | null;
@@ -37,7 +41,9 @@ function dealEvidence(deal: CatalogDeal): string {
   return [
     `Company: ${company.name}`,
     `Sector: ${company.sector}; country: ${company.country}`,
-    `Round: ${round.stage}; status: ${deal.status}`,
+    `Round: ${round.stage}; status: ${currentStatus(deal)}`,
+    `Source verified: ${deal.verified_at}`,
+    round.closes_at && `Published deadline: ${round.closes_at}`,
     `Provider: ${deal.provider}; category: ${deal.category}`,
     money("Minimum", deal.minimum), money("Raised", round.raised), money("Target", round.target),
     money("Valuation", round.valuation),
@@ -51,6 +57,37 @@ function dealEvidence(deal: CatalogDeal): string {
 const context = (kind: string, userId: string, id: string) => `private_${kind}:${userId}:${id}`;
 const keys = () => parseKeyring(Deno.env.get("CREDENTIAL_KEKS"), Deno.env.get("CREDENTIAL_ACTIVE_KEK"));
 const fail = (status: number, code: string, message: string) => { throw new ResearchError(status, code, message); };
+
+function aiDependencies(admin: ReturnType<typeof serviceClient>, documentProvider?: "openai" | "gemini"): AiProxyDeps {
+  const openAIKey = Deno.env.get("OPENAI_API_KEY");
+  const limit = Number.parseInt(Deno.env.get("AI_DAILY_LIMIT") ?? "", 10);
+  return {
+    config: {
+      geminiKey: documentProvider === "gemini" || (!documentProvider && !openAIKey) ? Deno.env.get("GEMINI_API_KEY") : undefined,
+      openAIKey: documentProvider !== "gemini" ? openAIKey : undefined,
+      dailyLimit: Number.isFinite(limit) && limit >= 0 ? limit : AI_LIMITS.defaultDailyLimit,
+      timeoutMs: 10_000,
+    },
+    quota: {
+      async consume(uid, ceiling) {
+        const { data, error } = await admin.rpc("consume_ai_quota", { p_user_id: uid, p_limit: ceiling }).single();
+        if (error) {
+          console.error("private research quota", error.code);
+          throw new ResearchError(503, "RESEARCH_QUOTA_FAILED", "Research quota could not be checked.");
+        }
+        const row = data as { allowed: boolean; used: number };
+        return { allowed: row.allowed, used: row.used };
+      },
+    },
+    fetch,
+  };
+}
+
+function catalogue(admin: ReturnType<typeof serviceClient>) {
+  return admin.from("investment_opportunities").select(publicDealFields)
+    .eq("published", true).eq("round.published", true).eq("round.company.published", true)
+    .eq("round.share_classes.published", true).order("verified_at", { ascending: false }).order("id");
+}
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return errorResponse(405, "METHOD_NOT_ALLOWED", "Use POST.");
@@ -68,9 +105,7 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "catalog") {
-      const { data, error } = await admin.from("investment_opportunities").select(publicDealFields)
-        .eq("published", true).eq("round.published", true).eq("round.company.published", true)
-        .eq("round.share_classes.published", true).order("verified_at", { ascending: false }).order("id").range(0, 499);
+      const { data, error } = await catalogue(admin).range(0, 499);
       if (error) throw error;
       return jsonResponse(200, { deals: data });
     }
@@ -82,6 +117,19 @@ Deno.serve(async (req) => {
       if (error) throw error;
     };
     switch (body.action) {
+      case "discover": {
+        const question = body.question;
+        if (typeof question !== "string" || !question.trim() || question.length > 600) {
+          return errorResponse(400, "INVALID_DISCOVERY", "Enter a search question up to 600 characters.");
+        }
+        const { data, error } = await catalogue(admin).range(0, 500).returns<Discoverable[]>();
+        if (error) throw error;
+        const window = data.slice(0, 500);
+        const sectors = [...new Set(window.map((deal) => deal.round.company.sector))].slice(0, 60);
+        const criteria = await interpretDiscovery(userId, question.trim(), sectors, aiDependencies(admin));
+        const deals = matchDiscovery(window, criteria);
+        return jsonResponse(200, { criteria, deals: deals.slice(0, 100), matched_count: deals.length, scanned_all: data.length <= 500 });
+      }
       case "updates": {
         const ids = body.company_ids;
         if (!Array.isArray(ids) || ids.length > 100 || ids.some((id) => typeof id !== "string" || !uuid.test(id))) {
@@ -315,28 +363,9 @@ Deno.serve(async (req) => {
         const research = async () => {
           try {
             await audit(ids.length ? "document_ai_consent" : "public_research_started", runId);
-            const limit = Number.parseInt(Deno.env.get("AI_DAILY_LIMIT") ?? "", 10);
-            const report = await buildResearch(userId, question, evidence, mode, {
-              config: {
-                geminiKey: (ids.length === 0 && !Deno.env.get("OPENAI_API_KEY")) ||
-                    (ids.length > 0 && documentProvider === "gemini") ? Deno.env.get("GEMINI_API_KEY") : undefined,
-                openAIKey: ids.length === 0 || documentProvider === "openai" ? Deno.env.get("OPENAI_API_KEY") : undefined,
-                dailyLimit: Number.isFinite(limit) && limit >= 0 ? limit : AI_LIMITS.defaultDailyLimit,
-                timeoutMs: mode === "committee" ? 22_000 : 10_000,
-              },
-              quota: {
-                async consume(uid, ceiling) {
-                  const { data, error } = await admin.rpc("consume_ai_quota", { p_user_id: uid, p_limit: ceiling }).single();
-                  if (error) {
-                    console.error("private research quota", error.code);
-                    throw new ResearchError(503, "RESEARCH_QUOTA_FAILED", "Research quota could not be checked (" + error.code + ").");
-                  }
-                  const row = data as { allowed: boolean; used: number };
-                  return { allowed: row.allowed, used: row.used };
-                },
-              },
-              fetch,
-            });
+            const deps = aiDependencies(admin, ids.length && approvedProvider ? documentProvider : undefined);
+            if (mode === "committee") deps.config.timeoutMs = 22_000;
+            const report = await buildResearch(userId, question, evidence, mode, deps);
             const payload = { ...report, id: runId, sources, question, created_at: new Date().toISOString() };
             const sealed = await seal(keyring, JSON.stringify(payload), context("report", userId, runId));
             const result = await admin.rpc("finish_private_research", {
