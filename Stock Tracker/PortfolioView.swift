@@ -61,6 +61,8 @@ struct PortfolioView: View {
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var insightService: AIInsightService
     @Environment(\.theme) private var theme
+    @EnvironmentObject private var privateMarkets: PrivateMarketsStore
+    @Environment(\.selectTab) private var selectTab
     @ObservedObject private var broker = SnapTradeViewModel.shared
 
     @AppStorage("portfolioSegment") private var segmentRaw = PortfolioSegment.holdings.rawValue
@@ -154,6 +156,12 @@ struct PortfolioView: View {
                                            .portfolioRow(bottom: DS.Space.xxl)
                     case .income:      PortfolioIncomeTab().portfolioRow(bottom: DS.Space.xxl)
                     }
+                }
+                if !privateMarkets.state.holdings.isEmpty {
+                    UnifiedPrivateAllocation()
+                        .portfolioRow(bottom: DS.Space.m)
+                    Button("Open Private Markets") { selectTab(.privateMarkets) }
+                        .portfolioRow(bottom: DS.Space.l)
                 }
                 // Practice (paper) portfolios sit apart from real holdings, always labelled.
                 PracticePortfolioSection()

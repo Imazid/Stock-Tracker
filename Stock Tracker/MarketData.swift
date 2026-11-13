@@ -35,6 +35,7 @@ final class MarketData: ObservableObject {
         // Mirror for the network layer, which converts non-USD quotes on the way in.
         didSet { FXRates.shared.update(exchangeRates) }
     }
+    @Published private(set) var verifiedFXRates: [String: Double] = ["USD": 1]
     /// Live S&P 500 level (^GSPC). Zero until the first refresh — never a placeholder level.
     @Published var sp500Index: MarketIndex = MarketIndex(
         name: "S&P 500",
@@ -111,7 +112,7 @@ final class MarketData: ObservableObject {
     static let supportedCurrencies = ["USD", "AUD", "EUR", "GBP", "JPY", "CAD"]
     /// Every currency a followed listing can be quoted in, so Yahoo prices convert to USD
     /// correctly (London, Zurich, Hong Kong, Singapore, Seoul and Mumbai included).
-    static let quoteCurrencies = ["AUD", "EUR", "GBP", "JPY", "CAD", "CHF", "HKD", "SGD", "KRW", "INR"]
+    static let quoteCurrencies = ["AUD", "EUR", "GBP", "JPY", "CAD", "CHF", "HKD", "SGD", "KRW", "INR", "NZD"]
 
     // MARK: - Computed Portfolio Metrics
 
@@ -611,6 +612,7 @@ final class MarketData: ObservableObject {
         let rates = await quoteService.fetchExchangeRates(for: currencies)
         for (code, rate) in rates {
             exchangeRates[code] = rate
+            if rate.isFinite, rate > 0 { verifiedFXRates[code] = rate }
         }
     }
 

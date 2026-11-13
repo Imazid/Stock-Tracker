@@ -1,0 +1,177 @@
+import Foundation
+
+public enum PrivateAssetClass: String, CaseIterable, Codable, Sendable {
+    case startupEquity = "Startup equity"
+    case ventureFund = "Venture fund"
+    case privateEquity = "Private equity"
+    case syndicate = "Syndicate or SPV"
+    case secondary = "Private secondary"
+    case other = "Other alternative"
+
+    public var isFund: Bool { self == .ventureFund || self == .privateEquity || self == .syndicate }
+}
+
+public struct PrivateCashFlow: Codable, Sendable, Equatable {
+    public enum Kind: String, CaseIterable, Codable, Sendable {
+        case contribution = "Contribution"
+        case distribution = "Distribution"
+        case capitalCall = "Capital call"
+        case sale = "Sale proceeds"
+
+        public var isOutflow: Bool { self == .contribution || self == .capitalCall }
+    }
+
+    public var id: UUID
+    public var kind: Kind
+    public var amount: Decimal
+    public var date: Date
+    public var settled: Bool
+    public var originalDueDate: Date?
+    public var disposedCost: Decimal?
+    public var source: String
+
+    public init(id: UUID = UUID(), kind: Kind, amount: Decimal, date: Date, settled: Bool, source: String,
+                disposedCost: Decimal? = nil) {
+        self.id = id
+        self.kind = kind
+        self.amount = amount
+        self.date = date
+        self.settled = settled
+        self.originalDueDate = kind == .capitalCall && !settled ? date : nil
+        self.disposedCost = kind == .sale ? disposedCost : nil
+        self.source = source
+    }
+}
+
+public struct PrivateValuation: Codable, Sendable, Equatable {
+    public var value: Decimal
+    public var date: Date
+    public var source: String
+    public var method: String
+
+    public init(value: Decimal, date: Date, source: String, method: String) {
+        self.value = value
+        self.date = date
+        self.source = source
+        self.method = method
+    }
+
+    public func isStale(asOf: Date = .now) -> Bool { asOf.timeIntervalSince(date) > 90 * 86_400 }
+}
+
+public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
+    public let id: UUID
+    public var name: String
+    public var assetClass: PrivateAssetClass
+    public var currency: String
+    public var commitment: Decimal?
+    public var units: Decimal?
+    public var ownershipPercent: Decimal?
+    public var shareClass: String
+    public var lockupUntil: Date?
+    public var valuations: [PrivateValuation]
+    public var cashFlows: [PrivateCashFlow]
+
+    public init(
+        id: UUID = UUID(), name: String, assetClass: PrivateAssetClass, currency: String, commitment: Decimal? = nil,
+        units: Decimal? = nil, ownershipPercent: Decimal? = nil, shareClass: String = "", lockupUntil: Date? = nil,
+        valuations: [PrivateValuation] = [], cashFlows: [PrivateCashFlow] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.assetClass = assetClass
+        self.currency = currency
+        self.commitment = commitment
+        self.units = units
+        self.ownershipPercent = ownershipPercent
+        self.shareClass = shareClass
+        self.lockupUntil = lockupUntil
+        self.valuations = valuations
+        self.cashFlows = cashFlows
+    }
+
+    public func valuation(asOf: Date = .now) -> PrivateValuation? {
+        valuations.filter { $0.date <= asOf }.max { $0.date < $1.date }
+    }
+
+    public func metrics(asOf: Date = .now) -> PrivateMetrics {
+        let settled = cashFlows.filter { $0.settled && $0.date <= asOf }
+        let paid = settled.filter { $0.kind.isOutflow }.reduce(Decimal.zero) { $0 + $1.amount }
+        let returned = settled.filter { !$0.kind.isOutflow }.reduce(Decimal.zero) { $0 + $1.amount }
+        let valuation = valuation(asOf: asOf)
+        let value = valuation?.value
+        // Flows later than the valuation could already be included in a future mark.
+        // Publish ratios and XIRR only when the mark covers all included flows.
+        let comparable = valuation.map { mark in settled.allSatisfy { $0.date <= mark.date } } ?? false
+        let multiple = comparable && paid > 0 ? value.map { ($0 + returned) / paid } : nil
+        let sales = settled.filter { $0.kind == .sale }
+        let costOfSales = sales.compactMap(\.disposedCost)
+        let disposed = costOfSales.reduce(Decimal.zero, +)
+        let validBasis = paid > 0 && costOfSales.count == sales.count && disposed <= paid
+        let realized = validBasis && !sales.isEmpty ? sales.reduce(Decimal.zero) { $0 + $1.amount } - disposed : nil
+        let unrealized = validBasis && comparable && !settled.contains(where: { $0.kind == .distribution })
+            ? value.map { $0 - (paid - disposed) } : nil
+        let xirr = valuation.flatMap { mark in
+            guard comparable else { return nil as Double? }
+            return PrivateMath.xirr(
+                settled.map { ($0.date, $0.kind.isOutflow ? -$0.amount : $0.amount) } + [(mark.date, mark.value)]
+            )
+        }
+        return PrivateMetrics(paid: paid, returned: returned,
+                              uncalled: commitment.map { max(0, $0 - paid) },
+                              pendingCalls: cashFlows.filter { $0.kind == .capitalCall && !$0.settled }.reduce(0) { $0 + $1.amount },
+                              netGain: comparable ? value.map { $0 + returned - paid } : nil,
+                              realizedGain: realized, unrealizedGain: unrealized, multiple: multiple, xirr: xirr,
+                              dpi: assetClass.isFund && paid > 0 ? returned / paid : nil)
+    }
+}
+
+public struct PrivateMetrics: Sendable {
+    public let paid: Decimal
+    public let returned: Decimal
+    public let uncalled: Decimal?
+    public let pendingCalls: Decimal
+    public let netGain: Decimal?
+    public let realizedGain: Decimal?
+    public let unrealizedGain: Decimal?
+    public let multiple: Decimal?
+    public let xirr: Double?
+    public let dpi: Decimal?
+}
+
+public enum PrivateMath {
+    public static func ownership(investment: Decimal, postMoney: Decimal, nextRoundPostMoney: Decimal?, nextRoundRaise: Decimal?) -> Decimal? {
+        guard investment > 0, postMoney > 0, investment <= postMoney else { return nil }
+        let initial = investment / postMoney
+        switch (nextRoundPostMoney, nextRoundRaise) {
+        case (nil, nil): return initial
+        case let (post?, raise?) where post > 0 && raise >= 0 && raise < post:
+            return initial * (1 - raise / post)
+        default: return nil
+        }
+    }
+
+    /// Reports a unique, bracketed annual rate for conventional dated cash flows.
+    /// A later contribution after net positive proceeds can create multiple roots.
+    public static func xirr(_ cashFlows: [(Date, Decimal)]) -> Double? {
+        let grouped = Dictionary(grouping: cashFlows, by: { $0.0 })
+            .map { (date: $0.key, amount: $0.value.reduce(Decimal.zero) { $0 + $1.1 }) }
+            .filter { $0.amount != 0 }.sorted { $0.date < $1.date }
+        guard let first = grouped.first, let last = grouped.last,
+              first.amount < 0, last.amount > 0, last.date > first.date else { return nil }
+        let positives = grouped.drop(while: { $0.amount < 0 })
+        guard positives.allSatisfy({ $0.amount > 0 }) else { return nil }
+        let series = grouped.map { ($0.date.timeIntervalSince(first.date) / (365 * 86_400), NSDecimalNumber(decimal: $0.amount).doubleValue) }
+        func npv(_ logRate: Double) -> Double {
+            series.reduce(0) { $0 + $1.1 * exp(-logRate * $1.0) }
+        }
+        var low = -16.0
+        var high = 16.0
+        guard npv(low) > 0, npv(high) < 0 else { return nil }
+        for _ in 0..<100 {
+            let middle = (low + high) / 2
+            if npv(middle) > 0 { low = middle } else { high = middle }
+        }
+        return expm1((low + high) / 2)
+    }
+}

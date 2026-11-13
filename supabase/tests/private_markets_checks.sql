@@ -1,0 +1,110 @@
+-- Run only against the throwaway database created by scripts/verify-migrations.sh.
+\set QUIET 1
+\pset tuples_only on
+\pset format unaligned
+begin;
+
+create function pg_temp.expect_error(statement text, expected text, label text) returns text language plpgsql as $$
+begin
+  execute statement;
+  return 'FAIL ' || label || ' (allowed)';
+exception when others then
+  if sqlstate = expected then return 'ok   ' || label; end if;
+  return 'FAIL ' || label || ' (' || sqlstate || ': ' || sqlerrm || ')';
+end $$;
+
+select format('grant usage on schema %I to anon, authenticated, service_role', nspname)
+  from pg_namespace where oid = pg_my_temp_schema() \gexec
+
+insert into auth.users (id,email) values
+  ('a0000000-0000-0000-0000-000000000001','pm-a@example.test'),
+  ('a0000000-0000-0000-0000-000000000002','pm-b@example.test');
+insert into public.private_companies (id,name,sector,country,source_url,verified_at,published) values
+  ('a0000000-0000-0000-0000-000000000010','SQL fixture','Technology','AU','https://example.test/company',now(),true),
+  ('a0000000-0000-0000-0000-000000000011','Unpublished SQL fixture','Technology','AU','https://example.test/draft',now(),false);
+insert into public.funding_rounds (id,company_id,stage,currency,closes_at,source_url,verified_at,published) values
+  ('a0000000-0000-0000-0000-000000000020','a0000000-0000-0000-0000-000000000010','Seed','AUD',now()+interval '1 day','https://example.test/round',now(),true),
+  ('a0000000-0000-0000-0000-000000000021','a0000000-0000-0000-0000-000000000011','Seed','AUD',now()+interval '1 day','https://example.test/draft-round',now(),true);
+insert into public.investment_opportunities
+  (id,round_id,provider,category,status,minimum,eligibility,jurisdictions,source_url,handoff_url,offer_document_url,verified_at,published) values
+  ('a0000000-0000-0000-0000-000000000030','a0000000-0000-0000-0000-000000000020','birchal','Crowdfunding','open',100,'retail',array['AU'],
+    'https://www.birchal.com/example-one','https://www.birchal.com/example-one','https://example.test/offer',now(),true),
+  ('a0000000-0000-0000-0000-000000000031','a0000000-0000-0000-0000-000000000020','birchal','Crowdfunding','open',100,'retail',array['AU'],
+    'https://www.birchal.com/example-two','https://www.birchal.com/example-two','https://example.test/offer',now(),true),
+  ('a0000000-0000-0000-0000-000000000032','a0000000-0000-0000-0000-000000000021','birchal','Crowdfunding','open',100,'retail',array['AU'],
+    'https://www.birchal.com/example-draft','https://www.birchal.com/example-draft','https://example.test/offer',now(),true);
+insert into public.investor_profiles values ('a0000000-0000-0000-0000-000000000001','AU','wholesale');
+insert into public.private_holdings (id,user_id,name,asset_class,currency) values
+  ('a0000000-0000-0000-0000-000000000040','a0000000-0000-0000-0000-000000000002','Other user','Venture fund','AUD');
+
+set role anon;
+select case when count(*) = 0 then 'ok   unpublished ancestor hides opportunity' else 'FAIL unpublished opportunity was visible' end
+  from public.investment_opportunities where id = 'a0000000-0000-0000-0000-000000000032';
+select pg_temp.expect_error('select handoff_url from public.investment_opportunities','42501','public catalog excludes application URLs');
+reset role;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub','a0000000-0000-0000-0000-000000000001',true) is not null;
+select case when count(*) = 0 then 'ok   another tenant holding is invisible' else 'FAIL cross-tenant holding visible' end
+  from public.private_holdings where id = 'a0000000-0000-0000-0000-000000000040';
+select pg_temp.expect_error('select sealed from public.deal_documents','42501','mobile clients cannot read encrypted document rows directly');
+select pg_temp.expect_error('update public.investor_eligibility set expires_at = now()','42501','investors cannot verify themselves');
+select pg_temp.expect_error('update public.investment_commitments set status = ''confirmed''','42501','investors cannot confirm applications');
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer')$q$,
+  '42501','investors cannot bypass the edge authentication path');
+reset role;
+
+set role service_role;
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer')$q$,
+  '42501','approval gate is closed by default');
+insert into public.private_market_rules values ('AU','TEST-VERSION',now() - interval '1 minute',now(),
+  'https://www.asic.gov.au/crowd-sourced-funding',10000,5,true);
+-- Remove any ordering dependency on the date the tests run.
+update public.private_market_rules set effective_at = '-infinity' where version = 'AU-CSF-2026-11';
+insert into public.private_provider_approvals values ('birchal','AU','TEST-VERSION','fixture agreement',now()+interval '1 day',true);
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer')$q$,
+  '42501','self-declared wholesale is insufficient');
+insert into public.provider_connections (id,user_id,provider,external_subject) values
+  ('a0000000-0000-0000-0000-000000000050','a0000000-0000-0000-0000-000000000001','birchal','fixture-account');
+insert into public.investor_eligibility (user_id,provider,connection_id,jurisdiction,verified_class,verified_at,expires_at,evidence_reference)
+  values ('a0000000-0000-0000-0000-000000000001','birchal','a0000000-0000-0000-0000-000000000050','AU','retail',now()-interval '1 hour',now()+interval '1 day','fixture-evidence');
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',99,'https://example.test/offer')$q$,
+  '22023','minimum investment is enforced');
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/old-offer')$q$,
+  '22023','offer document version is enforced');
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',10001,'https://example.test/offer')$q$,
+  '22023','retail crowd-funding cap is enforced');
+select case when count(*) = 1 then 'ok   eligible handoff created' else 'FAIL handoff missing' end
+  from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer');
+select case when h.commitment_id = c.id and c.status = 'handoff' and c.confirmed_at is null
+  then 'ok   retries are idempotent and do not confirm ownership' else 'FAIL retry changed state' end
+  from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer') h
+  join public.investment_commitments c on c.id = h.commitment_id;
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9600,'https://example.test/offer')$q$,
+  '23505','conflicting duplicate handoff is refused');
+select public.record_private_provider_event('birchal','fixture-account',
+  (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
+  'test-receipt','application_received',now()-interval '1 minute',now()+interval '5 days');
+select pg_temp.expect_error($q$select public.record_private_provider_event('birchal','different-account',
+  (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
+  'test-receipt','confirmed',now(),null,25,9500)$q$,'42501','provider events require matching connected account');
+select pg_temp.expect_error($q$select public.record_private_provider_event('birchal','fixture-account',
+  (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
+  'test-receipt','confirmed',now())$q$,'22023','confirmation requires units and settled capital');
+select public.record_private_provider_event('birchal','fixture-account',
+  (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
+  'test-receipt','confirmed',now(),null,25,9500);
+select public.record_private_provider_event('birchal','fixture-account',
+  (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
+  'test-receipt','confirmed',now(),null,25,9500);
+select case when count(*) = 1 and min(units) = 25 and min(settled_amount) = 9500
+  then 'ok   provider confirmation atomically creates one holding' else 'FAIL provider holding' end
+  from public.private_holdings where commitment_id is not null;
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000031',501,'https://example.test/offer')$q$,
+  '22023','recorded applications count toward the company and intermediary cap');
+update public.investment_opportunities set verified_at = now() - interval '25 hours' where id = 'a0000000-0000-0000-0000-000000000031';
+select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000031',100,'https://example.test/offer')$q$,
+  '22023','stale listing cannot start a handoff');
+select pg_temp.expect_error('update public.investment_audit_logs set action = ''altered''','42501','service cannot rewrite the audit log');
+reset role;
+rollback;

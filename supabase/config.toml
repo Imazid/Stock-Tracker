@@ -408,6 +408,9 @@ verify_jwt = false
 [functions.ai-proxy]
 verify_jwt = false
 
+[functions.private-markets]
+verify_jwt = false
+
 [functions.market-data-proxy]
 verify_jwt = false
 
