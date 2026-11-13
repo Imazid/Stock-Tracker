@@ -105,6 +105,18 @@ select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a00
 update public.investment_opportunities set verified_at = now() - interval '25 hours' where id = 'a0000000-0000-0000-0000-000000000031';
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000031',100,'https://example.test/offer')$q$,
   '22023','stale listing cannot start a handoff');
+insert into public.agent_analysis_runs (id,user_id,status) values
+  ('a0000000-0000-0000-0000-000000000060','a0000000-0000-0000-0000-000000000001','running');
+select pg_temp.expect_error($q$select public.finish_private_research('a0000000-0000-0000-0000-000000000002',
+  'a0000000-0000-0000-0000-000000000060','Cross-account write','{}')$q$,
+  '22023','another tenant cannot finish a research run');
+select public.finish_private_research('a0000000-0000-0000-0000-000000000001',
+  'a0000000-0000-0000-0000-000000000060','Research title','{}');
+select case when a.status = 'complete' and r.title = 'Research title'
+  then 'ok   research finalization saves the display title and updates the run'
+  else 'FAIL research finalization' end
+  from public.agent_analysis_runs a join public.research_reports r on r.id = a.report_id
+  where a.id = 'a0000000-0000-0000-0000-000000000060';
 select pg_temp.expect_error('update public.investment_audit_logs set action = ''altered''','42501','service cannot rewrite the audit log');
 reset role;
 rollback;

@@ -1,3 +1,4 @@
+// deno-lint-ignore no-import-prefix
 import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import { buildResearch, parseFinding, ResearchError } from "../_shared/private-markets/research.ts";
 
