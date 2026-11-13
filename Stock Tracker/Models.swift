@@ -223,6 +223,35 @@ struct PortfolioHolding: Identifiable, Codable {
 
 // MARK: - Transactions
 
+nonisolated struct TradeProvenance: Codable, Equatable, Sendable {
+    enum Source: String, Codable, Sendable {
+        case manualTrade = "manual_trade"
+        case openingPosition = "opening_position"
+        case csvPosition = "csv_position"
+        case brokerPosition = "broker_position"
+    }
+
+    enum Conversion: String, Codable, Sendable {
+        case usd
+        case appReference = "app_reference"
+        case appFallback = "app_fallback"
+    }
+
+    let source: Source
+    let currency: String?
+    let unitPrice: Double?
+    let fees: Double?
+    /// The app's multiplier for USD bookkeeping when recorded or edited.
+    let usdPerUnit: Double?
+    let conversion: Conversion?
+    let conversionRecordedAt: String?
+
+    func withAmounts(unitPrice: Double?, fees: Double?) -> Self {
+        Self(source: source, currency: currency, unitPrice: unitPrice, fees: fees,
+             usdPerUnit: usdPerUnit, conversion: conversion, conversionRecordedAt: conversionRecordedAt)
+    }
+}
+
 struct Transaction: Identifiable, Codable, Equatable {
     let id: UUID
     let date: Date
@@ -234,6 +263,7 @@ struct Transaction: Identifiable, Codable, Equatable {
     /// Average cost (USD) when a sale was recorded. Used only when the transaction list
     /// doesn't show how the shares were bought (older holdings, broker imports).
     let avgCostAtSale: Double?
+    let provenance: TradeProvenance?
 
     init(
         id: UUID = UUID(),
@@ -242,7 +272,8 @@ struct Transaction: Identifiable, Codable, Equatable {
         pricePerShare: Double,
         type: TransactionType,
         fees: Double = 0,
-        avgCostAtSale: Double? = nil
+        avgCostAtSale: Double? = nil,
+        provenance: TradeProvenance? = nil
     ) {
         self.id = id
         self.date = date
@@ -251,6 +282,7 @@ struct Transaction: Identifiable, Codable, Equatable {
         self.type = type
         self.fees = fees
         self.avgCostAtSale = avgCostAtSale
+        self.provenance = provenance
     }
 
     init(from decoder: Decoder) throws {
@@ -263,6 +295,7 @@ struct Transaction: Identifiable, Codable, Equatable {
         // Added 2026-10-17; older saves don't have them.
         fees = try c.decodeIfPresent(Double.self, forKey: .fees) ?? 0
         avgCostAtSale = try c.decodeIfPresent(Double.self, forKey: .avgCostAtSale)
+        provenance = try c.decodeIfPresent(TradeProvenance.self, forKey: .provenance)
     }
 
     /// Shares × price, before fees.

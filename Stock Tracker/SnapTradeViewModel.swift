@@ -344,8 +344,20 @@ final class SnapTradeViewModel: ObservableObject {
     // MARK: - Portfolio merge
 
     struct SyncPlan {
-        struct Add { let asset: Asset; let quantity: Double; let costPerUnit: Double; let currency: String }
-        struct Update { let holdingID: UUID; let symbol: String; let quantity: Double; let avgCostUSD: Double }
+        struct Add {
+            let asset: Asset
+            let quantity: Double
+            let costPerUnit: Double
+            let currency: String
+            let costKnown: Bool
+        }
+        struct Update {
+            let holdingID: UUID
+            let symbol: String
+            let quantity: Double
+            let avgCostUSD: Double
+            let provenance: TradeProvenance
+        }
 
         var adds: [Add] = []
         var updates: [Update] = []
@@ -387,8 +399,18 @@ final class SnapTradeViewModel: ObservableObject {
             let quantity = lots.reduce(0) { $0 + $1.quantity }
             guard quantity > 0, let first = lots.first else { continue }
             let currency = first.currency.isEmpty ? "USD" : first.currency.uppercased()
-            let costTotal = lots.reduce(0.0) { $0 + ($1.averageCost ?? $1.currentPrice ?? 0) * $1.quantity }
-            let costPerUnit = costTotal / quantity
+            let factor = FXRates.shared.toUSDFactor(from: currency) ?? 1
+            let costUSD = lots.reduce(0.0) { total, lot in
+                let conversion = FXRates.shared.toUSDFactor(from: lot.currency) ?? 1
+                return total + (lot.averageCost ?? lot.currentPrice ?? 0) * lot.quantity * conversion
+            } / quantity
+            let costKnown = lots.allSatisfy { lot in
+                guard lot.currency.uppercased() == currency, let average = lot.averageCost else { return false }
+                return average.isFinite && average >= 0
+            }
+            let costPerUnit = costKnown
+                ? lots.reduce(0.0) { $0 + ($1.averageCost ?? 0) * $1.quantity } / quantity
+                : costUSD / factor
             let secType = first.securityType?.uppercased() ?? ""
             let isCrypto = secType.contains("CRYPTO") || secType.contains("DIGITAL") || Self.knownCrypto.contains(symbol)
             let exchange = isCrypto ? "Crypto"
@@ -398,9 +420,12 @@ final class SnapTradeViewModel: ObservableObject {
             if let existing = marketData.portfolio.first(where: { $0.asset.symbol == symbol && $0.asset.kind == kind }) {
                 if imported.contains(existing.id) {
                     seenImported.insert(existing.id)
-                    let usd = costPerUnit * (FXRates.shared.toUSDFactor(from: currency) ?? 1)
-                    if abs(existing.shares - quantity) > 1e-9 || abs(existing.avgCost - usd) > 0.005 {
-                        plan.updates.append(.init(holdingID: existing.id, symbol: symbol, quantity: quantity, avgCostUSD: usd))
+                    if abs(existing.shares - quantity) > 1e-9 || abs(existing.avgCost - costUSD) > 0.005 ||
+                        existing.transactions.first?.provenance == nil {
+                        let provenance = marketData.tradeProvenance(source: .brokerPosition, currency: currency,
+                                                                   unitPrice: costKnown ? costPerUnit : nil, fees: nil, factor: factor)
+                        plan.updates.append(.init(holdingID: existing.id, symbol: symbol, quantity: quantity,
+                                                  avgCostUSD: costUSD, provenance: provenance))
                     }
                 } else {
                     plan.skipped.append(symbol)
@@ -408,10 +433,10 @@ final class SnapTradeViewModel: ObservableObject {
                 continue
             }
 
-            let priceUSD = (first.currentPrice ?? 0) * (FXRates.shared.toUSDFactor(from: currency) ?? 1)
+            let priceUSD = (first.currentPrice ?? 0) * factor
             let asset = Asset(symbol: symbol, name: first.displayName, price: priceUSD, change: 0, changePercent: 0,
                               volume: 0, kind: kind, exchange: exchange)
-            plan.adds.append(.init(asset: asset, quantity: quantity, costPerUnit: costPerUnit, currency: currency))
+            plan.adds.append(.init(asset: asset, quantity: quantity, costPerUnit: costPerUnit, currency: currency, costKnown: costKnown))
         }
 
         plan.removals = marketData.portfolio.filter { imported.contains($0.id) && !seenImported.contains($0.id) }
@@ -431,13 +456,14 @@ final class SnapTradeViewModel: ObservableObject {
         for update in plan.updates {
             guard let holding = marketData.portfolio.first(where: { $0.id == update.holdingID }) else { continue }
             let firstDate = holding.transactions.map(\.date).min() ?? Date()
-            let tx = Transaction(date: firstDate, shares: update.quantity, pricePerShare: update.avgCostUSD, type: .buy)
+            let tx = Transaction(date: firstDate, shares: update.quantity, pricePerShare: update.avgCostUSD,
+                                 type: .buy, provenance: update.provenance)
             if marketData.replaceTransactions(holdingID: holding.id, with: [tx]) == .ok { summary.updated += 1 }
         }
 
         for add in plan.adds {
             switch marketData.addHolding(asset: add.asset, shares: add.quantity, costPerUnit: add.costPerUnit,
-                                         costCurrency: add.currency) {
+                                         costCurrency: add.currency, source: .brokerPosition, sourceCostKnown: add.costKnown) {
             case .ok:
                 if let id = marketData.portfolio.first(where: { $0.asset.symbol == add.asset.symbol && $0.asset.kind == add.asset.kind })?.id {
                     ids.insert(id)

@@ -873,6 +873,7 @@ final class MarketData: ObservableObject {
         guard let aud = exchangeRates["AUD"], aud > 0 else { return }
         var changed = false
         for i in portfolio.indices where portfolio[i].asset.exchange == "ASX" {
+            guard portfolio[i].transactions.allSatisfy({ $0.provenance == nil }) else { continue }
             portfolio[i].avgCost /= aud
             portfolio[i].transactions = portfolio[i].transactions.map {
                 Transaction(id: $0.id, date: $0.date, shares: $0.shares, pricePerShare: $0.pricePerShare / aud, type: $0.type,
@@ -978,12 +979,15 @@ final class MarketData: ObservableObject {
     // MARK: - Portfolio Mutations
 
     @discardableResult
-    func addToPortfolio(asset: Asset, shares: Double, avgCost: Double, date: Date = Date()) -> HoldingChange {
+    func addToPortfolio(asset: Asset, shares: Double, avgCost: Double, date: Date = Date(),
+                        feesUSD: Double = 0, provenance: TradeProvenance? = nil) -> HoldingChange {
         let transaction = Transaction(
             date: date,
             shares: shares,
             pricePerShare: avgCost,
-            type: .buy
+            type: .buy,
+            fees: feesUSD,
+            provenance: provenance
         )
 
         let index = portfolio.firstIndex(where: { $0.asset.symbol == asset.symbol })
@@ -991,7 +995,7 @@ final class MarketData: ObservableObject {
         if let index {
             // Merge into existing holding with weighted average cost
             holding = portfolio[index]
-            let totalCost = (holding.shares * holding.avgCost) + (shares * avgCost)
+            let totalCost = (holding.shares * holding.avgCost) + (shares * avgCost) + feesUSD
             holding.shares += shares
             holding.avgCost = holding.shares > 0 ? totalCost / holding.shares : 0
             holding.asset = asset
@@ -1001,7 +1005,7 @@ final class MarketData: ObservableObject {
             holding = PortfolioHolding(
                 asset: asset,
                 shares: shares,
-                avgCost: avgCost,
+                avgCost: avgCost + feesUSD / shares,
                 transactions: [transaction]
             )
         }
@@ -1044,14 +1048,45 @@ final class MarketData: ObservableObject {
     /// trading currency (AUD for ASX, USD for US/crypto), as on a broker statement.
     @discardableResult
     func addHolding(asset: Asset, shares: Double, costPerUnit: Double,
-                    costCurrency: String = "USD", date: Date = Date()) -> HoldingChange {
+                    costCurrency: String = "USD", date: Date = Date(),
+                    source: TradeProvenance.Source = .openingPosition,
+                    sourceCostKnown: Bool = true, fees: Double? = nil) -> HoldingChange {
         guard shares > 0, shares.isFinite else { return .invalid("Enter how many you own.") }
         guard costPerUnit >= 0, costPerUnit.isFinite else { return .invalid("Enter what you paid per unit.") }
+        let brokerage = fees ?? 0
+        guard brokerage.isFinite, brokerage >= 0 else { return .invalid("Enter valid fees, or leave them blank.") }
         guard canAddHolding(symbol: asset.symbol, kind: asset.kind) else {
             return .limitReached(SubscriptionManager.shared.currentTier.maxPortfolioHoldings ?? portfolio.count)
         }
-        let usd = costPerUnit * (FXRates.shared.toUSDFactor(from: costCurrency) ?? 1)
-        return addToPortfolio(asset: asset, shares: shares, avgCost: usd, date: date)
+        let factor = FXRates.shared.toUSDFactor(from: costCurrency) ?? 1
+        let usdCost = costPerUnit * factor
+        let usdFees = brokerage * factor
+        guard usdCost.isFinite, usdFees.isFinite else { return .invalid("Enter a smaller price or fee.") }
+        let provenance = tradeProvenance(source: source, currency: costCurrency, unitPrice: sourceCostKnown ? costPerUnit : nil,
+                                         fees: fees, factor: factor)
+        return addToPortfolio(asset: asset, shares: shares, avgCost: usdCost, date: date,
+                              feesUSD: usdFees, provenance: provenance)
+    }
+
+    func tradeProvenance(source: TradeProvenance.Source, currency: String?, unitPrice: Double?,
+                         fees: Double?, factor: Double) -> TradeProvenance {
+        let code = currency?.uppercased()
+        guard let code, code.utf8.count == 3, code.utf8.allSatisfy({ (65...90).contains($0) }),
+              factor.isFinite, factor > 0, unitPrice != nil || fees != nil else {
+            return TradeProvenance(source: source, currency: nil, unitPrice: nil, fees: nil,
+                                   usdPerUnit: nil, conversion: nil, conversionRecordedAt: nil)
+        }
+        let conversion: TradeProvenance.Conversion
+        if code == "USD" {
+            conversion = .usd
+        } else if let verified = verifiedFXRates[code], 1 / verified == factor {
+            conversion = .appReference
+        } else {
+            conversion = .appFallback
+        }
+        return TradeProvenance(source: source, currency: code, unitPrice: unitPrice, fees: fees,
+                               usdPerUnit: factor, conversion: conversion,
+                               conversionRecordedAt: Date.now.ISO8601Format())
     }
 
     /// Records a buy or sell on an existing holding. A sell can't exceed what's
@@ -1071,10 +1106,13 @@ final class MarketData: ObservableObject {
         let factor = FXRates.shared.toUSDFactor(from: priceCurrency) ?? 1
         let usd = pricePerUnit * factor
         let feesUSD = fees * factor
+        let provenance = tradeProvenance(source: .manualTrade, currency: priceCurrency, unitPrice: pricePerUnit,
+                                         fees: fees, factor: factor)
         // A sale remembers the average cost it was made at, so its realised profit is
         // known even when the list doesn't show how the shares were bought.
         let tx = Transaction(date: date, shares: shares, pricePerShare: usd, type: type, fees: feesUSD,
-                             avgCostAtSale: type == .sell ? portfolio[i].avgCost : nil)
+                             avgCostAtSale: type == .sell ? portfolio[i].avgCost : nil,
+                             provenance: provenance)
         var holding = portfolio[i]
         switch type {
         case .buy:

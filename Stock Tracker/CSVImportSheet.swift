@@ -29,6 +29,7 @@ struct CSVImportSheet: View {
         let name: String
         let shares: Double
         let avgCost: Double
+        let costKnown: Bool
         let isCrypto: Bool
 
         var isASX: Bool { !isCrypto && symbol.hasSuffix(".AX") }
@@ -292,8 +293,8 @@ struct CSVImportSheet: View {
 
             let rawCost = costIdx.flatMap { $0 < cols.count ?
                 Double(sanitise(cols[$0], maxLength: 20).replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")) : nil
-            } ?? 0
-            let cost = clampValue(rawCost, max: Self.maxCostValue)
+            }
+            let cost = clampValue(rawCost ?? 0, max: Self.maxCostValue)
 
             let typeStr = sanitise(
                 typeIdx.flatMap { $0 < cols.count ? cols[$0] : nil } ?? "",
@@ -303,7 +304,8 @@ struct CSVImportSheet: View {
 
             if shares <= 0 { warnings += 1 }
 
-            rows.append(CSVRow(symbol: symbol, name: name, shares: shares, avgCost: cost, isCrypto: isCrypto))
+            rows.append(CSVRow(symbol: symbol, name: name, shares: shares, avgCost: cost,
+                               costKnown: rawCost == cost, isCrypto: isCrypto))
         }
 
         if rows.isEmpty {
@@ -358,7 +360,8 @@ struct CSVImportSheet: View {
                               price: usdCost, change: 0, changePercent: 0, volume: 0,
                               kind: row.isCrypto ? .crypto : .stock,
                               exchange: row.isCrypto ? "Crypto" : (row.isASX ? "ASX" : "US"))
-            switch marketData.addHolding(asset: asset, shares: row.shares, costPerUnit: row.avgCost, costCurrency: currency) {
+            switch marketData.addHolding(asset: asset, shares: row.shares, costPerUnit: row.avgCost, costCurrency: currency,
+                                         source: .csvPosition, sourceCostKnown: row.costKnown) {
             case .ok: added += 1
             case .limitReached: limited += 1
             case .invalid: failed.append(row.displaySymbol)
