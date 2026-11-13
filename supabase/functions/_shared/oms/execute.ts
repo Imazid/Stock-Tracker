@@ -216,14 +216,19 @@ export async function submitIntent(deps: ExecutionDeps, intent: IntentRecord, ca
 
   // 9. Submit. Never retried here or in the adapter.
   let result;
+  let submitLatencyMs: number;
+  const started = performance.now();
   try {
     result = await deps.adapter.submit(ctx, brokerRequest(intent));
+    submitLatencyMs = Math.max(0, Math.round(performance.now() - started));
   } catch (error) {
+    submitLatencyMs = Math.max(0, Math.round(performance.now() - started));
     // A refusal raised before any request left (environment, capability, validation) is a
     // known non-submission. Anything else is uncertain.
     if (error instanceof BrokerError && ["environment_refused", "unsupported", "invalid_request", "forbidden", "unauthorized", "insufficient_funds", "market_closed"].includes(error.code)) {
       const to: IntentStatus = error.code === "environment_refused" || error.code === "unsupported" ? "failed" : "rejected";
       await deps.store.transition(intent.id, "submitting", to, `adapter: ${error.code}`);
+      await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.submit_refused", detail: { code: error.code, submitLatencyMs } });
       return refuse(error.code === "environment_refused" ? "feature_disabled" : "provider_error", error.message, to, brokerDetails(error));
     }
     result = { outcome: "unknown" as const, reason: error instanceof Error ? error.name : "unknown error" };
@@ -232,16 +237,16 @@ export async function submitIntent(deps: ExecutionDeps, intent: IntentRecord, ca
   // 10. Record what happened.
   if (result.outcome === "accepted") {
     const status = await deps.store.recordBrokerOrder(intent.id, "submitting", result.order);
-    await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.submitted", detail: { providerOrderID: result.order.providerOrderID, status: result.order.status } });
+    await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.submitted", detail: { providerOrderID: result.order.providerOrderID, status: result.order.status, submitLatencyMs } });
     return { ok: true, status, brokerOrder: result.order, risk };
   }
   if (result.outcome === "rejected") {
     await deps.store.transition(intent.id, "submitting", "rejected", `provider: ${result.code}`);
-    await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.provider_rejected", detail: { code: result.code } });
+    await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.provider_rejected", detail: { code: result.code, submitLatencyMs } });
     return refuse("provider_error", result.message, "rejected", { providerCode: result.code });
   }
   await deps.store.transition(intent.id, "submitting", "reconciliation_required", `unknown outcome: ${result.reason}`);
-  await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.outcome_unknown", detail: { reason: result.reason } });
+  await deps.store.audit({ userID: intent.userID, intentID: intent.id, kind: "oms.outcome_unknown", detail: { reason: result.reason, submitLatencyMs } });
   const settled = await reconcileIntent(deps, { ...intent, status: "reconciliation_required", reconcilingSince: now });
   return settled.ok && settled.status !== "reconciliation_required"
     ? settled
