@@ -1,6 +1,10 @@
-import { type NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { safeReturnPath } from "@/lib/safe-return";
 import { serverSupabase } from "@/lib/supabase/server";
+
+function redirect(location: string) {
+  return new Response(null, { status: 303, headers: { Location: location, "Cache-Control": "no-store" } });
+}
 
 // The default PKCE email redirects here with a code. A custom confirmation template can
 // supply a token hash. Both store the session through the same server client.
@@ -15,14 +19,11 @@ export async function GET(request: NextRequest) {
     if (code) {
       const flowId = url.searchParams.get("sb_flow_id");
       const { error } = await supabase.auth.exchangeCodeForSession(code, flowId ? { flowId } : undefined);
-      if (!error) return NextResponse.redirect(new URL(next, url.origin));
+      if (!error) return redirect(next);
     } else if (tokenHash && (type === "email" || type === "signup" || type === "magiclink" || type === "invite")) {
       const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
-      if (!error) return NextResponse.redirect(new URL(next, url.origin));
+      if (!error) return redirect(next);
     }
   }
-  const login = new URL("/login", url.origin);
-  login.searchParams.set("error", "confirm");
-  login.searchParams.set("next", next);
-  return NextResponse.redirect(login);
+  return redirect(`/login?${new URLSearchParams({ error: "confirm", next })}`);
 }
