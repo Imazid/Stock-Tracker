@@ -69,6 +69,9 @@ export interface AdapterContext {
   now?: () => number;
   /** Request timeout in ms (default 10s). */
   timeoutMs?: number;
+  /** Set only by the order system after the platform's live gate passed. Money-moving calls
+   *  (submit / replace / cancel) refuse `live` without it. */
+  allowLive?: boolean;
 }
 
 // MARK: - Capabilities
