@@ -9,9 +9,10 @@ import { Field, Input, Select } from "@/components/ui/Field";
 import { money, percent, signedMoney } from "@/lib/format";
 import { browserSupabase } from "@/lib/supabase/client";
 import { uuid } from "@/lib/uuid";
+import { BrokerActivity } from "./broker-activity";
 
 type FlowKind = "deposit" | "withdrawal";
-type Flow = { date: string; kind: FlowKind; amount: number };
+type Flow = { date: string; kind: FlowKind; amount: number; snaptrade_id?: string };
 type ReturnMethods = {
   return_pct: number | null;
   time_weighted_return_pct: number | null;
@@ -30,7 +31,7 @@ type Period = ReturnMethods & {
   transfer_values_usd: Record<string, number>;
 };
 type Summary = ReturnMethods & Pick<Period, "starts_on" | "ends_on" | "investment_change_usd"> & { periods: number };
-type FlowInput = { id: string; date: string; kind: FlowKind; amount: string };
+type FlowInput = Omit<Flow, "amount"> & { id: string; amount: string };
 
 async function readPeriods(userId: string) {
   const db = browserSupabase();
@@ -169,7 +170,7 @@ function PeriodEditor({ userId, period, onClose, onSave }: { userId: string; per
       const { error } = await db.from("portfolio_performance_periods").upsert({
         id, user_id: userId, starts_on: start, ends_on: end,
         opening_value_usd: Number(form.get("opening")), closing_value_usd: Number(form.get("closing")),
-        external_flows: flows.map(({ date, kind, amount }) => ({ date, kind, amount: Number(amount) })),
+        external_flows: flows.map(({ date, kind, amount, snaptrade_id }) => ({ date, kind, amount: Number(amount), snaptrade_id })),
         transfer_values_usd: Object.fromEntries(valuationDates.filter((date) => transferValues[date]?.trim())
           .map((date) => [date, Number(transferValues[date])])),
       }, { onConflict: "id" });
@@ -195,12 +196,16 @@ function PeriodEditor({ userId, period, onClose, onSave }: { userId: string; per
         <Field label="Closing date" htmlFor="performance-end"><Input id="performance-end" type="date" min={start || "1900-01-01"} max="9999-12-31" required value={end} onChange={(event) => setEnd(event.target.value)} /></Field>
         <Field label="Closing value (USD)" htmlFor="performance-closing"><Input id="performance-closing" name="closing" type="number" min="0" max="9999999999999.99" step="0.01" required defaultValue={period?.closing_value_usd} /></Field>
       </div>
+      {start && end > start && <BrokerActivity key={`${start}/${end}`} start={start} end={end}
+        imported={new Set(flows.flatMap((flow) => flow.snaptrade_id ? [flow.snaptrade_id] : []))} canInclude={flows.length < 366 && !saving}
+        onInclude={(flow) => setFlows((current) => current.length >= 366 || current.some((existing) => existing.snaptrade_id === flow.snaptrade_id)
+          ? current : [...current, { ...flow, id: uuid(), amount: String(flow.amount) }])} />}
       {flows.map((flow, index) => (
         <fieldset key={flow.id} className="grid gap-2 border-t border-border pt-2 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
-          <legend className="sr-only">External transfer {index + 1}</legend>
-          <Field label="Transfer date" htmlFor={`flow-date-${flow.id}`}><Input id={`flow-date-${flow.id}`} type="date" min={start || "1900-01-01"} max={end || "9999-12-31"} required value={flow.date} onChange={(event) => setFlow(flow.id, { date: event.target.value })} /></Field>
-          <Field label="Transfer type" htmlFor={`flow-kind-${flow.id}`}><Select id={`flow-kind-${flow.id}`} value={flow.kind} onChange={(event) => setFlow(flow.id, { kind: event.target.value === "withdrawal" ? "withdrawal" : "deposit" })}><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option></Select></Field>
-          <Field label="Transfer amount (USD)" htmlFor={`flow-amount-${flow.id}`}><Input id={`flow-amount-${flow.id}`} type="number" min="0.01" max="9999999999999.99" step="0.01" required value={flow.amount} onChange={(event) => setFlow(flow.id, { amount: event.target.value })} /></Field>
+          <legend className={flow.snaptrade_id ? "text-xs text-text-2" : "sr-only"}>{flow.snaptrade_id ? "SnapTrade transfer" : `External transfer ${index + 1}`}</legend>
+          <Field label="Transfer date" htmlFor={`flow-date-${flow.id}`}><Input id={`flow-date-${flow.id}`} type="date" min={start || "1900-01-01"} max={end || "9999-12-31"} required value={flow.date} disabled={Boolean(flow.snaptrade_id)} onChange={(event) => setFlow(flow.id, { date: event.target.value })} /></Field>
+          <Field label="Transfer type" htmlFor={`flow-kind-${flow.id}`}><Select id={`flow-kind-${flow.id}`} value={flow.kind} disabled={Boolean(flow.snaptrade_id)} onChange={(event) => setFlow(flow.id, { kind: event.target.value === "withdrawal" ? "withdrawal" : "deposit" })}><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option></Select></Field>
+          <Field label="Transfer amount (USD)" htmlFor={`flow-amount-${flow.id}`}><Input id={`flow-amount-${flow.id}`} type="number" min="0.01" max="9999999999999.99" step="0.01" required value={flow.amount} disabled={Boolean(flow.snaptrade_id)} onChange={(event) => setFlow(flow.id, { amount: event.target.value })} /></Field>
           <Button size="sm" variant="ghost" onClick={() => setFlows((current) => current.filter((item) => item.id !== flow.id))} aria-label={`Remove transfer ${index + 1}`}>Remove</Button>
         </fieldset>
       ))}

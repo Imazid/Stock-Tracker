@@ -13,6 +13,7 @@
 //     and connection portals default to read-only.
 
 import { canonicalJson, fromUtf8, toBase64, utf8 } from "../secure/encoding.ts";
+import { activityPageSize, activityTypes, normalizeActivityPage, validActivityDay } from "./activities.ts";
 
 export const SNAPTRADE_DEFAULT_BASE = "https://api.snaptrade.com";
 const API_PREFIX = "/api/v1";
@@ -30,6 +31,7 @@ export type SnapTradeOperation =
   | "listAccounts"
   | "accountPositions"
   | "accountHoldings"
+  | "accountActivities"
   | "deleteUser";
 
 export const SNAPTRADE_OPERATIONS: readonly SnapTradeOperation[] = [
@@ -42,6 +44,7 @@ export const SNAPTRADE_OPERATIONS: readonly SnapTradeOperation[] = [
   "listAccounts",
   "accountPositions",
   "accountHoldings",
+  "accountActivities",
   "deleteUser",
 ];
 
@@ -93,8 +96,9 @@ export async function buildSignedRequest(
   query: Record<string, string>,
   body: Record<string, unknown> | null,
   nowMs: number,
+  prefix = API_PREFIX,
 ): Promise<{ url: string; init: RequestInit }> {
-  const fullPath = `${API_PREFIX}${path}`;
+  const fullPath = `${prefix}${path}`;
   const params: Record<string, string> = { ...query, clientId: config.clientId, timestamp: String(Math.floor(nowMs / 1000)) };
   const queryString = Object.keys(params)
     .sort()
@@ -160,6 +164,27 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
       }
       const suffix = operation === "accountPositions" ? "positions" : "holdings";
       return withUser(userId, deps, (u) => forward(deps, "GET", `/accounts/${accountId}/${suffix}`, u, null));
+    }
+    case "accountActivities": {
+      const { accountId, startDate, endDate, offset = 0 } = params;
+      if (typeof accountId !== "string" || !UUID.test(accountId)) {
+        return fail(400, "INVALID_ACCOUNT_ID", "Select a linked brokerage account.");
+      }
+      if (!validActivityDay(startDate) || !validActivityDay(endDate) || startDate > endDate) {
+        return fail(400, "INVALID_ACTIVITY_DATES", "Enter a valid activity date range.");
+      }
+      if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 || offset > 2147483600) {
+        return fail(400, "INVALID_ACTIVITY_PAGE", "Choose a valid activity page.");
+      }
+      return withUser(userId, deps, async (user) => {
+        const result = await call(deps, "GET", `/accounts/${accountId}/activities`, {
+          ...user, startDate, endDate, limit: String(activityPageSize), offset: String(offset), type: activityTypes,
+        }, null, "");
+        if ("error" in result) return result.error;
+        const normalized = await normalizeActivityPage(result.json, accountId, startDate, endDate, offset);
+        return normalized ? { status: 200, body: normalized } :
+          fail(502, "INVALID_ACTIVITY_RESPONSE", "The brokerage returned an unreadable page of activity.");
+      });
     }
     case "deleteUser":
       return withUser(userId, deps, async (u) => {
@@ -282,8 +307,9 @@ async function call(
   path: string,
   query: Record<string, string>,
   body: Record<string, unknown> | null,
+  prefix = API_PREFIX,
 ): Promise<{ status: number; json: unknown } | { error: ProxyResponse }> {
-  const { url, init } = await buildSignedRequest(deps.config, method, path, query, body, deps.now());
+  const { url, init } = await buildSignedRequest(deps.config, method, path, query, body, deps.now(), prefix);
   let response: Response;
   try {
     response = await deps.fetch(url, { ...init, signal: AbortSignal.timeout(deps.config.timeoutMs ?? 15_000) });

@@ -194,3 +194,74 @@ Deno.test("refuses without a verified user or server configuration", async () =>
 Deno.test("scrubSecrets removes userSecret at any depth", () => {
   assertEquals(scrubSecrets({ a: [{ userSecret: "x", keep: 1 }], UserSecret: "y" }), { a: [{ keep: 1 }] });
 });
+
+Deno.test("activity uses the signed root endpoint and offers only eligible dated USD cash flows", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });
+  const row = {
+    id: "broker-transaction",
+    trade_date: "2026-01-15T23:05:00-05:00",
+    currency: { code: "USD" },
+    symbol: null,
+    amount: 620.05,
+    type: "CONTRIBUTION",
+  };
+  const { deps, calls } = harness(() => json(200, {
+    data: [
+      row,
+      row,
+      { ...row, id: "withdrawal", type: "WITHDRAWAL", amount: -22.99 },
+      { ...row, id: "cad", currency: { code: "CAD" } },
+      { ...row, id: "wrong-sign", amount: -10 },
+      { ...row, id: "asset", symbol: { symbol: "AAPL" }, units: 2 },
+      { ...row, id: "over-precision", amount: 0.0001 },
+      { ...row, id: "div", type: "DIVIDEND", symbol: { symbol: "AAPL" }, fee: 0.5 },
+      { ...row, id: "split", type: "REVERSE_SPLIT", amount: null },
+      { ...row, id: "transfer", type: "INTERNAL_CASH_TRANSFER_OUT", amount: -10 },
+      { ...row, id: "ambiguous", type: "TRANSFER", amount: -10 },
+      { ...row, id: "bad-day", trade_date: null, settlement_date: "2026-01-15" },
+      { ...row, id: "outside", trade_date: "2025-12-31" },
+    ],
+    pagination: { offset: 0, total: 100 },
+  }), store);
+  const res = await handleSnapTradeRequest(USER, {
+    operation: "accountActivities",
+    params: { accountId: ACCOUNT, startDate: "2026-01-01", endDate: "2026-01-31", userId: `st-${OTHER}` },
+  }, deps);
+  assertEquals(res.status, 200);
+  assertEquals(calls[0].method, "GET");
+  assertEquals(calls[0].url.pathname, `/accounts/${ACCOUNT}/activities`);
+  assertEquals(calls[0].url.searchParams.get("startDate"), "2026-01-01");
+  assertEquals(calls[0].url.searchParams.get("limit"), "50");
+  assertEquals(calls[0].url.searchParams.get("userId"), `st-${USER}`);
+  assert(calls[0].headers.has("Signature"));
+  const body = res.body as { activities: { id: string; cashFlow: unknown; symbol: string; currency: string; fee: number }[]; omitted: number; nextOffset: number };
+  assertEquals(body.omitted, 2);
+  assertEquals(body.nextOffset, 13);
+  assertEquals(body.activities.length, 10);
+  assertEquals(body.activities[0].cashFlow, { date: "2026-01-15", kind: "deposit", amount: 620.05 });
+  assertEquals(body.activities[1].cashFlow, { date: "2026-01-15", kind: "withdrawal", amount: 22.99 });
+  assertEquals(body.activities[2].currency, "CAD");
+  assertEquals(body.activities[6].symbol, "AAPL");
+  assertEquals(body.activities[6].fee, 0.5);
+  assertEquals(body.activities[8].cashFlow, { date: "2026-01-15", kind: "withdrawal", amount: 10 });
+  assertEquals(body.activities.slice(2, 8).map((x) => x.cashFlow), Array(6).fill(null));
+  assertEquals(body.activities[9].cashFlow, null);
+  assert(body.activities.every((activity) => /^[a-f0-9]{64}$/.test(activity.id)));
+  assertFalse(JSON.stringify(res.body).includes("broker-transaction"));
+});
+
+Deno.test("activity refuses malformed dates or pagination and never uses a different user's credentials", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });
+  const { deps, calls } = harness(() => json(200, { data: [], pagination: { total: 10, offset: 0 } }), store);
+  const params = { accountId: ACCOUNT, startDate: "2026-01-01", endDate: "2026-01-31" };
+  for (const invalid of [
+    { startDate: "2026-02-30" }, { offset: -1 }, { offset: "1" }, { offset: 1.1 }, { accountId: "a/../accounts" },
+  ]) {
+    assertEquals((await handleSnapTradeRequest(USER, { operation: "accountActivities", params: { ...params, ...invalid } }, deps)).status, 400);
+  }
+  assertEquals((await handleSnapTradeRequest(OTHER, { operation: "accountActivities", params }, deps)).status, 409);
+  assertEquals(calls.length, 0);
+  assertEquals((await handleSnapTradeRequest(USER, { operation: "accountActivities", params }, deps)).status, 502);
+});

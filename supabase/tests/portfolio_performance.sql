@@ -103,6 +103,21 @@ select case when portfolio_metrics.money_weighted_return(
   '2026-01-01', '2026-01-31', 100, 160,
   '[{"date":"2026-01-11","kind":"withdrawal","amount":10},{"date":"2026-01-21","kind":"deposit","amount":60}]'
 ) = 8.86015229 then 'ok certify a unique IRR with alternating cash flow signs' else 'FAIL alternating but unique money-weighted return' end;
+update public.portfolio_performance_periods set external_flows =
+  jsonb_build_array(jsonb_build_object('date','2028-01-16','kind','deposit','amount',50,'snaptrade_id',repeat('a',64)))
+where starts_on = '2028-01-01';
+update public.portfolio_performance_periods set external_flows = '[{"date":"2028-01-16","kind":"deposit","amount":50}]'
+where starts_on = '2028-01-01';
+select case when external_flows->0->>'snaptrade_id' = repeat('a',64)
+  then 'ok older clients preserve the source of unchanged transfers' else 'FAIL source lost on older client edit' end
+  from public.portfolio_performance_results where starts_on = '2028-01-01';
+do $$
+begin
+  update public.portfolio_performance_periods set external_flows = external_flows || external_flows
+    where starts_on = '2028-01-01';
+  raise exception 'Duplicate broker activity accepted';
+exception when check_violation then raise notice 'Duplicate broker activity rejected';
+end $$;
 reset role;
 select case when not has_table_privilege('anon', 'public.portfolio_performance_results', 'SELECT')
   and not has_table_privilege('anon', 'public.portfolio_performance_periods', 'INSERT')
