@@ -130,3 +130,30 @@ Verify that the unauthenticated endpoint returns 401. Confirm scheduled requests
 Deploy `snaptrade-activity-sync` and `snaptrade-proxy`. Set a dedicated secret of at least 32 characters as `SNAPTRADE_ACTIVITY_SYNC_SECRET` on the Edge Function and `snaptrade_activity_secret` in Supabase Vault. Set `snaptrade_activity_url` in Vault to the full HTTPS sync endpoint. Use `pg_cron` and `pg_net` as for provider maintenance. If the extensions are enabled after applying the migration, register `select cron.schedule('snaptrade-activity-sync', '* * * * *', 'select public.invoke_snaptrade_activity_sync()');`.
 
 Each tick leases up to three SnapTrade identities and processes one provider request per identity. It publishes a 90-calendar-day snapshot once all accounts and pages are read, then schedules the next refresh 24 hours later. The portfolio editor prefers a complete snapshot synced in the past 36 hours. It offers a live broker read for other dates and on request. A revoked identity deletes its staged and published activity. Scheduler logs contain counts and error codes.
+
+## 10. Provider monitoring and response
+
+Apply the provider operations migration, then deploy `provider-maintenance`, `snaptrade-activity-sync` and `broker-orders` with their existing gateway settings. The first two report completed runs, durations, job and error counts, and allowlisted error categories. They use their existing scheduler and database credentials. Run reports expire after 30 days and resolved alerts after 90 days.
+
+The `provider-operations-check` job runs every minute. It opens an alert when a worker has no report for five minutes, a worker records three failing runs within 15 minutes, an order spends five minutes in `submitting`, or an order spends ten minutes in `reconciliation_required`. It records one open alert per condition and worker or provider environment. It logs an `opened` or `resolved` event in Postgres when a condition changes. Check the database logs or the private alerts table. External paging requires a configured log destination.
+
+If `pg_cron` was enabled after applying the migration, register `provider-operations-check` and `provider-operations-retention` using the schedules in the migration. The jobs run as the migration owner. As a database operator, check both the worker reports and the alert check's cron history. A successful cron invocation that queues a worker request does not prove the worker completed.
+
+```sql
+select condition, subject, observed_count, opened_at, last_seen_at
+from provider_operations.alerts where resolved_at is null order by opened_at;
+
+select worker, max(finished_at) as last_report, sum(jobs) as jobs, sum(errors) as errors,
+  count(*) filter (where errors > 0) as failing_runs, count(*) as runs
+from provider_operations.worker_runs where finished_at >= now() - interval '15 minutes'
+group by worker;
+
+select worker, finished_at, duration_ms, jobs, errors, failure_codes
+from provider_operations.worker_runs where errors > 0 order by finished_at desc limit 30;
+
+select * from provider_operations.submit_summary_24h;
+```
+
+For a missing worker report, check its cron history, worker deployment, scheduler secret configuration and recent function logs. For repeated errors, check the recorded category and the provider's status before changing credentials or retry settings. For an unresolved order, locate the affected intent in the flagged provider environment and reconcile it using the existing order workflow. Check the provider's order and fill records before taking further action. Sending a new order while the outcome remains unknown can duplicate execution.
+
+The submission summary reports the last 24 hours of recorded outcomes by provider and environment. Its latency measures the adapter call and includes preflight refusals. The `latency_samples` column gives the number of measurements behind the percentile. A blank percentile means there are no timed outcomes in the window.

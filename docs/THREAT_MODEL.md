@@ -31,15 +31,13 @@ providers (no secrets, no credentials, retrieved text treated as untrusted).
 | T13 | **Compromised background worker** | Worker uses the same pipeline; can't approve (approval requires an owner session); can't enable gates; kill switch is checked on every submit. **Gap:** separate least-privilege DB role for the scheduler. | — |
 | T14 | **Supply-chain dependency attack** | Engine and OMS are dependency-free TypeScript; Deno tests pin `jsr:@std/assert@1`; web app lockfile committed. **Gap:** `npm audit`/Dependabot in CI; CI checks the server, migrations, and iOS builds. | — |
 | T15 | **Provider outage / rate limiting** | Reads retried with backoff + jitter, honouring Retry-After; submissions fail closed; UI shows "couldn't reach provider — nothing was sent". | `brokers_http.test.ts` (brokers branch) |
-| T16 | **Loss of reconciliation state** (missed stream events, crashed function mid-submit) | Every transition persisted before and after the provider call; an intent left in `submitting`/`reconciliation_required` is picked up by reconcile (scheduler or manual); provider is the source of truth for order state; fills ingested idempotently. **Gap:** scheduled reconcile job. | `oms.test.ts` "reconcile: partial fill then fill" |
+| T16 | **Loss of reconciliation state** (missed stream events, crashed function mid-submit) | Every transition is persisted around the provider call. The scheduled worker and manual refresh reconcile `submitting` and `reconciliation_required` intents. The provider is the source of truth for order state and fills are ingested idempotently. The operations check records overdue intents and missing worker runs. | `oms.test.ts` "reconcile: partial fill then fill" and `provider_operations_monitoring.sql` |
 | T17 | **Misleading output** (hallucinated sources, paper results presented as real) | Practice results labelled "Practice"; backtests list assumptions; research must cite sources with timestamps; gate `personalised_recommendations` off. **Gap:** source-verification evals for the web AI workspace. | — |
 | T18 | **Audit tampering** | `order_intent_transitions` and `oms_events` append-only by trigger; practice `audit_events` hash-chained. **Gap:** hash-chain OMS events too. | SQL "deleting the transition log", "editing an OMS event" |
 
-## Operational controls still to build
+## Operational controls
 
-Monitoring of unknown-order-status counts, provider error rates and submit latency; alerting on
-any intent older than 5 minutes in `submitting`; a runbook for KEK rotation and for a provider
-incident; web checks in CI and dependency scanning.
+The provider operations check records stale orders, missing worker reports and repeated worker errors. The private submission summary tracks outcomes and adapter latency. See [provider monitoring and response](DEPLOYMENT.md#10-provider-monitoring-and-response) and the [key rotation procedure](IMPLEMENTATION_PLAN.md). External paging, provider stream coverage and dependency scanning remain open.
 
 ## SnapTrade and AI proxy controls
 
