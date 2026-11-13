@@ -1,4 +1,4 @@
-// Exact decimal arithmetic for money and quantities on the provider path.
+// Exact decimal arithmetic for non-negative monetary values and quantities.
 //
 // Providers send prices and sizes as decimal strings ("0.00012345"); we keep them as strings
 // end to end and only do arithmetic here, on BigInt-scaled integers, so a value is never

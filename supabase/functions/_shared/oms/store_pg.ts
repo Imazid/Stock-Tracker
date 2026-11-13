@@ -7,7 +7,7 @@ import type { BrokerOrder, ProviderCredentials, ProviderID, TradingEnvironment }
 import { defaultAccountPolicy, type AccountPolicy, standardPolicy } from "../trading/risk.ts";
 import type { GateID, IntentStatus, OrderIntentInput, OrderIntentView, RiskEvaluationView } from "./api.ts";
 import type { ApprovalRecord } from "./approval.ts";
-import * as D from "./decimal.ts";
+import * as D from "../decimal.ts";
 import type { ConnectionState, IntentRecord, OmsStore } from "./execute.ts";
 import { type GateRow, resolveGates } from "./gates.ts";
 import { nextFromBroker, RESERVING } from "./lifecycle.ts";

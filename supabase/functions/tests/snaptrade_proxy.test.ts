@@ -235,13 +235,15 @@ Deno.test("activity uses the signed root endpoint and offers only eligible dated
   assertEquals(calls[0].url.searchParams.get("limit"), "50");
   assertEquals(calls[0].url.searchParams.get("userId"), `st-${USER}`);
   assert(calls[0].headers.has("Signature"));
-  const body = res.body as { activities: { id: string; cashFlow: unknown; symbol: string; currency: string; fee: number }[]; omitted: number; nextOffset: number };
+  const body = res.body as { activities: { id: string; cashFlow: unknown; foreignCashFlow: unknown; symbol: string; currency: string; fee: number }[]; omitted: number; nextOffset: number };
   assertEquals(body.omitted, 2);
   assertEquals(body.nextOffset, 13);
   assertEquals(body.activities.length, 10);
   assertEquals(body.activities[0].cashFlow, { date: "2026-01-15", kind: "deposit", amount: 620.05 });
   assertEquals(body.activities[1].cashFlow, { date: "2026-01-15", kind: "withdrawal", amount: 22.99 });
   assertEquals(body.activities[2].currency, "CAD");
+  assertEquals(body.activities[2].foreignCashFlow, { date: "2026-01-15", kind: "deposit", currency: "CAD", amount: "620.05" });
+  assertEquals(body.activities[6].foreignCashFlow, null);
   assertEquals(body.activities[6].symbol, "AAPL");
   assertEquals(body.activities[6].fee, 0.5);
   assertEquals(body.activities[8].cashFlow, { date: "2026-01-15", kind: "withdrawal", amount: 10 });

@@ -118,6 +118,40 @@ begin
   raise exception 'Duplicate broker activity accepted';
 exception when check_violation then raise notice 'Duplicate broker activity rejected';
 end $$;
+update public.portfolio_performance_periods set external_flows = jsonb_build_array(jsonb_build_object(
+  'date','2028-01-16','kind','deposit','amount',50,'snaptrade_id',repeat('a',64),
+  'fx','{"source":"ECB","currency":"AUD","amount":"100","usd_per_unit":"0.5","rate_date":"2028-01-14"}'::jsonb))
+where starts_on = '2028-01-01';
+update public.portfolio_performance_periods set external_flows = jsonb_build_array((external_flows->0) - 'fx')
+where starts_on = '2028-01-01';
+select case when external_flows->0->'fx'->>'currency' = 'AUD'
+  then 'ok previous client preserves FX for a matching broker reference' else 'FAIL broker FX evidence lost' end
+  from public.portfolio_performance_results where starts_on = '2028-01-01';
+update public.portfolio_performance_periods set external_flows = jsonb_build_array((external_flows->0) - array['fx','snaptrade_id'])
+where starts_on = '2028-01-01';
+select case when external_flows->0->'fx'->>'rate_date' = '2028-01-14'
+  then 'ok legacy client preserves FX and source for a matching cash flow' else 'FAIL legacy FX evidence lost' end
+  from public.portfolio_performance_results where starts_on = '2028-01-01';
+do $$
+declare path text[];
+declare value text;
+begin
+  for path, value in select * from (values
+    (array['0','fx','rate_date'], '2028-01-17'),
+    (array['0','fx','rate_date'], '2028-01-08'),
+    (array['0','fx','usd_per_unit'], '0.51'),
+    (array['0','fx','amount'], 'not-an-amount')
+  ) bad(path, value)
+  loop
+    begin
+      update public.portfolio_performance_periods set external_flows = jsonb_set(external_flows, path, to_jsonb(value))
+        where starts_on = '2028-01-01';
+      raise exception 'Invalid conversion accepted';
+    exception when check_violation then null;
+    end;
+  end loop;
+  raise notice 'Inconsistent FX amount or date rejected';
+end $$;
 reset role;
 select case when not has_table_privilege('anon', 'public.portfolio_performance_results', 'SELECT')
   and not has_table_privilege('anon', 'public.portfolio_performance_periods', 'INSERT')

@@ -9,7 +9,7 @@
 
 import type { OrderIntentInput } from "./api.ts";
 import type { ProviderID, TradingEnvironment } from "../brokers/types.ts";
-import { isDecimal, isZero, normalise } from "./decimal.ts";
+import { isDecimal, isZero, normalise } from "../decimal.ts";
 
 export const INTENT_VERSION = 1;
 

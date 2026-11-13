@@ -85,6 +85,11 @@ export async function normalizeActivityPage(
     const cents = amount === null ? 0 : Math.round(Math.abs(amount) * 100);
     const cashFlow = cashOnly && kindMatchesAmount && currency === "USD" && cents > 0 && cents <= 999999999999999 &&
       amount !== null && cents / 100 === Math.abs(amount) ? { date: day, kind: isDeposit ? "deposit" : "withdrawal", amount: cents / 100 } : null;
+    const original = amount !== null ? String(Math.abs(amount)) : "";
+    const foreignCashFlow = cashOnly && kindMatchesAmount && currency && currency !== "USD" &&
+      /^(?:0|[1-9]\d{0,12})(?:\.\d{1,8})?$/.test(original)
+      ? { date: day, kind: isDeposit ? "deposit" : "withdrawal", currency, amount: original }
+      : null;
     const fingerprint = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([accountId.toLowerCase(), id])));
     return {
       id: Array.from(new Uint8Array(fingerprint), (byte) => byte.toString(16).padStart(2, "0")).join(""),
@@ -96,6 +101,7 @@ export async function normalizeActivityPage(
       fee: boundedNumber(row.fee),
       symbol: symbol ?? text(option?.ticker, 40),
       cashFlow,
+      foreignCashFlow,
     };
   }));
   const activities = [...new Map(rows.flatMap((row) => row ? [[row.id, row] as const] : [])).values()];
