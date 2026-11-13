@@ -99,6 +99,7 @@ struct PrivateMarketsView: View {
                         .accessibilityIdentifier("trading.copilot")
                     NavigationLink(value: PrivateDestination.updates) { Image(systemName: "bell") }
                         .accessibilityLabel("Company updates")
+                        .accessibilityIdentifier("private.companyUpdates")
                 }
             }
             .navigationDestination(for: PrivateDestination.self) { destination in

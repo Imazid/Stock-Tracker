@@ -169,5 +169,69 @@ select case when a.status = 'complete' and r.title = 'Research title'
   from public.agent_analysis_runs a join public.research_reports r on r.id = a.report_id
   where a.id = 'a0000000-0000-0000-0000-000000000060';
 select pg_temp.expect_error('update public.investment_audit_logs set action = ''altered''','42501','service cannot rewrite the audit log');
+-- Use the already confirmed provider holding and a synthetic announcement in the disposable DB.
+insert into public.corporate_actions (company_id,title,significance,published_at,source_url,published)
+values ('a0000000-0000-0000-0000-000000000010','Issuer news','A sourced issuer update.',now()-interval '1 minute',
+        'https://example.test/issuer-update',true),
+       ('a0000000-0000-0000-0000-000000000011','Private draft','Never publish.',now()-interval '1 minute',
+        'https://example.test/issuer-draft',true);
+update public.investment_opportunities set verified_at = now() where id = 'a0000000-0000-0000-0000-000000000030';
+update public.capital_calls set settled_on = null where provider_reference = 'call-1';
+select case when public.collect_private_market_alerts() = 0 then 'ok   monitor skips accounts without opt-in'
+  else 'FAIL unsolicited monitoring' end;
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010','a0000000-0000-0000-0000-000000000011']::uuid[],false,true);
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000081',
+  array['a0000000-0000-0000-0000-000000000010']::uuid[],false,true);
+select case when public.collect_private_market_alerts() = 3 then 'ok   scheduled collection captures one alert per source across devices'
+  else 'FAIL missing or duplicate alerts' end;
+select case when public.collect_private_market_alerts() = 0 then 'ok   scheduled collection is idempotent'
+  else 'FAIL monitor replay duplicated alerts' end;
+select case when count(*) = 3 and count(*) filter (where kind='announcement' and source_url like 'https://%') = 1
+  and count(*) filter (where kind='capital_call' and source_label is not null) = 1
+  then 'ok   inbox retains publication and provider evidence' else 'FAIL invalid inbox entries' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001');
+select case when count(*) = 0 then 'ok   no cross-account inbox records' else 'FAIL cross-account inbox' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000002');
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-000000000082',
+  '{}'::uuid[],true,true);
+select case when public.collect_private_market_alerts('a0000000-0000-0000-0000-000000000002') = 0
+  then 'ok   declared or missing classification does not produce eligibility alerts' else 'FAIL unverified eligibility alert' end;
+insert into public.investor_profiles values ('a0000000-0000-0000-0000-000000000002','AU','retail');
+insert into public.provider_connections (id,user_id,provider,external_subject) values
+  ('a0000000-0000-0000-0000-000000000083','a0000000-0000-0000-0000-000000000002','birchal','second-fixture-account');
+insert into public.investor_eligibility (user_id,provider,connection_id,jurisdiction,verified_class,verified_at,expires_at,evidence_reference)
+  values ('a0000000-0000-0000-0000-000000000002','birchal','a0000000-0000-0000-0000-000000000083',
+    'AU','retail',now()-interval '1 hour',now()+interval '1 day','second-fixture-evidence');
+select case when public.collect_private_market_alerts('a0000000-0000-0000-0000-000000000002') = 1
+  then 'ok   current provider classification can match an open round' else 'FAIL verified round was missed' end;
+select case when count(*) = 1 and min(kind) = 'eligible_round'
+  then 'ok   eligibility inbox includes only approved matching round' else 'FAIL unexpected eligibility inbox' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000002');
+update public.capital_calls set settled_on = current_date where provider_reference = 'call-1';
+select case when count(*) = 0 then 'ok   inbox drops settled obligations' else 'FAIL settled call still in inbox' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001') where kind = 'capital_call';
+update public.corporate_actions set published = false where source_url = 'https://example.test/issuer-update';
+select case when count(*) = 0 then 'ok   inbox hides an unpublished announcement' else 'FAIL unpublished alert visible' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001') where kind = 'announcement';
+update public.corporate_actions set published = true where source_url = 'https://example.test/issuer-update';
+update public.investment_opportunities set verified_at = now() - interval '25 hours' where id = 'a0000000-0000-0000-0000-000000000030';
+select case when count(*) = 1 and min(significance) like '%Current availability is unverified.%'
+  then 'ok   inbox labels old offer availability as unverified' else 'FAIL stale offer presented as open' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001') where kind = 'open_round';
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  '{}'::uuid[],false,false);
+select case when count(*) = 2 then 'ok   one device may opt out without erasing another device inbox'
+  else 'FAIL other device inbox erased' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001');
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000081',
+  '{}'::uuid[],false,false);
+select case when count(*) = 0 then 'ok   last opt-out removes the stored inbox' else 'FAIL inbox retained after opt-out' end
+  from public.private_market_alerts where user_id = 'a0000000-0000-0000-0000-000000000001';
+reset role;
+set role authenticated;
+select pg_temp.expect_error($q$select * from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001')$q$,
+  '42501','app clients cannot read another account inbox directly');
+select pg_temp.expect_error($q$select public.run_private_market_monitor()$q$, '42501', 'app clients cannot invoke scheduled collection');
 reset role;
 rollback;

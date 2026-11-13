@@ -111,6 +111,9 @@ struct ContentView: View {
         }
         .tint(DS.accent)
         .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
+        .task(id: cloudAuth.userId) {
+            if let owner = cloudAuth.userId { await privateMarkets.refreshMonitor(for: owner) }
+        }
         .modifier(TradingRootSheets())
         .sheet(isPresented: $router.showCommands, onDismiss: performCommand) {
             CommandPalette { destination in

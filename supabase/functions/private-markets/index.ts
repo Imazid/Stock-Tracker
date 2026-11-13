@@ -122,6 +122,26 @@ Deno.serve(async (req) => {
       if (error) throw error;
     };
     switch (body.action) {
+      case "monitor_settings": {
+        const { device_id: device, company_ids: companies, enabled, eligible_opportunities: eligible } = body;
+        if (typeof device !== "string" || !uuid.test(device) || typeof enabled !== "boolean" || typeof eligible !== "boolean" ||
+          !Array.isArray(companies) || companies.length > 250 || companies.some((id) => typeof id !== "string" || !uuid.test(id))) {
+          return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Send a device identifier and up to 250 company identifiers.");
+        }
+        const { error } = await admin.rpc("configure_private_monitor", {
+          p_user: userId, p_device: device, p_companies: companies, p_enabled: enabled, p_eligible: eligible,
+        });
+        if (error?.code === "22023") return errorResponse(422, "MONITOR_SETTINGS_UNAVAILABLE", error.message);
+        if (error) throw error;
+        return jsonResponse(200, {});
+      }
+      case "monitor_inbox": {
+        const collected = await admin.rpc("collect_private_market_alerts", { p_user: userId });
+        if (collected.error) throw collected.error;
+        const { data, error } = await admin.rpc("private_market_alert_inbox", { p_user: userId });
+        if (error) throw error;
+        return jsonResponse(200, { alerts: data });
+      }
       case "discover": {
         const question = body.question;
         if (typeof question !== "string" || !question.trim() || question.length > 600) {

@@ -181,15 +181,49 @@ struct PrivateUpdatesView: View {
     @State private var updates: [PrivateCompanyUpdate] = []
     @State private var error: String?
     @State private var loading = false
+    @State private var savingMonitor = false
 
     var body: some View {
         List {
-            Section("Notifications") {
+            Section("Monitoring") {
+                Toggle("Collect alerts while this device is offline", isOn: Binding(
+                    get: { store.state.monitorEnabled == true },
+                    set: { changeMonitor(enabled: $0, eligible: store.state.monitorEligible == true) }))
+                    .disabled(auth.userId == nil || savingMonitor)
+                    .accessibilityIdentifier("private.monitor.enable")
+                if store.state.monitorEnabled == true {
+                    Toggle("New rounds matching my verified eligibility", isOn: Binding(
+                        get: { store.state.monitorEligible == true },
+                        set: { changeMonitor(enabled: true, eligible: $0) }))
+                        .disabled(savingMonitor)
+                        .accessibilityIdentifier("private.monitor.eligible")
+                }
+                Text("Online monitoring shares the catalogue company IDs you track with your Stock Tracker account.")
+                    .font(.footnote).foregroundStyle(.secondary)
                 Toggle("Notify me about company updates", isOn: Binding(
                     get: { store.state.notify }, set: setNotifications))
                     .disabled(auth.userId == nil)
-                Text("Stock Tracker checks verified updates when iOS permits background refresh.")
+                Text("Device notifications appear when iOS permits the app to refresh.")
                     .font(.footnote).foregroundStyle(.secondary)
+                if savingMonitor { ProgressView("Saving monitoring preferences") }
+                if let error = store.monitorError { Text(error).foregroundStyle(.secondary) }
+            }
+            if store.state.monitorEnabled == true, auth.userId != nil {
+                Section("Monitoring inbox") {
+                    if store.monitorAlerts.isEmpty && !loading && !savingMonitor {
+                        Text("No alerts collected yet.").foregroundStyle(.secondary)
+                    }
+                    ForEach(store.monitorAlerts) { alert in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(alert.title).font(.headline)
+                            Text("\(alert.companyName) · \(alert.occurredAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Text(alert.significance)
+                            if let url = alert.sourceUrl, url.privateSourceIsSafe { Link("Read source", destination: url) }
+                            if let source = alert.sourceLabel { Text(source).font(.footnote).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
             }
             Section("Company updates") {
                 if loading {
@@ -241,10 +275,22 @@ struct PrivateUpdatesView: View {
         defer { loading = false }
         do {
             await store.refreshProviderHoldings(for: id)
+            await store.refreshMonitor(for: id)
             updates = try await store.checkUpdates(for: id)
         }
         catch is CancellationError {
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func changeMonitor(enabled: Bool, eligible: Bool) {
+        guard let owner = auth.userId else { return }
+        savingMonitor = true
+        Task {
+            defer { savingMonitor = false }
+            do { try await store.setMonitor(enabled: enabled, eligible: eligible, owner: owner) }
+            catch is CancellationError { }
+            catch { self.error = error.localizedDescription }
+        }
     }
 
     private func setNotifications(_ enabled: Bool) {

@@ -245,6 +245,9 @@ struct StockCryptoTrackerApp: App {
                 authManager.reset()
                 // Pull latest cloud data when app comes to foreground (throttled internally)
                 if supabaseAuthManager.isSignedIn && networkMonitor.isConnected {
+                    if let owner = supabaseAuthManager.userId {
+                        Task { await PrivateMarketsStore.shared.refreshMonitor(for: owner) }
+                    }
                     Task {
                         await syncManager.pullAndRefresh(
                             marketData: marketData,

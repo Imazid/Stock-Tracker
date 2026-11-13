@@ -93,6 +93,7 @@ final class PrivateMarketsFlowTests: XCTestCase {
     @MainActor
     func testOwnershipExcerptCanBeReviewedAndLinked() async throws {
         let host = "http://127.0.0.1:58531"
+        let authHost = "http://127.0.0.1:58521"
         let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
         func post(_ url: String, _ fields: [String: String], token: String? = nil) async throws -> (Int, [String: Any]) {
             var request = URLRequest(url: try XCTUnwrap(URL(string: url)), timeoutInterval: 20)
@@ -114,9 +115,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let email = "private-ui-\(UUID().uuidString.lowercased())@example.com"
         let password = "Test-Private-Markets-2026!"
         let credentials = ["email": email, "password": password]
-        let account = try await post(host + "/auth/v1/signup", credentials)
+        let account = try await post(authHost + "/auth/v1/signup", credentials)
         XCTAssertEqual(account.0, 200)
-        let session = try await post(host + "/auth/v1/token?grant_type=password", credentials)
+        let session = try await post(authHost + "/auth/v1/token?grant_type=password", credentials)
         XCTAssertEqual(session.0, 200)
         let token = try XCTUnwrap(session.1["access_token"] as? String)
         let saved = try await post(edge, ["action": "save_document", "title": "Ownership statement fixture",
@@ -161,6 +162,21 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(save.isEnabled, app.debugDescription)
         save.tap()
         XCTAssertTrue(app.buttons["private.ownership.linked"].waitForExistence(timeout: 8), app.debugDescription)
+        app.buttons["private.ownership.linked"].tap()
+        XCTAssertTrue(app.staticTexts["Reviewed by you"].waitForExistence(timeout: 8))
+
+        for title in ["Ownership excerpt", "Ownership Evidence", "Private evidence holding", "My Private Portfolio"] {
+            let back = app.navigationBars[title].buttons["BackButton"]
+            XCTAssertTrue(back.waitForExistence(timeout: 6), app.debugDescription)
+            back.tap()
+        }
+        app.buttons["private.companyUpdates"].tap()
+        let monitor = app.switches["private.monitor.enable"]
+        XCTAssertTrue(monitor.waitForExistence(timeout: 8), app.debugDescription)
+        let monitorControl = monitor.switches.firstMatch
+        if monitorControl.exists { monitorControl.tap() } else { monitor.tap() }
+        XCTAssertTrue(app.switches["private.monitor.eligible"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Monitoring inbox"].waitForExistence(timeout: 8))
     }
 
     private func openPrivateMarkets() {

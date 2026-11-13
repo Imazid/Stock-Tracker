@@ -140,6 +140,18 @@ struct PrivateCompanyUpdate: Decodable, Identifiable {
     let company: Company
 }
 
+struct PrivateMarketAlert: Decodable, Identifiable {
+    let id: UUID
+    let subjectId: UUID
+    let kind: String
+    let companyName: String
+    let title: String
+    let significance: String
+    let sourceUrl: URL?
+    let sourceLabel: String?
+    let occurredAt: Date
+}
+
 struct PrivateApplication: Decodable, Identifiable {
     let id: UUID
     let status: String
@@ -162,6 +174,7 @@ enum PrivateMarketsAPI {
     struct Catalog: Decodable { let deals: [PrivateDeal] }
     struct Items: Decodable { let items: [PrivateSavedItem] }
     struct Updates: Decodable { let updates: [PrivateCompanyUpdate] }
+    struct MonitorInbox: Decodable { let alerts: [PrivateMarketAlert] }
     struct Applications: Decodable { let applications: [PrivateApplication] }
     struct ConfirmedHoldings: Decodable {
         let holdings: [ProviderPrivateHolding]
@@ -217,6 +230,9 @@ final class PrivateMarketsStore: ObservableObject {
         var notify = false
         var seenUpdates: [UUID] = []
         var capitalReminders: Bool?
+        var monitorEnabled: Bool?
+        var monitorEligible: Bool?
+        var seenMonitorAlerts: [UUID]?
     }
 
     @Published private(set) var state = State()
@@ -224,6 +240,11 @@ final class PrivateMarketsStore: ObservableObject {
     @Published private(set) var providerHoldings: [ProviderPrivateHolding] = []
     @Published private(set) var providerError: String?
     @Published private(set) var loadingProviderHoldings = false
+    @Published private(set) var monitorAlerts: [PrivateMarketAlert] = []
+    @Published private(set) var monitorError: String?
+    private var monitorSettingsTask: Task<Void, Error>?
+    private var monitorSettingsRevision = UUID()
+    private var monitorLastSync: Date?
     private var providerLoadTask: Task<Void, Never>?
     private var providerRefreshID = UUID()
     private var hasLoadedProviderHoldings = false
@@ -245,6 +266,12 @@ final class PrivateMarketsStore: ObservableObject {
         providerHoldings = []
         providerError = nil
         loadingProviderHoldings = false
+        monitorSettingsTask?.cancel()
+        monitorSettingsTask = nil
+        monitorSettingsRevision = UUID()
+        monitorLastSync = nil
+        monitorAlerts = []
+        monitorError = nil
         providerLoadTask?.cancel()
         providerLoadTask = nil
         providerRefreshID = UUID()
@@ -320,8 +347,10 @@ final class PrivateMarketsStore: ObservableObject {
         edit(&next)
         let data = try JSONEncoder().encode(next)
         try data.write(to: Self.file(for: scope), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        let monitorScopeChanged = monitoredCompanies(in: next) != monitoredCompanies(in: state)
         state = next
         syncCapitalReminders()
+        if monitorScopeChanged, state.monitorEnabled == true, let scope { queueMonitorSettings(for: scope) }
     }
 
     func save(_ holding: PrivateHolding) throws {
@@ -382,7 +411,7 @@ final class PrivateMarketsStore: ObservableObject {
         try Task.checkCancellation()
         guard scope == userID else { return [] }
         updates.sort { $0.publishedAt > $1.publishedAt }
-        if state.notify, !deliveringUpdates {
+        if state.notify, state.monitorEnabled != true, !deliveringUpdates {
             deliveringUpdates = true
             defer { deliveringUpdates = false }
             let now = Date.now
@@ -413,11 +442,125 @@ final class PrivateMarketsStore: ObservableObject {
     }
 
     func checkUpdatesInBackground() async {
-        guard let id = scope, state.capitalReminders == true || state.notify else { return }
-        // Session restoration can lag a cold background launch. Never load or notify another account.
-        guard let sessionID = try? await SupabaseManager.auth.session.user.id, sessionID == id else { return }
+        // Session restoration can lag a cold background launch.
+        guard let id = try? await SupabaseManager.auth.session.user.id else { return }
+        if scope == nil { selectAccount(id) }
+        guard scope == id, state.capitalReminders == true || state.notify || state.monitorEnabled != nil else { return }
         await refreshProviderHoldings(for: id)
-        if state.notify { _ = try? await checkUpdates(for: id) }
+        if state.notify && state.monitorEnabled != true { _ = try? await checkUpdates(for: id) }
+        await refreshMonitor(for: id)
+    }
+
+    func setMonitor(enabled: Bool, eligible: Bool, owner: UUID) async throws {
+        guard scope == owner else { throw CancellationError() }
+        try change {
+            $0.monitorEnabled = enabled
+            $0.monitorEligible = enabled && eligible
+        }
+        if !enabled { monitorAlerts = [] }
+        queueMonitorSettings(for: owner)
+        await refreshMonitor(for: owner)
+    }
+
+    func refreshMonitor(for owner: UUID) async {
+        guard scope == owner, let enabled = state.monitorEnabled else { return }
+        if monitorSettingsTask == nil && (monitorLastSync == nil ||
+            (enabled && Date.now.timeIntervalSince(monitorLastSync ?? .distantPast) >= 86_400)) {
+            queueMonitorSettings(for: owner)
+        }
+        let revision = monitorSettingsRevision
+        do {
+            try await monitorSettingsTask?.value
+            try Task.checkCancellation()
+            guard scope == owner, revision == monitorSettingsRevision else { return }
+            guard enabled else {
+                monitorAlerts = []
+                return
+            }
+            let inbox: PrivateMarketsAPI.MonitorInbox = try await PrivateMarketsAPI.request("monitor_inbox", expectedUserID: owner)
+            try Task.checkCancellation()
+            guard scope == owner, state.monitorEnabled == true, revision == monitorSettingsRevision else { return }
+            monitorAlerts = inbox.alerts
+            await deliverMonitorNotifications(inbox.alerts, owner: owner)
+        } catch is CancellationError {
+        } catch {
+            if scope == owner, revision == monitorSettingsRevision { monitorError = error.localizedDescription }
+        }
+    }
+
+    @discardableResult
+    private func queueMonitorSettings(for owner: UUID) -> Task<Void, Error>? {
+        guard scope == owner, let enabled = state.monitorEnabled else { return nil }
+        let previous = monitorSettingsTask
+        let revision = UUID()
+        monitorSettingsRevision = revision
+        monitorLastSync = nil
+        let fields: [String: Any] = [
+            "enabled": enabled,
+            "device_id": Self.monitorDeviceID.uuidString,
+            "eligible_opportunities": state.monitorEligible == true,
+            "company_ids": enabled ? monitoredCompanies(in: state).map(\.uuidString) : [],
+        ]
+        monitorError = nil
+        let task = Task {
+            _ = await previous?.result
+            defer {
+                if monitorSettingsRevision == revision { monitorSettingsTask = nil }
+            }
+            guard scope == owner, monitorSettingsRevision == revision else { return }
+            try Task.checkCancellation()
+            do {
+                try await PrivateMarketsAPI.send("monitor_settings", fields, expectedUserID: owner)
+                if scope == owner, monitorSettingsRevision == revision { monitorLastSync = .now }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if scope == owner, monitorSettingsRevision == revision { monitorError = error.localizedDescription }
+                throw error
+            }
+        }
+        monitorSettingsTask = task
+        return task
+    }
+
+    private func monitoredCompanies(in records: State) -> [UUID] {
+        var seen = Set<UUID>()
+        return Array((records.follows.map(\.id) + records.holdings.compactMap(\.catalogueCompanyID))
+            .filter { seen.insert($0).inserted }.prefix(250))
+    }
+
+    private static var monitorDeviceID: UUID {
+        let key = "privateMarketMonitorDeviceID"
+        if let value = UserDefaults.standard.string(forKey: key).flatMap(UUID.init(uuidString:)) { return value }
+        let value = UUID()
+        UserDefaults.standard.set(value.uuidString, forKey: key)
+        return value
+    }
+
+    private func deliverMonitorNotifications(_ alerts: [PrivateMarketAlert], owner: UUID) async {
+        guard state.notify, !deliveringUpdates else { return }
+        deliveringUpdates = true
+        defer { deliveringUpdates = false }
+        let seen = Set(state.seenMonitorAlerts ?? [])
+        let now = Date.now
+        let recent = alerts.filter { !seen.contains($0.id) && !state.seenUpdates.contains($0.subjectId) &&
+            $0.kind != "capital_call" && now.timeIntervalSince($0.occurredAt) < 7 * 86_400 }
+        var delivered: [UUID] = []
+        for alert in recent.prefix(10) {
+            guard scope == owner, state.notify, state.monitorEnabled == true, !Task.isCancelled else { break }
+            let content = UNMutableNotificationContent()
+            content.title = "Private Markets update"
+            content.body = "There is a new update in your Private Markets inbox."
+            content.userInfo = ["privateMarkets": true]
+            do {
+                try await UNUserNotificationCenter.current().add(.init(identifier: "private-markets.monitor.\(alert.id)",
+                                                                        content: content, trigger: nil))
+                delivered.append(alert.id)
+            } catch { }
+        }
+        if !delivered.isEmpty, scope == owner {
+            try? change { $0.seenMonitorAlerts = Array((($0.seenMonitorAlerts ?? []) + delivered).suffix(300)) }
+        }
     }
 
     func setCapitalReminders(_ enabled: Bool) async throws {
