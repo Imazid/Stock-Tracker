@@ -8,6 +8,8 @@ export * from "./broker.ts";
 export * as Calendar from "./calendar.ts";
 export { MarketCalendar } from "./calendar.ts";
 export * from "./catalog.ts";
+export { Currencies } from "./currencies.ts";
+export { ExchangeHolidays } from "./exchange_holidays.ts";
 export * from "./engine.ts";
 export * from "./evaluator.ts";
 export * from "./indicators.ts";

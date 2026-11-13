@@ -6,8 +6,9 @@
 import { agentSpec, type TradingAgent } from "../_shared/trading/agent.ts";
 import { verifyAudit } from "../_shared/trading/audit.ts";
 import { TradingEngine } from "../_shared/trading/engine.ts";
+import { addCivilDays, civilDateInZone, instantInZone, isTradingDay } from "../_shared/trading/calendar.ts";
 import {
-  emptySnapshot, type Instrument, instrumentID, makeBarSeries, type MarketSnapshot, fixtureProvenance, syntheticProvenance,
+  emptySnapshot, fixtureProvenance, type Instrument, instrumentID, listed, makeBarSeries, type MarketSnapshot, syntheticProvenance,
 } from "../_shared/trading/market.ts";
 import { agentSource, makeRequest } from "../_shared/trading/orders.ts";
 import { makePolicy, reportSummary, type RiskPolicy, standardPolicy } from "../_shared/trading/risk.ts";
@@ -226,7 +227,7 @@ export function scenarios(): Scenario[] {
   });
   scenario("missing data", (e, r) => {
     const agent = e.createAgent(draft(), Fx.now); r.sync(e);
-    e.runAgent(agent.id, { series: {}, quotes: {}, failures: { [aapl]: "HTTP 500" } }, "schedule", Fx.now); r.sync(e);
+    e.runAgent(agent.id, { ...emptySnapshot(), failures: { [aapl]: "HTTP 500" } }, "schedule", Fx.now); r.sync(e);
   });
   scenario("synthetic data", (e, r) => {
     const agent = e.createAgent(draft(), Fx.now); r.sync(e);
@@ -451,8 +452,14 @@ export function scenarios(): Scenario[] {
     bad.spec.universe = [];
     r.refused("bad agent", () => e.createAgent(bad, Fx.now));
     r.refused("tiny portfolio", () => e.createPaperPortfolio("x", 1, "USD", Fx.now));
-    r.refused("euro portfolio", () => e.createPaperPortfolio("x", 1_000, "EUR", Fx.now));
+    r.refused("unknown currency", () => e.createPaperPortfolio("x", 1_000, "XYZ", Fx.now));
+    r.refused("too few yen", () => e.createPaperPortfolio("x", 500, "JPY", Fx.now));
+    r.refused("no name and too few pounds", () => e.createPaperPortfolio("", 99.99, "GBP", Fx.now));
     r.refused("long name", () => e.createPaperPortfolio("n".repeat(41), 1_000, "USD", Fx.now));
+    const yen = makeDraft({ name: "Yen", mode: "paper", spec: Fx.aboveAverageSpec([listed("7203", "tse")]), budget: 5_000, maxPositionPct: 10 });
+    r.refused("yen budget too small", () => e.createAgent(yen, Fx.now));
+    yen.budget = 2_000_000_000;
+    r.refused("yen budget too big", () => e.createAgent(yen, Fx.now));
     const research = draft();
     research.spec = Templates.portfolioResearch([Fx.aapl]);
     r.refused("research strategy in paper mode", () => e.createAgent(research, Fx.now));
@@ -589,6 +596,78 @@ export function scenarios(): Scenario[] {
     if (waiting) {
       r.result("approve", e.approveProposal(waiting.id, later + seconds(30))); r.sync(e);
     }
+  });
+  scenario("one venue's volume is not the asset's liquidity", (e, r) => {
+    const coin = makeDraft({ name: "Coin", mode: "paper", spec: Fx.aboveAverageSpec([Fx.btc]), budget: 5_000, maxPositionPct: 10 });
+    const agent = e.createAgent(coin, Fx.now); r.sync(e);
+    const closes = Fx.risingCloses().map((close) => close * 500);
+    const snapshot = emptySnapshot();
+    snapshot.series[btc] = makeBarSeries(Fx.btc, "day", Fx.dailyBars(closes, Fx.cryptoDays(closes.length), 0.09), fixtureProvenance("test"), Fx.now, false);
+    snapshot.quotes[btc] = Fx.quote(Fx.btc, closes[closes.length - 1], { spreadBps: 4 });
+    e.runAgent(agent.id, snapshot, "manual", Fx.now); r.sync(e);
+    r.note("stats without a market-wide figure", e.state.stats);
+    snapshot.dollarVolume[btc] = 25_000_000_000;
+    const later = Fx.now + seconds(600);
+    snapshot.quotes[btc] = Fx.quote(Fx.btc, closes[closes.length - 1], { spreadBps: 4, time: later });
+    e.runAgent(agent.id, snapshot, "manual", later); r.sync(e);
+    r.note("stats with one", e.state.stats);
+    // The figure doesn't outlive the data it came with.
+    snapshot.dollarVolume = {};
+    const muchLater = later + hours(1);
+    snapshot.quotes[btc] = Fx.quote(Fx.btc, closes[closes.length - 1], { spreadBps: 4, time: muchLater });
+    e.runAgent(agent.id, snapshot, "manual", muchLater); r.sync(e);
+    r.note("stats after it is gone", e.state.stats);
+  });
+  scenario("Tokyo: lots of 100 and a lunch break", (e, r) => {
+    const toyota = listed("7203", "tse", "Toyota Motor");
+    const id = instrumentID(toyota);
+    const tokyoNow = Fx.date("2026-11-10T01:00:00Z");
+    const ledger = e.createPaperPortfolio("Japan", 5_000_000, "JPY", tokyoNow); r.sync(e);
+    e.ingest([Fx.quote(toyota, 2_800, { time: tokyoNow })], { [id]: { averageDollarVolume: 1e11, dailyVolatilityPct: 1.5 } }, tokyoNow); r.sync(e);
+    const base = { ledgerID: ledger.id, instrument: toyota };
+    r.result("odd lot", e.submit(makeRequest({ ...base, clientOrderID: "m-1", side: "buy", quantity: 150 }), tokyoNow)); r.sync(e);
+    const byAmount = makeRequest({ ...base, clientOrderID: "m-2", side: "buy", notional: 700_000 });
+    r.preview("preview by amount", e.preview(byAmount, tokyoNow));
+    r.result("by amount", e.submit(byAmount, tokyoNow)); r.sync(e);
+    const lunch = Fx.date("2026-11-10T03:00:00Z");
+    e.ingest([Fx.quote(toyota, 2_810, { time: lunch })], {}, lunch); r.sync(e);
+    const waiting = makeRequest({ ...base, clientOrderID: "m-3", side: "buy", quantity: 100 });
+    r.preview("preview at lunch", e.preview(waiting, lunch));
+    r.result("at lunch", e.submit(waiting, lunch)); r.sync(e);
+    const afternoon = Fx.date("2026-11-10T03:31:00Z");
+    e.ingest([Fx.quote(toyota, 2_815, { time: afternoon })], {}, afternoon); r.sync(e);
+    r.result("sell a lot", e.submit(makeRequest({ ...base, clientOrderID: "m-4", side: "sell", quantity: 100 }), afternoon + seconds(60))); r.sync(e);
+  });
+  scenario("a pound portfolio can't buy a yen share", (e, r) => {
+    const pounds = e.createPaperPortfolio("UK", 10_000, "GBP", Fx.now); r.sync(e);
+    const sony = listed("6758", "tse");
+    e.ingest([Fx.quote(sony, 3_500)], {}, Fx.now); r.sync(e);
+    r.result("yen share", e.submit(makeRequest({ clientOrderID: "m-1", ledgerID: pounds.id, instrument: sony, side: "buy", quantity: 100 }), Fx.now)); r.sync(e);
+  });
+  scenario("a UK agent runs end to end in pounds", (e, r) => {
+    const shell = listed("SHEL", "lse", "Shell");
+    const id = instrumentID(shell);
+    const londonNow = Fx.date("2026-11-10T11:00:00Z");
+    const agent = e.createAgent(makeDraft({ name: "UK trend", mode: "paper", spec: Fx.aboveAverageSpec([shell]), budget: 10_000, maxPositionPct: 10 }), londonNow);
+    r.sync(e);
+    // The 60 London trading days before today, stamped at 08:00 local (as Yahoo stamps the open).
+    const barDays: number[] = [];
+    let day = civilDateInZone("Europe/London", londonNow);
+    while (barDays.length < 60) {
+      day = addCivilDays(day, -1);
+      const midnight = instantInZone("Europe/London", day, 0, 0);
+      if (isTradingDay("lse", midnight)) barDays.push(midnight + hours(8));
+    }
+    const closes = Fx.risingCloses().map((close) => close * 0.27);
+    const snapshot = emptySnapshot();
+    snapshot.series[id] = Fx.series(shell, closes, { days: barDays.reverse() });
+    snapshot.quotes[id] = Fx.quote(shell, closes[closes.length - 1], { time: londonNow });
+    e.runAgent(agent.id, snapshot, "manual", londonNow); r.sync(e);
+  });
+  scenario("a backtest is noted in the audit trail", (e, r) => {
+    const agent = e.createAgent(draft(), Fx.now); r.sync(e);
+    e.noteBacktest("Above average", "+12.4% over 2 years, 31 trades.", Fx.now + seconds(60), { agentID: agent.id, details: { trades: "31", returnPct: "12.4" } }); r.sync(e);
+    e.noteBacktest("Momentum", "No trades.", Fx.now + seconds(120), { actor: "copilot" }); r.sync(e);
   });
   return list;
 }

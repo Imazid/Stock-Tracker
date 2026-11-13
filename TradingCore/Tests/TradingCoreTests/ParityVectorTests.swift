@@ -191,10 +191,26 @@ final class ParityVectorTests: XCTestCase {
             }
         }
         var money: [Any] = []
-        for currency in ["USD", "AUD", "EUR"] {
-            for x in xs { money.append([x, currency, NumberText.money(x, currency: currency)] as [Any]) }
+        var compactMoney: [Any] = []
+        let codes = Currencies.supported + ["XYZ"]
+        for currency in codes {
+            for x in xs + [1e12, 2.55e12, -3.2e9] {
+                money.append([x, currency, NumberText.money(x, currency: currency)] as [Any])
+                compactMoney.append([x, currency, NumberText.compactMoney(x, currency: currency)] as [Any])
+            }
+        }
+        let currencies: [Any] = codes.map { code in
+            ["code": code, "supported": Currencies.isSupported(code), "symbol": Currencies.symbol(code),
+             "decimals": Currencies.decimals(code), "timeZone": Currencies.timeZone(code).identifier,
+             "roughUnitsPerUSD": Currencies.roughUnitsPerUSD(code),
+             "budgetRange": [Currencies.budgetRange(code).lowerBound, Currencies.budgetRange(code).upperBound],
+             "defaultBudget": Currencies.defaultBudget(code), "balanceChoices": Currencies.balanceChoices(code),
+             "liquidityFloor": Currencies.liquidityFloor(code)] as [String: Any]
         }
         try Vectors.check("text", [
+            "currencies": currencies,
+            "supportedCurrencies": Currencies.supported,
+            "compactMoney": compactMoney,
             "doubleDescription": description.map { [$0, String($0)] as [Any] },
             "price": xs.map { [$0, NumberText.price($0)] as [Any] },
             "number": xs.map { [$0, NumberText.number($0)] as [Any] },
@@ -213,13 +229,36 @@ final class ParityVectorTests: XCTestCase {
 
     func testCalendarVectors() throws {
         let calendar = MarketCalendar.standard
-        var instants: [Date] = []
+        // Every venue: a sweep across two years, and the edges of each region's day.
+        var everywhere: [Date] = []
         var t = Fx.date("2025-12-28T00:00:00Z")
         let end = Fx.date("2028-01-05T00:00:00Z")
         while t < end {
-            instants.append(t)
-            t = t.addingTimeInterval(2 * 86_400 + 5 * 3_600 + 17 * 60)
+            everywhere.append(t)
+            t = t.addingTimeInterval(9 * 86_400 + 7 * 3_600 + 13 * 60)
         }
+        everywhere += [
+            // Tuesday 10 November 2026 hour by hour (opens, lunches and closes from Tokyo to New York).
+            "2026-11-09T23:59:59Z", "2026-11-10T00:00:00Z", "2026-11-10T00:30:00Z", "2026-11-10T01:00:00Z", "2026-11-10T01:29:59Z",
+            "2026-11-10T01:30:00Z", "2026-11-10T02:29:59Z", "2026-11-10T02:30:00Z", "2026-11-10T03:00:00Z", "2026-11-10T03:29:59Z",
+            "2026-11-10T03:30:00Z", "2026-11-10T03:44:59Z", "2026-11-10T03:45:00Z", "2026-11-10T03:59:59Z", "2026-11-10T04:00:00Z",
+            "2026-11-10T04:30:00Z", "2026-11-10T05:00:00Z", "2026-11-10T05:30:00Z", "2026-11-10T06:29:59Z", "2026-11-10T06:30:00Z",
+            "2026-11-10T06:40:00Z", "2026-11-10T07:59:00Z", "2026-11-10T08:00:00Z", "2026-11-10T08:01:00Z", "2026-11-10T08:09:59Z",
+            "2026-11-10T08:10:00Z", "2026-11-10T09:05:59Z", "2026-11-10T09:06:00Z", "2026-11-10T09:59:59Z", "2026-11-10T10:00:00Z",
+            "2026-11-10T11:00:00Z", "2026-11-10T16:29:59Z", "2026-11-10T16:30:00Z", "2026-11-10T16:34:59Z", "2026-11-10T16:35:00Z",
+            "2026-11-10T16:40:00Z", "2026-11-10T15:00:00Z", "2026-11-10T21:00:00Z",
+            // A weekend, and a summer day (London and the continent on summer time).
+            "2026-11-14T10:00:00Z", "2026-11-15T23:30:00Z", "2026-07-14T07:01:00Z", "2026-07-14T06:59:00Z", "2026-07-14T15:35:00Z",
+            "2026-07-14T15:34:59Z", "2026-07-14T02:30:00Z",
+            // European clocks change: 29 March and 25 October 2026.
+            "2026-03-27T16:00:00Z", "2026-03-29T00:59:59Z", "2026-03-29T01:00:00Z", "2026-03-30T06:59:59Z", "2026-03-30T07:00:00Z",
+            "2026-03-30T08:00:00Z", "2026-10-23T15:35:00Z", "2026-10-25T00:59:59Z", "2026-10-25T01:00:00Z", "2026-10-26T07:59:59Z",
+            "2026-10-26T08:00:00Z", "2026-10-26T09:00:00Z",
+            // New Year, when the venues without holiday tables simply follow the week.
+            "2025-12-31T23:00:00Z", "2026-01-01T02:00:00Z", "2026-01-01T09:00:00Z", "2027-12-31T15:00:00Z", "2028-01-03T02:00:00Z"
+        ].map(Fx.date)
+        // The US and ASX in detail (their holiday tables, half days and clock changes).
+        var instants: [Date] = []
         instants += [
             // US session edges, a weekend, summer time.
             "2026-11-10T15:00:00Z", "2026-11-10T14:29:00Z", "2026-11-10T14:29:59Z", "2026-11-10T14:30:00Z",
@@ -259,13 +298,15 @@ final class ParityVectorTests: XCTestCase {
 
         var cases: [Any] = []
         for venue in Venue.allCases {
-            for instant in instants {
+            let detailed = venue == .us || venue == .asx || venue == .crypto
+            for instant in everywhere + (detailed ? instants : []) {
                 let session = calendar.session(venue, containing: instant)
                 cases.append([
                     "venue": venue.rawValue, "t": ms(instant),
                     "dayKey": calendar.dayKey(venue, instant),
                     "coversDate": calendar.coversDate(venue, instant),
                     "isTradingDay": calendar.isTradingDay(venue, instant),
+                    "segments": calendar.segments(venue, on: instant).map { [ms($0.start), ms($0.end)] },
                     "sessionStart": session.map { ms($0.start) } ?? NSNull(),
                     "sessionEnd": session.map { ms($0.end) } ?? NSNull(),
                     "isOpen": calendar.isOpen(venue, at: instant),
@@ -274,15 +315,22 @@ final class ParityVectorTests: XCTestCase {
                 ] as [String: Any])
             }
         }
+        let venues: [Any] = Venue.allCases.map { venue in
+            var facts: [String: Any] = ["venue": venue.rawValue, "timeZone": calendar.timeZone(venue).identifier,
+                                        "hasLunchBreak": calendar.hasLunchBreak(venue)]
+            if let regular = calendar.regularHours(venue) {
+                facts["regularHours"] = ["timeZone": regular.timeZone.identifier, "open": regular.open, "close": regular.close] as [String: Any]
+            }
+            if let covered = calendar.coveredYears(for: venue) { facts["coveredYears"] = [covered.lowerBound, covered.upperBound] }
+            return facts
+        }
 
         var barComplete: [Any] = []
         let barTimes = ["2026-11-10T05:00:00Z", "2026-11-10T14:30:00Z", "2026-11-09T05:00:00Z", "2026-11-07T05:00:00Z",
-                        "2026-11-26T05:00:00Z", "2026-11-27T05:00:00Z", "2026-11-10T00:00:00Z", "2026-11-09T13:00:00Z",
-                        "2026-11-10T15:00:00Z", "2026-07-14T04:00:00Z", "2026-12-24T13:00:00Z", "2026-11-09T23:00:00Z"].map(Fx.date)
+                        "2026-11-26T05:00:00Z", "2026-11-10T00:00:00Z", "2026-11-09T15:00:00Z", "2026-11-10T08:00:00Z"].map(Fx.date)
         let nows = ["2026-11-10T15:00:00Z", "2026-11-10T20:59:59Z", "2026-11-10T21:00:00Z", "2026-11-11T00:00:00Z",
-                    "2026-11-10T15:59:59Z", "2026-11-10T16:00:00Z", "2026-11-08T05:00:00Z", "2026-11-27T05:00:00Z",
-                    "2026-11-27T18:00:00Z", "2026-11-10T05:00:00Z", "2026-11-10T04:59:59Z", "2026-07-14T20:00:00Z",
-                    "2026-12-24T03:10:00Z", "2026-12-25T13:00:00Z", "2026-11-09T20:59:59Z", "2026-11-09T21:00:00Z"].map(Fx.date)
+                    "2026-11-10T03:00:00Z", "2026-11-10T06:29:59Z", "2026-11-10T06:31:00Z", "2026-11-10T16:35:00Z",
+                    "2026-11-08T05:00:00Z", "2026-11-27T18:00:00Z", "2026-11-09T21:00:00Z"].map(Fx.date)
         for venue in Venue.allCases {
             for timeframe in Timeframe.allCases {
                 for barTime in barTimes {
@@ -335,7 +383,7 @@ final class ParityVectorTests: XCTestCase {
         ], provenance: .fixture("messy"), fetchedAt: Fx.now)
 
         var ledgerDayKey: [Any] = []
-        for currency in ["USD", "AUD", "EUR"] {
+        for currency in Currencies.supported + ["XYZ"] {
             for text in ["2026-11-10T15:00:00Z", "2026-11-10T04:59:59Z", "2026-11-10T05:00:00Z", "2026-11-09T12:59:59Z",
                          "2026-11-09T13:00:00Z", "2026-07-01T03:59:59Z", "2026-07-01T04:00:00Z", "2026-07-01T13:59:59Z",
                          "2026-07-01T14:00:00Z", "2026-03-08T07:00:00Z", "2026-12-31T23:00:00Z"] {
@@ -343,10 +391,58 @@ final class ParityVectorTests: XCTestCase {
             }
         }
 
-        try Vectors.check("calendar", ["cases": cases, "barComplete": barComplete, "tradingDays": tradingDays,
+        try Vectors.check("calendar", ["cases": cases, "venues": venues, "barComplete": barComplete, "tradingDays": tradingDays,
                                        "completedBars": completedBars, "ledgerDayKey": ledgerDayKey,
                                        "tidiedSeries": ["times": messy.bars.map { ms($0.time) }, "closes": messy.bars.map(\.close)],
                                        "coveredYears": [MarketCalendar.coveredYears.lowerBound, MarketCalendar.coveredYears.upperBound]])
+    }
+
+    // MARK: Markets
+
+    func testMarketVectors() throws {
+        let venues: [Any] = Venue.allCases.map { venue in
+            var facts: [String: Any] = ["venue": venue.rawValue, "currency": venue.currency, "displayName": venue.displayName,
+                                        "shortName": venue.shortName, "country": venue.country, "region": venue.region.rawValue,
+                                        "regionName": venue.region.displayName]
+            if let suffix = venue.yahooSuffix { facts["yahooSuffix"] = suffix }
+            return facts
+        }
+        let symbols = ["VOD.L", "7203.T", "sap.de", "AAPL", "BHP.AX", "0700.HK", ".L", "MC.PA", "ASML.AS", "NESN.SW", "D05.SI",
+                       "005930.KS", "RELIANCE.NS", "BTC", "X.AXL", "BRK.B"]
+        let parsed: [Any] = symbols.map { symbol in
+            var entry: [String: Any] = ["input": symbol]
+            if let hit = Venue.parse(yahooSymbol: symbol) { entry["venue"] = hit.venue.rawValue; entry["symbol"] = hit.symbol }
+            return entry
+        }
+        let listings: [Any] = [Instrument.listed("vod", name: "Vodafone", on: .lse), .listed("7203", on: .tse), .listed("ISF", on: .lse, etf: true),
+                               Fx.aapl, Fx.btc, Fx.bhp].map { ["instrument": J($0), "id": $0.id, "yahooSymbol": $0.yahooSymbol] as [String: Any] }
+
+        // Liquidity and volatility from a snapshot: one venue's volume is never read as the market's.
+        var stats: [Any] = []
+        let closes = Fx.risingCloses().map { $0 * 500 }
+        func add(_ name: String, _ snapshot: MarketSnapshot, now: Date = Fx.now) {
+            stats.append(["name": name, "series": J(snapshot.series), "dollarVolume": snapshot.dollarVolume, "now": ms(now),
+                          "out": J(snapshot.stats(now: now))] as [String: Any])
+        }
+        var snapshot = MarketSnapshot()
+        snapshot.series[Fx.aapl.id] = Fx.series(Fx.aapl, closes: Fx.risingCloses())
+        snapshot.series[Fx.btc.id] = BarSeries(instrument: Fx.btc, timeframe: .day,
+                                               bars: Fx.dailyBars(closes: closes, days: Fx.cryptoDays(count: closes.count), volume: 0.09),
+                                               provenance: .fixture("test"), fetchedAt: Fx.now, volumeIsMarketWide: false)
+        add("market-wide stock, venue-only crypto with no figure", snapshot)
+        snapshot.dollarVolume[Fx.btc.id] = 25_000_000_000
+        snapshot.dollarVolume[Fx.aapl.id] = 1
+        add("a market-wide figure for the crypto", snapshot)
+        snapshot.dollarVolume[Fx.btc.id] = 0
+        add("a zero figure is no figure", snapshot)
+        snapshot.series[Fx.msft.id] = BarSeries(instrument: Fx.msft, timeframe: .hour, bars: Fx.dailyBars(closes: Fx.risingCloses()),
+                                                provenance: .fixture("test"), fetchedAt: Fx.now)
+        snapshot.series[Fx.spy.id] = Fx.series(Fx.spy, closes: [Double](repeating: 400, count: 12))
+        add("hourly bars and short histories give nothing", snapshot)
+        add("before the last bar has closed", snapshot, now: Fx.date("2026-11-09T20:00:00Z"))
+
+        try Vectors.check("market", ["venues": venues, "yahooSymbols": parsed, "listings": listings, "stats": stats,
+                                     "regions": MarketRegion.allCases.map { [$0.rawValue, $0.displayName] }])
     }
 
     // MARK: Indicators
@@ -679,7 +775,7 @@ final class ParityVectorTests: XCTestCase {
         guardian.protections = Protections(); add("guardian with nothing to do", guardian)
 
         // A hand-written or AI-drafted strategy may give just a symbol.
-        let lenient = #"[{"symbol":"btc"},{"symbol":"nvda"},{"symbol":"ZZZ","assetClass":"etf"},{"symbol":" bhp ","venue":"asx"},{"symbol":"bhp"},{"symbol":"eth","name":"Ether","currency":"AUD"},{"symbol":"NEW","assetClass":"crypto"},{"symbol":"spy","venue":"us"}]"#
+        let lenient = #"[{"symbol":"btc"},{"symbol":"nvda"},{"symbol":"ZZZ","assetClass":"etf"},{"symbol":" bhp ","venue":"asx"},{"symbol":"bhp"},{"symbol":"eth","name":"Ether","currency":"AUD"},{"symbol":"NEW","assetClass":"crypto"},{"symbol":"spy","venue":"us"},{"symbol":"vod","venue":"lse"},{"symbol":"7203"},{"symbol":"hsba"},{"symbol":"hsba","venue":"hkex"},{"symbol":"sap","venue":"euronextParis"},{"symbol":"asml"}]"#
         let decoded = try JSONDecoder().decode([Instrument].self, from: Data(lenient.utf8))
         try Vectors.check("validator", ["cases": cases,
                                         "lenientInstruments": ["input": try JSONSerialization.jsonObject(with: Data(lenient.utf8)), "out": J(decoded)],
@@ -888,6 +984,31 @@ final class ParityVectorTests: XCTestCase {
         add("ASX whole shares", s, s.intent(quantity: 2, price: 45))
         add("ASX half-cent limit", s, s.intent(quantity: 2, price: 45.005, type: .limit, limit: 45.005))
         add("ASX off-tick limit", s, s.intent(quantity: 2, price: 45.003, type: .limit, limit: 45.003))
+        // Markets outside the US: whole shares, and lots of 100 in Tokyo and Singapore.
+        let toyota = Instrument.listed("7203", name: "Toyota Motor", on: .tse)
+        s = RiskSetup(); s.agent = nil
+        s.ledger = Ledger(id: U(20), name: "Japan", kind: .manualPaper, currency: "JPY", startingCash: 5_000_000, createdAt: Fx.now)
+        s.instrument = toyota; s.quote = Fx.quote(toyota, last: 2_800)
+        s.stats = InstrumentStats(averageDollarVolume: 1e11, dailyVolatilityPct: 1.5)
+        add("Tokyo odd lot", s, s.intent(quantity: 150, price: 2_800))
+        add("Tokyo whole lot", s, s.intent(quantity: 200, price: 2_800))
+        add("Tokyo fraction", s, s.intent(quantity: 100.5, price: 2_800))
+        add("Tokyo tenth-yen limit", s, s.intent(quantity: 100, price: 2_800.1, type: .limit, limit: 2_800.1))
+        s.stats = InstrumentStats(averageDollarVolume: 150_000_000, dailyVolatilityPct: 1.5)
+        s.policy = RiskPolicy.standard(budget: 5_000_000, currency: "JPY")
+        add("yen liquidity below the floor", s, s.intent(quantity: 100, price: 2_800))
+        let shell = Instrument.listed("SHEL", name: "Shell", on: .lse)
+        s = RiskSetup()
+        s.ledger = Ledger(id: U(21), name: "UK", kind: .agentPaper, currency: "GBP", startingCash: 10_000, createdAt: Fx.now.addingTimeInterval(-86_400))
+        s.agent = TradingAgent(id: U(22), name: "UK trend", mode: .paper, spec: Fx.aboveAverageSpec([shell]),
+                               riskPolicy: .standard(budget: 10_000, currency: "GBP"), budget: 10_000, createdAt: Fx.now.addingTimeInterval(-86_400))
+        s.policy = .standard(budget: 10_000, currency: "GBP")
+        s.instrument = shell; s.quote = Fx.quote(shell, last: 27.5)
+        add("a pound agent buys a London share", s, s.intent(quantity: 30, price: 27.5))
+        add("London fraction", s, s.intent(quantity: 30.5, price: 27.5))
+        s.stats = InstrumentStats(averageDollarVolume: 640_000, dailyVolatilityPct: 2); add("pound liquidity below the floor", s, s.intent(quantity: 30, price: 27.5))
+        s.stats = InstrumentStats(averageDollarVolume: 3_400_000_000_000, dailyVolatilityPct: 2); add("very liquid in pounds", s, s.intent(quantity: 30, price: 27.5))
+        s.marketOpen = false; add("London closed queues", s, s.intent(quantity: 30, price: 27.5))
 
         // 11. Order size.
         s = RiskSetup(); s.policy.maxPositionPct = 50
@@ -990,12 +1111,16 @@ final class ParityVectorTests: XCTestCase {
         add("everything wrong", s, s.intent(quantity: 500))
 
         XCTAssertEqual(failed, Set(RiskCheckID.allCases), "every check needs a failing case")
-        let policies: [Any] = [
-            ["budget": 10_000, "maxPositionPct": 10, "crypto": false, "out": J(RiskPolicy.standard(budget: 10_000))],
-            ["budget": 5_000, "maxPositionPct": 10, "crypto": true, "out": J(RiskPolicy.standard(budget: 5_000, crypto: true))],
-            ["budget": 333.33, "maxPositionPct": 0.2, "crypto": false, "out": J(RiskPolicy.standard(budget: 333.33, maxPositionPct: 0.2))],
-            ["budget": 1, "maxPositionPct": 250, "crypto": false, "out": J(RiskPolicy.standard(budget: 1, maxPositionPct: 250))]
+        var policies: [Any] = [
+            ["budget": 10_000, "maxPositionPct": 10, "crypto": false, "currency": "USD", "out": J(RiskPolicy.standard(budget: 10_000))],
+            ["budget": 5_000, "maxPositionPct": 10, "crypto": true, "currency": "USD", "out": J(RiskPolicy.standard(budget: 5_000, crypto: true))],
+            ["budget": 333.33, "maxPositionPct": 0.2, "crypto": false, "currency": "USD", "out": J(RiskPolicy.standard(budget: 333.33, maxPositionPct: 0.2))],
+            ["budget": 1, "maxPositionPct": 250, "crypto": false, "currency": "USD", "out": J(RiskPolicy.standard(budget: 1, maxPositionPct: 250))]
         ]
+        for currency in Currencies.supported + ["XYZ"] {
+            policies.append(["budget": Currencies.defaultBudget(currency), "maxPositionPct": 20, "crypto": false, "currency": currency,
+                             "out": J(RiskPolicy.standard(budget: Currencies.defaultBudget(currency), maxPositionPct: 20, currency: currency))] as [String: Any])
+        }
         var bad = RiskPolicy.standard(budget: 5_000)
         bad.maxOrderNotional = 0; bad.maxPositionPct = 0; bad.maxDailyNotional = -1; bad.maxDailyLossPct = 101
         bad.maxDrawdownPct = 150; bad.maxOpenPositions = 0; bad.maxSpreadBps = 0; bad.maxQuoteAgeSeconds = 4
@@ -1015,7 +1140,13 @@ final class ParityVectorTests: XCTestCase {
         let standard = PaperBrokerConfig()
         let charged = PaperBrokerConfig(equityFeePerOrder: 1, equityFeeBps: 5, cryptoFeeBps: 40, modelledHalfSpreadBpsEquity: 3,
                                         modelledHalfSpreadBpsCrypto: 12, maxParticipation: 0.1, maxMatchQuoteAgeSeconds: 60)
-        let instruments = [Fx.aapl, Fx.spy, Fx.btc, Fx.bhp, Instrument(symbol: "IOZ", assetClass: .etf, venue: .asx)]
+        var instruments = [Fx.aapl, Fx.spy, Fx.btc, Fx.bhp, Instrument(symbol: "IOZ", assetClass: .etf, venue: .asx)]
+        // One listing on every other venue, and the odd pairings the rules must still answer for.
+        for venue in Venue.allCases where venue != .us && venue != .asx && venue != .crypto {
+            instruments.append(.listed("TEST", on: venue))
+        }
+        instruments += [.listed("ISF", on: .lse, etf: true), Instrument(symbol: "ODD", assetClass: .equity, venue: .crypto),
+                        Instrument(symbol: "COIN", assetClass: .crypto, venue: .tse)]
 
         var fee: [Any] = []
         for instrument in instruments {
@@ -1175,7 +1306,11 @@ final class ParityVectorTests: XCTestCase {
 
         try Vectors.check("broker", [
             "configs": ["standard": J(standard), "charged": J(charged)],
-            "rules": instruments.map { ["instrument": J($0), "rules": J(PaperBroker.rules(for: $0))] as [String: Any] },
+            "rules": instruments.map { instrument -> [String: Any] in
+                let amounts: [Double] = [0.5, 1, 100, 250.25, 1_234_567, 0.012_345_67]
+                return ["instrument": J(instrument), "rules": J(PaperBroker.rules(for: instrument)),
+                        "quantityText": amounts.map { [$0, PaperBroker.quantityText($0, for: instrument)] as [Any] }]
+            },
             "capabilities": ["paper": J(PaperBroker.capabilities), "live": J(LiveVenues.all)],
             "fee": fee, "executionPrice": price, "match": match, "expiry": expiry, "transitions": transitions,
             "statuses": OrderStatus.allCases.map { [$0.rawValue, $0.isOpen, $0.isTerminal, $0.displayName] as [Any] },
@@ -1806,8 +1941,14 @@ final class ParityVectorTests: XCTestCase {
             bad.spec.universe = []
             do { _ = try e.createAgent(bad, now: Fx.now) } catch { r.error("bad agent", error) }
             do { _ = try e.createPaperPortfolio(name: "x", startingCash: 1, now: Fx.now) } catch { r.error("tiny portfolio", error) }
-            do { _ = try e.createPaperPortfolio(name: "x", startingCash: 1_000, currency: "EUR", now: Fx.now) } catch { r.error("euro portfolio", error) }
+            do { _ = try e.createPaperPortfolio(name: "x", startingCash: 1_000, currency: "XYZ", now: Fx.now) } catch { r.error("unknown currency", error) }
+            do { _ = try e.createPaperPortfolio(name: "x", startingCash: 500, currency: "JPY", now: Fx.now) } catch { r.error("too few yen", error) }
+            do { _ = try e.createPaperPortfolio(name: "", startingCash: 99.99, currency: "GBP", now: Fx.now) } catch { r.error("no name and too few pounds", error) }
             do { _ = try e.createPaperPortfolio(name: String(repeating: "n", count: 41), startingCash: 1_000, now: Fx.now) } catch { r.error("long name", error) }
+            var yen = AgentDraft(name: "Yen", mode: .paper, spec: Fx.aboveAverageSpec([.listed("7203", on: .tse)]), budget: 5_000, maxPositionPct: 10)
+            do { _ = try e.createAgent(yen, now: Fx.now) } catch { r.error("yen budget too small", error) }
+            yen.budget = 2_000_000_000
+            do { _ = try e.createAgent(yen, now: Fx.now) } catch { r.error("yen budget too big", error) }
             var research = self.draft()
             research.spec = AgentTemplates.portfolioResearch([Fx.aapl])
             do { _ = try e.createAgent(research, now: Fx.now) } catch { r.error("research strategy in paper mode", error) }
@@ -1943,6 +2084,80 @@ final class ParityVectorTests: XCTestCase {
             if let proposal = e.state.pendingProposals.first {
                 r.result("approve", try e.approveProposal(id: proposal.id, now: later.addingTimeInterval(30))); r.sync(e)
             }
+        }
+        scenario("one venue's volume is not the asset's liquidity") { e, r in
+            let coin = AgentDraft(name: "Coin", mode: .paper, spec: Fx.aboveAverageSpec([Fx.btc]), budget: 5_000, maxPositionPct: 10)
+            let agent = try e.createAgent(coin, now: Fx.now); r.sync(e)
+            let closes = Fx.risingCloses().map { $0 * 500 }
+            var snapshot = MarketSnapshot()
+            snapshot.series[Fx.btc.id] = BarSeries(instrument: Fx.btc, timeframe: .day,
+                                                   bars: Fx.dailyBars(closes: closes, days: Fx.cryptoDays(count: closes.count), volume: 0.09),
+                                                   provenance: .fixture("test"), fetchedAt: Fx.now, volumeIsMarketWide: false)
+            snapshot.quotes[Fx.btc.id] = Fx.quote(Fx.btc, last: closes.last!, spreadBps: 4)
+            e.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: Fx.now); r.sync(e)
+            r.note("stats without a market-wide figure", J(e.state.stats))
+            snapshot.dollarVolume[Fx.btc.id] = 25_000_000_000
+            let later = Fx.now.addingTimeInterval(600)
+            snapshot.quotes[Fx.btc.id] = Fx.quote(Fx.btc, last: closes.last!, spreadBps: 4, time: later)
+            e.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: later); r.sync(e)
+            r.note("stats with one", J(e.state.stats))
+            // The figure doesn't outlive the data it came with.
+            snapshot.dollarVolume = [:]
+            let muchLater = later.addingTimeInterval(3_600)
+            snapshot.quotes[Fx.btc.id] = Fx.quote(Fx.btc, last: closes.last!, spreadBps: 4, time: muchLater)
+            e.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: muchLater); r.sync(e)
+            r.note("stats after it is gone", J(e.state.stats))
+        }
+        scenario("Tokyo: lots of 100 and a lunch break") { e, r in
+            let toyota = Instrument.listed("7203", name: "Toyota Motor", on: .tse)
+            let tokyoNow = Fx.date("2026-11-10T01:00:00Z")
+            let ledger = try e.createPaperPortfolio(name: "Japan", startingCash: 5_000_000, currency: "JPY", now: tokyoNow); r.sync(e)
+            e.ingest(quotes: [Fx.quote(toyota, last: 2_800, time: tokyoNow)],
+                     stats: [toyota.id: InstrumentStats(averageDollarVolume: 1e11, dailyVolatilityPct: 1.5)], now: tokyoNow); r.sync(e)
+            r.result("odd lot", e.submit(OrderRequest(clientOrderID: "m-1", ledgerID: ledger.id, instrument: toyota, side: .buy, quantity: 150), now: tokyoNow)); r.sync(e)
+            let byAmount = OrderRequest(clientOrderID: "m-2", ledgerID: ledger.id, instrument: toyota, side: .buy, notional: 700_000)
+            r.preview("preview by amount", e.preview(byAmount, now: tokyoNow))
+            r.result("by amount", e.submit(byAmount, now: tokyoNow)); r.sync(e)
+            let lunch = Fx.date("2026-11-10T03:00:00Z")
+            e.ingest(quotes: [Fx.quote(toyota, last: 2_810, time: lunch)], now: lunch); r.sync(e)
+            let waiting = OrderRequest(clientOrderID: "m-3", ledgerID: ledger.id, instrument: toyota, side: .buy, quantity: 100)
+            r.preview("preview at lunch", e.preview(waiting, now: lunch))
+            r.result("at lunch", e.submit(waiting, now: lunch)); r.sync(e)
+            let afternoon = Fx.date("2026-11-10T03:31:00Z")
+            e.ingest(quotes: [Fx.quote(toyota, last: 2_815, time: afternoon)], now: afternoon); r.sync(e)
+            r.result("sell a lot", e.submit(OrderRequest(clientOrderID: "m-4", ledgerID: ledger.id, instrument: toyota, side: .sell, quantity: 100),
+                                            now: afternoon.addingTimeInterval(60))); r.sync(e)
+        }
+        scenario("a pound portfolio can't buy a yen share") { e, r in
+            let pounds = try e.createPaperPortfolio(name: "UK", startingCash: 10_000, currency: "GBP", now: Fx.now); r.sync(e)
+            let sony = Instrument.listed("6758", on: .tse)
+            e.ingest(quotes: [Fx.quote(sony, last: 3_500)], now: Fx.now); r.sync(e)
+            r.result("yen share", e.submit(OrderRequest(clientOrderID: "m-1", ledgerID: pounds.id, instrument: sony, side: .buy, quantity: 100), now: Fx.now)); r.sync(e)
+        }
+        scenario("a UK agent runs end to end in pounds") { e, r in
+            let shell = Instrument.listed("SHEL", name: "Shell", on: .lse)
+            let londonNow = Fx.date("2026-11-10T11:00:00Z")
+            let agent = try e.createAgent(AgentDraft(name: "UK trend", mode: .paper, spec: Fx.aboveAverageSpec([shell]), budget: 10_000, maxPositionPct: 10),
+                                          now: londonNow); r.sync(e)
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = TimeZone(identifier: "Europe/London")!
+            var days: [Date] = []
+            var day = cal.startOfDay(for: londonNow)
+            while days.count < 60 {
+                day = cal.date(byAdding: .day, value: -1, to: day)!
+                if MarketCalendar.standard.isTradingDay(.lse, day) { days.append(day.addingTimeInterval(8 * 3_600)) }
+            }
+            let closes = Fx.risingCloses().map { $0 * 0.27 }
+            var snapshot = MarketSnapshot()
+            snapshot.series[shell.id] = Fx.series(shell, closes: closes, days: days.reversed())
+            snapshot.quotes[shell.id] = Fx.quote(shell, last: closes.last!, time: londonNow)
+            e.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: londonNow); r.sync(e)
+        }
+        scenario("a backtest is noted in the audit trail") { e, r in
+            let agent = try e.createAgent(self.draft(), now: Fx.now); r.sync(e)
+            e.noteBacktest(title: "Above average", summary: "+12.4% over 2 years, 31 trades.", agentID: agent.id,
+                           details: ["trades": "31", "returnPct": "12.4"], now: Fx.now.addingTimeInterval(60)); r.sync(e)
+            e.noteBacktest(title: "Momentum", summary: "No trades.", actor: .copilot, now: Fx.now.addingTimeInterval(120)); r.sync(e)
         }
         return list
     }

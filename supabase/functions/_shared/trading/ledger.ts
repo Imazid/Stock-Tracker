@@ -6,6 +6,7 @@
 // in place. Callers that need a copy (the risk engine's view of "today") take one first.
 
 import { dayKeyInZone } from "./calendar.ts";
+import { currencyTimeZone } from "./currencies.ts";
 import { type Instrument, instrumentID, isRealMarketData, type Quote } from "./market.ts";
 import { type ExecutionMode, type Fill, fillGross } from "./orders.ts";
 import * as Rounding from "./rounding.ts";
@@ -63,9 +64,12 @@ export interface Ledger {
   lastExitAt: Record<string, number>;
 }
 
-/** The ledger's trading day: Sydney for an AUD book, New York otherwise. */
+/**
+ * The ledger's trading day, counted in its currency's home market (Sydney for AUD, London
+ * for GBP, Tokyo for JPY…; New York for USD).
+ */
 export function ledgerDayKey(time: number, currency: string): string {
-  return dayKeyInZone(currency === "AUD" ? "Australia/Sydney" : "America/New_York", time);
+  return dayKeyInZone(currencyTimeZone(currency), time);
 }
 
 export function makeLedger(fields: { id: string; name: string; kind: LedgerKind; currency?: string; agentID?: string; startingCash: number; createdAt: number }): Ledger {

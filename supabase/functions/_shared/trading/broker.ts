@@ -7,7 +7,7 @@
 
 import { nextClose } from "./calendar.ts";
 import {
-  type AssetClass, hasTwoSidedMarket, type Instrument, type InstrumentRules, type Quote, quoteAge, type Venue,
+  type AssetClass, hasTwoSidedMarket, type Instrument, type InstrumentRules, type Quote, quoteAge, type Venue, VENUES,
 } from "./market.ts";
 import {
   isOpenStatus, needsLimitPrice, needsStopPrice, type Order, type OrderSide, type OrderStatus, type OrderType,
@@ -84,7 +84,7 @@ const paperCapabilities: BrokerCapabilities = {
   displayName: "Paper trading",
   environment: "paper",
   countries: ["*"],
-  venues: ["us", "asx", "crypto"],
+  venues: VENUES.slice(),
   assetClasses: ["equity", "etf", "crypto"],
   orderTypes: ["market", "limit", "stop", "stopLimit"],
   timeInForce: ["day", "gtc", "ioc", "fok"],
@@ -93,7 +93,8 @@ const paperCapabilities: BrokerCapabilities = {
   permissions: ["read", "trade"],
   isExecutionEnabled: true,
   notes: [
-    "Simulated fills against live quotes. No order leaves this app.",
+    "Simulated fills against live quotes (delayed for markets outside the US). No order leaves this app.",
+    "Shares outside the US trade in whole units; Tokyo and Singapore in lots of 100. Exchange tick-size tables and Hong Kong board lots are not enforced.",
     "No leverage, margin, short selling or withdrawals.",
   ],
 };
@@ -102,11 +103,29 @@ function rules(instrument: Instrument): InstrumentRules {
   if (instrument.assetClass === "crypto") {
     return { quantityIncrement: 0.000_000_01, minQuantity: 0.000_000_01, minNotional: 1, priceIncrement: 0.01, fractionable: true };
   }
-  if (instrument.venue === "asx") {
-    // ASX trades whole shares.
-    return { quantityIncrement: 1, minQuantity: 1, minNotional: 1, priceIncrement: 0.005, fractionable: false };
+  const whole = (tick: number, lot = 1): InstrumentRules =>
+    ({ quantityIncrement: lot, minQuantity: lot, minNotional: 1, priceIncrement: tick, fractionable: false });
+  switch (instrument.venue) {
+    case "us": case "crypto":
+      return { quantityIncrement: 0.000_001, minQuantity: 0.000_001, minNotional: 1, priceIncrement: 0.01, fractionable: true };
+    case "asx": return whole(0.005);
+    // Price steps are the finest each market uses; the full tick tables aren't modelled.
+    case "lse": return whole(0.0001); // pounds (Yahoo quotes pence; converted)
+    case "xetra": case "euronextParis": case "euronextAmsterdam": return whole(0.001);
+    case "six": return whole(0.01);
+    case "tse": return whole(0.1, 100); // Tokyo trades in units of 100 shares
+    case "hkex": return whole(0.001); // board lots vary by stock; not enforced
+    case "sgx": return whole(0.001, 100); // SGX board lot is 100 shares
+    case "krx": return whole(1);
+    case "nse": return whole(0.01);
   }
-  return { quantityIncrement: 0.000_001, minQuantity: 0.000_001, minNotional: 1, priceIncrement: 0.01, fractionable: true };
+}
+
+/** A quantity as a person would read it: at the instrument's precision, without trailing zeros. */
+function quantityText(quantity: number, instrument: Instrument): string {
+  const text = Rounding.string(quantity, rules(instrument).quantityIncrement);
+  if (!text.includes(".")) return text;
+  return text.replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function fee(instrument: Instrument, notional: number, isFirstFillOfOrder: boolean, config: PaperBrokerConfig): number {
@@ -200,7 +219,7 @@ function expiry(timeInForce: TimeInForce, venue: Venue, placedAt: number): numbe
 }
 
 /** The built-in simulator. It fills against real quotes with a spread, fees and partial fills. */
-export const PaperBroker = { adapterID: "paper", capabilities: paperCapabilities, rules, fee, executionPrice, match, expiry };
+export const PaperBroker = { adapterID: "paper", capabilities: paperCapabilities, rules, quantityText, fee, executionPrice, match, expiry };
 
 // MARK: - Live venues (described, not switched on)
 

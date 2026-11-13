@@ -18,6 +18,7 @@ import {
   type ExecutionMode, needsLimitPrice, needsStopPrice, type Order, type OrderSide, type OrderSource, type OrderType,
   orderTypeDisplayName, remainingQuantity, type TimeInForce, timeInForceDisplayName,
 } from "./orders.ts";
+import { liquidityFloor } from "./currencies.ts";
 import * as Rounding from "./rounding.ts";
 import { cFixed, compactText, durationText, NumberText, percentText } from "./text.ts";
 
@@ -63,9 +64,10 @@ export function makePolicy(fields: Partial<RiskPolicy> & Pick<RiskPolicy, "maxOr
 
 /**
  * Sensible starting limits for a budget. Crypto gets wider spread, volatility and gap
- * allowances because that market really is wider and jumpier.
+ * allowances because that market really is wider and jumpier. `currency` sets the
+ * liquidity floor to about US$1 million in local money.
  */
-export function standardPolicy(budget: number, maxPositionPct = 10, crypto = false): RiskPolicy {
+export function standardPolicy(budget: number, maxPositionPct = 10, crypto = false, currency = "USD"): RiskPolicy {
   const position = Math.min(Math.max(maxPositionPct, 1), 100);
   return {
     maxOrderNotional: Rounding.money(Math.max(budget * position / 100, 1)),
@@ -76,7 +78,7 @@ export function standardPolicy(budget: number, maxPositionPct = 10, crypto = fal
     maxOpenPositions: 10,
     maxSpreadBps: crypto ? 100 : 50,
     maxQuoteAgeSeconds: crypto ? 300 : 900,
-    minAverageDollarVolume: 1_000_000,
+    minAverageDollarVolume: liquidityFloor(currency),
     maxDailyVolatilityPct: crypto ? 15 : 8,
     cooldownSeconds: 300,
     maxPriceGapPct: crypto ? 8 : 5,
@@ -422,6 +424,8 @@ export function evaluate(intent: OrderIntent, c: RiskContext): RiskReport {
   if (ruleProblems.length === 0) {
     if (!r.fractionable && intent.quantity !== Rounding.roundAway(intent.quantity)) {
       ruleProblems.push(`${symbol} trades in whole units only.`);
+    } else if (!r.fractionable && r.quantityIncrement > 1 && !Rounding.isMultiple(intent.quantity, r.quantityIncrement)) {
+      ruleProblems.push(`${symbol} trades in lots of ${Math.trunc(r.quantityIncrement)} shares.`);
     } else if (!Rounding.isMultiple(intent.quantity, r.quantityIncrement)) {
       ruleProblems.push(`The quantity has more decimal places than ${symbol} allows (step ${Rounding.string(r.quantityIncrement, r.quantityIncrement)}).`);
     }
@@ -606,10 +610,10 @@ export function evaluate(intent: OrderIntent, c: RiskContext): RiskReport {
   if (c.stats) {
     const stats = c.stats;
     if (stats.averageDollarVolume >= c.policy.minAverageDollarVolume) {
-      add("liquidity", "passed", `About ${compactText(stats.averageDollarVolume)} trades a day.`);
+      add("liquidity", "passed", `About ${NumberText.compactMoney(stats.averageDollarVolume, intent.instrument.currency)} trades a day.`);
     } else {
       add("liquidity", isBuy && byAgent ? "failed" : "warning",
-        `Only about ${compactText(stats.averageDollarVolume)} trades a day; the minimum is ${compactText(c.policy.minAverageDollarVolume)}.`);
+        `Only about ${NumberText.compactMoney(stats.averageDollarVolume, intent.instrument.currency)} trades a day; the minimum is ${NumberText.compactMoney(c.policy.minAverageDollarVolume, intent.instrument.currency)}.`);
     }
     if (!isBuy) {
       add("volatility", "notApplicable", "Sells are always allowed.");
@@ -621,8 +625,8 @@ export function evaluate(intent: OrderIntent, c: RiskContext): RiskReport {
     }
   } else {
     const status: RiskCheckStatus = byAgent && isBuy ? "failed" : "warning";
-    add("liquidity", status, "There isn't enough price history to measure liquidity.");
-    add("volatility", status, "There isn't enough price history to measure volatility.");
+    add("liquidity", status, `Liquidity couldn't be measured for ${symbol}.`);
+    add("volatility", status, `Volatility couldn't be measured for ${symbol}.`);
   }
 
   // 23. Duplicates and agents trading against each other.

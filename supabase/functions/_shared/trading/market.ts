@@ -12,20 +12,68 @@ import { lookupInstrument } from "./catalog.ts";
 export type AssetClass = "equity" | "etf" | "crypto";
 export const ASSET_CLASSES: AssetClass[] = ["equity", "etf", "crypto"];
 
-/** Where an instrument trades. It decides the trading calendar and the currency. */
-export type Venue = "us" | "asx" | "crypto";
-export const VENUES: Venue[] = ["us", "asx", "crypto"];
+export type MarketRegion = "americas" | "europe" | "asiaPacific" | "crypto";
 
-export function venueCurrency(venue: Venue): string {
-  return venue === "asx" ? "AUD" : "USD";
-}
-
-export function venueDisplayName(venue: Venue): string {
-  switch (venue) {
-    case "us": return "US market";
-    case "asx": return "ASX";
+export function regionDisplayName(region: MarketRegion): string {
+  switch (region) {
+    case "americas": return "Americas";
+    case "europe": return "Europe";
+    case "asiaPacific": return "Asia-Pacific";
     case "crypto": return "Crypto";
   }
+}
+
+/** Where an instrument trades. It decides the trading calendar and the currency. */
+export type Venue =
+  | "us" | "asx" | "crypto"
+  | "lse" | "xetra" | "euronextParis" | "euronextAmsterdam" | "six"
+  | "tse" | "hkex" | "sgx" | "krx" | "nse";
+export const VENUES: Venue[] = ["us", "asx", "crypto", "lse", "xetra", "euronextParis", "euronextAmsterdam", "six", "tse", "hkex", "sgx", "krx", "nse"];
+
+interface VenueFacts {
+  currency: string;
+  /** Reads after "The": "The London market is closed." */
+  displayName: string;
+  /** The badge shown next to a ticker. */
+  shortName: string;
+  country: string;
+  region: MarketRegion;
+  /** The suffix Yahoo Finance puts on a listing here ("VOD.L"); undefined where prices come from elsewhere. */
+  yahooSuffix?: string;
+}
+
+const VENUE_FACTS: Record<Venue, VenueFacts> = {
+  us: { currency: "USD", displayName: "US market", shortName: "US", country: "United States", region: "americas" },
+  asx: { currency: "AUD", displayName: "ASX", shortName: "ASX", country: "Australia", region: "asiaPacific", yahooSuffix: ".AX" },
+  crypto: { currency: "USD", displayName: "Crypto", shortName: "Crypto", country: "Global", region: "crypto" },
+  lse: { currency: "GBP", displayName: "London market", shortName: "LSE", country: "United Kingdom", region: "europe", yahooSuffix: ".L" },
+  xetra: { currency: "EUR", displayName: "Frankfurt market (Xetra)", shortName: "XETRA", country: "Germany", region: "europe", yahooSuffix: ".DE" },
+  euronextParis: { currency: "EUR", displayName: "Paris market", shortName: "PARIS", country: "France", region: "europe", yahooSuffix: ".PA" },
+  euronextAmsterdam: { currency: "EUR", displayName: "Amsterdam market", shortName: "AMS", country: "Netherlands", region: "europe", yahooSuffix: ".AS" },
+  six: { currency: "CHF", displayName: "Swiss market", shortName: "SIX", country: "Switzerland", region: "europe", yahooSuffix: ".SW" },
+  tse: { currency: "JPY", displayName: "Tokyo market", shortName: "TSE", country: "Japan", region: "asiaPacific", yahooSuffix: ".T" },
+  hkex: { currency: "HKD", displayName: "Hong Kong market", shortName: "HKEX", country: "Hong Kong", region: "asiaPacific", yahooSuffix: ".HK" },
+  sgx: { currency: "SGD", displayName: "Singapore market", shortName: "SGX", country: "Singapore", region: "asiaPacific", yahooSuffix: ".SI" },
+  krx: { currency: "KRW", displayName: "Korean market", shortName: "KRX", country: "South Korea", region: "asiaPacific", yahooSuffix: ".KS" },
+  nse: { currency: "INR", displayName: "Indian market (NSE)", shortName: "NSE", country: "India", region: "asiaPacific", yahooSuffix: ".NS" },
+};
+
+export const venueCurrency = (venue: Venue): string => VENUE_FACTS[venue].currency;
+export const venueDisplayName = (venue: Venue): string => VENUE_FACTS[venue].displayName;
+export const venueShortName = (venue: Venue): string => VENUE_FACTS[venue].shortName;
+export const venueCountry = (venue: Venue): string => VENUE_FACTS[venue].country;
+export const venueRegion = (venue: Venue): MarketRegion => VENUE_FACTS[venue].region;
+export const venueYahooSuffix = (venue: Venue): string | undefined => VENUE_FACTS[venue].yahooSuffix;
+
+/** The venue and bare ticker behind a Yahoo symbol: "VOD.L" → (lse, "VOD"). */
+export function parseYahooSymbol(yahooSymbol: string): { venue: Venue; symbol: string } | undefined {
+  const upper = yahooSymbol.toUpperCase();
+  for (const venue of VENUES) {
+    const suffix = venueYahooSuffix(venue);
+    if (suffix === undefined || !upper.endsWith(suffix) || !(upper.length > suffix.length)) continue;
+    return { venue, symbol: upper.slice(0, upper.length - suffix.length) };
+  }
+  return undefined;
 }
 
 export interface Instrument {
@@ -49,6 +97,12 @@ export const usStock = (symbol: string, name = ""): Instrument => makeInstrument
 export const usETF = (symbol: string, name = ""): Instrument => makeInstrument(symbol, "etf", "us", name);
 export const asxStock = (symbol: string, name = ""): Instrument => makeInstrument(symbol, "equity", "asx", name);
 export const cryptoAsset = (symbol: string, name = ""): Instrument => makeInstrument(symbol, "crypto", "crypto", name);
+/** A share or fund listed on an exchange outside the US. */
+export const listed = (symbol: string, venue: Venue, name = "", etf = false): Instrument =>
+  makeInstrument(symbol, etf ? "etf" : "equity", venue, name);
+
+/** The symbol Yahoo Finance knows this listing by ("VOD.L"); the bare symbol where Yahoo isn't the price source. */
+export const yahooSymbol = (instrument: Instrument): string => instrument.symbol + (venueYahooSuffix(instrument.venue) ?? "");
 
 /**
  * Lenient decoding, so a hand-written or AI-drafted strategy can give just a symbol and
@@ -133,13 +187,20 @@ export interface BarSeries {
   bars: Bar[];
   provenance: DataProvenance;
   fetchedAt: number;
+  /**
+   * False when the volumes cover one venue only (a single exchange's slice of the market).
+   * Such volumes say nothing about how liquid the asset is, so they are never used to
+   * measure liquidity.
+   */
+  volumeIsMarketWide: boolean;
 }
 
 /** Builds a series the way Swift's initialiser does: invalid bars dropped, oldest first. */
-export function makeBarSeries(instrument: Instrument, timeframe: Timeframe, bars: Bar[], provenance: DataProvenance, fetchedAt: number): BarSeries {
+export function makeBarSeries(instrument: Instrument, timeframe: Timeframe, bars: Bar[], provenance: DataProvenance, fetchedAt: number,
+  volumeIsMarketWide = true): BarSeries {
   const kept = bars.filter(isValidBar).map((bar, index) => ({ bar, index }));
   kept.sort((a, b) => a.bar.time - b.bar.time || a.index - b.index);
-  return { instrument, timeframe, bars: kept.map((entry) => entry.bar), provenance, fetchedAt };
+  return { instrument, timeframe, bars: kept.map((entry) => entry.bar), provenance, fetchedAt, volumeIsMarketWide };
 }
 
 export interface Quote {
@@ -150,7 +211,11 @@ export interface Quote {
   /** When the venue produced this price (not when we fetched it). */
   time: number;
   provenance: DataProvenance;
-  /** Units traded so far today, when the feed reports it. */
+  /**
+   * A market-wide daily volume in units (today's, or a typical day's), when one is known.
+   * The simulator uses it to decide how much of a large order can fill at once. Leave it
+   * out rather than pass one venue's slice of the market.
+   */
   dayVolume?: number;
 }
 
@@ -214,8 +279,13 @@ export interface MarketSnapshot {
   quotes: Record<string, Quote>;
   /** Instruments whose data could not be loaded, with the reason. Nothing trades on these. */
   failures: Record<string, string>;
+  /**
+   * Market-wide average daily traded value, for instruments whose bars carry only one
+   * venue's volume (crypto, mostly). Read by `snapshotStats` in calendar.ts.
+   */
+  dollarVolume: Record<string, number>;
 }
 
 export function emptySnapshot(): MarketSnapshot {
-  return { series: {}, quotes: {}, failures: {} };
+  return { series: {}, quotes: {}, failures: {}, dollarVolume: {} };
 }

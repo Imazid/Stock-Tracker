@@ -24,6 +24,7 @@ import {
 import { appendAudit, archiveAudit, type AuditActor, type AuditInput, uuidString } from "./audit.ts";
 import { LiveVenues, PaperBroker } from "./broker.ts";
 import * as Calendar from "./calendar.ts";
+import { Currencies } from "./currencies.ts";
 import { decide, decideDCA, type Evidence, rebalanceTrades, researchFacts, type SignalDecision } from "./evaluator.ts";
 import {
   applyFill, drawdownPct, equity as ledgerEquity, type Ledger, ledgerDayKey, makeLedger, mark as markLedger, marketValue,
@@ -31,7 +32,7 @@ import {
 } from "./ledger.ts";
 import {
   type Bar, barName, type DataProvenance, type Instrument, instrumentID, type InstrumentStats, isRealMarketData,
-  type MarketSnapshot, measureStats, type Quote, quoteSpreadBps,
+  type MarketSnapshot, type Quote, quoteSpreadBps,
 } from "./market.ts";
 import {
   agentSource, type ExecutionMode, type Fill, isOpenStatus, isTerminalStatus, type Order, type OrderRequest, type OrderSide,
@@ -43,7 +44,7 @@ import {
 } from "./risk.ts";
 import * as Rounding from "./rounding.ts";
 import {
-  type AgentDraft, clone, connectionCanTrade, deepEqual, type EngineNotice, makeState, type OrderPreview, type OrderResult,
+  type AgentDraft, clone, connectionCanTrade, deepEqual, draftCurrency, type EngineNotice, makeState, type OrderPreview, type OrderResult,
   resolvedPolicy, TradingError, type TradingState,
 } from "./state.ts";
 import { type StrategySpec, validate as validateSpec } from "./strategy.ts";
@@ -61,7 +62,8 @@ export interface EngineOptions {
   newID?: () => string;
 }
 
-export const budgetRange = { lowerBound: 100, upperBound: 10_000_000 };
+/** The practice budget range in US dollars. Other currencies: `Currencies.budgetRange`. */
+export const budgetRange = Currencies.budgetRange("USD");
 
 /**
  * Limits for an order a person places by hand in a paper portfolio: the hard rules (funds,
@@ -124,10 +126,12 @@ export class TradingEngine {
     const clean = swiftTrim(name);
     const problems: string[] = [];
     if (clean === "" || characterCount(clean) > 40) problems.push("Give the portfolio a name of up to 40 characters.");
-    if (!(Number.isFinite(startingCash) && startingCash >= budgetRange.lowerBound && startingCash <= budgetRange.upperBound)) {
-      problems.push("The starting balance must be between 100 and 10,000,000.");
+    const range = Currencies.budgetRange(currency);
+    if (!Currencies.isSupported(currency)) {
+      problems.push(`Practice portfolios can be held in ${Currencies.supported.join(", ")}.`);
+    } else if (!(Number.isFinite(startingCash) && startingCash >= range.lowerBound && startingCash <= range.upperBound)) {
+      problems.push(`The starting balance must be between ${NumberText.money(range.lowerBound, currency)} and ${NumberText.money(range.upperBound, currency)}.`);
     }
-    if (!["USD", "AUD"].includes(currency)) problems.push("Paper portfolios are held in USD or AUD.");
     if (problems.length > 0) throw TradingError.invalid(problems);
     const ledger = makeLedger({ id: this.newID(), name: clean, kind: "manualPaper", currency, startingCash, createdAt: now });
     this.state.ledgers.push(ledger);
@@ -168,6 +172,15 @@ export class TradingEngine {
     }
     this.state.ledgers = this.state.ledgers.filter((l) => l.id !== id);
     this.audit({ time: now, actor: "user", kind: "portfolioDeleted", summary: `Paper portfolio "${ledger.name}" deleted.`, mode: "paper", ledgerID: id });
+  }
+
+  /** Records that a backtest was run, so the audit trail shows what a decision was based on. */
+  noteBacktest(title: string, summary: string, now: number, options: { agentID?: string; actor?: AuditActor; details?: Record<string, string> } = {}): void {
+    const input: AuditInput = {
+      time: now, actor: options.actor ?? "user", kind: "backtestRun", summary: `Backtest of ${title}: ${summary}`, details: options.details ?? {},
+    };
+    if (options.agentID !== undefined) input.agentID = options.agentID;
+    this.audit(input);
   }
 
   // MARK: - Live eligibility
@@ -215,9 +228,11 @@ export class TradingEngine {
     if (!(Number.isInteger(draft.schedule.intervalMinutes) && draft.schedule.intervalMinutes >= 5 && draft.schedule.intervalMinutes <= 10_080)) {
       problems.push("An agent can run between every 5 minutes and once a week.");
     }
+    const currency = draftCurrency(draft);
+    const range = Currencies.budgetRange(currency);
     if (draft.mode === "paper" && draft.attachToLedgerID === undefined &&
-      !(Number.isFinite(draft.budget) && draft.budget >= budgetRange.lowerBound && draft.budget <= budgetRange.upperBound)) {
-      problems.push("The budget must be between 100 and 10,000,000.");
+      !(Number.isFinite(draft.budget) && draft.budget >= range.lowerBound && draft.budget <= range.upperBound)) {
+      problems.push(`The budget must be between ${NumberText.money(range.lowerBound, currency)} and ${NumberText.money(range.upperBound, currency)}.`);
     }
     if (draft.spec.followsLedgerPositions && draft.attachToLedgerID === undefined && draft.mode === "paper") {
       problems.push("Choose the portfolio this agent should watch.");
@@ -940,13 +955,13 @@ export class TradingEngine {
     }
 
     // Take in what the snapshot learned about prices before deciding anything.
-    const measured: Record<string, InstrumentStats> = {};
+    const usable: MarketSnapshot = { ...snapshot, series: {} };
     for (const [instrumentKey, series] of Object.entries(snapshot.series)) {
-      if (series.timeframe !== "day" || !this.isUsable(series.provenance)) continue;
-      const stats = measureStats(Calendar.completedBars(series, now));
-      if (stats) measured[instrumentKey] = stats;
+      if (this.isUsable(series.provenance)) usable.series[instrumentKey] = series;
     }
-    this.ingest(Object.values(snapshot.quotes), measured, now);
+    // An instrument whose liquidity can't be measured this time loses its old figure too.
+    for (const instrumentKey of Object.keys(usable.series)) delete state.stats[instrumentKey];
+    this.ingest(Object.values(snapshot.quotes), Calendar.snapshotStats(usable, now), now);
 
     const spec = agentSpec(agent);
     const mode = agent.mode;

@@ -4,6 +4,8 @@
 // `toFixed` and `String` print, which differ on exact halves and on whole numbers.
 // Pinned by TradingCore/Tests/Vectors/text.json.
 
+import { currencyDecimals, currencySymbol } from "./currencies.ts";
+
 const f64 = new Float64Array(1);
 const u64 = new BigUint64Array(f64.buffer);
 
@@ -135,9 +137,22 @@ export const NumberText = {
     const text = cFixed(x, 1);
     return `${text.startsWith("-") ? "" : "+"}${text}%`;
   },
+  /** "$1234.50", "¥1235", "-£0.04": the currency's own symbol and number of decimals. */
   money(x: number, currency = "USD"): string {
-    const symbol = currency === "AUD" ? "A$" : currency === "USD" ? "$" : `${currency} `;
-    return symbol + cFixed(x, 2);
+    const sign = x < 0 ? "-" : "";
+    const places = currencyDecimals(currency);
+    const m = places === 0 ? 1 : 100;
+    return sign + currencySymbol(currency) + cFixed(roundAwayInt(Math.abs(x) * m) / m, places);
+  },
+  /** "$1.2M", "¥150M". */
+  compactMoney(x: number, currency: string): string {
+    const symbol = currencySymbol(currency);
+    const size = Math.abs(x);
+    if (size >= 1e12) return `${symbol}${cFixed(x / 1e12, 1)}T`;
+    if (size >= 1e9) return `${symbol}${cFixed(x / 1e9, 1)}B`;
+    if (size >= 1e6) return `${symbol}${cFixed(x / 1e6, 1)}M`;
+    if (size >= 1e3) return `${symbol}${cFixed(x / 1e3, 0)}K`;
+    return `${symbol}${cFixed(x, 0)}`;
   },
 };
 

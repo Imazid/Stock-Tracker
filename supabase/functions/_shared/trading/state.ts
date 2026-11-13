@@ -53,8 +53,13 @@ export function draftIsCryptoOnly(draft: AgentDraft): boolean {
   return draft.spec.universe.length > 0 && draft.spec.universe.every((instrument) => instrument.assetClass === "crypto");
 }
 
+/** The currency the agent's money is held in: that of the assets it trades. */
+export function draftCurrency(draft: AgentDraft): string {
+  return draft.spec.universe[0]?.currency ?? "USD";
+}
+
 export function resolvedPolicy(draft: AgentDraft): RiskPolicy {
-  return draft.riskPolicy ?? standardPolicy(draft.budget, draft.maxPositionPct, draftIsCryptoOnly(draft));
+  return draft.riskPolicy ?? standardPolicy(draft.budget, draft.maxPositionPct, draftIsCryptoOnly(draft), draftCurrency(draft));
 }
 
 export type TradingErrorKind = "invalid" | "liveNotAvailable" | "notFound" | "notAllowed";

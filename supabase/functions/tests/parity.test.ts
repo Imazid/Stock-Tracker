@@ -12,8 +12,11 @@ import { catalogInstruments } from "../_shared/trading/catalog.ts";
 import { manualPolicy } from "../_shared/trading/engine.ts";
 import { decideAt, decideDCA, PreparedSeries, rebalanceTrades, researchFacts } from "../_shared/trading/evaluator.ts";
 import * as Ledgers from "../_shared/trading/ledger.ts";
+import { Currencies } from "../_shared/trading/currencies.ts";
 import {
-  type Bar, decodeInstrument, hasTwoSidedMarket, makeBarSeries, measureStats, fixtureProvenance, type Quote, quoteMid, quoteSpreadBps,
+  type Bar, decodeInstrument, fixtureProvenance, hasTwoSidedMarket, instrumentID, listed, makeBarSeries, measureStats, parseYahooSymbol,
+  type Quote, quoteMid, quoteSpreadBps, regionDisplayName, venueCountry, venueCurrency, venueDisplayName, venueRegion, VENUES,
+  venueShortName, venueYahooSuffix, yahooSymbol,
 } from "../_shared/trading/market.ts";
 import {
   canTransition, type Fill, fillGross, isOpenStatus, isTerminalStatus, type Order, ORDER_STATUSES, orderStatusDisplayName,
@@ -56,7 +59,41 @@ Deno.test("number text matches the Swift core", async () => {
   for (const [x, out] of v.durationText) m.check(`durationText(${x})`, durationText(x), out);
   for (const [x, rules, out] of v.quantityText) m.check(`quantityText(${x}, ${rules.quantityIncrement})`, quantityText(x, rules), out);
   for (const [word, out] of v.capitalized) m.check(`capitalized(${word})`, capitalized(word), out);
-  m.assertNone(700);
+  for (const [x, currency, out] of v.compactMoney) m.check(`compactMoney(${x}, ${currency})`, NumberText.compactMoney(x, currency), out);
+  m.check("supported currencies", Currencies.supported, v.supportedCurrencies);
+  for (const c of v.currencies) {
+    const range = Currencies.budgetRange(c.code);
+    m.check(`currency ${c.code}`, {
+      code: c.code, supported: Currencies.isSupported(c.code), symbol: Currencies.symbol(c.code), decimals: Currencies.decimals(c.code),
+      timeZone: Currencies.timeZone(c.code), roughUnitsPerUSD: Currencies.roughUnitsPerUSD(c.code),
+      budgetRange: [range.lowerBound, range.upperBound], defaultBudget: Currencies.defaultBudget(c.code),
+      balanceChoices: Currencies.balanceChoices(c.code), liquidityFloor: Currencies.liquidityFloor(c.code),
+    }, c);
+  }
+  m.assertNone(2_000);
+});
+
+Deno.test("venues, listings and snapshot liquidity match the Swift core", async () => {
+  const v = await loadVectors("market");
+  const m = new Mismatches();
+  m.check("venue order", VENUES, v.venues.map((c: { venue: string }) => c.venue));
+  for (const c of v.venues) {
+    const region = venueRegion(c.venue);
+    m.check(`venue ${c.venue}`, {
+      venue: c.venue, currency: venueCurrency(c.venue), displayName: venueDisplayName(c.venue), shortName: venueShortName(c.venue),
+      country: venueCountry(c.venue), region, regionName: regionDisplayName(region), yahooSuffix: venueYahooSuffix(c.venue),
+    }, c);
+  }
+  for (const c of v.yahooSymbols) m.check(`parse ${c.input}`, { input: c.input, ...parseYahooSymbol(c.input) }, c);
+  for (const c of v.listings) {
+    m.check(`listing ${c.id}`, { id: instrumentID(c.instrument), yahooSymbol: yahooSymbol(c.instrument) }, { id: c.id, yahooSymbol: c.yahooSymbol });
+  }
+  m.check("listed()", [listed("vod", "lse", "Vodafone"), listed("7203", "tse"), listed("ISF", "lse", "", true)],
+    v.listings.slice(0, 3).map((c: { instrument: unknown }) => c.instrument));
+  for (const c of v.stats) {
+    m.check(`stats: ${c.name}`, Calendar.snapshotStats({ series: c.series, quotes: {}, failures: {}, dollarVolume: c.dollarVolume }, c.now), c.out);
+  }
+  m.assertNone(40);
 });
 
 Deno.test("market calendar matches the Swift core", async () => {
@@ -68,6 +105,7 @@ Deno.test("market calendar matches the Swift core", async () => {
     m.check(`${label} dayKey`, Calendar.dayKey(c.venue, c.t), c.dayKey);
     m.check(`${label} coversDate`, Calendar.coversDate(c.venue, c.t), c.coversDate);
     m.check(`${label} isTradingDay`, Calendar.isTradingDay(c.venue, c.t), c.isTradingDay);
+    m.check(`${label} segments`, Calendar.segments(c.venue, c.t).map((part) => [part.start, part.end]), c.segments);
     m.check(`${label} sessionStart`, session?.start, c.sessionStart);
     m.check(`${label} sessionEnd`, session?.end, c.sessionEnd);
     m.check(`${label} isOpen`, Calendar.isOpen(c.venue, c.t), c.isOpen);
@@ -96,7 +134,15 @@ Deno.test("market calendar matches the Swift core", async () => {
   ], fixtureProvenance("messy"), Fx.now);
   m.check("tidied series", { times: messy.bars.map((bar) => bar.time), closes: messy.bars.map((bar) => bar.close) }, v.tidiedSeries);
   m.check("covered years", [Calendar.coveredYears.lowerBound, Calendar.coveredYears.upperBound], v.coveredYears);
-  m.assertNone(9_000);
+  for (const c of v.venues) {
+    const covered = Calendar.coveredYearsFor(c.venue);
+    m.check(`venue hours ${c.venue}`, {
+      // Foundation names the UTC zone "GMT"; it is the same zone.
+      venue: c.venue, timeZone: Calendar.timeZone(c.venue) === "UTC" ? "GMT" : Calendar.timeZone(c.venue), hasLunchBreak: Calendar.hasLunchBreak(c.venue),
+      regularHours: Calendar.regularHours(c.venue), coveredYears: covered ? [covered.lowerBound, covered.upperBound] : undefined,
+    }, c);
+  }
+  m.assertNone(15_000);
 });
 
 Deno.test("indicators match the Swift core bit for bit", async () => {
@@ -211,7 +257,9 @@ Deno.test("all 24 risk checks match the Swift core", async () => {
     if (report.checks.length !== 24) throw new Error(`${c.name}: ${report.checks.length} checks reported, expected 24`);
   }
   for (const id of RISK_CHECK_IDS) if (!failed.has(id)) throw new Error(`no failing case for ${id}`);
-  for (const c of v.standardPolicy) m.check(`standardPolicy ${c.budget}`, standardPolicy(c.budget, c.maxPositionPct, c.crypto), c.out);
+  for (const c of v.standardPolicy) {
+    m.check(`standardPolicy ${c.budget} ${c.currency}`, standardPolicy(c.budget, c.maxPositionPct, c.crypto, c.currency), c.out);
+  }
   for (const c of v.policyIssues) m.check("policyIssues", policyIssues(c.policy), c.issues);
   for (const c of v.manualPolicy) m.check(`manualPolicy ${c.equity}`, manualPolicy(c.equity), c.out);
   m.check("titles", RISK_CHECK_IDS.map((id) => [id, riskCheckTitle(id)]), v.titles);
@@ -222,7 +270,10 @@ Deno.test("the paper broker matches the Swift core", async () => {
   const v = await loadVectors("broker");
   const m = new Mismatches();
   const configs = v.configs as Record<string, PaperBrokerConfig>;
-  for (const c of v.rules) m.check(`rules ${c.instrument.venue}:${c.instrument.symbol}`, PaperBroker.rules(c.instrument), c.rules);
+  for (const c of v.rules) {
+    m.check(`rules ${c.instrument.venue}:${c.instrument.symbol}`, PaperBroker.rules(c.instrument), c.rules);
+    for (const [amount, out] of c.quantityText) m.check(`quantityText ${amount} ${c.instrument.venue}`, PaperBroker.quantityText(amount, c.instrument), out);
+  }
   m.check("paper capabilities", PaperBroker.capabilities, v.capabilities.paper);
   m.check("live venues", LiveVenues.all, v.capabilities.live);
   for (const venue of LiveVenues.all) if (venue.isExecutionEnabled) throw new Error(`${venue.adapterID} must not be able to execute`);
