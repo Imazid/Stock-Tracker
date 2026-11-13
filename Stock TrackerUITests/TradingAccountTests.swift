@@ -193,7 +193,7 @@ final class TradingAccountTests: XCTestCase {
 
     // MARK: - App helpers
 
-    private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id] }
+    private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
 
     private func tap(_ id: String, timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) {
         let target = app.buttons[id].exists ? app.buttons[id] : element(id)
