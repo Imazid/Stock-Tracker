@@ -1,9 +1,9 @@
 import type { TransactionRow } from "./transactions.ts";
 
-type Lot = { purchase: TransactionRow; units: bigint; cost: bigint; fee: bigint };
+type Lot = { purchase: TransactionRow; units: bigint; amounts?: { cost: bigint; fee: bigint } };
 type Holding = { lots: Lot[]; next: number; invalid: boolean };
 export type LotRow = {
-  kind: "Sale match" | "Unmatched sale" | "Open lot" | "Archived holding lot" | "Invalid transaction";
+  kind: "Sale match" | "Unmatched sale" | "Open lot" | "Archived holding lot" | "Invalid transaction" | "Position record";
   transaction: TransactionRow;
   purchase?: TransactionRow;
   units?: bigint;
@@ -95,7 +95,9 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       continue;
     }
     if (transaction.type === "Buy") {
-      holding.lots.push({ purchase: transaction, units, cost: gross, fee });
+      const source = transaction.trade_provenance;
+      const unknown = source && (source.source === "csv_position" || source.source === "broker_position" || source.unitPrice == null);
+      holding.lots.push({ purchase: transaction, units, amounts: unknown ? undefined : { cost: gross, fee } });
       continue;
     }
 
@@ -105,23 +107,30 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     while (remaining > 0n && holding.next < holding.lots.length) {
       const lot = holding.lots[holding.next];
       const matched = remaining < lot.units ? remaining : lot.units;
-      const purchaseCost = roundedDivide(lot.cost * matched, lot.units);
-      const purchaseFee = roundedDivide(lot.fee * matched, lot.units);
+      const purchaseCost = lot.amounts && roundedDivide(lot.amounts.cost * matched, lot.units);
+      const purchaseFee = lot.amounts && roundedDivide(lot.amounts.fee * matched, lot.units);
       const saleProceeds = roundedDivide(grossRemaining * matched, remaining);
       const saleFee = roundedDivide(feeRemaining * matched, remaining);
       if (visible) {
-        rows.push({
-          kind: "Sale match", transaction, purchase: lot.purchase, units: matched,
-          purchaseCost, purchaseFee, saleProceeds, saleFee,
-          result: saleProceeds - saleFee - purchaseCost - purchaseFee,
-        });
+        if (purchaseCost === undefined || purchaseFee === undefined) {
+          rows.push({ kind: "Unmatched sale", transaction, purchase: lot.purchase, units: matched, saleProceeds, saleFee,
+            note: "These units need an acquisition record with the trade date and cost." });
+        } else {
+          rows.push({
+            kind: "Sale match", transaction, purchase: lot.purchase, units: matched,
+            purchaseCost, purchaseFee, saleProceeds, saleFee,
+            result: saleProceeds - saleFee - purchaseCost - purchaseFee,
+          });
+        }
       }
       remaining -= matched;
       grossRemaining -= saleProceeds;
       feeRemaining -= saleFee;
       lot.units -= matched;
-      lot.cost -= purchaseCost;
-      lot.fee -= purchaseFee;
+      if (lot.amounts && purchaseCost !== undefined && purchaseFee !== undefined) {
+        lot.amounts.cost -= purchaseCost;
+        lot.amounts.fee -= purchaseFee;
+      }
       if (lot.units === 0n) holding.next++;
     }
     if (remaining > 0n) {
@@ -139,10 +148,11 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       const archiveDate = archived && sydneyDate(archived);
       const needsReview = archiveDate && (!end || archiveDate <= end);
       rows.push({
-        kind: needsReview ? "Archived holding lot" : "Open lot",
+        kind: lot.amounts === undefined ? "Position record" : needsReview ? "Archived holding lot" : "Open lot",
         transaction: lot.purchase, purchase: lot.purchase,
-        units: lot.units, purchaseCost: lot.cost, purchaseFee: lot.fee,
-        note: needsReview ? "The holding was archived. Check your iPhone and broker records for a closing trade or removal." : undefined,
+        units: lot.units, purchaseCost: lot.amounts?.cost, purchaseFee: lot.amounts?.fee,
+        note: lot.amounts === undefined ? "Use an acquisition record with the trade date and cost to establish basis for these units."
+          : needsReview ? "The holding was archived. Check your iPhone and broker records for a closing trade or removal." : undefined,
       });
     }
   }

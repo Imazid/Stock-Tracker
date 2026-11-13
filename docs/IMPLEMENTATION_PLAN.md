@@ -114,6 +114,8 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 
 ## 7. Known gaps and follow-ups (found while integrating, 2026-11-13)
 
+- The synced transaction CSV includes original amounts when recorded and labels the USD bookkeeping multiplier as an app reference or fallback rate. FIFO records keep position snapshots and purchases with missing costs in quantity order and leave their basis blank. Existing USD-only rows retain empty source amounts. Broker execution FX and transaction-date AUD conversion require additional source records.
+
 - **Engine port lag — resolved.** The TS port caught up with core `b0d2f19` (calendars, lots,
   transaction taxes) in the practice effort's `e1039ec`; parity tests pass again, and the studio
   backtester now charges the same transaction taxes as `Backtester.swift`.

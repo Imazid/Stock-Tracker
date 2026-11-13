@@ -203,6 +203,7 @@ struct RemoteTransaction: Codable {
     /// Optional so rows written before fees/realised profit existed still decode.
     let fees: Double?
     let avgCostAtSale: Double?
+    let provenance: TradeProvenance?
     let updatedAt: String
     let deletedAt: String?
 
@@ -216,6 +217,7 @@ struct RemoteTransaction: Codable {
         case type
         case fees
         case avgCostAtSale   = "avg_cost_at_sale"
+        case provenance      = "trade_provenance"
         case updatedAt       = "updated_at"
         case deletedAt       = "deleted_at"
     }
@@ -230,7 +232,8 @@ struct RemoteTransaction: Codable {
             pricePerShare: pricePerShare,
             type: TransactionType(rawValue: type) ?? .buy,
             fees: fees ?? 0,
-            avgCostAtSale: avgCostAtSale
+            avgCostAtSale: avgCostAtSale,
+            provenance: provenance
         )
     }
 
@@ -244,7 +247,8 @@ struct RemoteTransaction: Codable {
             price_per_share:  tx.pricePerShare,
             type:             tx.type.rawValue,
             fees:             tx.fees,
-            avg_cost_at_sale: tx.avgCostAtSale
+            avg_cost_at_sale: tx.avgCostAtSale,
+            trade_provenance: tx.provenance
         )
     }
 }
@@ -259,6 +263,7 @@ nonisolated struct TransactionUpsert: Encodable, Sendable {
     let type: String
     let fees: Double
     let avg_cost_at_sale: Double?
+    let trade_provenance: TradeProvenance?
 }
 
 struct PortfolioLedgerChange: Codable {
