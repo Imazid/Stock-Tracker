@@ -15,6 +15,8 @@ import SwiftUI
 import TradingCore
 
 struct CopilotView: View {
+    var initialPrompt: String? = nil
+
     @EnvironmentObject private var trading: TradingStore
     @EnvironmentObject private var marketData: MarketData
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
@@ -24,6 +26,7 @@ struct CopilotView: View {
 
     var body: some View {
         CopilotScreen(engine: CopilotEngine(trading: trading, marketData: marketData),
+                      initialPrompt: initialPrompt,
                       canUseModel: { insightService.canQuery(tier: subscriptionManager.currentTier) },
                       didUseModel: { insightService.incrementQueryCount() },
                       onClose: { dismiss() })
@@ -33,6 +36,7 @@ struct CopilotView: View {
 
 private struct CopilotScreen: View {
     @StateObject private var engine: CopilotEngine
+    let initialPrompt: String?
     let canUseModel: () -> Bool
     let didUseModel: () -> Void
     let onClose: () -> Void
@@ -55,9 +59,10 @@ private struct CopilotScreen: View {
         let parsed: ParsedAgentRequest
     }
 
-    init(engine: @autoclosure @escaping () -> CopilotEngine, canUseModel: @escaping () -> Bool,
-         didUseModel: @escaping () -> Void, onClose: @escaping () -> Void) {
+    init(engine: @autoclosure @escaping () -> CopilotEngine, initialPrompt: String?,
+         canUseModel: @escaping () -> Bool, didUseModel: @escaping () -> Void, onClose: @escaping () -> Void) {
         _engine = StateObject(wrappedValue: engine())
+        self.initialPrompt = initialPrompt
         self.canUseModel = canUseModel
         self.didUseModel = didUseModel
         self.onClose = onClose
@@ -73,17 +78,20 @@ private struct CopilotScreen: View {
                             messageView(message).id(message.id)
                         }
                         if engine.isWorking {
-                            HStack(spacing: DS.Space.s) {
-                                ProgressView().controlSize(.small)
-                                Text("Looking that up…").font(.footnote).foregroundStyle(theme.secondaryText)
-                            }
-                            .id("working")
+                            TextSkeleton()
+                                .padding(DS.Space.m)
+                                .background(theme.intelligenceTint.opacity(0.08), in: RoundedRectangle(cornerRadius: DS.Radius.chip))
+                                .loadingSkeleton("Copilot is preparing an answer")
+                                .id("working")
                         }
                     }
                     .padding(.horizontal, DS.Space.gutter)
                     .padding(.vertical, DS.Space.l)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .onChange(of: engine.isWorking) { _, working in
+                    if working { proxy.scrollTo("working", anchor: .bottom) }
+                }
                 .onChange(of: engine.messages.count) { _, _ in
                     if let last = engine.messages.last { dsAnimate { proxy.scrollTo(last.id, anchor: .top) } }
                 }
@@ -99,6 +107,11 @@ private struct CopilotScreen: View {
         .onAppear {
             engine.canUseModel = canUseModel
             engine.didUseModel = didUseModel
+        }
+        .task {
+            if let initialPrompt, engine.messages.isEmpty {
+                await engine.send(initialPrompt)
+            }
         }
         .sheet(item: $draft) { sheet in
             NavigationStack {
@@ -118,8 +131,12 @@ private struct CopilotScreen: View {
 
     private var intro: some View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
-            Text("Ask about your portfolio, orders and agents.")
-                .font(DS.display(.title))
+            Label {
+                Text("Ask about your portfolio, orders and agents.")
+                    .font(DS.display(.title, weight: .semibold))
+            } icon: {
+                Image(systemName: "sparkles").foregroundStyle(theme.intelligenceTint)
+            }
                 .fixedSize(horizontal: false, vertical: true)
             Text("Answers come from your own data in this app. I can draft an agent or a limit change for you to confirm, but I can't place, change or cancel an order.")
                 .font(.subheadline)
@@ -161,6 +178,7 @@ private struct CopilotScreen: View {
                 .background(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous).fill(theme.subtleFill))
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityLabel("You asked: \(message.text)")
+                .accessibilityIdentifier("copilot.question")
         } else {
             VStack(alignment: .leading, spacing: DS.Space.m) {
                 Text(message.text)

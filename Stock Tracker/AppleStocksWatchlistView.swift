@@ -733,11 +733,12 @@ struct WatchlistRow: View {
             Text("No live price")
                 .font(.footnote)
                 .foregroundStyle(theme.secondaryText)
-        } else {
-            QuoteNumbers(price: marketData.formatPrice(isLoaded ? asset.price : 100),
+        } else if isLoaded {
+            QuoteNumbers(price: marketData.formatPrice(asset.price),
                          percent: asset.changePercent, stacked: stacked)
-                .redacted(reason: isLoaded ? [] : .placeholder)
                 .priceFlash(value: asset.price)
+        } else {
+            QuoteNumbersSkeleton(stacked: stacked)
         }
     }
 

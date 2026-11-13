@@ -96,6 +96,7 @@ struct AppleStocksDetailView: View {
                         format: format,
                         lastUpdated: lastUpdated,
                         quoteFailed: quoteFailed,
+                        quoteLoading: live.price <= 0 && !quoteFailed && (model.quoteLoading || marketData.isRefreshingQuotes),
                         candlesLocked: !isPro,
                         onLockedCandles: { sheet = .paywall("Candlestick Charts") },
                         scrubbed: $scrubbed,
@@ -643,6 +644,7 @@ final class AssetDetailViewModel: ObservableObject {
     @Published private(set) var refreshedQuote: Asset?
     @Published private(set) var refreshedAt: Date?
     @Published private(set) var ownQuoteFailed = false
+    @Published private(set) var quoteLoading = true
 
     @Published var range: TimeRange = .oneDay {
         didSet {
@@ -772,7 +774,7 @@ final class AssetDetailViewModel: ObservableObject {
             }
         }
         // Rate-limited sources (keyless CoinGecko backs off for minutes) shouldn't
-        // leave a spinner up indefinitely; say so and keep listening for the reply.
+        // keep the chart pending indefinitely; show a retry and keep listening for the reply.
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.slowAfter))
             guard let self, self.chartToken == token, self.chartPhase == .loading,
@@ -910,7 +912,9 @@ final class AssetDetailViewModel: ObservableObject {
 
     /// Prices an asset nobody tracks (opened from search or an index card).
     private func refreshQuote(skip: Bool = false) async {
+        defer { quoteLoading = false }
         guard !skip else { return }
+        quoteLoading = true
         let current = quote
         let service = QuoteService()
         var fresh: Asset?

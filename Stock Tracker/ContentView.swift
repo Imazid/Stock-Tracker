@@ -64,6 +64,8 @@ struct ContentView: View {
     @EnvironmentObject private var cloudAuth: SupabaseAuthManager
     @StateObject private var privateMarkets = PrivateMarketsStore.shared
     @Environment(\.colorScheme) var colorScheme
+    @AppStorage("portfolioSegment") private var portfolioSegment = PortfolioSegment.holdings.rawValue
+    @State private var pendingCommand: WorkspaceDestination?
 
     /// Binding allows the parent (StockCryptoTrackerApp) to drive tab selection from widget deep links.
     @Binding var selectedTab: MainTab
@@ -107,10 +109,19 @@ struct ContentView: View {
                 selectedTab = .markets
             }
         }
+        .tabViewStyle(.sidebarAdaptable)
         .tint(DS.accent)
         .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
         .modifier(TradingRootSheets())
         .environmentObject(privateMarkets)
+        .sheet(isPresented: $router.showCommands, onDismiss: performCommand) {
+            CommandPalette { destination in
+                pendingCommand = destination
+                router.showCommands = false
+            }
+            .presentationDetents([.large])
+            .presentationBackground(.regularMaterial)
+        }
         .onChange(of: router.requestedTab, initial: true) { _, tab in
             if let tab {
                 selectedTab = tab
@@ -120,13 +131,56 @@ struct ContentView: View {
         .environment(\.selectTab, { [selectedTab = $selectedTab] tab in selectedTab.wrappedValue = tab })
         .sensoryFeedback(.impact(flexibility: .soft), trigger: selectedTab)
         .onChange(of: selectedTab) { _, _ in marketData.refreshIfStale() }
-        .onAppear { configureTabBar() }
+        .onChange(of: colorScheme, initial: true) { _, _ in configureTabBar() }
+    }
+
+    private func performCommand() {
+        guard let destination = pendingCommand else { return }
+        pendingCommand = nil
+        switch destination {
+        case .command(let command):
+            switch command {
+            case .home: selectedTab = .home
+            case .markets:
+                router.marketsSection = .watchlist
+                selectedTab = .markets
+            case .news:
+                router.marketsSection = .news
+                selectedTab = .markets
+            case .privateMarkets: selectedTab = .privateMarkets
+            case .portfolio: selectedTab = .portfolio
+            case .performance:
+                portfolioSegment = PortfolioSegment.performance.rawValue
+                selectedTab = .portfolio
+            case .agents: selectedTab = .agents
+            case .activity: selectedTab = .activity
+            case .search: selectedTab = .search
+            case .copilot: router.askCopilot()
+            case .newAgent: router.createAgent()
+            }
+        case .asset(let asset):
+            router.assetDetail = asset
+        case .watchlist(let id):
+            guard let index = marketData.watchlistGroups.firstIndex(where: { $0.id == id }) else { return }
+            marketData.switchToWatchlist(index: index)
+            router.marketsSection = .watchlist
+            selectedTab = .markets
+        case .agent(let id):
+            router.agent = TradingRouter.Ref(id: id)
+        case .order(let id):
+            router.order = TradingRouter.Ref(id: id)
+        case .trade(let instrument, let side):
+            router.trade(instrument, side: side)
+        case .ask(let question):
+            router.askCopilot(question)
+        }
     }
 
     private func configureTabBar() {
         let isDark = colorScheme == .dark
         let normalColor = isDark ? UIColor.white.withAlphaComponent(0.6) : UIColor.label.withAlphaComponent(0.5)
-        let selectedColor = UIColor(DS.accent)
+        let style = UITraitCollection(userInterfaceStyle: isDark ? .dark : .light)
+        let selectedColor = UIColor(DS.accent).resolvedColor(with: style)
 
         let appearance = UITabBarAppearance()
         appearance.configureWithTransparentBackground()
@@ -294,6 +348,8 @@ struct AIFeatureHighlight: View {
         .environmentObject(PriceAlertManager())
         .environmentObject(SubscriptionManager.shared)
         .environmentObject(ThemeManager())
+        .environmentObject(SupabaseAuthManager())
+        .environmentObject(AIInsightService.shared)
         .environmentObject(TradingStore.shared)
         .environmentObject(TradingRouter.shared)
 }

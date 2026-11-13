@@ -46,38 +46,55 @@ struct PortfolioPerformanceChart: View {
     var body: some View {
         let live = marketData.totalPortfolioValue
         let daily = marketData.dailyProfitLoss
-        let points = series?.points.chartPoints ?? []
+        let points = loadedRange == range ? series?.points.chartPoints ?? [] : []
+        let chartPhase: DSChartPhase = loadedRange == range ? phase : .loading
         let reference: Double? = range == .oneDay ? live - daily : points.first?.value
-        let shown = scrubbed?.value ?? live
+        let selection = chartPhase == .loading ? nil : scrubbed
+        let shown = selection?.value ?? live
         let change = reference.map { shown - $0 } ?? 0
-        let changePct = (reference ?? 0) > 0 ? change / reference! * 100 : 0
+        let changePct = reference.flatMap { $0 > 0 ? change / $0 * 100 : nil }
 
         VStack(alignment: .leading, spacing: DS.Space.m) {
             VStack(alignment: centered ? .center : .leading, spacing: DS.Space.m) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(theme.secondaryText)
-                    .padding(.bottom, -DS.Space.s)
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(theme.secondaryText)
+                .padding(.bottom, -DS.Space.s)
 
-                MoneyText(text: hidesValues ? "••••••" : marketData.formatPrice(shown), size: centered ? 50 : 44)
-                    .contentTransition(.numericText())
-                    .motionSafeAnimation(scrubbed == nil && !hidesValues ? DS.quick : nil, value: live)
-                    .accessibilityIdentifier("\(accessibilityID).value")
+            Text(hidesValues ? "••••••" : marketData.formatPrice(shown))
+                .font(DS.money(40, weight: .bold))
+                .foregroundStyle(theme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .contentTransition(.numericText())
+                .motionSafeAnimation(selection == nil && !hidesValues ? DS.quick : nil, value: live)
+                .accessibilityIdentifier("\(accessibilityID).value")
 
-                VStack(alignment: centered ? .center : .leading, spacing: 6) {
-                    changeLine(percent: changePct,
-                               amount: change,
-                               label: scrubbed.map { Text(range.scrubLabel(for: $0.date)) } ?? Text(range.periodLabel))
-                    if showsTodayLine && range != .oneDay && scrubbed == nil {
-                        changeLine(percent: marketData.dailyProfitLossPercent, amount: daily, label: Text("Today"))
+            VStack(alignment: .leading, spacing: 6) {
+                if let changePct {
+                    changeLine(percent: changePct, amount: change,
+                               label: selection.map { Text(range.scrubLabel(for: $0.date)) } ?? Text(range.periodLabel))
+                } else {
+                    HStack(spacing: DS.Space.s) {
+                        if chartPhase == .loading {
+                            SkeletonBlock(width: 116, height: 18)
+                                .loadingSkeleton("Loading portfolio return")
+                        } else {
+                            Text("—").foregroundStyle(theme.secondaryText)
+                        }
+                        Text(range.periodLabel).font(.subheadline).foregroundStyle(theme.secondaryText)
                     }
+                    .frame(minHeight: 24)
+                }
+                if showsTodayLine && range != .oneDay && selection == nil {
+                    changeLine(percent: marketData.dailyProfitLossPercent, amount: daily, label: Text("Today"))
                 }
             }
             .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
 
             DSPriceChart(
                 points: points,
-                phase: phase,
+                phase: chartPhase,
                 baseline: range == .oneDay ? series?.baseline : nil,
                 baselineLabel: range == .oneDay ? "Prev close" : nil,
                 xMode: xMode,
@@ -97,6 +114,7 @@ struct PortfolioPerformanceChart: View {
             notes
         }
         .task(id: loadKey) { await load() }
+        .onChange(of: range) { _, _ in scrubbed = nil }
     }
 
     private func changeLine(percent: Double, amount: Double, label: Text) -> some View {
@@ -135,25 +153,28 @@ struct PortfolioPerformanceChart: View {
 
     private func load(force: Bool = false) async {
         guard !marketData.portfolio.isEmpty else { series = nil; return }
+        let requestedRange = range
+        let requestedKey = loadKey
         // Only flash a loading state when the range changes; live updates are silent.
-        if loadedRange != range || series == nil || force { phase = .loading }
+        if loadedRange != requestedRange || series == nil || force { phase = .loading }
         do {
             let value = marketData.totalPortfolioValue
             let result = try await PriceHistoryService.shared.portfolioSeries(
                 holdings: marketData.portfolio,
-                range: range,
+                range: requestedRange,
                 liveValue: value,
                 previousCloseValue: value - marketData.dailyProfitLoss,
                 forceRefresh: force
             )
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, loadKey == requestedKey else { return }
             series = result
             phase = .loaded
-            loadedRange = range
+            loadedRange = requestedRange
         } catch {
-            guard !Task.isCancelled else { return }
-            if series == nil || loadedRange != range {
+            guard !Task.isCancelled, loadKey == requestedKey else { return }
+            if series == nil || loadedRange != requestedRange {
                 series = nil
+                loadedRange = requestedRange
                 phase = .failed("Prices for your holdings couldn't be loaded.")
             } else {
                 phase = .loaded

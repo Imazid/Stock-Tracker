@@ -10,7 +10,6 @@ import Combine
 struct HomeView: View {
     @EnvironmentObject var marketData: MarketData
     @EnvironmentObject var subscriptionManager: SubscriptionManager
-    @Environment(\.colorScheme) var colorScheme
     @Environment(\.theme) var appTheme
 
     @State private var showSettings = false
@@ -19,66 +18,79 @@ struct HomeView: View {
     @State private var briefingLoading = false
 
     var body: some View {
-        let theme = appTheme
-        ZStack {
-            NavigationStack {
+        NavigationStack {
+            GeometryReader { geometry in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
-                        // Sections rise in one after another the first time Home shows,
-                        // and ease in/out at the scroll edges.
-
-                        // 1. Who/when: greeting + market status
+                    VStack(alignment: .leading, spacing: DS.Space.xl) {
                         HomeHeader(onSettings: { showSettings = true })
                             .staggeredAppear(0)
+                        WorkspaceCommandButton(expanded: true)
 
-                        // 2. Your money: value, today's move, chart, all-time
-                        PortfolioSummaryHero()
-                            .staggeredAppear(1).scrollCardMotion()
+                        if geometry.size.width >= 800 {
+                            HStack(alignment: .top, spacing: DS.Space.xl) {
+                                VStack(alignment: .leading, spacing: DS.Space.xl) {
+                                    portfolio
+                                    watchlist
+                                    HomeComingUpSection()
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
-                        // 2b. Practice money, agents and anything waiting for a decision
-                        HomeTradingSection()
-
-                        // 3. What you follow
-                        HomeWatchlistSection()
-                            .staggeredAppear(2).scrollCardMotion()
-
-                        // 4. What's next for it: earnings in the next 30 days (hidden when none)
-                        HomeComingUpSection()
-                            .staggeredAppear(3).scrollCardMotion()
-
-                        // 5. The wider market — real index levels
-                        VStack(alignment: .leading, spacing: DS.Space.m) {
-                            SectionHeader(title: "Markets")
-                            LiveIndicesWithGlow()
+                                VStack(alignment: .leading, spacing: DS.Space.xl) {
+                                    HomeTradingSection()
+                                    indices
+                                    dailyBriefingCard
+                                    TrendingTickersSection()
+                                }
+                                .frame(width: min(420, geometry.size.width * 0.36), alignment: .leading)
+                            }
+                        } else {
+                            portfolio
+                            watchlist
+                            HomeTradingSection()
+                            HomeComingUpSection()
+                                .staggeredAppear(3).scrollCardMotion()
+                            indices
+                            dailyBriefingCard
+                                .staggeredAppear(5).scrollCardMotion()
+                            TrendingTickersSection()
+                                .staggeredAppear(6).scrollCardMotion()
                         }
-                        .staggeredAppear(4).scrollCardMotion()
-
-                        // 6. Extras
-                        dailyBriefingCard
-                            .staggeredAppear(5).scrollCardMotion()
-                        TrendingTickersSection()
-                            .staggeredAppear(6).scrollCardMotion()
                     }
+                    .frame(maxWidth: 1180)
                     .padding(.horizontal, DS.Space.gutter)
                     .padding(.top, DS.Space.s)
                     .padding(.bottom, 60)
+                    .frame(maxWidth: .infinity)
                 }
                 .refreshable { await marketData.refreshFromAPI() }
-                // Earnings for "Coming up" — on the always-present scroll view (a .task on a
-                // section that renders nothing until it has data never runs).
                 .task(id: (marketData.watchlist.map(\.symbol) + marketData.portfolio.map(\.asset.symbol))
                         .sorted().joined(separator: ",")) {
                     await EarningsCalendar.shared.refresh(for: marketData.portfolio.map(\.asset) + marketData.watchlist)
                 }
-                .navigationTitle("")
-                .navigationBarTitleDisplayMode(.inline)
-                .dsScreenBackground(style: .home)
             }
-
-            .sheet(isPresented: $showSettings) {
-                SettingsSheetView()
-            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
+            .background(appTheme.background.ignoresSafeArea())
         }
+        .sheet(isPresented: $showSettings) { SettingsSheetView() }
+    }
+
+    private var portfolio: some View {
+        PortfolioSummaryHero()
+            .staggeredAppear(1).scrollCardMotion()
+    }
+
+    private var watchlist: some View {
+        HomeWatchlistSection()
+            .staggeredAppear(2).scrollCardMotion()
+    }
+
+    private var indices: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionHeader(title: "Markets")
+            LiveIndicesWithGlow()
+        }
+        .staggeredAppear(4).scrollCardMotion()
     }
 
     // MARK: - Daily AI Briefing
@@ -185,7 +197,10 @@ struct LiveIndicesWithGlow: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: DS.Space.m) {
                         if cards.isEmpty {
-                            ForEach(0..<4, id: \.self) { _ in IndexCard.placeholder }
+                            HStack(spacing: DS.Space.m) {
+                                ForEach(0..<4) { _ in IndexCard.placeholder }
+                            }
+                            .loadingSkeleton("Loading market indices")
                         } else {
                             ForEach(cards) { card in
                                 Button {
@@ -285,12 +300,11 @@ private struct IndexCardPlaceholder: View {
     @Environment(\.theme) private var theme
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
-            Text("S&P 500").font(.subheadline.weight(.semibold))
-            Text("0,000.00").font(DS.money(17))
-            Text("+0.00%").font(.caption)
-            Rectangle().fill(theme.subtleFill).frame(height: 30)
+            SkeletonBlock(width: 74, height: 15)
+            SkeletonBlock(width: 90, height: 17)
+            SkeletonBlock(width: 53, height: 17)
+            SkeletonBlock(height: 30)
         }
-        .redacted(reason: .placeholder)
         .padding(DS.Space.m + 2)
         .frame(width: 152, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous).fill(theme.subtleFill))

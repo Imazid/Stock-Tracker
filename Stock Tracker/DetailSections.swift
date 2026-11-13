@@ -779,8 +779,10 @@ struct DetailFinancialsSection: View {
         let content = lines
         if content.lines.isEmpty {
             if statementsLoading && kind != .income {
-                ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 120)
+                VStack(spacing: 0) {
+                    ForEach(0..<4) { _ in DataRowSkeleton() }
+                }
+                .loadingSkeleton("Loading financial statements")
             } else {
                 // Usually the provider's free daily quota, not the company: don't blame the company.
                 Text("Statements couldn't be loaded right now. Try again later.")
@@ -978,12 +980,8 @@ struct DetailAISummaryCard: View {
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
                 } else if isLoading {
-                    HStack(spacing: DS.Space.s) {
-                        ProgressView().controlSize(.small)
-                        Text("Summarising \(symbol)…")
-                            .font(.subheadline)
-                            .foregroundStyle(theme.secondaryText)
-                    }
+                    TextSkeleton()
+                        .loadingSkeleton("Summarising \(symbol)")
                     .frame(minHeight: 44)
                 } else {
                     if failed {

@@ -269,13 +269,10 @@ struct AddHoldingFlow: View {
                 ForEach(crypto) { resultRow($0) }
             }
             if isSearching || stockState == .idle {
-                HStack(spacing: DS.Space.s) {
-                    ProgressView().controlSize(.small)
-                    Text(stocks.isEmpty && crypto.isEmpty ? "Searching…" : "Searching crypto…")
-                        .foregroundStyle(theme.secondaryText)
+                VStack(spacing: 0) {
+                    ForEach(0..<(stocks.isEmpty && crypto.isEmpty ? 3 : 1)) { _ in SearchRowSkeleton() }
                 }
-                .font(.subheadline)
-                .frame(minHeight: 44)
+                .loadingSkeleton("Searching for holdings")
                 .portfolioRow()
             } else if stocks.isEmpty && crypto.isEmpty {
                 Text("No matches for “\(trimmedQuery)”. Check the ticker, or enter it manually below.")
@@ -332,7 +329,8 @@ struct AddHoldingFlow: View {
             }
             Spacer(minLength: DS.Space.s)
             if busy {
-                ProgressView().controlSize(.small)
+                SkeletonBlock(width: 56, height: 14)
+                    .loadingSkeleton("Loading quote")
             } else if let trailing {
                 Text(trailing)
                     .font(.subheadline.monospacedDigit())

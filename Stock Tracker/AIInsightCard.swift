@@ -3,7 +3,7 @@
 //  Stock Tracker
 //
 //  Reusable card for AI-generated insights across the app.
-//  Animated loading and a quiet accent for generated insights.
+//  Shared violet treatment for intelligence and skeleton loading.
 //
 
 import SwiftUI
@@ -18,7 +18,7 @@ struct AIInsightCard: View {
     let onGenerate: () async -> Void
     var onRegenerate: (() async -> Void)?
 
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.theme) private var theme
     @AppStorage("aiPortfolioContextEnabled") private var includePortfolioContext = false
     private var showsBorder: Bool {
         !isLocked && includePortfolioContext && (isLoading || insightText?.isEmpty == false)
@@ -38,15 +38,12 @@ struct AIInsightCard: View {
     }
 
     var body: some View {
-        let theme = Theme(colorScheme: colorScheme)
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(colors: [.purple, .blue], startPoint: .leading, endPoint: .trailing)
-                    )
+                    .foregroundStyle(theme.intelligenceTint)
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(theme.primaryText.opacity(0.8))
@@ -89,14 +86,11 @@ struct AIInsightCard: View {
             }
             .motionSafeAnimation(Motion.reveal, value: isLoading)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dsCard()
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Color.purple.opacity(showsBorder ? 0.32 : 0), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.card)
+                .strokeBorder(theme.intelligenceTint.opacity(showsBorder ? 0.32 : 0.16), lineWidth: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
@@ -120,23 +114,16 @@ struct AIInsightCard: View {
                 Text("Upgrade to Pro for AI insights")
                     .font(.caption.weight(.semibold))
             }
-            .foregroundColor(.purple)
+            .foregroundStyle(theme.intelligenceTint)
         }
     }
 
     // MARK: - Skeleton Loading
 
     private var skeletonContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SkeletonBlock(height: 11)
-            SkeletonBlock(height: 11)
-            SkeletonBlock(height: 11)
-            SkeletonBlock(width: 104, height: 11)
-        }
-        .skeletonPulse()
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Generating insight")
+        TextSkeleton(lineCount: 4)
+            .padding(.vertical, 4)
+            .loadingSkeleton("Generating insight")
     }
 
     @ViewBuilder
@@ -150,9 +137,7 @@ struct AIInsightCard: View {
             HStack {
                 Image(systemName: "sparkles")
                     .font(.system(size: 8))
-                    .foregroundStyle(
-                        LinearGradient(colors: [.purple, .blue], startPoint: .leading, endPoint: .trailing)
-                    )
+                    .foregroundStyle(theme.intelligenceTint)
                 Text("AI-generated · Not financial advice")
                     .font(.caption2)
                     .foregroundColor(.secondary)

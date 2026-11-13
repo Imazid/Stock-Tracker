@@ -19,7 +19,7 @@ struct PaywallView: View {
     @Environment(\.theme) private var theme
 
     @State private var selectedPeriod: BillingPeriod = .yearly
-    @State private var isLoadingProducts = false
+    @State private var isLoadingProducts = true
     @State private var legal: LegalPage?
 
     enum BillingPeriod: String, CaseIterable {
@@ -110,10 +110,11 @@ struct PaywallView: View {
     private var storeUnavailable: some View {
         HStack(spacing: DS.Space.m) {
             if isLoadingProducts {
-                ProgressView()
-                Text("Getting prices from the App Store…")
-                    .font(.subheadline)
-                    .foregroundStyle(theme.secondaryText)
+                VStack(spacing: DS.Space.s) {
+                    DataRowSkeleton()
+                    DataRowSkeleton()
+                }
+                .loadingSkeleton("Getting prices from the App Store")
             } else {
                 Image(systemName: "exclamationmark.circle")
                     .foregroundStyle(theme.warningColor)

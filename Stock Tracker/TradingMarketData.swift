@@ -35,6 +35,24 @@ nonisolated enum TradingDataError: LocalizedError {
     }
 }
 
+nonisolated struct CryptoOrderBook: Sendable {
+    struct Level: Decodable, Sendable {
+        let price: Double
+        let size: Double
+
+        private enum CodingKeys: String, CodingKey {
+            case price = "p"
+            case size = "s"
+        }
+
+        var isValid: Bool { price.isFinite && size.isFinite && price > 0 && size > 0 }
+    }
+
+    let bids: [Level]
+    let asks: [Level]
+    let time: Date
+}
+
 /// Bars and quotes from Alpaca (US stocks, ETFs and crypto) and Yahoo Finance (ASX).
 nonisolated struct LiveMarketData: MarketDataProviding {
     private let session: URLSession
@@ -167,6 +185,34 @@ nonisolated struct LiveMarketData: MarketDataProviding {
         // Volume here is one venue's, so it is not passed on as the day's volume.
         return Quote(instrumentID: instrument.id, last: last, bid: bid, ask: ask, time: time,
                      provenance: .market(source), dayVolume: nil)
+    }
+
+    /// A read-only Alpaca US snapshot, shown independently of the execution quote.
+    func cryptoOrderBook(for instrument: Instrument) async throws -> CryptoOrderBook {
+        guard instrument.venue == .crypto else {
+            throw TradingDataError.unsupported("Order book snapshots are available for crypto.")
+        }
+        struct Payload: Decodable {
+            let orderbooks: [String: Book]
+
+            struct Book: Decodable {
+                let a: [CryptoOrderBook.Level]
+                let b: [CryptoOrderBook.Level]
+                let t: String
+            }
+        }
+
+        let pair = "\(Self.clean(instrument.symbol))/USD"
+        let json = try await alpacaJSON("/v1beta3/crypto/us/latest/orderbooks", [("symbols", pair)])
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        guard let book = payload.orderbooks[pair], let time = Self.parseTime(book.t) else {
+            throw TradingDataError.empty(instrument.symbol)
+        }
+        let bids = book.b.filter(\.isValid).sorted { $0.price > $1.price }
+        let asks = book.a.filter(\.isValid).sorted { $0.price < $1.price }
+        guard !bids.isEmpty || !asks.isEmpty else { throw TradingDataError.empty(instrument.symbol) }
+        return CryptoOrderBook(bids: Array(bids.prefix(5)), asks: Array(asks.prefix(5)), time: time)
     }
 
     // MARK: Bars

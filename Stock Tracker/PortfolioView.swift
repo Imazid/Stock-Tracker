@@ -258,6 +258,7 @@ struct PortfolioView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
+            WorkspaceCommandButton()
             if !marketData.portfolio.isEmpty {
                 Button {
                     Haptics.tap()

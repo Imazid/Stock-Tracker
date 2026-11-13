@@ -145,12 +145,12 @@ struct Theme {
     // MARK: - Semantic Colors (Accessibility)
 
     var positiveColor: Color {
-        let base = colorblindMode.positiveColor
+        let base = isDark && colorblindMode == .standard ? Color(red: 0.34, green: 0.88, blue: 0.64) : colorblindMode.positiveColor
         return highContrast ? base.opacity(1.0) : base
     }
 
     var negativeColor: Color {
-        let base = colorblindMode.negativeColor
+        let base = isDark && colorblindMode == .standard ? Color(red: 1, green: 0.44, blue: 0.53) : colorblindMode.negativeColor
         return highContrast ? base.opacity(1.0) : base
     }
 
@@ -159,7 +159,7 @@ struct Theme {
     }
 
     var accentColor: Color {
-        Color.blue
+        DS.accent
     }
 
     var neutralColor: Color {
@@ -169,40 +169,48 @@ struct Theme {
     var positiveIcon: String { colorblindMode.positiveIcon }
     var negativeIcon: String { colorblindMode.negativeIcon }
 
-    // Cool neutrals after Coinbase / Revolut in light mode; a deep blue-black after Fey in
-    // dark mode. The backdrop's glows (DSGlass.swift) sit on top of `background`.
+    // Warm light surfaces and a layered graphite palette in dark mode.
 
-    /// #F4F5F8 light / #030408 dark — the page (Revolut's near-black).
+    /// #FAF8F5 in light mode, #090A0D in dark mode.
     var background: Color {
-        isDark ? Color(red: 0.012, green: 0.016, blue: 0.031)
-               : Color(red: 0.957, green: 0.961, blue: 0.973)
+        isDark ? Color(red: 0.035, green: 0.039, blue: 0.051)
+               : Color(red: 0.980, green: 0.973, blue: 0.961)
     }
 
-    /// #EBEDF2 light / #0D0F17 dark.
+    /// #F3EFE8 in light mode, #14161D in dark mode.
     var secondaryBackground: Color {
-        isDark ? Color(red: 0.051, green: 0.059, blue: 0.090)
-               : Color(red: 0.922, green: 0.929, blue: 0.949)
+        isDark ? Color(red: 0.078, green: 0.086, blue: 0.114)
+               : Color(red: 0.953, green: 0.937, blue: 0.910)
     }
 
     /// Solid card surface where translucency would hurt (lists, inputs): white / #171A26,
     /// Revolut's navy-grey.
     var cardBackground: Color {
-        isDark ? Color(red: 0.090, green: 0.102, blue: 0.149)
-               : Color.white
+        isDark ? Color(red: 0.114, green: 0.125, blue: 0.165)
+               : Color(red: 0.929, green: 0.910, blue: 0.878)
     }
 
     var cardBorder: Color {
-        isDark ? Color.white.opacity(0.10)
-               : Color(red: 0.10, green: 0.14, blue: 0.30).opacity(0.10)
+        isDark ? Color.white.opacity(highContrast ? 0.35 : 0.16)
+               : Color(red: 0.78, green: 0.74, blue: 0.69).opacity(0.5)
     }
 
     var primaryText: Color {
-        Color(UIColor.label)
+        isDark ? Color(red: 0.961, green: 0.961, blue: 0.969) : Color(UIColor.label)
     }
 
     var secondaryText: Color {
-        Color(UIColor.secondaryLabel)
+        isDark
+            ? (highContrast ? Color.white : Color(red: 0.62, green: 0.65, blue: 0.72))
+            : Color(UIColor.secondaryLabel)
     }
+
+    var intelligenceTint: Color {
+        isDark ? Color(red: 0.655, green: 0.545, blue: 0.98) : Color(red: 0.36, green: 0.22, blue: 0.71)
+    }
+
+    var skeletonFill: Color {
+        isDark ? Color.white.opacity(0.13) : Color.black.opacity(0.10)    }
 
     var separator: Color {
         Color(UIColor.separator)
@@ -221,7 +229,7 @@ struct Theme {
     var backgroundGradient: LinearGradient {
         isDark
             ? LinearGradient(
-                colors: [Color(UIColor.systemBackground), Color(UIColor.secondarySystemBackground)],
+                colors: [background, secondaryBackground],
                 startPoint: .top, endPoint: .bottom
               )
             : LinearGradient(
@@ -280,7 +288,7 @@ struct Theme {
     }
 
     var detailBackground: Color {
-        Color(UIColor.systemBackground)
+        isDark ? background : Color(UIColor.systemBackground)
     }
 
     var buttonBackground: Color {

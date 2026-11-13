@@ -43,6 +43,7 @@ struct DetailHeaderChart: View {
     let format: DetailFormatter
     let lastUpdated: Date?
     let quoteFailed: Bool
+    let quoteLoading: Bool
     let candlesLocked: Bool
     let onLockedCandles: () -> Void
     @Binding var scrubbed: DSChartPoint?
@@ -59,14 +60,16 @@ struct DetailHeaderChart: View {
 
     private var previousClose: Double? {
         let pc = live.price - live.change
-        return pc > 0 && live.price > 0 ? pc : nil
+        return canPlotQuote && pc > 0 && live.price > 0 ? pc : nil
     }
 
-    /// The series for the selected range, ending on the live price. While a new
-    /// range loads the previous line stays (dimmed by the chart) without the live point.
+    private var canPlotQuote: Bool { !quoteFailed && lastUpdated != nil }
+
+    /// Only a refreshed quote can extend the provider's historical series.
     private var chartPoints: [DSChartPoint] {
-        guard model.pointsRange == model.range else { return model.points.chartPoints }
-        return PriceHistoryService.appendingLive(model.points, price: live.price).chartPoints
+        guard model.pointsRange == model.range else { return [] }
+        guard canPlotQuote, let lastUpdated else { return model.points.chartPoints }
+        return PriceHistoryService.appendingLive(model.points, price: live.price, at: lastUpdated).chartPoints
     }
 
     private var reference: Double? {
@@ -150,10 +153,20 @@ struct DetailHeaderChart: View {
     private var priceBlock: some View {
         let shown = scrubbedCandle?.close ?? scrubbed?.value ?? live.price
         HStack(alignment: .center) {
-            MoneyText(text: live.price > 0 ? format.money(shown) : "—", size: 44)
-                .contentTransition(.numericText(value: shown))
-                .motionSafeAnimation(scrubbed == nil && scrubbedCandle == nil ? DS.quick : nil, value: live.price)
-                .accessibilityIdentifier("detail.price")
+            if quoteLoading {
+                SkeletonBlock(width: 146, height: 40)
+                    .loadingSkeleton("Loading quote")
+                    .accessibilityIdentifier("detail.price.loading")
+            } else {
+                Text(shown > 0 ? format.money(shown) : "—")
+                    .font(DS.money(40, weight: .bold))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .contentTransition(.numericText(value: shown))
+                    .motionSafeAnimation(scrubbed == nil && scrubbedCandle == nil ? DS.quick : nil, value: live.price)
+                    .accessibilityIdentifier("detail.price")
+            }
             Spacer(minLength: DS.Space.s)
             if kind.isStock || kind == .index {
                 chartStyleToggle
@@ -168,6 +181,7 @@ struct DetailHeaderChart: View {
 
     private func changeRow(shown: Double) -> some View {
         let isLiveDay = model.range == .oneDay && scrubbed == nil
+        let canShowChange = live.price > 0 && (canPlotQuote || isLiveDay)
         let change: Double? = isLiveDay ? live.change : reference.map { shown - $0 }
         let percent: Double? = {
             if isLiveDay { return live.changePercent }
@@ -175,16 +189,19 @@ struct DetailHeaderChart: View {
             return change / ref * 100
         }()
         return HStack(spacing: DS.Space.s) {
-            if let change, let percent, live.price > 0 {
+            if let change, let percent, canShowChange {
                 ChangePill(percent: percent, amount: format.signedMoney(change))
                     .fixedSize()
                     .layoutPriority(1)
+            } else if model.chartPhase == .loading {
+                SkeletonBlock(width: 110, height: 18)
+                    .loadingSkeleton("Loading price change")
             } else {
                 Text("—")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.secondaryText)
             }
-            Text(changeLabel)
+            Text(isLiveDay && quoteFailed ? "Last known session" : changeLabel)
                 .font(.subheadline)
                 .foregroundStyle(theme.secondaryText)
                 .lineLimit(1)
@@ -352,7 +369,7 @@ struct DetailHeaderChart: View {
     private var chart: some View {
         if model.style == .candle && (kind.isStock || kind == .index) {
             DetailCandleChart(
-                candles: model.candlesRange == model.range || model.candlePhase == .loading ? model.candles : [],
+                candles: model.candlesRange == model.range ? model.candles : [],
                 phase: model.candlePhase,
                 height: 240,
                 valueText: { format.money($0) },

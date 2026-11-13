@@ -201,8 +201,11 @@ final class SymbolSearchModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var quoteTasks: [Task<Void, Never>] = []
 
-    init(scope: SymbolSearchScope = .all) {
+    private let prefetchQuotes: Bool
+
+    init(scope: SymbolSearchScope = .all, prefetchQuotes: Bool = true) {
         self.scope = scope
+        self.prefetchQuotes = prefetchQuotes
     }
 
     func retry() { schedule(debounce: false) }
@@ -245,7 +248,7 @@ final class SymbolSearchModel: ObservableObject {
                 allHits = merged
                 if !merged.isEmpty {
                     phase = .results
-                    loadQuotes(for: Array(merged.prefix(8)))
+                    if prefetchQuotes { loadQuotes(for: Array(merged.prefix(8))) }
                 }
             }
         }
@@ -487,7 +490,17 @@ struct SymbolSearchView: View {
         case .idle:
             idleList
         case .searching where model.allHits.isEmpty:
-            stateMessage(icon: nil, title: "Searching…", message: nil, id: "search.searching")
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(0..<5) { _ in SearchRowSkeleton() }
+                }
+                .dsCard(padding: 0)
+                .padding(.horizontal, DS.Space.gutter)
+                .padding(.top, DS.Space.m)
+                .loadingSkeleton("Searching for assets")
+                .accessibilityIdentifier("search.searching")
+            }
+            .scrollDismissesKeyboard(.immediately)
         case .failed:
             stateMessage(icon: "wifi.exclamationmark",
                          title: "Search isn't available right now",
@@ -571,10 +584,7 @@ struct SymbolSearchView: View {
                 }
             } header: {
                 if model.phase == .searching {
-                    HStack(spacing: DS.Space.s) {
-                        ProgressView().controlSize(.small)
-                        Text("Searching…")
-                    }
+                    Text("Searching…")
                 } else if model.hits.isEmpty {
                     Text("No \(model.scope == .crypto ? "crypto" : model.scope == .asx ? "ASX" : "US") matches — try All")
                 } else {
@@ -656,19 +666,15 @@ struct SymbolSearchView: View {
 
     // MARK: States
 
-    private func stateMessage(icon: String?, title: String, message: String?, id: String,
+    private func stateMessage(icon: String, title: String, message: String?, id: String,
                               action: (String, () -> Void)? = nil) -> some View {
         VStack(spacing: DS.Space.m) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 52, height: 52)
-                    .background(Circle().fill(DS.accent.opacity(0.14)))
-                    .accessibilityHidden(true)
-            } else {
-                ProgressView()
-            }
+            Image(systemName: icon)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 52, height: 52)
+                .background(Circle().fill(DS.accent.opacity(0.14)))
+                .accessibilityHidden(true)
             Text(title)
                 .font(.headline)
                 .foregroundStyle(theme.primaryText)
@@ -767,11 +773,7 @@ struct SymbolResultRow: View {
             QuoteNumbers(price: marketData.formatPrice(quote.price), percent: quote.changePercent,
                          stacked: stacked, priceFont: .subheadline.weight(.semibold).monospacedDigit())
         } else if isLoadingQuote {
-            VStack(alignment: .trailing, spacing: 4) {
-                SkeletonBlock(width: 55, height: 13)
-                SkeletonBlock(width: 42, height: 11)
-            }
-            .skeletonPulse()
+            QuoteNumbersSkeleton(stacked: stacked)
         }
     }
 
@@ -781,6 +783,7 @@ struct SymbolResultRow: View {
             parts.append(marketData.formatPrice(quote.price))
             parts.append(String(format: "%@ %.2f percent today", quote.changePercent >= 0 ? "up" : "down", abs(quote.changePercent)))
         }
+        if isLoadingQuote && quote == nil { parts.append("loading price") }
         if isInWatchlist { parts.append("on \(listName)") }
         return parts.joined(separator: ", ")
     }

@@ -736,7 +736,45 @@ struct HomeTradingSection: View {
                 }
                 .dsCard()
                 .accessibilityIdentifier("home.trading.card")
+                if trading.orders.contains(where: { $0.mode == .paper }) {
+                    recentOrders
+                }
             }
         }
     }
+
+    private var recentOrders: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            SectionHeader(title: "Recent practice orders", actionTitle: "See all",
+                          action: { router.requestedTab = .activity })
+            VStack(spacing: 0) {
+                ForEach(trading.orders.filter { $0.mode == .paper }.prefix(3)) { order in
+                    Button {
+                        Haptics.tap()
+                        router.order = TradingRouter.Ref(id: order.id)
+                    } label: {
+                        HStack(spacing: DS.Space.m) {
+                            InstrumentLabel(instrument: order.instrument, logoSize: 32)
+                            Spacer(minLength: DS.Space.xs)
+                            VStack(alignment: .trailing, spacing: 3) {
+                                Text(TradingFormat.orderTitle(order.type, order.side))
+                                    .font(.caption.weight(.semibold))
+                                Text(order.status.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(theme.secondaryText)
+                            }
+                        }
+                        .foregroundStyle(theme.primaryText)
+                        .padding(.vertical, DS.Space.xs)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .dsCard(padding: DS.Space.m)
+        }
+        .accessibilityIdentifier("home.trading.recentOrders")
+    }
+
 }

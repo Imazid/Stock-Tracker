@@ -73,6 +73,7 @@ struct NewsView: View {
             .dsScreenBackground()
             .navigationTitle("News")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { WorkspaceCommandButton() } }
             .searchable(text: $viewModel.searchText, prompt: "Search headlines or tickers")
             .refreshable { await refreshNews() }
             .task {
@@ -171,9 +172,9 @@ struct NewsView: View {
             }
 
             if marketData.isFetchingNews {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding(DS.Space.l)
+                NewsCompactSkeleton()
+                    .padding(.horizontal, DS.Space.gutter)
+                    .loadingSkeleton("Loading more stories")
             } else if !marketData.newsHasMore && viewModel.selectedFilter == .all && viewModel.searchText.isEmpty {
                 Text("You're all caught up")
                     .font(.footnote)
@@ -187,10 +188,10 @@ struct NewsView: View {
     private var loadingSkeleton: some View {
         VStack(spacing: DS.Space.l) {
             NewsHeroSkeleton()
-            StaggeredSkeletonList(count: 4) { NewsCompactSkeleton() }
+            ForEach(0..<4) { _ in NewsCompactSkeleton() }
         }
         .padding(.horizontal, DS.Space.gutter)
-        .accessibilityLabel("Loading news")
+        .loadingSkeleton("Loading news")
         .accessibilityIdentifier("news.loading")
     }
 

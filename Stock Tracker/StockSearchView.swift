@@ -19,7 +19,10 @@ struct StockSearchView: View {
                 .navigationTitle("Search")
                 .navigationBarTitleDisplayMode(.large)
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { micButton }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        WorkspaceCommandButton()
+                        micButton
+                    }
                 }
                 .onDisappear {
                     if speech.isRecording { speech.stopRecording() }

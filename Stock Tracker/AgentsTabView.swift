@@ -27,6 +27,7 @@ struct AgentsTabView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.Space.l) {
                     TradingHomeBadge()
+                    copilotEntry
                     PausedAllBanner { router.showPauseAll = true }
 
                     if !trading.pendingProposals.isEmpty {
@@ -83,6 +84,38 @@ struct AgentsTabView: View {
             .navigationDestination(for: UUID.self) { AgentDetailView(agentID: $0) }
         }
         .accessibilityIdentifier("agents.screen")
+    }
+
+    private var copilotEntry: some View {
+        Button {
+            Haptics.tap()
+            router.askCopilot()
+        } label: {
+            HStack(spacing: DS.Space.m) {
+                Image(systemName: "sparkles")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(theme.intelligenceTint)
+                    .frame(width: 38, height: 38)
+                    .background(theme.intelligenceTint.opacity(0.13), in: RoundedRectangle(cornerRadius: DS.Radius.chip))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Ask Copilot").font(.subheadline.weight(.semibold)).foregroundStyle(theme.primaryText)
+                    Text("Research your portfolio, orders and agents")
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                Spacer(minLength: DS.Space.s)
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(theme.intelligenceTint)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .dsCard(padding: DS.Space.m)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityIdentifier("agents.copilot")
     }
 
     private var statusRow: some View {
@@ -153,6 +186,7 @@ struct AgentCard: View {
         let ledger = trading.ledger(agent.ledgerID)
         let ownsLedger = ledger?.kind == .agentPaper
         let trades = trading.state.fills.filter { $0.source.agentID == agent.id }.count
+        let latestRun = trading.state.runs.lazy.filter { $0.agentID == agent.id }.max { $0.startedAt < $1.startedAt }
         VStack(alignment: .leading, spacing: DS.Space.m) {
             HStack(alignment: .center, spacing: DS.Space.m) {
                 AgentAvatar(seed: agent.templateID ?? agent.id.uuidString,
@@ -183,6 +217,17 @@ struct AgentCard: View {
                 .foregroundStyle(theme.secondaryText)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
+            if let latestRun {
+                Text(latestRun.summary)
+                    .font(.footnote)
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(2)
+            }
+            if agent.status == .active, let nextRun = agent.nextRunAt, nextRun > Date() {
+                Text("Next check \(TradingFormat.time(nextRun))")
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            }
             HStack(alignment: .firstTextBaseline) {
                 Label(agent.mode.displayName, systemImage: agent.mode.glyph)
                     .font(.caption.weight(.medium))

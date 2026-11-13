@@ -12,7 +12,7 @@
 //    multi-day intraday ranges on an ordinal axis so nights/weekends don't
 //    draw fake flat lines
 //  - y-domain hugs the data (never forced to 0)
-//  - honest states: loading (keeps the old line dimmed), empty, failed+retry
+//  - honest states: loading, empty, and failed with retry
 //  - VoiceOver audio graph via AXChartDescriptor
 //
 //  Charts never invent data: give them real points or an error.
@@ -152,16 +152,11 @@ struct DSPriceChart: View {
     // MARK: Body
 
     var body: some View {
-        ZStack {
-            if points.count >= 2 {
-                chart
-                    .opacity(phase == .loading ? 0.45 : 1)
-                    .motionSafeAnimation(DS.quick, value: phase == .loading)
-            } else {
+        Group {
+            if phase == .loading || points.count < 2 {
                 placeholder
-            }
-            if phase == .loading && points.count >= 2 {
-                ProgressView().controlSize(.small)
+            } else {
+                chart
             }
         }
         .frame(height: height)
@@ -169,6 +164,12 @@ struct DSPriceChart: View {
         .onChange(of: range) {
             rawX = nil
             selection?.wrappedValue = nil
+        }
+        .onChange(of: phase) { _, phase in
+            if phase == .loading {
+                rawX = nil
+                selection?.wrappedValue = nil
+            }
         }
         .onChange(of: activeIndex) { _, index in
             selection?.wrappedValue = index.map { points[$0] }
@@ -182,7 +183,7 @@ struct DSPriceChart: View {
     private var placeholder: some View {
         switch phase {
         case .loading:
-            ChartLoadingSkeleton()
+            ChartSkeleton(showsYAxis: showsYAxis)
         case .failed(let message):
             chartNote(icon: "chart.line.downtrend.xyaxis", title: "Chart unavailable", detail: message, retry: onRetry)
         case .loaded:
@@ -411,13 +412,19 @@ struct DSRangePicker: View {
     var tint: Color = DS.accent
     @Environment(\.theme) private var theme
 
-    static let standard: [TimeRange] = [.oneDay, .oneWeek, .oneMonth, .threeMonths, .ytd, .oneYear, .fiveYears]
+    static let standard: [TimeRange] = [.oneDay, .oneWeek, .oneMonth, .threeMonths, .ytd, .oneYear, .fiveYears, .all]
 
     @Namespace private var chip
 
     var body: some View {
-        // A capsule track with a raised chip that slides to the selection (Revolut / Coinbase).
-        HStack(spacing: 0) {
+        ViewThatFits(in: .horizontal) {
+            rangeButtons
+            ScrollView(.horizontal) { rangeButtons }.scrollIndicators(.hidden)
+        }
+    }
+
+    private var rangeButtons: some View {
+        HStack(spacing: 2) {
             ForEach(options, id: \.self) { option in
                 let isOn = option == selection
                 Button {
@@ -426,17 +433,12 @@ struct DSRangePicker: View {
                     dsAnimate(DS.spring) { selection = option }
                 } label: {
                     Text(option.rawValue)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(isOn ? theme.primaryText : theme.secondaryText)
+                        .font(.footnote.weight(isOn ? .bold : .semibold))
+                        .foregroundStyle(isOn ? tint : theme.secondaryText)
+                        .fixedSize()
+                        .padding(.horizontal, DS.Space.xs)
                         .frame(maxWidth: .infinity, minHeight: 32)
-                        .background {
-                            if isOn {
-                                Capsule()
-                                    .fill(theme.isDark ? Color.white.opacity(0.14) : Color.white)
-                                    .shadow(color: .black.opacity(theme.isDark ? 0 : 0.08), radius: 4, y: 1)
-                                    .matchedGeometryEffect(id: "chip", in: chip)
-                            }
-                        }
+                        .background(Capsule().fill(isOn ? tint.opacity(0.15) : .clear))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
                 }

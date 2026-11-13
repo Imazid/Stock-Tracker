@@ -119,9 +119,13 @@ struct AccountView: View {
                     syncFeaturesCard
                 } else if accountService.status == .checking || accountService.status == .unknown {
                     syncFeaturesCard
-                    ProgressView("Checking your connection…")
-                        .font(.footnote)
-                        .frame(maxWidth: .infinity, minHeight: 120)
+                    VStack(spacing: DS.Space.m) {
+                        SkeletonBlock(height: 42)
+                        SkeletonBlock(height: 42)
+                        SkeletonBlock(height: 46)
+                    }
+                    .dsCard()
+                    .loadingSkeleton("Checking your connection")
                         .accessibilityIdentifier("account.checking")
                 } else {
                     syncFeaturesCard

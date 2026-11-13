@@ -49,15 +49,12 @@ struct DetailCandleChart: View {
 
     var body: some View {
         let data = shown
-        ZStack {
-            if data.count >= 2 {
+        Group {
+            if phase == .loading || data.count < 2 {
+                placeholder
+            } else {
                 chart(data)
                     .chartPlotStyle { $0.chartPlotReveal(range, isScrubbing: rawX != nil) }
-                    .opacity(phase == .loading ? 0.45 : 1)
-                    .motionSafeAnimation(DS.quick, value: phase == .loading)
-                if phase == .loading { ProgressView().controlSize(.small) }
-            } else {
-                placeholder
             }
         }
         .frame(height: height)
@@ -77,7 +74,7 @@ struct DetailCandleChart: View {
     private var placeholder: some View {
         switch phase {
         case .loading:
-            ChartLoadingSkeleton(label: "Loading candlesticks")
+            ChartSkeleton(label: "Loading candlesticks")
         case .failed(let message):
             note(title: "Candles unavailable", detail: message)
         case .loaded:

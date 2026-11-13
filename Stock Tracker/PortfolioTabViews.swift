@@ -33,6 +33,9 @@ struct PortfolioPerformanceTab: View {
     @State private var benchmarkPoints: [PricePoint] = []
     @State private var phase: DSChartPhase = .loading
     @State private var benchmarkFailed = false
+    @State private var loadedKey: String?
+    @State private var benchmarkLoading = false
+    @State private var contributionsLoading = true
     @State private var scrubDate: Date?
     @State private var contributions: [Contribution] = []
 
@@ -98,8 +101,8 @@ struct PortfolioPerformanceTab: View {
     }
 
     private var comparisonCard: some View {
-        let mine = portfolioPct
-        let theirs = benchmarkPct
+        let mine = loadedKey == loadKey ? portfolioPct : []
+        let theirs = loadedKey == loadKey ? benchmarkPct : []
         let myValue = value(in: mine, at: scrubDate)
         let theirValue = value(in: theirs, at: scrubDate)
 
@@ -115,7 +118,10 @@ struct PortfolioPerformanceTab: View {
             VStack(alignment: .leading, spacing: 6) {
                 legendLine(color: DS.accent, title: "Your holdings", pct: myValue, dashed: false)
                 if canCompare {
-                    if benchmarkFailed {
+                    if benchmarkLoading || loadedKey != loadKey {
+                        DataRowSkeleton()
+                            .loadingSkeleton("Loading benchmark")
+                    } else if benchmarkFailed {
                         HStack(spacing: DS.Space.s) {
                             Text("\(benchmark.title) data unavailable")
                                 .font(.subheadline)
@@ -218,7 +224,7 @@ struct PortfolioPerformanceTab: View {
 
     @ViewBuilder
     private func chart(mine: [PctPoint], theirs: [PctPoint]) -> some View {
-        if mine.count >= 2 {
+        if loadedKey == loadKey, phase != .loading, mine.count >= 2 {
             Chart {
                 RuleMark(y: .value("Start", 0))
                     .foregroundStyle(theme.secondaryText.opacity(0.4))
@@ -260,12 +266,10 @@ struct PortfolioPerformanceTab: View {
                         .foregroundStyle(theme.secondaryText)
                 }
             }
-            .opacity(phase == .loading ? 0.45 : 1)
-            .overlay { if phase == .loading { ProgressView().controlSize(.small) } }
             .sensoryFeedback(.selection, trigger: scrubDate)
             .accessibilityIdentifier("portfolio.performance.chart")
         } else {
-            DSPriceChart(points: [], phase: phase, onRetry: { Task { await load(force: true) } },
+            DSPriceChart(points: [], phase: loadedKey == loadKey ? phase : .loading, onRetry: { Task { await load(force: true) } },
                          accessibilityID: "portfolio.performance.chart")
         }
     }
@@ -280,8 +284,13 @@ struct PortfolioPerformanceTab: View {
             Text(range.periodLabelString)
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
-            if contributions.isEmpty {
-                Text(phase == .loading ? "Working it out…" : "No price history for this period.")
+            if contributionsLoading || loadedKey != loadKey {
+                VStack(spacing: 0) {
+                    ForEach(0..<3) { _ in DataRowSkeleton() }
+                }
+                .loadingSkeleton("Loading performance contributors")
+            } else if contributions.isEmpty {
+                Text("No price history for this period.")
                     .font(.subheadline)
                     .foregroundStyle(theme.secondaryText)
                     .padding(.vertical, DS.Space.s)
@@ -382,32 +391,42 @@ struct PortfolioPerformanceTab: View {
     private func load(force: Bool = false) async {
         let holdings = marketData.portfolio
         guard !holdings.isEmpty else { return }
+        let key = loadKey
+        let requestedRange = range
+        let requestedBenchmark = benchmark
+        let compare = canCompare
         phase = .loading
+        benchmarkLoading = compare
+        contributionsLoading = true
+        portfolioPoints = []
+        benchmarkPoints = []
+        contributions = []
+        loadedKey = key
         scrubDate = nil
         let value = marketData.totalPortfolioValue
         let service = PriceHistoryService.shared
 
         do {
-            let series = try await service.portfolioSeries(holdings: holdings, range: range, liveValue: value,
+            let series = try await service.portfolioSeries(holdings: holdings, range: requestedRange, liveValue: value,
                                                            previousCloseValue: value - marketData.dailyProfitLoss,
                                                            forceRefresh: force)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, loadKey == key else { return }
             portfolioPoints = series.points
             phase = .loaded
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, loadKey == key else { return }
             portfolioPoints = []
             phase = .failed("Prices for your holdings couldn't be loaded.")
         }
 
-        if canCompare {
+        if compare {
             do {
-                let points = try await service.history(for: benchmark.asset, range: range, forceRefresh: force)
-                guard !Task.isCancelled else { return }
+                let points = try await service.history(for: requestedBenchmark.asset, range: requestedRange, forceRefresh: force)
+                guard !Task.isCancelled, loadKey == key else { return }
                 benchmarkPoints = points
                 benchmarkFailed = points.count < 2
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, loadKey == key else { return }
                 benchmarkPoints = []
                 benchmarkFailed = true
             }
@@ -416,16 +435,19 @@ struct PortfolioPerformanceTab: View {
             benchmarkFailed = false
         }
 
+        benchmarkLoading = false
+
         // Per-holding change over the period: shares × (live price − first price in range).
         var out: [Contribution] = []
         for h in holdings {
-            guard let points = try? await service.history(for: h.asset, range: range),
+            guard let points = try? await service.history(for: h.asset, range: requestedRange),
                   let start = points.first?.price, start > 0, h.asset.price > 0 else { continue }
             let change = h.shares * (h.asset.price - start)
             out.append(Contribution(id: h.id, holding: h, change: change, percent: (h.asset.price / start - 1) * 100))
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, loadKey == key else { return }
         contributions = out.sorted { abs($0.change) > abs($1.change) }
+        contributionsLoading = false
     }
 }
 
@@ -454,6 +476,7 @@ struct PortfolioIncomeTab: View {
     @Environment(\.theme) private var theme
     @AppStorage("portfolioValueHidden") private var valueHidden = false
     @State private var isLoading = false
+    @State private var didLoad = false
 
     private var stocks: [PortfolioHolding] { marketData.portfolio.filter { $0.asset.kind == .stock } }
     private var payers: [PortfolioHolding] {
@@ -472,10 +495,19 @@ struct PortfolioIncomeTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
-            if payers.isEmpty {
+            if payers.isEmpty && !noData.isEmpty && (isLoading || !didLoad) {
+                VStack(alignment: .leading, spacing: DS.Space.m) {
+                    Text("Estimated yearly income").font(.subheadline.weight(.medium))
+                    SkeletonBlock(width: 130, height: 32)
+                    DataRowSkeleton()
+                    DataRowSkeleton()
+                }
+                .dsCard()
+                .loadingSkeleton("Loading dividend income")
+            } else if payers.isEmpty {
                 EmptyStateCard(
                     systemImage: "dollarsign.circle",
-                    title: isLoading ? "Looking for dividends…" : "No dividend income found",
+                    title: "No dividend income found",
                     message: emptyMessage
                 )
                 .accessibilityIdentifier("portfolio.income.empty")
@@ -495,11 +527,11 @@ struct PortfolioIncomeTab: View {
             isLoading = true
             await marketData.refreshDividendYieldsIfNeeded()
             isLoading = false
+            didLoad = true
         }
     }
 
     private var emptyMessage: LocalizedStringKey {
-        if isLoading { return "Checking your stocks and ETFs for dividend yields." }
         if stocks.isEmpty { return "Crypto doesn't pay dividends. Add dividend-paying stocks or ETFs to see estimated income here." }
         return "None of your holdings paid a dividend in the last 12 months that we can find."
     }

@@ -18,9 +18,6 @@ struct RefreshStatusBadge: View {
     var body: some View {
         HStack(spacing: 5) {
             if marketData.isRefreshingQuotes {
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .tint(.secondary)
                 Text("Updating…")
                     .font(.caption2.weight(.medium))
                     .foregroundColor(.secondary)

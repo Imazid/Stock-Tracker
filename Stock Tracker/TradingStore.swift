@@ -137,6 +137,11 @@ final class TradingStore: ObservableObject {
     func signal(_ id: UUID?) -> TradingSignal? { id.flatMap { id in state.signals.first { $0.id == id } } }
     func quote(_ instrument: Instrument) -> Quote? { state.quotes[instrument.id] }
 
+    func cryptoOrderBook(for instrument: Instrument) async throws -> CryptoOrderBook {
+        guard let market = data as? LiveMarketData else { throw TradingDataError.notConfigured }
+        return try await market.cryptoOrderBook(for: instrument)
+    }
+
     func runs(for agentID: UUID) -> [AgentRun] {
         state.runs.filter { $0.agentID == agentID }.sorted { $0.startedAt > $1.startedAt }
     }

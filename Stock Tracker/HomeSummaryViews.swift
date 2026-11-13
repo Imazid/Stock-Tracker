@@ -86,13 +86,14 @@ struct PortfolioSummaryHero: View {
     @State private var sheet: AddSource?
 
     @AppStorage("homeChartRange") private var rangeRaw = TimeRange.oneDay.rawValue
+    @AppStorage("portfolioValueHidden") private var valueHidden = false
 
     enum AddSource: String, Identifiable {
         case broker, manual
         var id: String { rawValue }
     }
 
-    private static let ranges: [TimeRange] = [.oneDay, .oneWeek, .oneMonth, .threeMonths, .ytd, .oneYear]
+    private static let ranges: [TimeRange] = [.oneDay, .oneWeek, .oneMonth, .threeMonths, .ytd, .oneYear, .all]
 
     private var rangeBinding: Binding<TimeRange> {
         Binding(get: { TimeRange(rawValue: rangeRaw) ?? .oneDay }, set: { rangeRaw = $0.rawValue })
@@ -167,10 +168,11 @@ struct PortfolioSummaryHero: View {
 
         return VStack(alignment: .leading, spacing: DS.Space.m) {
             PortfolioPerformanceChart(
-                title: "Your portfolio",
+                title: "Portfolio value · \(marketData.preferredCurrency)",
                 ranges: Self.ranges,
                 range: rangeBinding,
-                chartHeight: 150,
+                chartHeight: 178,
+                hidesValues: valueHidden,
                 showsTodayLine: false,
                 accessibilityID: "chart.price",
                 centered: true
@@ -196,16 +198,47 @@ struct PortfolioSummaryHero: View {
 
             HStack(alignment: .firstTextBaseline) {
                 HeroStat(label: "All-time return",
-                         value: "\(signedMoney(total)) (\(String(format: "%+.2f%%", totalPct)))",
-                         tint: totalColor)
+                         value: valueHidden ? "••••" : "\(signedMoney(total)) (\(String(format: "%+.2f%%", totalPct)))",
+                         tint: valueHidden ? nil : totalColor)
                 Spacer()
                 HeroStat(label: "Holdings", value: "\(marketData.portfolio.count)", alignment: .trailing)
             }
+            allocationSummary
         }
         // On the section gradient, not in a card (Revolut's balance hero).
         .padding(.vertical, DS.Space.s)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.portfolio")
+    }
+
+    @ViewBuilder
+    private var allocationSummary: some View {
+        let total = marketData.totalPortfolioValue
+        if total > 0 && !valueHidden {
+            let crypto = marketData.portfolio.filter { $0.asset.kind == .crypto }.reduce(0) { $0 + $1.currentValue }
+            let cryptoWeight = min(1, max(0, crypto / total))
+            let stocksWeight = 1 - cryptoWeight
+            VStack(spacing: DS.Space.s) {
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        Rectangle().fill(DS.accent).frame(width: geometry.size.width * stocksWeight)
+                        Rectangle().fill(theme.intelligenceTint)
+                    }
+                    .clipShape(Capsule())
+                }
+                .frame(height: 4)
+                .accessibilityHidden(true)
+                HStack {
+                    Text("Stocks & ETFs \(stocksWeight.formatted(.percent.precision(.fractionLength(0))))")
+                    Spacer(minLength: DS.Space.s)
+                    Text("Crypto \(cryptoWeight.formatted(.percent.precision(.fractionLength(0))))")
+                }
+                .font(.caption.weight(.medium).monospacedDigit())
+                .foregroundStyle(theme.secondaryText)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("home.portfolio.allocation")
+        }
     }
 
     private func signedMoney(_ value: Double) -> String {
@@ -306,10 +339,14 @@ private struct HomeWatchlistRow: View {
                     }
                 }
             } numbers: { stacked in
-                QuoteNumbers(price: asset.price.formattedPrice(in: marketData.preferredCurrency, rates: marketData.exchangeRates),
-                             percent: asset.changePercent, stacked: stacked)
-                    .redacted(reason: isLoaded ? [] : .placeholder)
-                    .priceFlash(value: asset.price)
+                if isLoaded {
+                    QuoteNumbers(price: marketData.formatPrice(asset.price), percent: asset.changePercent, stacked: stacked)
+                        .priceFlash(value: asset.price)
+                } else if marketData.quoteFailures.contains(asset.symbol) {
+                    Text("No live price").font(.footnote).foregroundStyle(theme.secondaryText)
+                } else {
+                    QuoteNumbersSkeleton(stacked: stacked)
+                }
             }
             .padding(.horizontal, DS.Space.l)
             .padding(.vertical, DS.Space.m)
@@ -318,12 +355,12 @@ private struct HomeWatchlistRow: View {
         .buttonStyle(PressableButtonStyle(scale: 0.99))
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(FinancialAccessibility.priceChangeDescription(
+        .accessibilityLabel(isLoaded ? FinancialAccessibility.priceChangeDescription(
             symbol: asset.symbol,
             price: asset.price,
             change: asset.change,
             changePercent: asset.changePercent
-        ))
+        ) : "\(asset.symbol), \(marketData.quoteFailures.contains(asset.symbol) ? "no live price" : "loading price")")
         .accessibilityHint("Opens details")
         .accessibilityIdentifier("home.watchlist.\(asset.symbol)")
     }

@@ -52,7 +52,15 @@ final class TradingRouter: ObservableObject {
     /// Portfolio tab's lazy list closed itself (and the order ticket on top of it) whenever
     /// the list redrew after a trade.
     @Published var practicePortfolio: Ref?
+    @Published var showCommands = false
+    @Published var assetDetail: Asset?
     @Published var showCopilot = false
+    var copilotPrompt: String?
+
+    func askCopilot(_ prompt: String? = nil) {
+        copilotPrompt = prompt
+        showCopilot = true
+    }
     @Published var showPauseAll = false
 
     /// Opens the order ticket. Only for use from a tab's own screen; a view already inside
@@ -107,8 +115,11 @@ struct TradingRootSheets: ViewModifier {
             .sheet(isPresented: $router.showPauseAll) {
                 PauseAllSheet()
             }
-            .sheet(isPresented: $router.showCopilot) {
-                CopilotView()
+            .sheet(item: $router.assetDetail) { asset in
+                AppleStocksDetailView(stock: detailedStock(from: asset), asset: asset, position: nil)
+            }
+            .sheet(isPresented: $router.showCopilot, onDismiss: { router.copilotPrompt = nil }) {
+                CopilotView(initialPrompt: router.copilotPrompt)
             }
     }
 }
@@ -122,16 +133,22 @@ struct MarketsTabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Section", selection: $router.marketsSection) {
-                ForEach(MarketsSection.allCases) { section in
-                    Text(section.rawValue).tag(section)
+            HStack(spacing: DS.Space.m) {
+                Picker("Section", selection: $router.marketsSection) {
+                    ForEach(MarketsSection.allCases) { section in
+                        Text(section.rawValue).tag(section)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("markets.section")
+
+                if router.marketsSection == .watchlist {
+                    WorkspaceCommandButton()
+                        .frame(width: 44, height: 44)
                 }
             }
-            .pickerStyle(.segmented)
             .padding(.horizontal, DS.Space.gutter)
-            .padding(.top, DS.Space.s)
-            .padding(.bottom, DS.Space.s)
-            .accessibilityIdentifier("markets.section")
+            .padding(.vertical, DS.Space.s)
 
             ZStack {
                 Group {
@@ -170,12 +187,15 @@ struct TradingToolbar: ToolbarContent {
             .accessibilityIdentifier("trading.search")
             Button {
                 Haptics.tap()
-                router.showCopilot = true
+                router.askCopilot()
             } label: {
-                Image(systemName: "text.bubble")
+                Image(systemName: "sparkles")
             }
             .accessibilityLabel("Ask the copilot")
             .accessibilityIdentifier("trading.copilot")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            WorkspaceCommandButton()
         }
     }
 }

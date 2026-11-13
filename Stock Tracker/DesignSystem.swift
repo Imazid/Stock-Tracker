@@ -3,9 +3,8 @@
 //  Stock Tracker
 //
 //  Shared tokens and building blocks for the redesigned onboarding and home.
-//  Direction: calm and ledger-like — one brand accent, white/ink pill CTAs,
-//  serif display type for moments of emphasis, monospaced digits for money,
-//  short gentle motion (150–250ms), honest empty states.
+//  Graphite surfaces, cyan navigation, and violet for intelligence.
+//  System typography with tabular financial values and short transitions.
 //
 //  Gain/loss colour always comes from `Theme.positiveColor/negativeColor`
 //  so colour-blind modes keep working; this file never hardcodes red/green.
@@ -345,6 +344,22 @@ struct QuoteNumbers: View {
     }
 }
 
+/// The same price/change footprint as QuoteNumbers while a quote is pending.
+struct QuoteNumbersSkeleton: View {
+    let stacked: Bool
+
+    var body: some View {
+        let layout = stacked
+            ? AnyLayout(HStackLayout(spacing: DS.Space.s))
+            : AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+        layout {
+            SkeletonBlock(width: 57, height: 14)
+            SkeletonBlock(width: 46, height: 14)
+            if stacked { Spacer(minLength: 0) }
+        }
+    }
+}
+
 // MARK: - Section header
 
 struct SectionHeader: View {
@@ -439,6 +454,15 @@ private struct DSCardModifier: ViewModifier {
     let padding: CGFloat
 
     func body(content: Content) -> some View {
-        content.frostedCard(padding: padding)
+        content
+            .padding(padding)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                    .fill(theme.colorScheme == .dark ? theme.secondaryBackground : theme.subtleFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                    .strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5)
+            )
     }
 }

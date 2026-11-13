@@ -80,15 +80,14 @@ struct ReferAndEarnView: View {
     private var content: some View {
         switch referralManager.loadState {
         case .idle, .loading:
-            HStack(spacing: DS.Space.m) {
-                ProgressView()
-                Text("Getting your invite code…")
-                    .font(.subheadline)
-                    .foregroundStyle(theme.secondaryText)
+            VStack(spacing: DS.Space.m) {
+                SkeletonBlock(width: 124, height: 12)
+                SkeletonBlock(width: 152, height: 30)
+                SkeletonBlock(width: 98, height: 12)
             }
             .frame(maxWidth: .infinity, minHeight: 96)
             .dsCard()
-            .accessibilityElement(children: .combine)
+            .loadingSkeleton("Getting your invite code")
             .accessibilityIdentifier("referrals.loading")
 
         case .unavailable:

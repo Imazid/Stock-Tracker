@@ -22,7 +22,8 @@ export function alpacaRequest(input: URL, now = Date.now()): URL | undefined {
   const { searchParams } = input;
   const path = searchParams.get("path") ?? "";
   const single = stockPath.exec(path);
-  const isCrypto = path === cryptoRoot + "bars" || path === cryptoRoot + "snapshots";
+  const isCrypto = path === cryptoRoot + "bars" || path === cryptoRoot + "snapshots" ||
+    path === cryptoRoot + "latest/orderbooks";
   const isBars = single?.[2] === "bars" || path === cryptoRoot + "bars";
   if ((!single && !isCrypto && path !== stockBatch) || (single && !stock.test(single[1]))) return;
 

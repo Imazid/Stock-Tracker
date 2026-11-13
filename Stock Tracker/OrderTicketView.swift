@@ -14,6 +14,134 @@
 import SwiftUI
 import TradingCore
 
+private struct TicketHistoryChart: View {
+    let asset: Asset
+    @EnvironmentObject private var marketData: MarketData
+    @State private var range: TimeRange = .oneDay
+    @State private var loadedRange: TimeRange?
+    @State private var points: [DSChartPoint] = []
+    @State private var phase: DSChartPhase = .loading
+    @State private var retry = 0
+
+    var body: some View {
+        VStack(spacing: DS.Space.s) {
+            DSPriceChart(
+                points: loadedRange == range ? points : [],
+                phase: loadedRange == range ? phase : .loading,
+                height: 144,
+                valueText: marketData.formatPrice,
+                dateText: { range.scrubLabel(for: $0) },
+                onRetry: { retry += 1 },
+                accessibilityID: "ticket.chart"
+            )
+            DSRangePicker(options: [.oneDay, .oneWeek, .oneMonth, .threeMonths], selection: $range)
+            Text("Chart in \(marketData.preferredCurrency)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task(id: "\(range.rawValue):\(retry)") { await load() }
+    }
+
+    private func load() async {
+        let requested = range
+        phase = .loading
+        do {
+            let history = try await PriceHistoryService.shared.history(for: asset, range: requested, forceRefresh: retry > 0)
+            guard !Task.isCancelled, range == requested else { return }
+            points = history.chartPoints
+            loadedRange = requested
+            phase = .loaded
+        } catch {
+            guard !Task.isCancelled, range == requested else { return }
+            points = []
+            loadedRange = requested
+            phase = .failed("Prices for this period couldn't be loaded.")
+        }
+    }
+}
+
+private struct TicketOrderBook: View {
+    let instrument: Instrument
+    @EnvironmentObject private var trading: TradingStore
+    @Environment(\.theme) private var theme
+    @State private var book: CryptoOrderBook?
+    @State private var isLoading = true
+    @State private var request = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack {
+                Text("Crypto order book").font(.headline).accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button {
+                    request += 1
+                } label: {
+                    Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Refresh order book")
+                .disabled(isLoading)
+            }
+            if let book {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: DS.Space.l) {
+                        levels("Bids", book.bids, tint: theme.positiveColor)
+                        levels("Asks", book.asks, tint: theme.negativeColor)
+                    }
+                    VStack(spacing: DS.Space.l) {
+                        levels("Bids", book.bids, tint: theme.positiveColor)
+                        levels("Asks", book.asks, tint: theme.negativeColor)
+                    }
+                }
+                Text("Alpaca US snapshot · \(TradingFormat.time(book.time))")
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            } else if isLoading {
+                VStack(spacing: 0) {
+                    ForEach(0..<4) { _ in DataRowSkeleton() }
+                }
+                .loadingSkeleton("Loading order book")
+            } else {
+                Text("The order book is unavailable from Alpaca US.")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryText)
+            }
+        }
+        .dsCard()
+        .task(id: request) { await load() }
+        .accessibilityIdentifier("ticket.orderBook")
+    }
+
+    private func levels(_ title: LocalizedStringKey, _ values: [CryptoOrderBook.Level], tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(tint)
+            if values.isEmpty {
+                Text("No levels").font(.caption).foregroundStyle(theme.secondaryText)
+            } else {
+                ForEach(Array(values.enumerated()), id: \.offset) { _, level in
+                    HStack {
+                        Text(TradingFormat.price(level.price, instrument.currency))
+                        Spacer(minLength: DS.Space.xs)
+                        Text(TradingFormat.units(level.size, instrument)).foregroundStyle(theme.secondaryText)
+                    }
+                    .font(.caption.monospacedDigit())
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func load() async {
+        isLoading = true
+        book = nil
+        let latest = try? await trading.cryptoOrderBook(for: instrument)
+        guard !Task.isCancelled else { return }
+        book = latest
+        isLoading = false
+    }
+}
+
 // MARK: - Ticket
 
 struct OrderTicketView: View {
@@ -34,6 +162,7 @@ struct OrderTicketView: View {
         case done
     }
 
+    @AppStorage("orderTicketAdvanced") private var isAdvanced = false
     @State private var side: OrderSide
     @State private var type: OrderType = .market
     @State private var timeInForce: TimeInForce = .day
@@ -70,6 +199,12 @@ struct OrderTicketView: View {
     private var ledger: Ledger? {
         if let id = selectedLedgerID, let chosen = trading.ledger(id), chosen.currency == currency { return chosen }
         return portfolios.first
+    }
+
+    private var recentInstrumentOrders: [Order] {
+        Array(trading.orders.lazy.filter {
+            $0.instrument.id == instrument.id && $0.mode == .paper && $0.ledgerID == ledger?.id
+        }.prefix(3))
     }
     private var quote: Quote? { trading.quote(instrument) }
     private var held: Double { ledger?.position(instrument.id)?.quantity ?? 0 }
@@ -172,6 +307,14 @@ struct OrderTicketView: View {
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("ticket.side")
 
+                Picker("Trading layout", selection: $isAdvanced) {
+                    Text("Simple").tag(false)
+                    Text("Advanced").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("ticket.layout")
+
+                if isAdvanced { advancedMarketCard }
                 if portfolios.count > 1 { portfolioPicker }
 
                 amountCard
@@ -179,6 +322,10 @@ struct OrderTicketView: View {
                 if type != .market { priceFields }
 
                 summaryCard
+
+                if isAdvanced && instrument.venue == .crypto {
+                    TicketOrderBook(instrument: instrument)
+                }
             }
             .padding(.horizontal, DS.Space.gutter)
             .padding(.top, DS.Space.m)
@@ -224,7 +371,11 @@ struct OrderTicketView: View {
                         .foregroundStyle(theme.secondaryText)
                         .lineLimit(1)
                 } else if isLoadingPrice {
-                    Text("Getting price…").font(.subheadline).foregroundStyle(theme.secondaryText)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        SkeletonBlock(width: 80, height: 23)
+                        SkeletonBlock(width: 65, height: 10)
+                    }
+                    .loadingSkeleton("Loading price")
                 } else {
                     Button("Try again") { Task { await loadPrice() } }
                         .font(.subheadline.weight(.semibold))
@@ -394,6 +545,47 @@ struct OrderTicketView: View {
         .foregroundStyle(theme.primaryText)
     }
 
+    private var advancedMarketCard: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            Text("Market quotes and history")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            if let quote, quote.hasTwoSidedMarket, let bid = quote.bid, let ask = quote.ask {
+                TradingRow(label: "Best bid", value: TradingFormat.price(bid, currency))
+                TradingRow(label: "Best ask", value: TradingFormat.price(ask, currency))
+                TradingRow(label: "Spread", value: TradingFormat.price(ask - bid, currency))
+            } else if isLoadingPrice {
+                VStack {
+                    DataRowSkeleton()
+                    DataRowSkeleton()
+                }
+                .loadingSkeleton("Loading bid and ask")
+            } else {
+                Text("Bid and ask are unavailable from this price source.")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryText)
+            }
+            TicketHistoryChart(asset: instrument.asAsset)
+            TradingRow(label: "Position", value: TradingFormat.units(held, instrument))
+            if let ledger {
+                TradingRow(label: "Cash balance", value: TradingFormat.money(ledger.cash, currency))
+            }
+            if !recentInstrumentOrders.isEmpty {
+                Divider()
+                DisclosureGroup("Recent orders") {
+                    ForEach(recentInstrumentOrders) { order in
+                        TradingRow(label: "\(TradingFormat.orderTitle(order.type, order.side))",
+                                   value: order.status.displayName)
+                    }
+                }
+                .font(.subheadline)
+                .accessibilityIdentifier("ticket.advanced.orders")
+            }
+        }
+        .dsCard()
+        .accessibilityIdentifier("ticket.advanced.market")
+    }
+
     private var priceFields: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
             if type.needsStopPrice {
@@ -404,17 +596,14 @@ struct OrderTicketView: View {
                 priceField("Limit price", text: $limitText, id: "ticket.limit",
                            hint: side == .buy ? "The most you'll pay per unit." : "The least you'll accept per unit.")
             }
-            if let quote, quote.hasTwoSidedMarket, let bid = quote.bid, let ask = quote.ask {
-                Text("Bid \(TradingFormat.price(bid, currency)) · Ask \(TradingFormat.price(ask, currency))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(theme.secondaryText)
+            if isAdvanced || timeInForce != .day {
+                Divider()
+                Picker("Good for", selection: $timeInForce) {
+                    ForEach(TimeInForce.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .font(.subheadline)
+                .accessibilityIdentifier("ticket.tif")
             }
-            Divider()
-            Picker("Good for", selection: $timeInForce) {
-                ForEach(TimeInForce.allCases, id: \.self) { Text($0.displayName).tag($0) }
-            }
-            .font(.subheadline)
-            .accessibilityIdentifier("ticket.tif")
         }
         .dsCard()
     }
@@ -466,7 +655,7 @@ struct OrderTicketView: View {
     private var typeSheet: some View {
         NavigationStack {
             List {
-                ForEach(OrderType.allCases, id: \.self) { option in
+                ForEach(isAdvanced ? OrderType.allCases : OrderType.allCases.filter { $0 == .market || $0 == .limit || $0 == type }, id: \.self) { option in
                     Button {
                         type = option
                         if option != .market, limitText.isEmpty, let quote { limitText = String(format: "%.2f", quote.last) }
