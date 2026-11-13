@@ -1,4 +1,4 @@
--- Behaviour checks for migrations/20261113150000_server_side_secret_custody.sql.
+-- Behaviour checks for migrations/20261113190000_server_side_secret_custody.sql.
 --
 -- DESTRUCTIVE: inserts and deletes rows (including auth.users). Run ONLY against a
 -- throwaway database — scripts/verify-migrations.sh starts and removes one, and CI uses
@@ -9,6 +9,9 @@
 \set ON_ERROR_STOP 1
 \pset tuples_only on
 \pset format unaligned
+
+begin;
+create temporary table custody_test_scope (id integer);
 
 create or replace function pg_temp.expect_error(sql text, label text) returns text language plpgsql as $$
 begin
@@ -36,8 +39,8 @@ begin
   return 'FAIL ' || label || ' (expected ' || coalesce(expected, 'null') || ', got ' || coalesce(actual, 'null') || ')';
 end $$;
 
-grant usage on schema pg_temp to service_role, authenticated;
-grant execute on all functions in schema pg_temp to service_role, authenticated;
+select format('grant usage on schema %I to service_role, authenticated', nspname)
+from pg_namespace where oid = pg_my_temp_schema() \gexec
 
 insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'a@example.test'),
@@ -70,14 +73,14 @@ select pg_temp.expect_error($q$delete from public.credential_events$q$,
   'credential_events rows cannot be deleted directly');
 
 select pg_temp.expect_eq(
-  (select string_agg(format('%s/%s', allowed, used), ', ') from (
+  (select string_agg(format('%s/%s', allowed::text, used), ', ') from (
      select * from public.consume_ai_quota('11111111-1111-1111-1111-111111111111', 2)
      union all select * from public.consume_ai_quota('11111111-1111-1111-1111-111111111111', 2)
      union all select * from public.consume_ai_quota('11111111-1111-1111-1111-111111111111', 2)) q),
   'true/1, true/2, false/2',
   'the AI quota allows exactly the limit and never counts past it');
 select pg_temp.expect_eq(
-  (select format('%s/%s', allowed, used) from public.consume_ai_quota('22222222-2222-2222-2222-222222222222', 0)),
+  (select format('%s/%s', allowed::text, used) from public.consume_ai_quota('22222222-2222-2222-2222-222222222222', 0)),
   'false/0',
   'a zero limit refuses without recording usage');
 reset role;
@@ -110,3 +113,5 @@ select pg_temp.expect_eq((select count(*)::text from public.credential_events), 
   'only the other person''s credential events remain');
 select pg_temp.expect_eq((select count(*)::text from public.secure_credentials), '1',
   'only the other person''s credentials remain');
+
+rollback;

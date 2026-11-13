@@ -1,172 +1,152 @@
-# Agentic Trading Platform — Implementation Plan and Status
+# Implementation plan — agentic stock & crypto platform
 
-_Last updated 2026-11-13. Status words in this file are exact: **Done** means implemented and covered by automated tests on this branch; **In flight** means work in progress elsewhere, not yet on this branch; **Gap** means not started._
+Written 2026-11-13 against the owner's master brief ("transform Stock-Tracker into an agentic
+stock and cryptocurrency investment platform"). It records what the brief asks for, what is already built, and what remains. It is updated
+as work lands; status words mean exactly this:
 
-## 1. What this repository is
+- **Done** — implemented and covered by automated tests in this repository.
+- **Built, needs credentials** — implemented and tested against mocks/fixtures; needs a provider key or deployment to run for real.
+- **Simulation only** — works with simulated money by design.
+- **Gated** — implemented but switched off server-side pending legal/provider/operational approval (see `REGULATORY_REVIEW.md`).
+- **Not started** / **Deferred**.
 
-Stock Tracker is a **native iOS app** (SwiftUI, iOS 26.1+, widget and notification extensions), not a web app. Everything below extends that stack rather than replacing it:
+## 1. What the repository is (audit)
 
-| Layer | Where | Notes |
+Stock Tracker ships a native iOS app and a Next.js web app.
+
+| Part | What it is | Notes |
 |---|---|---|
-| iOS app | `Stock Tracker/` | `MarketData` (central observable), `APIService` (Alpaca data, CoinGecko, Alpha Vantage, Finnhub, FMP, Yahoo), SnapTrade brokerage aggregation, AI chat, insights and copilot, watchlists, alerts, widgets, Live Activities, StoreKit tiers |
-| Trading domain | `TradingCore/` (Swift package) | Deterministic and dependency-free: strategy spec, validator, parser and evaluator, indicators, backtester, 24-check risk engine, paper broker, ledger, order state machine, market calendars (US, ASX, international), agent pipeline, audit hash chain. `swift test` |
-| Backend | `supabase/` | Postgres + RLS + Edge Functions (Deno). A **new, dedicated project** was created on 2026-11-13: org "Stock Tracker", project ref `opruuwczvrwklmwdtsaw`, region `ap-southeast-2`. No migrations or functions are applied to it yet (see §7) |
-| UI tests | `Stock TrackerUITests/` | XCUITest suites (onboarding, lists, portfolio, broker flow, dark mode, large text, motion, performance) |
+| `Stock Tracker/` | Native **SwiftUI iPhone app** (plus widget and notification extensions) | Portfolio tracker for US/ASX stocks and crypto: real charts (`PriceHistoryService`), watchlists, alerts, news, SnapTrade read-only broker import, onboarding, paywall. Money invariant: stored values are USD (`FXRates.swift`). See repo `CLAUDE.md`. |
+| `TradingCore/` | Local **Swift package**, the trading domain (no UI, no network) | Strategy specs as data, evaluator (completed bars only), 24-check `RiskEngine`, `PaperBroker` (spread, fees, partial fills, DAY/GTC/IOC/FOK), average-cost `Ledger`, hash-chained `AuditLog`, `Backtester` (next-bar-open fills), 13 venues with calendars. 140+ tests. |
+| `supabase/functions/_shared/trading/` | **TypeScript port** of TradingCore for the server | Proven against shared vectors generated from Swift (`TradingCore/Tests/Vectors`). Strategy parsing and backtesting are in `_shared/studio/`. |
+| `supabase/` | Postgres schema + Deno edge functions | `20261017000000` (watchlists, holdings, transactions, alerts, referrals, RLS). The practice-trading server (`trading-api`, `agent-scheduler`, migration `20261113120000`) is included, along with the provider OMS and server-side credential custody. |
+| `web/` | Next.js web app | Uses the same Supabase backend and imports the shared TypeScript engine rather than re-implementing it. |
 
-The original Supabase project no longer resolves (see the header of `supabase/migrations/20261017000000_stocktracker_schema.sql`), so the new project replaces it.
+Data providers in use: Alpaca market data (IEX feed on the free plan — not consolidated), Yahoo
+v8 (ASX and international venues; unofficial), CoinGecko, FMP, Finnhub, Frankfurter FX,
+SnapTrade (read-only aggregation). The replacement Supabase project is `opruuwczvrwklmwdtsaw` (Sydney). The local stack uses port 58321.
 
-## 2. Architecture
+### Critical problems found before extending
 
-```
- iOS app (SwiftUI)                         Supabase project (Sydney)
- ───────────────────────                   ─────────────────────────────────────────────
- Views ─▶ MarketData / TradingStore        Auth (email, Apple, TOTP MFA for step-up)
-   │        │                              Postgres + RLS
-   │        ├─ TradingCore (on device):    ├─ sync tables (watchlist, holdings, alerts…)
-   │        │   paper trading, backtests,  ├─ secure_credentials  (sealed, service-role only)
-   │        │   agents, risk, audit        ├─ ai_usage_daily + consume_ai_quota()
-   │        │                              └─ trading tables (in flight, §4)
-   │        └─ SecureBackend ──HTTPS+JWT──▶ Edge Functions
-   │                                        ├─ snaptrade-proxy  ─▶ SnapTrade  (signed here)
-   │                                        ├─ ai-proxy         ─▶ Gemini / OpenAI
-   │                                        └─ trading-api, agent-scheduler (in flight)
-   └─ APIService ─▶ market-data providers (keys still on device — §5 item 4)
-```
+1. **Keys in the app bundle and in public history.** `Secrets.plist` ships in the IPA; historical
+   keys are in the public repo's history. Action for the owner: rotate them; move provider calls
+   behind server functions (this branch's broker functions never put keys on a device).
+2. **Hosted configuration.** Accounts, sync and server functions use the dedicated Stock Tracker project. See §9 for the credential proxy configuration.
+3. **Practice trading stores money as `double precision`.** The practice server keeps doubles
+   because the engine works in doubles and rounds to the cent itself (documented in its
+   migration). Provider orders on this branch use `numeric(38,18)` and decimal strings end to end.
 
-**Invariants (enforced in code, not by convention):**
+## 2. Server-side credential custody
 
-1. No language model can reach an order path. Agents and the copilot produce drafts and proposals; the deterministic risk engine and an explicit approval stand between any proposal and an order (`TradingEngine+Agents.swift`).
-2. Live execution is impossible in this build. `LiveVenues.*.isExecutionEnabled = false` in TradingCore. The in-flight server work adds a database constraint (`live_trading_not_available_in_this_build`) and a live adapter registry that is empty and frozen. Turning live trading on is a reviewed change to all three layers plus the regulatory gate in `docs/REGULATORY_REVIEW.md`.
-3. Provider secrets live on the server. After this branch, release builds contain no SnapTrade consumer key, SnapTrade user secret, OpenAI key or Gemini key (§5).
-4. Strategies are data, not code. JSON is checked by `StrategyValidator`, and no generated code ever runs.
-5. Money never mixes currencies without an explicit FX conversion, and each practice portfolio holds a single currency.
+The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with its Supabase session. SnapTrade requests are signed in the Edge Function. User secrets are sealed in `secure_credentials` and bound to the authenticated owner. The AI proxy sets a fixed model policy and enforces a daily quota per user. Provider order credentials use the OMS vault.
 
-## 3. Spec module map
+## 3. Feature inventory against the brief
 
-| # | Module (spec §2) | Status | Where |
+| Brief section | Status | Where |
+|---|---|---|
+| §3 Unified dashboard (stocks + crypto, AUD default, FX explicit) | iPhone: **Done** (USD stored, display currency). Web: overview with markets and watchlist **Done**; web portfolio page **Not started** (shows "Soon") | `MarketData`, `FXRates`; `web/src/app` |
+| §3 Portfolio analytics (TWR/MWR, benchmarks, cost basis) | Cost basis, realised/unrealised, benchmark on iPhone **Done**; TWR/MWR **Not started** | `PortfolioTabViews`, `PriceHistoryService` |
+| §4 Provider-agnostic connections | Contract + capability registry **Done**; Alpaca + Coinbase adapters **Built, needs credentials** (66 mocked-HTTP tests; never run against a real account); `broker-connections` function (connect/sync/revoke) **Built, needs credentials** | `_shared/brokers/`, `broker-connections/`, `docs/trading/provider-adapters.md` |
+| §4 Encrypted credentials | **Done** (AES-256-GCM envelope, key ring, binding, rotation; no client can read the table) | `_shared/vault/`, migration `20261113180000` |
+| §4 Reliability (retry, backoff, idempotent ingest, reconcile) | Adapters: retries on reads only, unknown submits never retried; idempotent fill keys **Done**; WebSocket streams **Not started** | `_shared/brokers/http.ts`, `broker_fills` unique key |
+| §5 Markets, search, charts, indicators | iPhone **Done**. Web **Done** and verified with live data (US, ASX, LSE, TSE, crypto): candles/line/area, volume, SMA/EMA/Bollinger, RSI/MACD from the shared engine, provenance chips on every price | `web/src/app/markets`, `web/src/server/market` |
+| §5 Watchlists | iPhone **Done**; web on the same table **Built, needs a hosted project** (one list: multiple named lists need a schema change) | `watchlist_assets` |
+| §6 Agent workspace, multi-agent | iPhone agents + copilot (practice) **Done** in the other effort. Web AI Workspace (`/ai` + side panel) **Built, needs an API key**: 8 read/prepare tools, sources with times, untrusted-data wrapping, never places orders; tools verified on live data, safety tests pass; no live model turn has run. Web Agent Studio **Not started** | `web/src/server/agent`, `web/src/app/ai` |
+| §6 AI security (untrusted retrieved content, no model-placed orders) | Practice: LLMs never decide trades (`StrategyParser.decodeDraft`, validator). OMS: an agent can only *draft*; approval requires the owner's session; the adapter is reachable only through `execute.ts` | `TradingCore`, `_shared/oms/` |
+| §7 Strategy builder (typed DSL, no generated code) | **Done** in TradingCore; TS port **Done** (31 tests); web Strategy Studio **Done** (plain-English → spec, rule editor, validation; versions kept in the browser — no strategies table yet) | `_shared/studio/`, `web/src/app/strategies` |
+| §8 Paper trading | **Simulation only, Done** (iPhone; server in the other effort). Provider-hosted paper (Alpaca paper) via OMS: **Gated** (`provider_paper_execution`) | `PaperBroker`; `_shared/oms/` |
+| §9 Backtesting | Swift **Done**; TS port + web backtests on real history **Done** (identical inputs gave an identical result fingerprint); results not stored server-side yet | `Backtester.swift`, `_shared/studio/backtester.ts`, `web/src/app/api/backtests` |
+| §10 Controlled live execution | OMS lifecycle, immutable intent hash, approvals, step-up, idempotency, reconciliation **Done**; live: **Gated** (DB CHECK constraints + gate + adapter refusal) | `_shared/oms/`, migration |
+| §11 Risk engine + kill switch | Practice: 24-check engine + kill switch **Done**. Provider orders: the same engine on a provider-built ledger plus restricted symbols, crypto cap, cash reserve, price-deviation guard; reserving orders counted; re-run under a per-user lock at submit; kill switch blocks manual provider orders too **Done** | `_shared/trading/risk.ts`, `_shared/oms/risk.ts`, `execute.ts` |
+| §12 Data model | Practice tables (other effort); provider tables **Done** (see §5 below) | migrations |
+| §13 API | `broker-connections` / `broker-orders` **Built, needs a hosted project** (type-checked; PgOmsStore proven on a throwaway Postgres; HTTP layer not yet run end to end) | `_shared/oms/api.ts`, `broker-orders/`, `broker-connections/` |
+| §14 Premium UI | iPhone redesign **Done**; web shell **Done** (12-section sidebar, ⌘K, dark/light, PRACTICE badge on every page; Portfolio, Agent Studio, Paper Trading, Activity shown as "Soon"); phone-width layout not checked in a browser | `web/src/components` |
+| §15 Security / threat model | `THREAT_MODEL.md` | |
+| §16 Australian regulation | `REGULATORY_REVIEW.md` (decisions) + `docs/trading/regulatory-au.md` (research, other effort) | |
+| §17 Observability | Structured logs in functions; OMS events append-only; metrics/alerting **Not started** | |
+| §18 Testing | Swift 140+, TS parity vectors; provider path: OMS 21, risk 9, vault 5, brokers 66, boundaries 1, Postgres integration 3, SQL behaviour checks; studio port 31; web e2e **Not started** | `supabase/functions/tests/`, `supabase/tests/` |
+
+## 4. Architecture decisions
+
+1. **Keep the native app; add the web app beside it.** The brief says reuse the existing stack;
+   the owner additionally asked for the Next.js web app. Both talk to one Supabase backend.
+2. **One trading engine, two languages, one specification.** Swift is the spec; the TypeScript
+   port is checked against shared vectors. The web app imports the TS engine directly (path
+   aliases), so charts, backtests and live evaluation use identical indicator maths.
+3. **Two order paths that never mix.** `trading-api` = simulated fills in our own database.
+   `broker-orders` = an order that goes to a provider (Alpaca paper now). Both reuse the same
+   risk engine; only `broker-orders` can reach a provider, and only through `oms/execute.ts`.
+4. **Defence in depth for real money.** Live is refused by (a) a CHECK constraint on
+   `platform_gates`, `order_intents` and `broker_connections`, (b) the gate check in the
+   pipeline, (c) the risk engine's authorization check (`accountPolicy.live` is forced off),
+   (d) the adapter's own `allowLive` refusal. Turning live on is a migration plus a reviewed
+   code change, never a flag flip.
+5. **Approvals bind a hash.** The intent's material fields are canonicalised and hashed; the
+   approval stores that hash; submission recomputes it from the stored row. A changed order can't
+   ride on an old approval; the DB also refuses edits to hashed fields.
+6. **Uncertainty stops execution.** Any submission whose outcome is unknown enters
+   `reconciliation_required`; the only way out is a provider lookup by our client order id.
+7. **Exact money on the provider path.** Decimal strings across the adapter boundary, BigInt
+   arithmetic (`oms/decimal.ts`), `numeric(38,18)` in Postgres.
+
+## 5. Database migration strategy
+
+- Migrations are append-only, timestamped, idempotent (`if not exists`, guarded constraints).
+- `20261113180000_provider_order_management.sql` applies alone (after the base schema) or after
+  the practice migration, and re-applies cleanly; verified on a throwaway
+  `supabase/postgres:17.6.1.165` container with `supabase/tests/provider_order_management.sql`.
+- Hosted rollout (when a project exists): `supabase db push` on a branch database first, run the
+  SQL checks, then production. Never `db reset` a shared stack.
+- Later consolidation: fold `oms_events` into the practice `audit_events` hash chain once both
+  are committed, with a migration that back-fills the chain.
+
+## 6. Phases and acceptance criteria
+
+| Phase | Deliverable | Acceptance | Status |
 |---|---|---|---|
-| 1 | Identity & permissions | **Done** (auth, TOTP MFA), step-up for trading **in flight** | `SupabaseAuthManager.swift`, `MFAManager.swift` |
-| 2 | Connections | **Done**: SnapTrade read-only aggregation, now server-signed (this branch). **Gap**: direct Alpaca/Coinbase account adapters | `SnapTrade*.swift`, `supabase/functions/snaptrade-proxy` |
-| 3 | Market data | **Done** (multi-provider, delayed or real-time labels, international venues). **Gap**: server-side market-data proxy | `APIService.swift`, `PriceHistoryService.swift`, `TradingMarketData.swift` |
-| 4 | Portfolio engine | **Done** for tracked and synced holdings, FX, performance chart. **Gap**: TWR/MWR with cash flows, tax lots | `PortfolioService.swift`, `FXRates.swift` |
-| 5 | Agent orchestrator | **Done** on device (deterministic pipeline, copilot with fixed tools). Server scheduler **in flight** | `TradingEngine+Agents.swift`, `CopilotEngine.swift` |
-| 6 | Strategy engine | **Done** | `StrategySpec.swift`, `StrategyParser.swift`, `StrategyEvaluator.swift` |
-| 7 | Backtesting | **Done** (no look-ahead, costs, benchmark) | `Backtester.swift`, `BacktesterTests.swift` |
-| 8 | Paper trading | **Done** on device; server copy **in flight** | `PaperBroker`, `Ledger.swift`, `PracticePortfolioViews.swift` |
-| 9 | Risk engine | **Done** (24 checks incl. kill switch, stale data, notional, exposure) | `Risk.swift`, `RiskEngineTests.swift` |
-| 10 | Order management | **Done** for paper. Live is **deliberately disabled** | `Orders.swift`, `TradingEngine.swift` |
-| 11 | Notifications | **Done** for price alerts. **Gap**: agent and order event push | `PriceAlert.swift`, notification extension |
-| 12 | Audit & compliance | **Done**: audit hash chain on device. Server audit **in flight**. Compliance gates: **Gap** (§6) | `Audit.swift`, `docs/REGULATORY_REVIEW.md` |
+| 0 Audit | This plan, threat model, regulatory review | Docs in `docs/`, reviewed by owner | Done (this branch) |
+| 1 Foundation | Adapter contract, OMS core, vault, gates, migration | Deno + SQL tests green; negative controls fail when a safeguard is removed | Done |
+| 2 Providers + data | Alpaca/Coinbase adapters; `broker-connections`; web markets/charts/watchlists | Adapter tests with mocked HTTP; web routes return labelled real data | Done (needs credentials / hosted project to run for real) |
+| 3 Agents (web) | AI workspace with read-only tools, source-backed answers, prompt-injection tests | Safety tests in repo; agents can't reach order submission; live-model eval suite still to write and run (billed) | Built; live run blocked on an API key |
+| 4 Strategies + simulation | TS parser/backtester port; web Strategy Studio + backtests | Port tests mirror Swift cases; identical inputs → identical results | Done (web paper trading waits on a hosted trading-api) |
+| 5 Trading + risk | `broker-orders` function; risk mapping for provider accounts; reconciliation scheduler | End-to-end against mocked Alpaca paper: draft → risk → approve → submit → fill; all failure journeys of brief §18 | Pipeline + store done and tested; HTTP end to end and the scheduler not yet |
+| 6 Release readiness | Hosted backend, monitoring, deployment docs, accessibility pass | Owner sign-off; `REGULATORY_REVIEW.md` items answered before any live gate | Blocked on owner/legal |
 
-### Work in flight in a parallel session (not on this branch)
+## 7. Known gaps and follow-ups (found while integrating, 2026-11-13)
 
-As of 2026-11-13 13:16 AEDT, another Claude Code session had these local, uncommitted or unpushed changes in `~/Downloads/StockTracker`:
-
-- `supabase/functions/_shared/trading/*`: a TypeScript port of TradingCore, checked against shared Swift vectors (commit `4779c15`, not pushed).
-- `supabase/functions/trading-api`, `agent-scheduler`, `_shared/server/*` and `_shared/market/*`. The market code is an Alpaca **data-only** provider.
-- `supabase/migrations/20261113120000_trading_platform.sql`, with tables `trading_accounts`, `orders`, `order_fills`, `risk_policies`, `trade_proposals`, `broker_connections`, `audit_events` and related ones.
-- UI edits to `OrderTicketView`, `PracticePortfolioViews`, `TradingNavigation`, `TradingUI` and `ContentView`.
-
-This branch avoids all of those files. Merge order: that work first, then this branch. They don't conflict; this branch's migration timestamp (`20261113150000`) sorts after theirs.
-
-## 4. Feature inventory against the spec
-
-| Spec area | Fully implemented & tested | Needs provider credentials | Simulation only | Restricted pending regulatory authorisation | Deferred |
-|---|---|---|---|---|---|
-| §3 Dashboard | Portfolio value, P&L, allocation, stock vs crypto split, movers, multi-currency display | Broker-synced balances (SnapTrade) | — | — | TWR/MWR with external cash flows, sector exposure |
-| §4 Connections | SnapTrade read-only via server proxy | SnapTrade partner keys, set as function secrets | — | Trading connections (`SNAPTRADE_ALLOW_TRADE_CONNECTIONS` off) | Direct Alpaca and Coinbase account adapters, OAuth flows |
-| §5 Markets & charts | Search, watchlists, line and candle charts, indicators, session-aware status | Alpaca, FMP, Finnhub, CoinGecko keys | — | — | Order book / level 2 |
-| §6 AI workspace | Copilot over app data with fixed tools; AI chat via server proxy | Gemini or OpenAI key, set as function secrets | — | Personalised recommendations (§6 of the regulatory review) | Source-backed external research agent |
-| §7 Strategy studio | NL to structured spec (rules-based parser), validator, versions | — | — | — | LLM-drafted specs beyond the parser |
-| §8 Paper trading | Local simulator, fees and slippage, ledger, partial fills | — | **Yes**: all trading is paper | — | Provider-hosted paper accounts |
-| §9 Backtesting | Deterministic, costs, benchmark, no look-ahead | Historical data keys | — | — | Survivorship-free universes |
-| §10 Live orders | Order state machine, approval proposals | — | — | **Yes**: disabled at three layers | Live adapters (seam exists, empty) |
-| §11 Risk | 24 deterministic checks, kill switch | — | — | — | Server-side concurrent reservation (in flight) |
-
-## 5. Security remediation (P0, before extending affected components)
-
-| # | Finding | Status |
-|---|---|---|
-| 1 | Secrets committed to git: a fiscal.ai key in `.mcp.json`, plus SnapTrade consumer key, user id and user secret in `Stock Tracker/Info.txt` | Removed from this branch's tree in an earlier commit. **They are still on `main` and in history: rotate all of them** (fiscal.ai dashboard, SnapTrade dashboard: regenerate the consumer key, delete the hard-coded test user). Rewriting history is optional once they're rotated |
-| 2 | SnapTrade consumer key and per-user `userSecret` shipped in the app | **Done (this branch)**: `snaptrade-proxy` signs server-side, user secrets are sealed with envelope encryption, and release builds use only the proxy. Existing Keychain identities move to the server once (`importLegacyUser`, proven against SnapTrade first) and are then deleted from the device |
-| 3 | OpenAI and Gemini keys shipped in the app | **Done (this branch)**: `ai-proxy` with a per-user daily ceiling. Direct calls exist only in Debug builds with no server configured |
-| 4 | Alpaca key pair shipped in the app (market data). Alpaca keys also authorise trading on the account they belong to | **Gap**. Until a market-data proxy exists, use keys from a **dedicated, unfunded paper account used for nothing else**. The in-flight server `_shared/market/alpaca.ts` is the natural home for that proxy |
-| 5 | `Config/Secrets.plist` is bundled into the app, so every value in it ships | **Action for you**: once the proxies are deployed, delete `SnapTradeConsumerKey`, `OpenAIAPIKey` and `GeminiAPIKey` from your local `Secrets.plist`. `Secrets.plist.example` documents this |
-| 6 | Debug tools that read keys were compiled into release (link already DEBUG-only) | **Done (this branch)**: `DebugView` and `SnapTradeClient` compile in Debug builds only. Dead `SnapTradeAuthManager` removed |
-| 7 | Receipt validation endpoint is a placeholder (`Constants.URLs.receiptValidation`), so the server can't verify subscription tiers | **Gap**. Until it's fixed, the server's AI ceiling is an abuse limit, not the entitlement |
-| 8 | `main` fails to link the widget extension | Fixed on the feature branch; resolved when it merges |
-
-## 6. Remaining phases and acceptance criteria
-
-**Phase A: deploy what exists (needs your go-ahead; see §7).**
-Accept when `supabase db push` has applied the baseline, the in-flight trading migration and this branch's custody migration to `opruuwczvrwklmwdtsaw`, the functions are deployed with secrets set, and a signed-in device can link a brokerage read-only and chat with AI with no provider key in the build.
-
-**Phase B: market-data proxy.** Move Alpaca, FMP, Finnhub and fiscal.ai calls behind an Edge Function with caching and per-user rate limits. Accept when the release build contains no market-data secret and charts still label delayed or real-time data correctly.
-
-**Phase C: direct account connections (read-only).** Alpaca and Coinbase Advanced Trade account, balance, position and fill sync using `secure_credentials` (purpose `broker_api_key`), with paginated, idempotent sync cursors and rate-limit-aware retries. Accept when mocked-HTTP adapter tests pass, keys are validated as read-only (no withdrawal or transfer scopes), and synced positions reconcile against provider totals.
-
-**Phase D: compliance gates.** A server-side `feature_flags` / compliance table, admin-only writes, read by every trading and advice path. Default: live trading off, automated live off, personalised recommendations off, AU only. Accept when every gate has a test showing that a client cannot flip it.
-
-**Phase E: portfolio analytics.** TWR and MWR with external cash flows, tax-lot-ready transaction history, and an accountant export (CSV with AUD values at trade date).
-
-**Phase F: live execution (only after the regulatory review is signed off).** Implement the live adapter behind the existing seam, with idempotent `client_order_id`, reconcile-before-retry on timeout, step-up MFA on approval, and approvals bound to an immutable intent hash. Accept with the end-to-end suite in spec §18 against provider sandboxes only.
-
-## 7. Deployment (the new Supabase project)
-
-Nothing has been applied or deployed yet. `scripts/deploy-backend.sh` performs the steps below with guard rails: it refuses Miraa project refs, makes you type the target ref, shows a dry run before pushing, and reads the DB password and KEK from the Keychain so neither is printed. The manual equivalent, for reference:
-
-```bash
-supabase link --project-ref opruuwczvrwklmwdtsaw     # DB password: macOS Keychain item "supabase-stock-tracker-db"
-supabase db push                                       # baseline + trading (when merged) + secret custody
-supabase secrets set --project-ref opruuwczvrwklmwdtsaw \
-  CREDENTIAL_KEKS="k1:$(openssl rand -base64 32)" CREDENTIAL_ACTIVE_KEK=k1 \
-  SNAPTRADE_CLIENT_ID=… SNAPTRADE_CONSUMER_KEY=…  GEMINI_API_KEY=… OPENAI_API_KEY=…  AI_DAILY_LIMIT=50
-supabase functions deploy snaptrade-proxy ai-proxy --project-ref opruuwczvrwklmwdtsaw
-```
-
-- **Save the KEK yourself** (for example in your password manager) before setting it: Supabase never shows a secret again, and losing every KEK makes every sealed credential unrecoverable. To rotate, add `k2:…`, set `CREDENTIAL_ACTIVE_KEK=k2`, rewrap rows (`rewrap()` in `_shared/secure/envelope.ts`), then drop `k1`.
-- Then set `SupabaseURL` / `SupabaseAnonKey` in `Config/Secrets.plist`. The anon key is designed to be public.
+- **Engine port lag — resolved.** The TS port caught up with core `b0d2f19` (calendars, lots,
+  transaction taxes) in the practice effort's `e1039ec`; parity tests pass again, and the studio
+  backtester now charges the same transaction taxes as `Backtester.swift`.
+- **Two decimal helpers** (`_shared/brokers/decimal.ts`, `_shared/oms/decimal.ts`) and **two HTTP/auth
+  helpers** (`_shared/server`, `_shared/oms/http.ts`) were written in parallel; fold each pair into one.
+- **"Today" on the provider path** is the trailing 24 hours (conservative), not the exchange day.
+- **Coinbase reconciliation** can only search the 500 most recent orders by client order id (the API
+  has no lookup by client id).
+- **No scheduler yet** for provider reconciliation or fill sync; both run on request.
+- **Web market-data adapters** (`web/src/server/market`) duplicate part of `_shared/market`; merge into one.
+- **Assistant runs aren't persisted** (no AgentRun/AgentToolEvent tables for the web assistant); turns are logged only in the browser.
+- **The ported strategy parser** maps "buy ETH when RSI drops below 30" to the crypto trend template rather than RSI rules (Swift behaviour, carried over; the screen lists the assumption).
 
 ## 8. Externally blocked
 
-| Item | Blocked on |
-|---|---|
-| Rotating the leaked fiscal.ai and SnapTrade credentials | You, in those providers' dashboards |
-| SnapTrade, Gemini and OpenAI function secrets | Your keys (never pasted into an agent session) |
-| Live trading of any kind | Australian legal review (AFSL / digital-asset framework / AUSTRAC), provider approval, and the gates in Phase D |
-| Real-time consolidated US equities data | A paid market-data entitlement (Alpaca's free feed is IEX-only) |
-| Coinbase Advanced Trade | A CDP API key with view-only scope for read sync |
-| Server-verified subscription tiers | An App Store Server API integration |
+- Provider keys: Alpaca paper key for end-to-end runs; Coinbase CDP key for read tests.
+- Live trading: everything in `REGULATORY_REVIEW.md` §3 and the go-live gate in
+  `docs/trading/regulatory-au.md` §8.
+- Market-data licensing for redistribution in a public web app (Alpaca IEX vs SIP entitlement,
+  Yahoo's unofficial endpoints) — see `REGULATORY_REVIEW.md`.
 
-## 9. How to verify
+## 9. Credential custody rollout and verification
 
-CI (`.github/workflows/ci.yml`) runs everything below on every pull request and on pushes to `main` and `feature/**`:
-
-| Job | What it proves | Local equivalent |
+| # | Finding | Status |
 |---|---|---|
-| `server` | Edge Functions lint, typecheck and unit tests (no network) | `npx -y deno test --no-check=remote --allow-read --allow-env supabase/functions/tests/` |
-| `migrations` | Every migration applies to a fresh Supabase Postgres, and the custody rules hold: RLS denial, uniqueness, append-only log, cascade on account deletion, quota limit | `scripts/verify-migrations.sh` (throwaway container, removed on exit) |
-| `trading-core` | The trading domain | `(cd TradingCore && swift test)` |
-| `ios` | Release build and the UI test bundle compile from a **clean checkout** | `cp "Stock Tracker/SecretsConfig.swift.template" "Stock Tracker/SecretsConfig.swift"`, then `xcodebuild … build` |
+| 1 | Secrets committed to git: a fiscal.ai key in `.mcp.json`, plus SnapTrade consumer key, user id and user secret in `Stock Tracker/Info.txt` | Removed from the current tree. **They are still in Git history: rotate them** (fiscal.ai dashboard, SnapTrade dashboard: regenerate the consumer key, delete the hard-coded test user). Rewriting history is optional once they're rotated |
+| 2 | SnapTrade consumer key and per-user `userSecret` shipped in the app | **Done**: `snaptrade-proxy` signs server-side, user secrets are sealed with envelope encryption, and release builds use only the proxy. Existing Keychain identities move to the server once (`importLegacyUser`, proven against SnapTrade first) and are then deleted from the device |
+| 3 | OpenAI and Gemini keys shipped in the app | **Done**: `ai-proxy` with a per-user daily ceiling. Direct calls exist only in Debug builds with no server configured |
+| 4 | Alpaca key pair shipped in the app (market data). Alpaca keys also authorise trading on the account they belong to | **Gap**. Until a market-data proxy exists, use keys from a **dedicated, unfunded paper account used for nothing else**. The in-flight server `_shared/market/alpaca.ts` is the natural home for that proxy |
+| 5 | `Config/Secrets.plist` is bundled into the app, so every value in it ships | **Action for you**: once the proxies are deployed, delete `SnapTradeConsumerKey`, `OpenAIAPIKey` and `GeminiAPIKey` from your local `Secrets.plist`. `Secrets.plist.example` documents this |
+| 6 | Debug tools that read keys were compiled into release (link already DEBUG-only) | **Done**: `DebugView` and `SnapTradeClient` compile in Debug builds only. Dead `SnapTradeAuthManager` removed |
+| 7 | Receipt validation endpoint is a placeholder (`Constants.URLs.receiptValidation`), so the server can't verify subscription tiers | **Gap**. Until it's fixed, the server's AI ceiling is an abuse limit, not the entitlement |
 
-A clean checkout now builds: `SecretsConfig.swift.template` is the real plist-reading implementation (a missing key reads as empty), not an outdated list of hard-coded strings.
+The hosted project applied the provider OMS as `20261113180000` and credential custody as `20261113190000`. Use `scripts/deploy-backend.sh` for SnapTrade and AI function configuration. Keep an offline copy of each credential encryption key. For rotation, add the next key to `CREDENTIAL_KEKS`, set `CREDENTIAL_ACTIVE_KEK`, and rewrap rows before removing the old key.
 
-## 10. Merge readiness
-
-Merge order: the parallel session's server work → `feature/agentic-trading-platform` → this branch (`feature/agentic-trading-platform-backend`) → `main`. `main` is an ancestor of the feature branch, so that last step has no conflicts today.
-
-| Gate | Status (2026-11-13) |
-|---|---|
-| Debug and Release iOS builds | Pass (local, Xcode 27.2) |
-| UI test bundle compiles | Pass (`build-for-testing`) |
-| Broker and onboarding UI tests | See the PR description for the run result |
-| TradingCore tests | Pass: 142 tests |
-| Edge Function tests, lint, typecheck | Pass: 27 tests |
-| Migration behaviour checks | Written (`supabase/tests/secret_custody_checks.sql`). **Not yet run**: the Miraa guard hook in the authoring session blocks database clients. CI or `scripts/verify-migrations.sh` runs them |
-| CI green on GitHub | **Unverified** until the first run. The `ios` job assumes a `macos-26` runner image |
-| Build artefacts untracked (`build/`, 547 files) | Done |
-| Backend deployed to `opruuwczvrwklmwdtsaw` | **Not yet**: run `scripts/deploy-backend.sh` (it refuses Miraa project refs and asks you to type the target ref) |
-| Provider secrets set (SnapTrade, Gemini/OpenAI) | **You**: see the end of `deploy-backend.sh` |
-| Leaked credentials rotated | **You**: §5 item 1 |
-
-**Before the merged app ships:** deploy the backend and set the provider secrets. Release builds route SnapTrade and AI only through the server, so without a deployed backend both features show "not configured".
+CI runs Edge Function lint, typechecking and tests, throwaway Postgres migration checks, TradingCore tests, and clean iOS builds. See [DEPLOYMENT.md](DEPLOYMENT.md) for the web app and the OMS setup.

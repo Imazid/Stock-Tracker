@@ -393,6 +393,21 @@ deno_version = 2
 [functions.trading-api]
 verify_jwt = true
 
+# Provider order management (Alpaca paper today). Both take a signed-in person's token and
+# check it again themselves; the user id always comes from that token.
+[functions.broker-orders]
+verify_jwt = true
+
+[functions.broker-connections]
+verify_jwt = true
+
+# These proxies validate bearer tokens with Supabase Auth in the handler.
+[functions.snaptrade-proxy]
+verify_jwt = false
+
+[functions.ai-proxy]
+verify_jwt = false
+
 # The scheduler is called by pg_cron with a secret header (TRADING_SCHEDULER_SECRET), not
 # a user token. Without the header it refuses.
 [functions.agent-scheduler]

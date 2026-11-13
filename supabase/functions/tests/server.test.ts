@@ -198,8 +198,18 @@ function code(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((line) => line.replace(/^\s*\/\/.*$/, "").replace(/\s\/\/ .*$/, "")).join("\n");
 }
 
-Deno.test("the server's code can't place a real order or ask a model", async () => {
-  const files = await sources(new URL("../", import.meta.url));
+const PRACTICE_PATH = /^(trading-api|agent-scheduler|_shared\/(server|trading|market|studio))\//;
+const EXTERNAL_PATH = /^(broker-orders|broker-connections|snaptrade-proxy|ai-proxy|market-data-proxy|_shared\/(brokers|oms|vault|snaptrade|ai|secure))\//;
+
+Deno.test("the practice server cannot place a provider order or call a model", async () => {
+  const files = (await sources(new URL("../", import.meta.url))).filter((file) => PRACTICE_PATH.test(file.path));
+  const root = new URL("../", import.meta.url);
+  for (const file of files) {
+    for (const match of code(file.text).matchAll(/\b(?:from\s+|import\s*\(\s*|import\s+)["'](\.[^"']+)["']/g)) {
+      const target = new URL(match[1], new URL(file.path, root)).pathname.slice(root.pathname.length);
+      assert(!EXTERNAL_PATH.test(target), `${file.path} imports ${target}`);
+    }
+  }
   assert(files.length >= 30, `only ${files.length} source files found`);
 
   // Every address the code can call.
