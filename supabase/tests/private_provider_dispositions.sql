@@ -54,6 +54,8 @@ reset role;
 update public.private_provider_approvals set disposition_activity_enabled=true where provider='birchal' and jurisdiction='AU';
 
 set role service_role;
+select public.configure_private_monitor('ed000000-0000-4000-8000-000000000002',
+  'ed000000-0000-4000-8000-000000000071',array['ed000000-0000-4000-8000-000000000010']::uuid[],false,true);
 select pg_temp.expect_disposition_error($q$select public.record_private_holding_disposition('birchal','other-provider-account',
   'ed000000-0000-4000-8000-000000000060','sale-one',now()-interval '4 days','AUD','Sale receipt',false,current_date-5,30,500,300)$q$,
   '42501','another provider account cannot add a sale');
@@ -66,6 +68,10 @@ select case when public.record_private_holding_disposition('birchal','dispositio
 select case when units=100 and remaining_units=70 and last_disposition_on=current_date-5 and exit_source is null
   then 'ok   a partial sale preserves original units and records the remaining position' else 'FAIL partial balance' end
   from public.private_holdings where id='ed000000-0000-4000-8000-000000000060';
+select public.configure_private_monitor('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',array[]::uuid[],false,true);
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=0
+  then 'ok   a partial sale does not create an exit alert' else 'FAIL alert for partial sale' end;
 select case when not public.record_private_holding_disposition('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
   'sale-one',now()-interval '4 days','AUD','Sale receipt',false,current_date-5,30,500,300)
   then 'ok   replay does not add a second sale' else 'FAIL replay' end;
@@ -82,12 +88,39 @@ select case when public.record_private_holding_disposition('birchal','dispositio
   then 'ok   a correction replaces a settlement' else 'FAIL correction' end;
 select case when remaining_units=75 then 'ok   a correction recomputes remaining units' else 'FAIL corrected balance' end
   from public.private_holdings where id='ed000000-0000-4000-8000-000000000060';
+select public.configure_private_monitor('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',array[]::uuid[],false,false);
 select case when public.record_private_holding_disposition('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
   'sale-two',now()-interval '2 days','AUD','Final sale receipt',false,current_date-3,75,700)
   then 'ok   sale can settle all remaining units' else 'FAIL full sale' end;
 select case when remaining_units=0 and last_disposition_on=current_date-3 and exit_source='Final sale receipt'
   then 'ok   full exit retains its settlement date and source' else 'FAIL exit evidence' end
   from public.private_holdings where id='ed000000-0000-4000-8000-000000000060';
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=0
+  then 'ok   full exits are not collected without monitoring consent' else 'FAIL unsolicited exit alert' end;
+select public.configure_private_monitor('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',array[]::uuid[],false,true);
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=1
+  then 'ok   the opted-in owner receives the full-exit alert' else 'FAIL missing exit alert' end;
+select case when count(*)=1 and bool_and(source_label='Final sale receipt' and occurred_at=now()-interval '2 days'
+    and significance like '%' || (current_date-3)::text || '%' and source_url is null)
+  then 'ok   the alert includes the settlement source, report timestamp and date' else 'FAIL alert evidence' end
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='holding_exit';
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000002')=0
+  and not exists (select 1 from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000002') where kind='holding_exit')
+  then 'ok   a different user following the company cannot see the private exit' else 'FAIL exit alert isolation' end;
+reset role;
+select case when public.private_market_push_through('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',0) is not null
+  then 'ok   active settlement evidence can trigger a generic push' else 'FAIL missing exit push' end;
+set role service_role;
+select public.record_private_holding_disposition('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'sale-two',now()-interval '36 hours','AUD','Revised sale receipt',false,current_date-3,75,710);
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=0
+  then 'ok   correcting an already alerted settlement creates no duplicate' else 'FAIL duplicate exit alert' end;
+select case when count(*)=1 and bool_and(source_label='Revised sale receipt' and occurred_at=now()-interval '36 hours')
+  then 'ok   an existing alert presents the newest provider evidence' else 'FAIL stale exit alert' end
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='holding_exit';
 select case when public.record_private_holding_disposition('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
   'sale-two',now()-interval '1 day','AUD','Provider reversal',true)
   then 'ok   the provider can reverse a sale' else 'FAIL reversal' end;
@@ -95,8 +128,13 @@ select case when remaining_units=75 and last_disposition_on=current_date-5 and e
     and disposition_revision_at=now()-interval '1 day'
   then 'ok   a reversal reopens the holding and invalidates older valuations' else 'FAIL reversed balance' end
   from public.private_holdings where id='ed000000-0000-4000-8000-000000000060';
+select case when count(*)=0 then 'ok   a reversal removes the full exit from the inbox' else 'FAIL reversed exit alert' end
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='holding_exit';
 
 reset role;
+select case when public.private_market_push_through('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',0) is null
+  then 'ok   a reversal cancels any unsent push' else 'FAIL reversed exit push' end;
 set role authenticated;
 select set_config('request.jwt.claim.sub','ed000000-0000-4000-8000-000000000001',true) is not null;
 select case when count(*)=2 and count(*) filter(where reversed)=1
@@ -105,6 +143,8 @@ select case when count(*)=2 and count(*) filter(where reversed)=1
 select pg_temp.expect_disposition_error($q$select public.record_private_holding_disposition('birchal','disposition-owner',
   'ed000000-0000-4000-8000-000000000060','sale-one',now(),'AUD','Client attempt',true)$q$,
   '42501','even an owner cannot submit a sale or reversal');
+select pg_temp.expect_disposition_error($q$select * from public.private_current_holding_exits$q$,
+  '42501','clients cannot read the exit evidence view directly');
 select set_config('request.jwt.claim.sub','ed000000-0000-4000-8000-000000000002',true) is not null;
 select case when count(*)=0 then 'ok   sale evidence is tenant isolated' else 'FAIL tenant isolation' end
   from public.private_holding_dispositions;
