@@ -376,6 +376,43 @@ create table if not exists public.broker_balance_snapshots (
 create index if not exists broker_balance_snapshots_idx on public.broker_balance_snapshots (connection_id, observed_at desc);
 
 -- =============================================================================
+-- Risk limits for a provider account (versioned; every evaluation records the version)
+-- =============================================================================
+create table if not exists public.provider_risk_policies (
+  connection_id   uuid primary key references public.broker_connections(id) on delete cascade,
+  user_id         uuid not null references auth.users(id) on delete cascade,
+  version         integer not null default 1 check (version >= 1),
+  -- The engine's RiskPolicy (_shared/trading/risk.ts) and the OMS AccountLimits (_shared/oms/risk.ts).
+  limits          jsonb not null check (jsonb_typeof(limits) = 'object'),
+  account_limits  jsonb not null default '{}'::jsonb check (jsonb_typeof(account_limits) = 'object'),
+  updated_at      timestamptz not null default now()
+);
+create or replace function public.oms_bump_policy_version() returns trigger language plpgsql as $$
+begin
+  if (new.limits, new.account_limits) is distinct from (old.limits, old.account_limits) then
+    new.version := old.version + 1;
+  else
+    new.version := old.version;
+  end if;
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists provider_risk_policies_version on public.provider_risk_policies;
+create trigger provider_risk_policies_version before update on public.provider_risk_policies
+  for each row execute function public.oms_bump_policy_version();
+
+-- A retried state-changing call returns its first answer instead of acting twice.
+create table if not exists public.oms_idempotency_keys (
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  key         text not null check (char_length(key) between 8 and 128),
+  action      text not null,
+  status      integer not null,
+  response    jsonb not null,
+  created_at  timestamptz not null default now(),
+  primary key (user_id, key)
+);
+
+-- =============================================================================
 -- Sync cursors, webhook de-duplication, OMS events
 -- =============================================================================
 create table if not exists public.provider_sync_cursors (
@@ -425,7 +462,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['order_intents', 'order_intent_transitions', 'order_approvals', 'broker_orders', 'broker_fills',
-                           'broker_position_snapshots', 'broker_balance_snapshots', 'oms_events'] loop
+                           'broker_position_snapshots', 'broker_balance_snapshots', 'oms_events', 'provider_risk_policies'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists %I on public.%I', t || '_select_own', t);
     if t = 'order_approvals' then
@@ -446,7 +483,8 @@ grant select on public.platform_gates to authenticated;
 
 alter table public.provider_sync_cursors enable row level security;
 alter table public.provider_webhook_events enable row level security;
-revoke all on public.provider_sync_cursors, public.provider_webhook_events from anon, authenticated;
+alter table public.oms_idempotency_keys enable row level security;
+revoke all on public.provider_sync_cursors, public.provider_webhook_events, public.oms_idempotency_keys from anon, authenticated;
 
 revoke insert, update, delete, truncate on public.broker_connections from anon, authenticated;
 grant select (id, user_id, adapter_id, name, environment, permissions, created_at, provider_account_id, status,
