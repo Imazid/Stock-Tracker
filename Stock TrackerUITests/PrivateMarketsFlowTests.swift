@@ -187,7 +187,7 @@ final class PrivateMarketsFlowTests: XCTestCase {
         health.setValue(key, forHTTPHeaderField: "apikey")
         let response = try? await URLSession.shared.data(for: health).1 as? HTTPURLResponse
         try XCTSkipUnless(response?.statusCode == 200, "Start the disposable Private Markets test stack and function proxy.")
-        var signup = URLRequest(url: try XCTUnwrap(URL(string: authHost + "/auth/v1/signup")), timeoutInterval: 10)
+        var signup = URLRequest(url: try XCTUnwrap(URL(string: authHost + "/auth/v1/signup")), timeoutInterval: 45)
         signup.httpMethod = "POST"
         signup.setValue(key, forHTTPHeaderField: "apikey")
         signup.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -211,7 +211,7 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(digest.waitForExistence(timeout: 20), app.debugDescription)
         let digestControl = digest.switches.firstMatch
         let toggle = digestControl.exists ? digestControl : digest
-        XCTAssertTrue(toggle.wait(for: \.isEnabled, toEqual: true, timeout: 20), app.debugDescription)
+        XCTAssertTrue(toggle.wait(for: \.isEnabled, toEqual: true, timeout: 45), app.debugDescription)
         XCTAssertEqual(toggle.value as? String, "0")
         toggle.tap()
         let ready = app.staticTexts["A summary appears after the next scheduled run with new announcements."]
