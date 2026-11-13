@@ -7,8 +7,8 @@ struct PortfolioBrokerActivity: View {
         let institution_name: String?
         let number: String?
 
-        var title: String {
-            let label = name ?? institution_name ?? "Brokerage account"
+        func title(masked: Bool = false) -> String {
+            let label = (masked ? institution_name : name ?? institution_name) ?? "Brokerage account"
             guard let number, !number.isEmpty else { return label }
             return "\(label) · \(number.suffix(4))"
         }
@@ -56,7 +56,36 @@ struct PortfolioBrokerActivity: View {
     let end: String
     let imported: Set<String>
     let canInclude: Bool
-    let include: (PerformanceFlow) -> Void
+    private enum Review {
+        case transfer((PerformanceFlow) -> Void)
+        case income(selected: String?, review: (CashIncomeBrokerPayment) -> Void)
+    }
+    private let review: Review
+
+    init(userId: UUID, start: String, end: String, imported: Set<String>, canInclude: Bool,
+         include: @escaping (PerformanceFlow) -> Void) {
+        self.userId = userId
+        self.start = start
+        self.end = end
+        self.imported = imported
+        self.canInclude = canInclude
+        review = .transfer(include)
+    }
+
+    init(userId: UUID, start: String, end: String, imported: Set<String>, canInclude: Bool,
+         selectedIncomeID: String?, reviewIncome: @escaping (CashIncomeBrokerPayment) -> Void) {
+        self.userId = userId
+        self.start = start
+        self.end = end
+        self.imported = imported
+        self.canInclude = canInclude
+        review = .income(selected: selectedIncomeID, review: reviewIncome)
+    }
+
+    private var reviewingIncome: Bool {
+        if case .income = review { return true }
+        return false
+    }
 
     @State private var accounts: [Account]?
     @State private var accountId = ""
@@ -74,7 +103,7 @@ struct PortfolioBrokerActivity: View {
                     Text("No linked accounts. Connect a brokerage from Portfolio.")
                 } else {
                     Picker("Brokerage account", selection: $accountId) {
-                        ForEach(accounts) { Text($0.title).tag($0.id) }
+                        ForEach(accounts) { Text($0.title()).tag($0.id) }
                     }
                     .disabled(busy || lookup != nil)
                     .onChange(of: accountId) { _, _ in
@@ -102,22 +131,36 @@ struct PortfolioBrokerActivity: View {
                     Text("Some records had missing or unsupported data. Check your statement for complete activity.")
                         .font(.footnote)
                 }
-                if page.activities.isEmpty { Text("No reported cash or corporate activity in this date range.") }
-                ForEach(page.activities) { activity in
-                    activityRow(activity)
+                let activities = reviewingIncome ? page.activities.filter { CashIncomeKind(brokerLabel: $0.label) != nil } : page.activities
+                if activities.isEmpty {
+                    if reviewingIncome {
+                        Text(page.nextOffset == nil ? "No reported payments in this date range." : "No reported payments on the loaded pages.")
+                    } else {
+                        Text("No reported cash or corporate activity in this date range.")
+                    }
+                }
+                ForEach(activities) { activity in
+                    switch review {
+                    case .transfer(let include): activityRow(activity, include: include)
+                    case .income(let selected, let review): incomeRow(activity, selected: selected, review: review)
+                    }
                 }
                 if let next = page.nextOffset {
                     Button("Load more activity") { Task { await loadPage(next) } }.disabled(busy || lookup != nil)
                 }
             }
         } header: {
-            Text("Broker activity")
+            Text(reviewingIncome ? "Broker-reported payments" : "Broker activity")
         } footer: {
-            Text("Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Compare with transfers already entered from statements. SnapTrade refreshes activity daily. For foreign cash, look up an ECB reference rate or enter the USD amount from your statement.")
+            if reviewingIncome {
+                Text("Review the reported payment and enter the cash received from your statement. Check for any previous manual entry for the same payment.")
+            } else {
+                Text("Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Compare with transfers already entered from statements. SnapTrade refreshes activity daily. For foreign cash, look up an ECB reference rate or enter the USD amount from your statement.")
+            }
         }
     }
 
-    private func activityRow(_ activity: Activity) -> some View {
+    private func activityRow(_ activity: Activity, include: @escaping (PerformanceFlow) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text([activity.label, activity.symbol].compactMap { $0 }.joined(separator: " · "))
             let amount = activity.amount.map { "\($0.formatted()) \(activity.currency ?? "")" }
@@ -156,6 +199,29 @@ struct PortfolioBrokerActivity: View {
                 .buttonStyle(.borderless)
                 .disabled(included || !canInclude)
                 .accessibilityLabel(included ? "Already included" : "Include \(activity.label) on \(activity.date)")
+            }
+        }
+    }
+
+    private func incomeRow(_ activity: Activity, selected: String?,
+                           review: @escaping (CashIncomeBrokerPayment) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text([activity.label, activity.symbol].compactMap { $0 }.joined(separator: " · "))
+            Text(activity.date).font(.caption).foregroundStyle(.secondary)
+            if let amount = activity.amount, amount > 0, CashIncomeDraft.amount(amount.description) != nil,
+               let currency = activity.currency, currency.wholeMatch(of: /[A-Z]{3}/) != nil,
+               let kind = CashIncomeKind(brokerLabel: activity.label) {
+                Text("Reported \(cashIncomeMoney(amount.description, currency))").font(.caption).foregroundStyle(.secondary)
+                let included = imported.contains(activity.id)
+                Button(included ? "Already recorded" : selected == activity.id ? "Selected" : "Review payment") {
+                    let account = accounts?.first(where: { $0.id == accountId })?.title(masked: true) ?? ""
+                    review(CashIncomeBrokerPayment(id: activity.id, date: activity.date, kind: kind, symbol: activity.symbol,
+                                                   amount: amount.description, currency: currency, account: String(account.prefix(100))))
+                }
+                .buttonStyle(.borderless)
+                .disabled(included || selected == activity.id || busy || !canInclude)
+            } else {
+                Text("Check the statement for a cash payment or reversal.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
