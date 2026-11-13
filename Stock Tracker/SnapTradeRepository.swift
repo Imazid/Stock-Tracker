@@ -34,17 +34,55 @@ class SnapTradeRepository {
     
     init(networkService: SnapTradeNetworkService) {
         self.networkService = networkService
-        loadAuthFromStorage()
+        if networkService.isServerBacked {
+            // The identity lives on the server; this flag only saves a round trip at launch.
+            // A stale flag corrects itself: the server answers NOT_REGISTERED.
+            isAuthenticated = UserDefaults.standard.bool(forKey: Self.serverRegisteredKey)
+        } else {
+            loadAuthFromStorage()
+        }
+    }
+
+    private static let serverRegisteredKey = "snaptrade_server_registered"
+
+    private func setServerRegistered(_ value: Bool) {
+        isAuthenticated = value
+        UserDefaults.standard.set(value, forKey: Self.serverRegisteredKey)
+    }
+
+    /// The identity to pass to the network layer. In server mode the server supplies it, so
+    /// this only checks that one exists.
+    private func requireIdentity() throws -> (userId: String, userSecret: String) {
+        if networkService.isServerBacked {
+            guard isAuthenticated else { throw SnapTradeError.notAuthenticated }
+            return ("", "")
+        }
+        guard let userId, let userSecret else { throw SnapTradeError.notAuthenticated }
+        return (userId, userSecret)
+    }
+
+    /// Runs a server call; if the server no longer knows this account's identity, forget the flag.
+    private func tracked<T>(_ work: () async throws -> T) async throws -> T {
+        do {
+            return try await work()
+        } catch SnapTradeError.notAuthenticated {
+            if networkService.isServerBacked { setServerRegistered(false) }
+            throw SnapTradeError.notAuthenticated
+        }
     }
     
     // MARK: - Authentication
     
     /// Register a new user or restore existing credentials
-    func authenticateUser(customUserId: String? = nil) async throws -> (userId: String, userSecret: String) {
+    func authenticateUser(customUserId: String? = nil) async throws {
+        if networkService.isServerBacked {
+            try await authenticateOnServer()
+            return
+        }
         // Check if already authenticated
-        if let userId = userId, let userSecret = userSecret {
+        if userId != nil, userSecret != nil {
             SecureLogger.info("Using existing SnapTrade credentials")
-            return (userId, userSecret)
+            return
         }
         
         // Generate or use custom user ID
@@ -62,20 +100,46 @@ class SnapTradeRepository {
         saveAuthToStorage()
         
         SecureLogger.info("SnapTrade user authenticated")
-        return (self.userId!, self.userSecret!)
+    }
+
+    /// Server mode: move a Keychain identity from an older app version if there is one,
+    /// otherwise create a fresh identity. Either way the device keeps no secret afterwards.
+    private func authenticateOnServer() async throws {
+        let legacyId = KeychainManager.shared.retrieve(key: keychainUserIdKey)
+        let legacySecret = KeychainManager.shared.retrieve(key: keychainUserSecretKey)
+        if let legacyId, let legacySecret {
+            do {
+                try await networkService.importLegacyIdentity(userId: legacyId, userSecret: legacySecret)
+                SecureLogger.info("Moved SnapTrade identity from Keychain to the server")
+            } catch SnapTradeError.apiError(let code, _) where code == "ALREADY_REGISTERED" {
+                SecureLogger.info("Server already holds a SnapTrade identity for this account")
+            } catch SnapTradeError.apiError(let code, _)
+                        where code == "LEGACY_CREDENTIALS_REJECTED" || code == "IDENTITY_IN_USE" {
+                // Invalid, or already claimed by another account (early builds shared one
+                // hard-coded test identity): start this account with its own identity.
+                SecureLogger.warning("Old SnapTrade identity unusable (\(code)); registering a new one")
+                try await networkService.registerOnServer()
+            }
+            clearAuthFromStorage()
+            userId = nil
+            userSecret = nil
+        } else {
+            try await networkService.registerOnServer()
+        }
+        setServerRegistered(true)
     }
     
     /// Get broker connection URL
     func getBrokerConnectionURL(broker: String = "ALPACA") async throws -> URL {
-        guard let userId = userId, let userSecret = userSecret else {
-            throw SnapTradeError.notAuthenticated
+        let identity = try requireIdentity()
+
+        let response = try await tracked {
+            try await networkService.getLoginURL(
+                userId: identity.userId,
+                userSecret: identity.userSecret,
+                broker: broker
+            )
         }
-        
-        let response = try await networkService.getLoginURL(
-            userId: userId,
-            userSecret: userSecret,
-            broker: broker
-        )
         
         guard let url = URL(string: response.redirectURI) else {
             throw SnapTradeError.invalidURL
@@ -87,7 +151,11 @@ class SnapTradeRepository {
     /// Deletes the user at SnapTrade (with all their broker connections), then forgets it here.
     /// Throws — and keeps the local login — if SnapTrade can't be reached.
     func deleteUserAndDisconnect() async throws {
-        if let userId { try await networkService.deleteUser(userId: userId) }
+        if networkService.isServerBacked {
+            if isAuthenticated { try await networkService.deleteUser(userId: "") }
+        } else if let userId {
+            try await networkService.deleteUser(userId: userId)
+        }
         disconnect()
     }
 
@@ -97,6 +165,7 @@ class SnapTradeRepository {
         userSecret = nil
         isAuthenticated = false
         clearAuthFromStorage()
+        if networkService.isServerBacked { setServerRegistered(false) }
         SecureLogger.info("SnapTrade user disconnected")
     }
     
@@ -109,14 +178,11 @@ class SnapTradeRepository {
 
     /// Fetch all brokerage accounts for the authenticated user
     func fetchAccounts() async throws -> [BrokerAccount] {
-        guard let userId = userId, let userSecret = userSecret else {
-            throw SnapTradeError.notAuthenticated
+        let identity = try requireIdentity()
+
+        let snapTradeAccounts = try await tracked {
+            try await networkService.fetchAccounts(userId: identity.userId, userSecret: identity.userSecret)
         }
-        
-        let snapTradeAccounts = try await networkService.fetchAccounts(
-            userId: userId,
-            userSecret: userSecret
-        )
         
         // Map to app models (empty list is valid — no broker connected yet)
         let accounts = snapTradeAccounts.map { BrokerAccount.from(snapTradeAccount: $0) }
@@ -129,14 +195,11 @@ class SnapTradeRepository {
     
     /// Fetch all holdings across all accounts
     func fetchAllHoldings() async throws -> [BrokerHolding] {
-        guard let userId = userId, let userSecret = userSecret else {
-            throw SnapTradeError.notAuthenticated
-        }
+        let identity = try requireIdentity()
 
-        let accountsWithPositions = try await networkService.fetchAllHoldings(
-            userId: userId,
-            userSecret: userSecret
-        )
+        let accountsWithPositions = try await tracked {
+            try await networkService.fetchAllHoldings(userId: identity.userId, userSecret: identity.userSecret)
+        }
 
         let allHoldings = accountsWithPositions.flatMap { (accountId, positions) in
             positions.map { BrokerHolding.from(snapTradePosition: $0, accountId: accountId) }
@@ -148,15 +211,15 @@ class SnapTradeRepository {
 
     /// Fetch holdings for a specific account
     func fetchHoldings(for accountId: String) async throws -> [BrokerHolding] {
-        guard let userId = userId, let userSecret = userSecret else {
-            throw SnapTradeError.notAuthenticated
-        }
+        let identity = try requireIdentity()
 
-        let positions = try await networkService.fetchAccountHoldings(
-            accountId: accountId,
-            userId: userId,
-            userSecret: userSecret
-        )
+        let positions = try await tracked {
+            try await networkService.fetchAccountHoldings(
+                accountId: accountId,
+                userId: identity.userId,
+                userSecret: identity.userSecret
+            )
+        }
 
         let holdings = positions.map { BrokerHolding.from(snapTradePosition: $0, accountId: accountId) }
         SecureLogger.info("Fetched \(holdings.count) holdings for account")

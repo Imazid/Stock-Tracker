@@ -9,8 +9,11 @@ import Foundation
 import Combine
 
 class AIAgentService: ObservableObject {
+    #if DEBUG
+    // Direct provider keys exist only in Debug builds (local development without a server).
     private var openAIKey: String { SecretsConfig.openAIAPIKey }
     private var geminiKey: String { SecretsConfig.geminiAPIKey }
+    #endif
 
     private let openAIBaseURL = "https://api.openai.com/v1/chat/completions"
 
@@ -27,12 +30,55 @@ class AIAgentService: ObservableObject {
     /// Disabled after receiving `insufficient_quota` — no point retrying a dead key
     private var openAIDisabled = false
 
-    /// Sends a conversation, trying Gemini first (more generous free tier) then falling back to OpenAI.
-    func sendMessage(messages: [ChatMessage]) async throws -> String {
+    /// Sends a conversation. Release builds always go through the `ai-proxy` Edge Function,
+    /// which holds the provider keys and enforces limits; Debug builds call Gemini/OpenAI
+    /// directly only while no Supabase project is configured.
+    /// `purpose` picks the server's output budget: "chat", "insight" or "copilot".
+    func sendMessage(messages: [ChatMessage], purpose: String = "chat") async throws -> String {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
+        if SecureBackend.shouldUseServer {
+            return try await sendViaServer(messages: messages, purpose: purpose)
+        }
+
+        #if DEBUG
+        return try await sendDirect(messages: messages)
+        #else
+        throw URLError(.userAuthenticationRequired)
+        #endif
+    }
+
+    // MARK: - Server (ai-proxy)
+
+    private func sendViaServer(messages: [ChatMessage], purpose: String) async throws -> String {
+        struct Reply: Decodable { let text: String }
+        let payload: [[String: String]] = messages.map { msg in
+            let role = msg.role ?? (msg.isUser ? "user" : "assistant")
+            return ["role": role, "content": msg.isUser ? InputSanitizer.sanitizeForAPI(msg.text) : msg.text]
+        }
+        do {
+            let data = try await SecureBackend.invoke("ai-proxy", body: ["purpose": purpose, "messages": payload])
+            return try JSONDecoder().decode(Reply.self, from: data).text
+        } catch let error as SecureBackend.FunctionError {
+            switch error.code {
+            case "AI_DAILY_QUOTA_EXCEEDED":
+                errorMessage = "You've reached today's AI limit. It resets at midnight UTC."
+            case "AI_UPSTREAM":
+                errorMessage = "AI providers are busy. Please wait a minute and try again."
+            default:
+                errorMessage = error.message
+            }
+            SecureLogger.error("ai-proxy \(error.status) \(error.code)")
+            throw error
+        }
+    }
+
+    // MARK: - Direct (Debug builds without a server)
+
+    #if DEBUG
+    private func sendDirect(messages: [ChatMessage]) async throws -> String {
         // Try Gemini first — 15 RPM free tier is more generous than OpenAI
         if !geminiKey.isEmpty {
             do {
@@ -57,7 +103,7 @@ class AIAgentService: ObservableObject {
             }
         }
 
-        errorMessage = "No AI API key configured. Add an OpenAI or Gemini key in Secrets.plist."
+        errorMessage = "No AI provider configured. Configure the Supabase project (ai-proxy), or add a key to Secrets.plist for a Debug build."
         throw URLError(.userAuthenticationRequired)
     }
 
@@ -167,6 +213,7 @@ class AIAgentService: ObservableObject {
         }
         return text
     }
+#endif
 }
 
 // MARK: - OpenAI Request/Response Models

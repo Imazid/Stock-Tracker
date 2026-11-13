@@ -237,6 +237,12 @@ function loginBody(
     }
     body.immediateRedirect = params.immediateRedirect;
   }
+  if (params.connectionPortalVersion !== undefined) {
+    if (params.connectionPortalVersion !== "v2" && params.connectionPortalVersion !== "v3" && params.connectionPortalVersion !== "v4") {
+      return { error: fail(400, "INVALID_PORTAL_VERSION", "connectionPortalVersion must be v2, v3 or v4") };
+    }
+    body.connectionPortalVersion = params.connectionPortalVersion;
+  }
   if (params.customRedirect !== undefined) {
     const prefixes = config.redirectPrefixes ?? ["stocktracker://"];
     if (typeof params.customRedirect !== "string" || params.customRedirect.length > 300 ||

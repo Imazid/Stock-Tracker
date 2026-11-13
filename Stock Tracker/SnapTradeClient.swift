@@ -1,3 +1,5 @@
+#if DEBUG
+// Device-side SnapTrade signing, used only by the Debug tools. Release builds use snaptrade-proxy.
 //
 //  SnapTradeClient.swift
 //  Stock Tracker
@@ -196,3 +198,4 @@ final class SnapTradeClient {
         }
     }
 }
+#endif

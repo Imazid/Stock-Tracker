@@ -144,7 +144,7 @@ class AIInsightService: ObservableObject {
         let userMsg = ChatMessage(text: userPrompt, isUser: true)
 
         do {
-            let response = try await aiService.sendMessage(messages: [systemMsg, userMsg])
+            let response = try await aiService.sendMessage(messages: [systemMsg, userMsg], purpose: "insight")
             let insight = CachedInsight(
                 id: key,
                 text: response,

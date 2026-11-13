@@ -34,11 +34,60 @@ class SnapTradeNetworkService {
     // SECURITY: Secure URLSession with timeouts
     private let secureSession = SecureURLSessionFactory.makeSecureSession(timeoutInterval: 30)
 
+    /// When true, every call goes through the `snaptrade-proxy` Edge Function: the server
+    /// signs with the consumer key and supplies the person's SnapTrade identity, so this
+    /// device holds neither. `userId` / `userSecret` arguments are ignored in this mode.
+    let isServerBacked: Bool
+
+    /// Direct mode — signs on the device. Debug builds only, for running without a server.
     init(clientId: String, consumerKey: String) {
         self.clientId = clientId
         self.consumerKey = consumerKey
+        self.isServerBacked = false
+        SecureLogger.info("SnapTradeNetworkService initialized (direct)")
+    }
 
-        SecureLogger.info("SnapTradeNetworkService initialized")
+    private init(serverBacked: Void) {
+        self.clientId = ""
+        self.consumerKey = ""
+        self.isServerBacked = true
+        SecureLogger.info("SnapTradeNetworkService initialized (server)")
+    }
+
+    /// Server mode — no SnapTrade secret on the device.
+    static func serverBacked() -> SnapTradeNetworkService {
+        SnapTradeNetworkService(serverBacked: ())
+    }
+
+    // MARK: - Server transport
+
+    private func serverData(_ operation: String, _ params: [String: Any] = [:]) async throws -> Data {
+        do {
+            return try await SecureBackend.invoke("snaptrade-proxy", body: ["operation": operation, "params": params])
+        } catch let error as SecureBackend.FunctionError {
+            if error.code == "NOT_REGISTERED" { throw SnapTradeError.notAuthenticated }
+            throw SnapTradeError.apiError(code: error.code, message: error.message)
+        }
+    }
+
+    private func viaServer<T: Decodable>(_ operation: String, _ params: [String: Any] = [:]) async throws -> T {
+        let data = try await serverData(operation, params)
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw SnapTradeError.decodingError(error)
+        }
+    }
+
+    /// Creates (or confirms) this account's SnapTrade identity on the server.
+    func registerOnServer() async throws {
+        _ = try await serverData("registerUser")
+    }
+
+    /// One-time move of an identity an older app version kept in the Keychain. The server
+    /// proves it with SnapTrade before storing it sealed; the caller then deletes its copy.
+    func importLegacyIdentity(userId: String, userSecret: String) async throws {
+        _ = try await serverData("importLegacyUser", ["snapTradeUserId": userId, "userSecret": userSecret])
     }
     
     // MARK: - Authentication
@@ -65,7 +114,18 @@ class SnapTradeNetworkService {
         customRedirect: String? = nil
     ) async throws -> SnapTradeLoginResponse {
         SecureLogger.info("Getting SnapTrade login URL")
-        
+
+        if isServerBacked {
+            var params: [String: Any] = [
+                "broker": broker,
+                "immediateRedirect": immediateRedirect,
+                "connectionType": "read",
+                "connectionPortalVersion": "v3"
+            ]
+            if let customRedirect { params["customRedirect"] = customRedirect }
+            return try await viaServer("loginLink", params)
+        }
+
         var body: [String: Any] = [
             "broker": broker,
             "immediateRedirect": immediateRedirect,
@@ -95,6 +155,10 @@ class SnapTradeNetworkService {
     /// Deletes the SnapTrade user and every broker connection it has (SnapTrade removes them
     /// shortly after). Afterwards nothing can read the person's broker any more.
     func deleteUser(userId: String) async throws {
+        if isServerBacked {
+            let _: SnapTradeDeleteUserResponse = try await viaServer("deleteUser")
+            return
+        }
         let request = try createRequest(path: "/snapTrade/deleteUser", method: "DELETE",
                                         queryParams: ["userId": userId])
         let _: SnapTradeDeleteUserResponse = try await executeRequest(request)
@@ -105,6 +169,7 @@ class SnapTradeNetworkService {
     /// Every institution SnapTrade can connect, with the slug `getLoginURL` needs, its
     /// display name, logo and whether it's enabled / in maintenance. Partner-signed, no user.
     func fetchBrokerages() async throws -> [SnapTradeBrokerage] {
+        if isServerBacked { return try await viaServer("listBrokerages") }
         let request = try createRequest(path: "/brokerages", method: "GET")
         return try await executeRequest(request)
     }
@@ -114,7 +179,9 @@ class SnapTradeNetworkService {
     /// Fetch all accounts for a user
     func fetchAccounts(userId: String, userSecret: String) async throws -> [SnapTradeAccount] {
         SecureLogger.info("Fetching SnapTrade accounts")
-        
+
+        if isServerBacked { return try await viaServer("listAccounts") }
+
         let request = try createRequest(
             path: "/accounts",
             method: "GET",
@@ -136,6 +203,7 @@ class SnapTradeNetworkService {
         userId: String,
         userSecret: String
     ) async throws -> [SnapTradePosition] {
+        if isServerBacked { return try await viaServer("accountPositions", ["accountId": accountId]) }
         let request = try createRequest(
             path: "/accounts/\(accountId)/positions",
             method: "GET",
@@ -150,6 +218,10 @@ class SnapTradeNetworkService {
         userId: String,
         userSecret: String
     ) async throws -> [SnapTradePosition] {
+        if isServerBacked {
+            let wrapper: SnapTradeAccountHoldingsResponse = try await viaServer("accountHoldings", ["accountId": accountId])
+            return wrapper.positions ?? []
+        }
         let request = try createRequest(
             path: "/accounts/\(accountId)/holdings",
             method: "GET",

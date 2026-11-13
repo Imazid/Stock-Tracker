@@ -120,9 +120,10 @@ Deno.test("connection portals are read-only unless the server enables trading co
   store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "s" });
   const { deps, calls } = harness(() => json(200, { redirectURI: "https://app.snaptrade.com/x", sessionId: "abc" }), store);
 
-  const read = await handleSnapTradeRequest(USER, { operation: "loginLink", params: { broker: "ALPACA" } }, deps);
+  const read = await handleSnapTradeRequest(USER, { operation: "loginLink", params: { broker: "ALPACA", connectionPortalVersion: "v3", immediateRedirect: false } }, deps);
   assertEquals(read.status, 200);
-  assertEquals(JSON.parse(calls[0].body!), { broker: "ALPACA", connectionType: "read" });
+  assertEquals(JSON.parse(calls[0].body!), { broker: "ALPACA", connectionPortalVersion: "v3", connectionType: "read", immediateRedirect: false });
+  assertEquals((await handleSnapTradeRequest(USER, { operation: "loginLink", params: { connectionPortalVersion: "v9" } }, deps)).status, 400);
 
   const trade = await handleSnapTradeRequest(USER, { operation: "loginLink", params: { connectionType: "trade" } }, deps);
   assertEquals(trade.status, 403);

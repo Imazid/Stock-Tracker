@@ -1,3 +1,5 @@
+#if DEBUG
+// Debug tools read provider keys directly; they exist only in Debug builds (the Settings link is DEBUG-only too).
 //
 //  DebugView.swift
 //  Stock Tracker
@@ -1009,3 +1011,4 @@ struct APILogEntry: Identifiable {
     let isError: Bool
     let timestamp = Date()
 }
+#endif

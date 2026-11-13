@@ -20,8 +20,18 @@ import Combine
 final class SnapTradeViewModel: ObservableObject {
 
     static let shared: SnapTradeViewModel = {
-        let network = SnapTradeNetworkService(clientId: SecretsConfig.snapTradeClientId,
-                                              consumerKey: SecretsConfig.snapTradeConsumerKey)
+        // SnapTrade's consumer key signs requests for every user of the client id, so it must
+        // never ship in the app: release builds always use the snaptrade-proxy Edge Function.
+        // Debug builds sign on the device only while no Supabase project is configured.
+        let network: SnapTradeNetworkService
+        #if DEBUG
+        network = SecureBackend.shouldUseServer
+            ? .serverBacked()
+            : SnapTradeNetworkService(clientId: SecretsConfig.snapTradeClientId,
+                                      consumerKey: SecretsConfig.snapTradeConsumerKey)
+        #else
+        network = .serverBacked()
+        #endif
         return SnapTradeViewModel(repository: SnapTradeRepository(networkService: network))
     }()
 
