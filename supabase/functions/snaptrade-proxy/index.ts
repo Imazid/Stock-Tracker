@@ -51,6 +51,13 @@ Deno.serve(async (req) => {
       store: new SealedSnapTradeStore(credentialTable(admin), keyring),
       fetch,
       now: Date.now,
+      async readActivityCache(userId, request) {
+        const { data, error } = await admin.rpc("read_snaptrade_activity_cache", {
+          p_user: userId, p_account: request.accountId, p_start: request.startDate, p_end: request.endDate,
+          p_offset: request.offset, p_snapshot: request.snapshot,
+        });
+        return error ? null : data;
+      },
     });
     return jsonResponse(result.status, result.body);
   } catch (error) {

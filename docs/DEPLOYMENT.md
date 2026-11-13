@@ -124,3 +124,9 @@ Enable `pg_cron` and `pg_net` before applying the provider maintenance migration
 Store a dedicated random scheduler secret of at least 32 characters as `PROVIDER_MAINTENANCE_SECRET` for the Edge Function and `provider_maintenance_secret` in Supabase Vault. Store the full HTTPS Edge Function endpoint in Vault as `provider_maintenance_url`. Deploy the function with gateway JWT verification off. The worker authenticates the Vault secret using the `x-scheduler-secret` header.
 
 Verify that the unauthenticated endpoint returns 401. Confirm scheduled requests in the `provider_maintenance` Edge Function logs, which report counts for claimed orders, connections, imported fills and errors. A cron run reports delivery to pg_net. Check the HTTP response or function logs for the worker result.
+
+## 9. Scheduled SnapTrade activity
+
+Deploy `snaptrade-activity-sync` and `snaptrade-proxy`. Set a dedicated secret of at least 32 characters as `SNAPTRADE_ACTIVITY_SYNC_SECRET` on the Edge Function and `snaptrade_activity_secret` in Supabase Vault. Set `snaptrade_activity_url` in Vault to the full HTTPS sync endpoint. Use `pg_cron` and `pg_net` as for provider maintenance. If the extensions are enabled after applying the migration, register `select cron.schedule('snaptrade-activity-sync', '* * * * *', 'select public.invoke_snaptrade_activity_sync()');`.
+
+Each tick leases up to three SnapTrade identities and processes one provider request per identity. It publishes a 90-calendar-day snapshot once all accounts and pages are read, then schedules the next refresh 24 hours later. The portfolio editor prefers a complete snapshot synced in the past 36 hours. It offers a live broker read for other dates and on request. A revoked identity deletes its staged and published activity. Scheduler logs contain counts and error codes.
