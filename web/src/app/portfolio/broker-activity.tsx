@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, Select } from "@/components/ui/Field";
+import { cashAmount, type IncomeActivity, type IncomeKind } from "@/lib/portfolio-income";
 import type { SplitActivity } from "@/lib/portfolio-splits";
 import { service } from "@/workspace/lib/backend";
 
@@ -30,11 +31,24 @@ type Page = { activities: Activity[]; omitted: number; nextOffset: number | null
 
 type ReviewMode = { imported: ReadonlySet<string>; canInclude: boolean } & (
   { mode: "cash"; onInclude: (flow: BrokerCashFlow) => void } |
-  { mode: "splits"; selectedId?: string; onReview: (activity: SplitActivity) => void }
+  { mode: "splits"; selectedId?: string; onReview: (activity: SplitActivity) => void } |
+  { mode: "income"; selectedId?: string; onReview: (activity: IncomeActivity) => void }
 );
 
 function isSplitActivity(activity: Activity): activity is Activity & SplitActivity {
   return activity.label === "Stock split" || activity.label === "Reverse stock split";
+}
+
+function incomeKind(label: string): IncomeKind | undefined {
+  switch (label) {
+    case "Dividend": return "dividend";
+    case "Distribution": return "distribution";
+    case "Substitute dividend": return "substitute_dividend";
+  }
+}
+
+function brokerAccountLabel(account: Account) {
+  return [account.name || account.institution_name || "Brokerage account", account.number?.slice(-4)].filter(Boolean).join(" · ");
 }
 
 function quantity(value: number | string, currency?: string | null) {
@@ -108,22 +122,26 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
   }
 
   const nextOffset = page?.nextOffset ?? null;
-  const reviewSplits = review.mode === "splits";
-  const accountField = reviewSplits ? "split-broker-account" : "returns-broker-account";
-  const activities = reviewSplits ? page?.activities.filter(isSplitActivity) : page?.activities;
+  const accountField = `broker-account-${review.mode}`;
+  const selectedAccount = accounts?.find((account) => account.id === accountId);
+  const activities = page?.activities.filter((activity) => review.mode === "cash" ||
+    (review.mode === "splits" ? isSplitActivity(activity) : incomeKind(activity.label)));
+  const brokerTitles = { cash: "Broker activity", splits: "Broker-reported splits", income: "Broker-reported payments" };
+  const emptyLabels = { cash: "cash or corporate activity", splits: "splits", income: "dividends or distributions" };
 
   return <fieldset className="space-y-3 rounded-md border border-border p-3">
-    <legend className="px-1 text-sm font-medium">{reviewSplits ? "Broker-reported splits" : "Broker activity"}</legend>
-    <p className="text-xs text-text-2">{reviewSplits
+    <legend className="px-1 text-sm font-medium">{brokerTitles[review.mode]}</legend>
+    <p className="text-xs text-text-2">{review.mode === "splits"
       ? "Choose an event to bring its reference and reported date into the adjustment form. Confirm the holding, effective date and ratio against your statement."
-      : "Review reported activity for the selected dates. Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Check against transfers already entered from statements."}</p>
+      : review.mode === "income" ? "Select a reported payment, then enter the cash received from your statement. Review any prior manual entry for the same payment."
+        : "Review reported activity for the selected dates. Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Check against transfers already entered from statements."}</p>
     {!accounts ? <Button size="sm" disabled={busy} onClick={() => void loadAccounts()}>Find linked accounts</Button>
       : accounts.length === 0 ? <p className="text-sm text-text-2">No linked brokerage accounts. <Link className="underline" href="/#settings">Open brokerage connections</Link></p>
       : <div className="flex flex-wrap items-end gap-2">
         <Field label="Brokerage account" htmlFor={accountField}>
           <Select id={accountField} disabled={busy || Boolean(lookup)} value={accountId} onChange={(event) => { setAccountId(event.target.value); setPage(undefined); setError(""); setConversions({}); setFxError(undefined); }}>
             {accounts.map((account) => <option key={account.id} value={account.id}>
-              {[account.name || account.institution_name || "Brokerage account", account.number?.slice(-4)].filter(Boolean).join(" · ")}
+              {brokerAccountLabel(account)}
             </option>)}
           </Select>
         </Field>
@@ -136,11 +154,11 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
         <p className="text-xs text-text-2">Imported {new Date(page.syncedAt).toLocaleString()}</p>
         <Button size="sm" disabled={busy || Boolean(lookup)} onClick={() => void loadPage(0, false)}>Fetch from broker</Button>
       </div>}
-      <p className="text-xs text-text-2">SnapTrade refreshes activity daily.{!reviewSplits && " For foreign cash, you can look up an ECB reference rate or enter the USD amount from your statement."}</p>
+      <p className="text-xs text-text-2">SnapTrade refreshes activity daily.{review.mode === "cash" && " For foreign cash, you can look up an ECB reference rate or enter the USD amount from your statement."}</p>
       {page.omitted > 0 && <p role="status" className="text-xs text-warn">{page.omitted} records had missing or unsupported data. Check your statement for complete activity.</p>}
-      {activities?.length === 0 && <p className="text-sm text-text-2">{reviewSplits
-        ? nextOffset === null ? "No reported splits in this date range." : "No reported splits on the loaded pages. Load more activity to keep looking."
-        : "No reported cash or corporate activity in this date range."}</p>}
+      {activities?.length === 0 && <p className="text-sm text-text-2">{nextOffset === null
+        ? `No reported ${emptyLabels[review.mode]} in this date range.`
+        : `No reported ${emptyLabels[review.mode]} on the loaded pages. Load more activity to keep looking.`}</p>}
       <ul className="divide-y divide-border">
         {activities?.map((activity) => {
           const included = review.imported.has(activity.id);
@@ -158,6 +176,26 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
                 onClick={() => review.onReview({ id, date, label, symbol })}>
                 {included ? "Already recorded" : selected ? "Selected" : "Review split"}
               </Button>
+            </li>;
+          }
+          if (review.mode === "income") {
+            const { id, date, label, symbol, currency } = activity;
+            const kind = incomeKind(label);
+            const amount = String(activity.amount);
+            const selected = review.selectedId === id;
+            const eligible = kind && currency && /^[A-Z]{3}$/.test(currency) && cashAmount.test(amount) && Number(amount) > 0;
+            return <li key={id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <div className="min-w-0 [overflow-wrap:anywhere]">
+                <p className="text-sm">{label}{symbol && ` · ${symbol}`}</p>
+                <p className="text-xs text-text-2">{date}{activity.amount !== null && ` · Reported ${quantity(activity.amount, currency)}`}</p>
+                {!eligible && <p className="text-xs text-text-2">Check the statement for a cash payment or reversal.</p>}
+              </div>
+              {eligible && <Button size="sm" disabled={busy || included || selected || !review.canInclude}
+                aria-label={included || selected ? undefined : `Review ${label.toLowerCase()} ${symbol ?? "payment"} reported ${date}`}
+                onClick={() => review.onReview({ id, date, kind, symbol, currency, amount,
+                  account: selectedAccount ? brokerAccountLabel({ ...selectedAccount, name: undefined }) : "" })}>
+                {included ? "Already recorded" : selected ? "Selected" : "Review payment"}
+              </Button>}
             </li>;
           }
           const foreign = activity.foreignCashFlow;

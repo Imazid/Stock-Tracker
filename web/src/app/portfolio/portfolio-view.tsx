@@ -15,6 +15,7 @@ import type { QuoteResponse } from "@/lib/market-types";
 import { portfolioMovement } from "@/lib/portfolio-movement";
 import { MovementCard } from "./movement-card";
 import { LotReport } from "./lot-report";
+import { IncomeLedger } from "./income-ledger";
 import { PerformanceLedger } from "./performance-ledger";
 import { useSession } from "@/lib/session";
 import { browserSupabase } from "@/lib/supabase/client";
@@ -97,7 +98,11 @@ export function PortfolioView() {
       ) : (
         <>
           {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={prices.some((price) => price.isPending)} />}
-          {userId && <><PerformanceLedger key={userId} userId={userId} /><LotReport key={userId + "-lots"} userId={userId} /></>}
+          {userId && <>
+            <PerformanceLedger key={userId} userId={userId} />
+            <IncomeLedger key={userId + "-income"} userId={userId} />
+            <LotReport key={userId + "-lots"} userId={userId} />
+          </>}
           <Card>
             <CardHeader title="Holdings" subtitle="Position values use the trading currency. Average costs are recorded in USD." />
             {portfolio.data?.truncated && <p role="status" className="px-4 pb-3 text-xs text-warn">Showing the first 200 holdings.</p>}
