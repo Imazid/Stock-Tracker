@@ -42,7 +42,7 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 
 | Brief section | Status | Where |
 |---|---|---|
-| §3 Unified dashboard (stocks + crypto, AUD default, FX explicit) | iPhone: **Done** (USD stored, display currency). Web: overview with markets and watchlist **Done**; web portfolio shows synced positions and recent saved USD valuations | `MarketData`, `FXRates`; `web/src/app` |
+| §3 Unified dashboard (stocks + crypto, AUD default, FX explicit) | iPhone: **Done** (USD stored, display currency). Web: overview with markets and watchlist **Done**; web portfolio shows synced positions, per-currency market contributions with data coverage and timestamps, and recent saved USD valuations | `MarketData`, `FXRates`; `web/src/app` |
 | §3 Portfolio analytics (TWR/MWR, benchmarks, cost basis) | Cost basis, realised/unrealised, benchmark on iPhone **Done**; TWR/MWR **Not started** | `PortfolioTabViews`, `PriceHistoryService` |
 | §4 Provider-agnostic connections | Contract + capability registry **Done**; Alpaca + Coinbase adapters **Built, needs credentials** (66 mocked-HTTP tests; never run against a real account); `broker-connections` function (connect/sync/revoke) **Built, needs credentials** | `_shared/brokers/`, `broker-connections/`, `docs/trading/provider-adapters.md` |
 | §4 Encrypted credentials | **Done** (AES-256-GCM envelope, key ring, binding, rotation; no client can read the table) | `_shared/vault/`, migration `20261113180000` |
