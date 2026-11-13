@@ -261,6 +261,10 @@ final class TradingStore: ObservableObject {
         for (id, quote) in engine.state.quotes where (next.quotes[id]?.time ?? .distantPast) < quote.time {
             next.quotes[id] = quote
         }
+        // The server doesn't keep liquidity stats either; keep the ones this phone worked out.
+        for (id, stats) in engine.state.stats where next.stats[id] == nil {
+            next.stats[id] = stats
+        }
         next.accountPolicy.allowFixtureData = usesFixtureData
         next.accountPolicy.live = .disabled
         engine = TradingEngine(state: next)

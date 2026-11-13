@@ -135,7 +135,8 @@ final class TradingAccountTests: XCTestCase {
         XCTAssertEqual(agents.count, 1, "\(agents)")
         XCTAssertEqual(agents.first?["review_each_paper_trade"] as? Bool, true)
         let proposals = try rows("trade_proposals", select: "status", token: token)
-        XCTAssertTrue(proposals.contains { $0["status"] as? String == "approved" }, "\(proposals)")
+        // An approved proposal is "submitted": its order was placed (filled or not is the order's story).
+        XCTAssertTrue(proposals.contains { $0["status"] as? String == "submitted" }, "\(proposals)")
         let orders = try rows("orders", select: "status,source_kind", token: token)
         XCTAssertTrue(orders.contains { $0["source_kind"] as? String == "agent" && $0["status"] as? String == "filled" }, "\(orders)")
 
