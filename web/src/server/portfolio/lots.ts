@@ -1,6 +1,7 @@
 import type { TransactionRow } from "./transactions.ts";
 
-type Lot = { purchase: TransactionRow; units: bigint; amounts?: { cost: bigint; fee: bigint } };
+type Amounts = { gross?: bigint; fee?: bigint };
+type Lot = { purchase: TransactionRow; units: bigint; usd: Amounts; aud: Amounts };
 type Holding = { lots: Lot[]; next: number; invalid: boolean };
 export type LotRow = {
   kind: "Sale match" | "Unmatched sale" | "Open lot" | "Archived holding lot" | "Invalid transaction" | "Position record";
@@ -12,6 +13,13 @@ export type LotRow = {
   saleProceeds?: bigint;
   saleFee?: bigint;
   result?: bigint;
+  aud?: {
+    purchaseCost?: bigint;
+    purchaseFee?: bigint;
+    saleProceeds?: bigint;
+    saleFee?: bigint;
+    result?: bigint;
+  };
   note?: string;
 };
 
@@ -36,8 +44,10 @@ function transactionTime(timestamp: string) {
 export const UNIT_DECIMALS = 18;
 const UNIT_SCALE = 10n ** BigInt(UNIT_DECIMALS);
 
-function scaled(value: number) {
-  if (!Number.isFinite(value) || value < 0 || value >= 1e15) return undefined;
+function scaled(value: number | string | null | undefined) {
+  if (value == null) return undefined;
+  if (typeof value === "number" && (!Number.isFinite(value) || value < 0 || value >= 1e15)) return undefined;
+  if (typeof value === "string" && !/^(?:0|[1-9]\d{0,14})(?:\.\d{1,18})?$/.test(value)) return undefined;
   // Use the shortest decimal representation of the stored double.
   const [significand, exponent = "0"] = String(value).split("e");
   const [whole, fraction = ""] = significand.split(".");
@@ -50,6 +60,31 @@ function roundedDivide(numerator: bigint, denominator: bigint) {
   return (numerator + denominator / 2n) / denominator;
 }
 
+function audAmounts(transaction: TransactionRow, units: bigint, rate: bigint | undefined): Amounts {
+  if (!rate) return {};
+  const source = transaction.trade_provenance;
+  if (source?.source === "csv_position" || source?.source === "broker_position") return {};
+  const price = scaled(source?.unitPrice);
+  const fee = scaled(source?.fees);
+  return {
+    gross: price === undefined ? undefined : roundedDivide(units * price * rate * 100n, UNIT_SCALE ** 3n),
+    fee: fee === undefined ? undefined : roundedDivide(fee * rate * 100n, UNIT_SCALE ** 2n),
+  };
+}
+
+function takeAmounts(amounts: Amounts, taken: bigint, remaining: bigint): Amounts {
+  const gross = amounts.gross === undefined ? undefined : roundedDivide(amounts.gross * taken, remaining);
+  const fee = amounts.fee === undefined ? undefined : roundedDivide(amounts.fee * taken, remaining);
+  if (amounts.gross !== undefined && gross !== undefined) amounts.gross -= gross;
+  if (amounts.fee !== undefined && fee !== undefined) amounts.fee -= fee;
+  return { gross, fee };
+}
+
+function result(purchase: Amounts, sale: Amounts) {
+  if (purchase.gross === undefined || purchase.fee === undefined || sale.gross === undefined || sale.fee === undefined) return undefined;
+  return sale.gross - sale.fee - purchase.gross - purchase.fee;
+}
+
 export function lotNumber(value: bigint | undefined, scale: number) {
   if (value === undefined) return "";
   const negative = value < 0n;
@@ -58,7 +93,7 @@ export function lotNumber(value: bigint | undefined, scale: number) {
   return (negative ? "-" : "") + digits.slice(0, -scale) + (fraction ? "." + fraction : "");
 }
 
-export function calculateLots(transactions: TransactionRow[], start?: string, end?: string) {
+export function calculateLots(transactions: TransactionRow[], start?: string, end?: string, audRates?: ReadonlyMap<string, string>) {
   const rows: LotRow[] = [];
   const holdings = new Map<string, Holding>();
   const sorted = transactions.map((transaction) => ({ transaction, time: transactionTime(transaction.transaction_date) }))
@@ -85,11 +120,13 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     }
     const gross = roundedDivide(units * price * 100n, UNIT_SCALE * UNIT_SCALE);
     const fee = roundedDivide(fees * 100n, UNIT_SCALE);
+    const rate = audRates?.get(transaction.id);
+    const aud = audAmounts(transaction, units, scaled(rate));
     if (holding.invalid) {
       if (transaction.type === "Sell") {
         rows.push({
           kind: "Unmatched sale", transaction, units, saleProceeds: gross, saleFee: fee,
-          note: "An earlier transaction in this holding needs review.",
+          aud: { saleProceeds: aud.gross, saleFee: aud.fee }, note: "An earlier transaction in this holding needs review.",
         });
       }
       continue;
@@ -97,45 +134,37 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     if (transaction.type === "Buy") {
       const source = transaction.trade_provenance;
       const unknown = source && (source.source === "csv_position" || source.source === "broker_position" || source.unitPrice == null);
-      holding.lots.push({ purchase: transaction, units, amounts: unknown ? undefined : { cost: gross, fee } });
+      holding.lots.push({ purchase: transaction, units, usd: unknown ? {} : { gross, fee }, aud });
       continue;
     }
 
     let remaining = units;
-    let grossRemaining = gross;
-    let feeRemaining = fee;
+    const usd = { gross, fee };
     while (remaining > 0n && holding.next < holding.lots.length) {
       const lot = holding.lots[holding.next];
       const matched = remaining < lot.units ? remaining : lot.units;
-      const purchaseCost = lot.amounts && roundedDivide(lot.amounts.cost * matched, lot.units);
-      const purchaseFee = lot.amounts && roundedDivide(lot.amounts.fee * matched, lot.units);
-      const saleProceeds = roundedDivide(grossRemaining * matched, remaining);
-      const saleFee = roundedDivide(feeRemaining * matched, remaining);
+      const purchase = takeAmounts(lot.usd, matched, lot.units);
+      const sale = takeAmounts(usd, matched, remaining);
+      const audPurchase = takeAmounts(lot.aud, matched, lot.units);
+      const audSale = takeAmounts(aud, matched, remaining);
       if (visible) {
-        if (purchaseCost === undefined || purchaseFee === undefined) {
-          rows.push({ kind: "Unmatched sale", transaction, purchase: lot.purchase, units: matched, saleProceeds, saleFee,
-            note: "These units need an acquisition record with the trade date and cost." });
-        } else {
-          rows.push({
-            kind: "Sale match", transaction, purchase: lot.purchase, units: matched,
-            purchaseCost, purchaseFee, saleProceeds, saleFee,
-            result: saleProceeds - saleFee - purchaseCost - purchaseFee,
-          });
-        }
+        const usdResult = result(purchase, sale);
+        rows.push({
+          kind: usdResult === undefined ? "Unmatched sale" : "Sale match", transaction, purchase: lot.purchase, units: matched,
+          purchaseCost: purchase.gross, purchaseFee: purchase.fee, saleProceeds: sale.gross, saleFee: sale.fee,
+          result: usdResult, note: usdResult === undefined ? "These units need an acquisition record with the trade date and cost." : undefined,
+          aud: { purchaseCost: audPurchase.gross, purchaseFee: audPurchase.fee, saleProceeds: audSale.gross,
+            saleFee: audSale.fee, result: result(audPurchase, audSale) },
+        });
       }
       remaining -= matched;
-      grossRemaining -= saleProceeds;
-      feeRemaining -= saleFee;
       lot.units -= matched;
-      if (lot.amounts && purchaseCost !== undefined && purchaseFee !== undefined) {
-        lot.amounts.cost -= purchaseCost;
-        lot.amounts.fee -= purchaseFee;
-      }
       if (lot.units === 0n) holding.next++;
     }
     if (remaining > 0n) {
       rows.push({
-        kind: "Unmatched sale", transaction, units: remaining, saleProceeds: grossRemaining, saleFee: feeRemaining,
+        kind: "Unmatched sale", transaction, units: remaining, saleProceeds: usd.gross, saleFee: usd.fee,
+        aud: { saleProceeds: aud.gross, saleFee: aud.fee },
         note: "The ledger has insufficient earlier purchases for this quantity.",
       });
     }
@@ -148,10 +177,11 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       const archiveDate = archived && sydneyDate(archived);
       const needsReview = archiveDate && (!end || archiveDate <= end);
       rows.push({
-        kind: lot.amounts === undefined ? "Position record" : needsReview ? "Archived holding lot" : "Open lot",
+        kind: lot.usd.gross === undefined ? "Position record" : needsReview ? "Archived holding lot" : "Open lot",
         transaction: lot.purchase, purchase: lot.purchase,
-        units: lot.units, purchaseCost: lot.amounts?.cost, purchaseFee: lot.amounts?.fee,
-        note: lot.amounts === undefined ? "Use an acquisition record with the trade date and cost to establish basis for these units."
+        units: lot.units, purchaseCost: lot.usd.gross, purchaseFee: lot.usd.fee,
+        aud: { purchaseCost: lot.aud.gross, purchaseFee: lot.aud.fee },
+        note: lot.usd.gross === undefined ? "Use an acquisition record with the trade date and cost to establish basis for these units."
           : needsReview ? "The holding was archived. Check your iPhone and broker records for a closing trade or removal." : undefined,
       });
     }
