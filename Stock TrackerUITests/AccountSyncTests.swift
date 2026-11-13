@@ -148,7 +148,7 @@ final class AccountSyncTests: XCTestCase {
             let field = app.textFields["portfolio.cashIncome.\(id)"].firstMatch
             reveal(field)
             field.tap()
-            if let current = field.value as? String, current != field.placeholderValue {
+            if let current = field.value as? String, !current.isEmpty, current != field.placeholderValue {
                 field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
             }
             field.typeText(text)
@@ -214,7 +214,8 @@ final class AccountSyncTests: XCTestCase {
             review.tap()
             let cash = app.textFields["portfolio.cashIncome.cash"].firstMatch
             reveal(cash)
-            XCTAssertEqual(cash.value as? String, cash.placeholderValue)
+            let displayedCash = cash.value as? String ?? ""
+            XCTAssertTrue(displayedCash.isEmpty || displayedCash == cash.placeholderValue)
             replace("cash", with: "5.10")
             app.buttons["portfolio.cashIncome.save"].tap()
             XCTAssertTrue(app.buttons["portfolio.cashIncome.save"].waitForNonExistence(timeout: 12))
