@@ -7,6 +7,10 @@
 // from providers (instrument names, notes) is cleaned, capped and labelled so it can't pose
 // as an instruction.
 
+import { RESEARCH_SECTIONS, type Evidence, type ResearchSection } from "@/lib/research-types";
+import { filingPassages } from "@/server/research/documents";
+import { companyReport } from "@/server/research/report";
+import { getResearch, parseFilters, ResearchInputError } from "@/server/research/service";
 import { StrategyParser } from "@studio/parser.ts";
 import { BadInstrumentError, parseInstrumentID } from "@/server/market/instruments";
 import { getCandles, getQuote, NoDataError, search } from "@/server/market/service";
@@ -46,10 +50,16 @@ function quoteSource(q: { source: string; observedAt: string; status: string; st
   return { label, source: q.source, observedAt: q.observedAt, status: q.stale ? `${q.status}, stale` : q.status };
 }
 
+function researchSources(rows: { label: string; evidence: Evidence }[]) {
+  return [...new Map(rows.map(({ label, evidence }) => [evidence.url, {
+    label, source: evidence.provider, observedAt: evidence.publishedAt ?? evidence.retrievedAt, url: evidence.url,
+  }])).values()].slice(0, 20);
+}
+
 const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolContext) => Promise<ToolOutcome>> = {
   async search_instruments(input) {
     const query = str(input, "query", true, 60)!;
-    const res = await search(query);
+    const res = await search(query, { allowLicensedIdentifiers: process.env.RESEARCH_FMP_AI === "true" });
     return {
       data: { query, results: res.results.slice(0, 10).map((r) => ({ instrumentId: r.id, symbol: r.symbol, name: clean(r.name, 80), venue: r.venue, assetClass: r.assetClass, currency: r.currency })), warning: res.warning },
     };
@@ -92,6 +102,49 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
       },
       sources: [{ label: `${view.instrument.symbol} ${range} history`, source: view.source, observedAt: view.observedAt, status: view.status }],
     };
+  },
+
+  async get_company_research(input) {
+    const report = await companyReport(instrumentFrom(input), process.env.RESEARCH_FMP_AI !== "true");
+    return {
+      data: report,
+      sources: researchSources([
+        ...report.facts,
+        ...report.events.map((event) => ({ label: event.title, evidence: event.evidence })),
+        ...report.ownership.map((event) => ({ label: event.title, evidence: event.evidence })),
+        ...report.earnings, ...report.peers, ...report.multiples,
+        ...(report.profile ? [{ label: report.profile.name, evidence: report.profile.evidence }] : []),
+      ]),
+    };
+  },
+
+  async get_company_dataset(input) {
+    const section = str(input, "section", true, 20) as ResearchSection;
+    if (!RESEARCH_SECTIONS.includes(section)) throw new ToolInputError("Choose a company research dataset.");
+    const params = new URLSearchParams({ limit: "25", q: str(input, "query", false, 100) ?? "", period: str(input, "period", false, 10) ?? "annual" });
+    const asOf = str(input, "as_of", false, 10);
+    if (asOf) params.set("asOf", asOf);
+    if (input.page !== undefined) params.set("page", String(input.page));
+    const publicOnly = section === "options" ? process.env.RESEARCH_MASSIVE_AI !== "true" : process.env.RESEARCH_FMP_AI !== "true";
+    const data = await getResearch(instrumentFrom(input), section, { ...parseFilters(params), publicOnly });
+    return {
+      data,
+      sources: researchSources([
+        ...(data.facts ?? []),
+        ...(data.events ?? []).map((event) => ({ label: event.title, evidence: event.evidence })),
+        ...(data.records ?? []),
+        ...(data.profile ? [{ label: data.profile.name, evidence: data.profile.evidence }] : []),
+      ]),
+    };
+  },
+
+  async search_filing_text(input) {
+    const accession = str(input, "accession", true, 20)!;
+    const query = str(input, "query", true, 120)!;
+    const archive = input.archive;
+    if (archive !== undefined && (typeof archive !== "number" || !Number.isInteger(archive) || archive < 0 || archive > 100)) throw new ToolInputError("Choose a valid archive batch.");
+    const data = await filingPassages(instrumentFrom(input), accession, query, archive);
+    return { data, sources: researchSources([{ label: `Form ${data.form} · ${accession}`, evidence: data.evidence }]) };
   },
 
   async get_watchlist(_input, ctx) {
@@ -199,7 +252,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   try {
     return await executors[name as ToolName](input as Record<string, unknown>, ctx);
   } catch (error) {
-    if (error instanceof ToolInputError) return { data: { error: error.message }, isError: true };
+    if (error instanceof ToolInputError || error instanceof ResearchInputError) return { data: { error: error.message }, isError: true };
     if (error instanceof NoDataError) return { data: { error: error.message }, isError: true };
     return { data: { error: "That data source didn't answer. Say the data is unavailable rather than guessing." }, isError: true };
   }

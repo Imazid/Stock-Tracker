@@ -43,14 +43,14 @@ export function MarketsView() {
       <PageHeader title="Markets" description="US, ASX, UK, European and Asian listings and the crypto we can price. Every price shows its source, currency and age." />
       <div className="relative mb-5">
         <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-3" />
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by ticker or company — e.g. BHP, Vodafone, Toyota, ETH" aria-label="Search instruments" className="h-11 pl-9 pr-9 text-[15px]" />
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search ticker, name, exchange or identifier" aria-label="Search instruments" className="h-11 pl-9 pr-9 text-[15px]" />
         {search.isFetching ? <Loader2 aria-label="Searching" className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-text-3" />
           : query ? <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-3 hover:text-text"><X className="h-4 w-4" /></button> : null}
       </div>
 
       {searching ? (
         <Card>
-          <CardHeader title={`Results for “${query.trim()}”`} subtitle="Same ticker on two exchanges? They're separate listings with their own prices." />
+          <CardHeader title={`Results for “${query.trim()}”`} subtitle="Try ASX:BHP, CIK:320193, ISIN:US0378331005 or a company name." />
           {search.data?.warning ? <div className="px-4 pb-3"><Notice tone="warn">{search.data.warning}</Notice></div> : null}
           {search.isError ? <EmptyState tone="down" title="Search isn't available" body="Try again in a moment." />
             : search.data && search.data.results.length === 0 && !search.isFetching ? <EmptyState title="No matches" body="Check the spelling, or try the company name." />

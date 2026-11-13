@@ -17,6 +17,7 @@ import type {
 import { ALPACA_CRYPTO_SOURCE, ALPACA_IEX_SOURCE, alpacaCandles, alpacaConfigured, alpacaQuote, alpacaSupports } from "./alpaca";
 import { cached } from "./cache";
 import { COIN_NAMES, COINGECKO_IDS, COINGECKO_SOURCE, coinGeckoQuote } from "./coingecko";
+import { decodeSearch, researchSearch } from "@/server/research/search";
 import { UpstreamError } from "./http";
 import { marketState, toView } from "./instruments";
 import { YAHOO_SOURCE, yahooChart, yahooQuote, yahooSearch, yahooVolumeScope } from "./yahoo";
@@ -231,38 +232,47 @@ function rank(query: string, r: SearchResult): number {
   return 4;
 }
 
-export async function search(query: string): Promise<SearchResponse> {
+export async function search(query: string, { allowLicensedIdentifiers = true } = {}): Promise<SearchResponse> {
   const q = query.trim();
   if (q === "") return { query: q, results: [] };
-  const upper = q.toUpperCase();
-  const seen = new Set<string>();
-  const results: SearchResult[] = [];
-  const add = (r: SearchResult) => {
-    if (seen.has(r.id)) return;
-    seen.add(r.id);
-    results.push(r);
+  const decoded = decodeSearch(q);
+  const upper = decoded.term.toUpperCase();
+  const results = new Map<string, SearchResult>();
+  const add = (r: SearchResult, preferred = false) => {
+    if (decoded.venue && decoded.venue !== r.venue) return;
+    if (preferred || !results.has(r.id)) results.set(r.id, r);
   };
 
-  // Crypto we can price + the curated catalog answer at once, whatever Yahoo does.
-  for (const [sym, name] of Object.entries(COIN_NAMES)) {
-    if (sym.startsWith(upper) || name.toUpperCase().includes(upper)) add({ ...toView(makeInstrument(sym, "crypto", "crypto", name)), origin: "catalog", exchangeLabel: "Crypto" });
-  }
-  for (const instrument of catalogInstruments) {
-    if (instrument.symbol.startsWith(upper) || instrument.name.toUpperCase().includes(upper)) {
-      add({ ...toView(instrument), origin: "catalog", exchangeLabel: instrument.venue.toUpperCase() });
+  const exactIdentifier = Boolean(decoded.cik || decoded.identifier);
+  if (!exactIdentifier) {
+    for (const [sym, name] of Object.entries(COIN_NAMES)) {
+      if (sym.startsWith(upper) || name.toUpperCase().includes(upper)) add({ ...toView(makeInstrument(sym, "crypto", "crypto", name)), origin: "catalog", exchangeLabel: "Crypto" });
+    }
+    for (const instrument of catalogInstruments) {
+      if (instrument.symbol.startsWith(upper) || instrument.name.toUpperCase().includes(upper)) {
+        add({ ...toView(instrument), origin: "catalog", exchangeLabel: instrument.venue.toUpperCase() });
+      }
     }
   }
 
-  let warning: string | undefined;
-  try {
-    const hits = await cached(`search:${upper}`, 60_000, () => yahooSearch(q));
-    for (const hit of hits) {
+  const [sec, yahoo] = await Promise.allSettled([
+    decoded.identifier && !allowLicensedIdentifiers ? Promise.resolve([]) : researchSearch(decoded),
+    exactIdentifier ? Promise.resolve([]) : cached(`search:${upper}`, 60_000, () => yahooSearch(decoded.term)),
+  ]);
+  if (yahoo.status === "fulfilled") {
+    for (const hit of yahoo.value) {
       if (hit.venue === "crypto" && !COINGECKO_IDS[hit.symbol]) continue;
-      add({ ...toView(makeInstrument(hit.symbol, hit.assetClass, hit.venue, hit.name)), origin: "search", exchangeLabel: hit.exchangeLabel });
+      add({ ...toView(makeInstrument(hit.symbol, hit.assetClass, hit.venue, hit.name)), origin: "search", exchangeLabel: hit.exchangeLabel }, true);
     }
-  } catch (error) {
-    warning = `Live search isn't available right now (${reason(error)}). Showing known instruments only.`;
   }
-  results.sort((a, b) => rank(q, a) - rank(q, b));
-  return { query: q, results: results.slice(0, 20), warning };
+  if (sec.status === "fulfilled") {
+    for (const row of sec.value) {
+      const existing = results.get(row.id);
+      add(existing ? { ...row, assetClass: existing.assetClass === "etf" ? "etf" : row.assetClass } : row, true);
+    }
+  }
+  const warning = yahoo.status === "rejected" ? `Market search is temporarily limited (${reason(yahoo.reason)}).`
+    : exactIdentifier && !results.size ? "No matching identifier was returned by the connected directories." : undefined;
+  const sorted = [...results.values()].sort((a, b) => rank(decoded.term, a) - rank(decoded.term, b));
+  return { query: q, results: sorted.slice(0, 20), warning };
 }

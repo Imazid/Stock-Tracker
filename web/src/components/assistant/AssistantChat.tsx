@@ -58,7 +58,7 @@ function Turn({ turn }: { turn: AssistantTurn }) {
           <summary className="cursor-pointer select-none">Sources ({turn.sources.length})</summary>
           <ul className="mt-1 space-y-0.5">
             {turn.sources.map((s, i) => (
-              <li key={i}>{s.label}: {s.source}{s.observedAt ? ` · ${new Date(s.observedAt).toLocaleString()}` : ""}{s.status ? ` · ${s.status.replace("_", "-")}` : ""}</li>
+              <li key={i}>{s.url ? <a href={s.url} target="_blank" rel="noreferrer" className="text-primary-fg hover:underline">{s.label}</a> : s.label} · {s.source}{s.observedAt ? ` · ${new Date(s.observedAt).toLocaleString()}` : ""}{s.status ? ` · ${s.status.replace("_", "-")}` : ""}</li>
             ))}
           </ul>
         </details>
@@ -73,13 +73,19 @@ function Turn({ turn }: { turn: AssistantTurn }) {
 interface Status { assistant: boolean; accounts: boolean }
 
 /** The chat itself; `compact` for the side panel, full size for the AI Workspace page. */
-export function AssistantChat({ compact = false }: { compact?: boolean }) {
-  const { turns, busy, send, stop, reset } = useAssistant();
+export function AssistantChat({ compact = false, company }: { compact?: boolean; company?: { instrumentId: string; symbol: string; section: string } }) {
+  const { turns, busy, send, stop, reset } = useAssistant(company?.instrumentId, company?.section);
+  const suggestions = company ? [
+    `Write a source-backed investment research report on ${company.symbol}, covering business, performance, finances, valuation, risks, recent filings, earnings and peers. Cite the evidence and mark missing datasets.`,
+    "How has operating cash flow changed over the last five years?",
+    "What do the latest reported results show about profitability and financial risk?",
+  ] : SUGGESTIONS;
   const [draft, setDraft] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
   const status = useQuery({ queryKey: ["status"], queryFn: () => getJSON<Status>("/api/status"), staleTime: 60_000 });
 
   useEffect(() => {
+    if (!turns.length) return;
     bottom.current?.scrollIntoView({ block: "end" });
   }, [turns]);
 
@@ -101,14 +107,14 @@ export function AssistantChat({ compact = false }: { compact?: boolean }) {
         ) : null}
         {turns.length === 0 ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-text"><BrainCircuit aria-hidden className="h-4 w-4 text-primary-fg" />Ask about markets, your watchlist or a strategy</div>
+            <div className="flex items-center gap-2 text-sm font-medium text-text"><BrainCircuit aria-hidden className="h-4 w-4 text-primary-fg" />{company ? `Ask about ${company.symbol}` : "Ask about markets, your watchlist or a strategy"}</div>
             <p className="text-[13px] leading-relaxed text-text-2">
-              Answers come from the app&apos;s market data and your own lists, with sources and times. It can draft a strategy, run a backtest or fill in an order ticket for you to review — it never places, approves or sends an order. General information only, not personal advice.
+              {company ? "Research uses the selected listing, company datasets and source documents available to this app." : <>Answers come from the app&apos;s market data and your own lists, with sources and times. It can draft a strategy, run a backtest or fill in an order ticket for you to review — it never places, approves or sends an order. General information only, not personal advice.</>}
             </p>
             <ul className="space-y-1.5">
-              {SUGGESTIONS.slice(0, compact ? 3 : SUGGESTIONS.length).map((s) => (
+              {suggestions.slice(0, compact ? 3 : suggestions.length).map((s, i) => (
                 <li key={s}>
-                  <button type="button" disabled={busy || unavailable} onClick={() => submit(s)} className="w-full rounded-lg border border-border px-3 py-2 text-left text-[13px] text-text-2 hover:border-primary/50 hover:text-text disabled:opacity-50">{s}</button>
+                  <button type="button" disabled={busy || unavailable} onClick={() => submit(s)} className="w-full rounded-lg border border-border px-3 py-2 text-left text-[13px] text-text-2 hover:border-primary/50 hover:text-text disabled:opacity-50">{company && i === 0 ? "Generate AI research report" : s}</button>
                 </li>
               ))}
             </ul>
@@ -125,10 +131,10 @@ export function AssistantChat({ compact = false }: { compact?: boolean }) {
           submit(draft);
         }}
       >
-        <label htmlFor={compact ? "assistant-input-panel" : "assistant-input"} className="sr-only">Message the assistant</label>
+        <label htmlFor={company ? "company-assistant-input" : compact ? "assistant-input-panel" : "assistant-input"} className="sr-only">Message the assistant</label>
         <div className="flex items-end gap-2">
           <textarea
-            id={compact ? "assistant-input-panel" : "assistant-input"}
+            id={company ? "company-assistant-input" : compact ? "assistant-input-panel" : "assistant-input"}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {

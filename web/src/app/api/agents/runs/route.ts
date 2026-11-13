@@ -5,6 +5,8 @@
 // development without Supabase it runs signed-out with public market data only.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { RESEARCH_SECTIONS, type ResearchSection } from "@/lib/research-types";
+import { parseInstrumentID } from "@/server/market/instruments";
 import { supabaseConfigured } from "@/lib/env";
 import { serverSupabase } from "@/lib/supabase/server";
 import { type AgentEvent, type ChatTurn, runTurn } from "@/server/agent/run";
@@ -46,8 +48,17 @@ export async function POST(request: Request) {
   }
 
   let history: ChatTurn[];
+  let company: { instrumentId: string; section: string } | undefined;
   try {
-    history = decodeHistory(await request.json());
+    const body = await request.json();
+    history = decodeHistory(body);
+    if (body.company !== undefined) {
+      const { instrumentId, section } = body.company ?? {};
+      if (typeof instrumentId !== "string" || !RESEARCH_SECTIONS.includes(section as ResearchSection)) throw new Error("Choose a company research context.");
+      const instrument = parseInstrumentID(instrumentId);
+      if (instrument.venue === "crypto") throw new Error("Choose a company or fund listing.");
+      company = { instrumentId: `${instrument.venue}:${instrument.symbol}`, section };
+    }
   } catch (error) {
     return jsonError(400, "invalid", error instanceof Error ? error.message : "Bad request.");
   }
@@ -65,7 +76,7 @@ export async function POST(request: Request) {
         }
       };
       try {
-        await runTurn(history, { supabase: supabase ?? undefined, signedIn, now: Date.now() }, emit, abort.signal);
+        await runTurn(history, { supabase: supabase ?? undefined, signedIn, company, now: Date.now() }, emit, abort.signal);
       } catch (error) {
         if (error instanceof Anthropic.RateLimitError) emit({ type: "error", code: "rate_limited", message: "The assistant is busy. Try again in a minute." });
         else if (error instanceof Anthropic.AuthenticationError) emit({ type: "error", code: "feature_disabled", message: "The assistant's API key was refused." });

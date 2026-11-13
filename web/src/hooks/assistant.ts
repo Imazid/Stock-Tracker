@@ -26,6 +26,9 @@ const TOOL_LABELS: Record<string, string> = {
   search_instruments: "Searching instruments",
   get_quote: "Getting a quote",
   get_price_history: "Reading price history",
+  get_company_research: "Collecting company evidence",
+  get_company_dataset: "Reading company data",
+  search_filing_text: "Searching the original filing",
   get_watchlist: "Reading your watchlist",
   get_portfolio: "Reading your portfolio",
   draft_strategy: "Drafting a strategy",
@@ -39,7 +42,7 @@ async function errorFrom(response: Response): Promise<{ code: string; message: s
   return { code: body?.error?.code ?? `http_${response.status}`, message: body?.error?.message ?? `The assistant answered ${response.status}.` };
 }
 
-export function useAssistant() {
+export function useAssistant(instrumentId?: string, section?: string) {
   const [turns, setTurns] = useState<AssistantTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -64,7 +67,7 @@ export function useAssistant() {
       const response = await fetch("/api/agents/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history.slice(-40) }),
+        body: JSON.stringify({ messages: history.slice(-39).filter((turn, index) => index !== 0 || turn.role === "user"), company: instrumentId && section ? { instrumentId, section } : undefined }),
         signal: abort.signal,
       });
       if (!response.ok || !response.body) {
@@ -113,7 +116,7 @@ export function useAssistant() {
       setBusy(false);
       abortRef.current = null;
     }
-  }, [busy, turns]);
+  }, [busy, turns, instrumentId, section]);
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
   const reset = useCallback(() => {

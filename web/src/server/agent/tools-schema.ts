@@ -13,6 +13,9 @@ export const TOOL_NAMES = [
   "search_instruments",
   "get_quote",
   "get_price_history",
+  "get_company_research",
+  "get_company_dataset",
+  "search_filing_text",
   "get_watchlist",
   "get_portfolio",
   "draft_strategy",
@@ -41,6 +44,30 @@ export const TOOLS: Anthropic.Tool[] = [
       instrument_id: { type: "string" },
       range: { type: "string", enum: CHART_RANGES, description: "1D, 5D, 1M, 3M, 6M, 1Y or 5Y" },
     }, ["instrument_id", "range"]),
+  },
+  {
+    name: "get_company_research",
+    description: "Collect an evidence-backed overview, financial ratios, market history, filings, earnings, ownership disclosures and peers for a listing. This is the first tool to call for a comprehensive company report.",
+    input_schema: obj({ instrument_id: { type: "string", description: "Canonical listing id, for example us:NVDA" } }, ["instrument_id"]),
+  },
+  {
+    name: "get_company_dataset",
+    description: "Read one company dataset with citations and an optional historical filing-date cutoff. Use financials with a metric query for historical series, or events with a form query such as 10-K. Events supply source links and metadata.",
+    input_schema: obj({
+      instrument_id: { type: "string" },
+      section: { type: "string", enum: ["overview", "financials", "valuation", "earnings", "ownership", "events", "options", "peers"] },
+      query: { type: "string" }, as_of: { type: "string", description: "Inclusive UTC filing-date cutoff YYYY-MM-DD" },
+      period: { type: "string", enum: ["annual", "quarter", "ttm", "all"] }, page: { type: "integer", minimum: 0, maximum: 1000 },
+    }, ["instrument_id", "section"]),
+  },
+  {
+    name: "search_filing_text",
+    description: "Find relevant text passages in a specific SEC primary HTML filing for this listing. Use the accession returned in the events dataset. Search short keywords, then cite returned evidence and describe the limits of the excerpts.",
+    input_schema: obj({
+      instrument_id: { type: "string" }, accession: { type: "string" },
+      query: { type: "string", description: "Keywords such as liquidity, competition or risk factors" },
+      archive: { type: "integer", minimum: 0, maximum: 100, description: "Optional SEC submissions archive batch number, zero-based" },
+    }, ["instrument_id", "accession", "query"]),
   },
   {
     name: "get_watchlist",
@@ -87,11 +114,12 @@ export interface ToolOutcome {
   /** JSON-serialisable data for the model. */
   data: unknown;
   isError?: boolean;
-  sources?: { label: string; source: string; observedAt?: string; status?: string }[];
+  sources?: { label: string; source: string; observedAt?: string; status?: string; url?: string }[];
   card?: { kind: "strategy" | "order_ticket" | "backtest"; title: string; href: string; payload: unknown };
 }
 
 export interface ToolContext {
+  company?: { instrumentId: string; section: string };
   /** A Supabase client bound to the signed-in person's session, or undefined when signed out / unconfigured. */
   supabase?: SupabaseClient;
   signedIn: boolean;
@@ -114,7 +142,7 @@ export function clean(text: unknown, max = 160): string {
 
 function deepClean(value: unknown, depth = 0): unknown {
   if (depth > 8) return null;
-  if (typeof value === "string") return clean(value, 400);
+  if (typeof value === "string") return clean(value, 1200);
   if (Array.isArray(value)) return value.slice(0, 200).map((v) => deepClean(v, depth + 1));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};

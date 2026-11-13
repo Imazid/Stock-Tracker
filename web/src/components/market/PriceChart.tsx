@@ -88,11 +88,12 @@ function formatter(timeZone: string | undefined, intraday: boolean) {
   };
 }
 
-export function PriceChart({ candles, type, indicators, markers, timeZone, intraday, baseline, height = 420, ariaLabel }: {
+export function PriceChart({ candles, type, indicators, markers, comparison, timeZone, intraday, baseline, height = 420, ariaLabel }: {
   candles: CandleView[];
   type: ChartType;
   indicators: IndicatorSet;
   markers?: ChartMarker[];
+  comparison?: { title: string; points: { time: number; value: number }[]; listing: { time: number; value: number }[] };
   timeZone?: string;
   intraday: boolean;
   /** Previous close: drawn as a dashed line on intraday charts. */
@@ -191,6 +192,20 @@ export function PriceChart({ candles, type, indicators, markers, timeZone, intra
         for (let i = 1; i < panes.length; i++) panes[i].setStretchFactor(1);
       }
 
+      if (comparison) {
+        const listing = chart.addSeries(LineSeries, {
+          color: p.warn, priceScaleId: "left", priceFormat: { type: "percent" },
+          lineWidth: 2, priceLineVisible: false, title: "Listing return",
+        });
+        listing.setData(comparison.listing.map(({ time, value }) => ({ time: time as UTCTimestamp, value })));
+        const relative = chart.addSeries(LineSeries, {
+          color: p.primary, priceScaleId: "left", priceFormat: { type: "percent" },
+          lineWidth: 2, priceLineVisible: false, title: comparison.title,
+        });
+        chart.priceScale("left").applyOptions({ visible: true, borderColor: p.border });
+        relative.setData(comparison.points.map(({ time, value }) => ({ time: time as UTCTimestamp, value })));
+      }
+
       if (markers && markers.length > 0) {
         const sorted: SeriesMarker<Time>[] = markers.slice().sort((a, b) => a.time - b.time).map((m) => ({
           time: m.time as UTCTimestamp,
@@ -211,7 +226,7 @@ export function PriceChart({ candles, type, indicators, markers, timeZone, intra
       chartRef.current?.remove();
       chartRef.current = null;
     };
-  }, [candles, type, indicators, markers, timeZone, intraday, baseline]);
+  }, [candles, type, indicators, markers, comparison, timeZone, intraday, baseline]);
 
   const paneCount = 1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
   return <div ref={container} role="img" aria-label={ariaLabel} style={{ height: height + (paneCount - 1) * 110 }} className="w-full" />;

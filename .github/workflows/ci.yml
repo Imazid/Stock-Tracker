@@ -56,6 +56,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+      - run: node --test src/server/research/financials.test.ts src/server/agent/agent-safety.test.ts
       - run: npm run build
 
   ios:

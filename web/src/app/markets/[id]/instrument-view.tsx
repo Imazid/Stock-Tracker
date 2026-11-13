@@ -1,12 +1,14 @@
 "use client";
 
 import { MarketCalendar } from "@engine/calendar.ts";
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, Check, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ChangeText } from "@/components/market/Change";
 import { MarketChip, SourceLine, StatusChip } from "@/components/market/DataChips";
 import { type ChartType, DEFAULT_INDICATORS, type IndicatorSet, PriceChart } from "@/components/market/PriceChart";
+import { CompanyResearch, useCompanyProfile } from "@/components/research/CompanyResearch";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -58,12 +60,18 @@ export function InstrumentView({ id }: { id: string }) {
   const [range, setRange] = useState<ChartRange>("1D");
   const [type, setType] = useState<ChartType>("candles");
   const [indicators, setIndicators] = useState<IndicatorSet>(DEFAULT_INDICATORS);
+  const [benchmark, setBenchmark] = useState("");
+  const benchmarkRange = range === "3M" || range === "6M" || range === "1Y";
+  const benchmarkChart = useCandles(benchmark && benchmarkRange && benchmark !== id ? benchmark : undefined, range);
   const info = useInstrument(id);
   const quote = useQuote(id, { refetchMs: 20_000 });
   const candles = useCandles(id, range);
   const orderPath = useOrderPath(info.data?.instrument);
 
   const instrument = info.data?.instrument ?? quote.data?.instrument;
+  const profile = useCompanyProfile(id, Boolean(instrument && instrument.venue !== "crypto"));
+  const researchProfile = profile.data?.profile;
+  const logo = researchProfile?.logo && /^https:\/\/(?:images\.)?financialmodelingprep\.com\//.test(researchProfile.logo) ? researchProfile.logo : undefined;
   useEffect(() => {
     if (instrument) pushRecent({ id: instrument.id, symbol: instrument.symbol, name: instrument.name, venueShort: instrument.venueShort, assetClass: instrument.assetClass });
   }, [instrument]);
@@ -72,6 +80,23 @@ export function InstrumentView({ id }: { id: string }) {
   const q = quote.data?.quote;
   const market = quote.data?.market ?? info.data?.market;
   const series = candles.data?.candles ?? [];
+  const comparison = useMemo(() => {
+    const current = candles.data;
+    const other = benchmarkChart.data;
+    if (!benchmark || benchmark === id || !benchmarkRange || !current || !other || current.range !== range || other.range !== range) return;
+    const day = (time: number) => new Date(time * 1000).toISOString().slice(0, 10);
+    const closes = new Map(other.candles.map((bar) => [day(bar.time), bar.close]));
+    const aligned = current.candles.flatMap((bar) => {
+      const close = closes.get(day(bar.time));
+      return close && close > 0 && bar.close > 0 ? [{ time: bar.time, close, listingClose: bar.close }] : [];
+    });
+    if (aligned.length < 2) return;
+    return {
+      title: other.instrument.symbol,
+      points: aligned.map(({ time, close }) => ({ time, value: (close / aligned[0].close - 1) * 100 })),
+      listing: aligned.map(({ time, listingClose }) => ({ time, value: (listingClose / aligned[0].listingClose - 1) * 100 })),
+    };
+  }, [benchmark, benchmarkChart.data, benchmarkRange, candles.data, id, range]);
 
   if (info.isError) {
     const err = info.error;
@@ -91,10 +116,12 @@ export function InstrumentView({ id }: { id: string }) {
         <div className="min-w-0">
           {instrument ? (
             <div className="flex flex-wrap items-center gap-2">
+              {logo ? <Image src={logo} alt="" width={30} height={30} unoptimized className="rounded-md bg-surface-2 object-contain" /> : null}
               <h1 className="text-xl font-semibold tracking-tight text-text">{instrument.symbol}</h1>
-              <Badge>{instrument.venueShort}</Badge>
+              <Badge>{researchProfile?.exchange ?? instrument.venueShort}</Badge>
+              {researchProfile?.kind ? <Badge>{researchProfile.kind}</Badge> : null}
               {instrument.pair ? <Badge tone="primary">{instrument.pair}</Badge> : null}
-              <span className="truncate text-sm text-text-2">{instrument.name}</span>
+              <span className="truncate text-sm text-text-2">{researchProfile?.name ?? instrument.name}</span>
             </div>
           ) : <div className="skeleton h-7 w-48" />}
           <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -148,6 +175,18 @@ export function InstrumentView({ id }: { id: string }) {
                   indicators[key] ? "border-primary/50 bg-primary-soft text-text" : "border-border text-text-2 hover:text-text")}>{label}</button>
             ))}
           </div>
+          {instrument?.venue !== "crypto" ? <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-3 text-xs text-text-2">
+            <label className="flex items-center gap-2">Benchmark
+              <select className="rounded border border-border bg-surface-2 px-2 py-1 text-text" value={benchmark} onChange={(event) => setBenchmark(event.target.value)}>
+                <option value="">None</option><option value="us:SPY">SPY</option><option value="asx:VAS">VAS</option>
+              </select>
+            </label>
+            {benchmark === id ? <span>Choose a different benchmark.</span>
+              : benchmark && !benchmarkRange ? <span>Choose 3M, 6M or 1Y for a daily comparison.</span>
+              : comparison && benchmarkChart.data ? <span>Left axis <span className="text-warn">{instrument?.symbol}</span> and <span className="text-primary-fg">{comparison.title}</span> returns · {benchmarkChart.data.source} · {benchmarkChart.data.adjustment} · local currency</span>
+              : benchmark && benchmarkChart.isError ? <span>Benchmark history unavailable.</span>
+              : benchmark && benchmarkChart.data && !candles.isFetching ? <span>Too few overlapping trading dates.</span> : null}
+          </div> : null}
           <div className="px-2 pb-2 pt-3">
             {candles.isLoading ? <div className="skeleton mx-2 h-[420px]" />
               : candles.isError ? (
@@ -155,7 +194,7 @@ export function InstrumentView({ id }: { id: string }) {
                   actions={<Button size="sm" onClick={() => candles.refetch()}>Try again</Button>} />
               ) : series.length === 0 ? <EmptyState title="No bars for this range" />
                 : (
-                  <PriceChart candles={series} type={type} indicators={indicators} timeZone={timeZone} intraday={candles.data!.intraday}
+                  <PriceChart candles={series} type={type} indicators={indicators} comparison={comparison} timeZone={timeZone} intraday={candles.data!.intraday}
                     baseline={range === "1D" && instrument?.venue !== "crypto" ? q?.previousClose : undefined}
                     ariaLabel={`${instrument?.symbol ?? ""} ${range} price chart`} />
                 )}
@@ -164,6 +203,7 @@ export function InstrumentView({ id }: { id: string }) {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2.5 text-[11px] text-text-3">
               <span>{candles.data.source}</span>
               <span>{candles.data.interval} bars</span>
+              <StatusChip status={candles.data.status} delayMinutes={candles.data.delayMinutes} />
               <span>{candles.data.currency}</span>
               <span>{candles.data.adjustment}</span>
               <span>{SCOPE_LABEL[candles.data.volumeScope]}</span>
@@ -206,6 +246,7 @@ export function InstrumentView({ id }: { id: string }) {
           ) : null}
         </div>
       </div>
+      {instrument && instrument.venue !== "crypto" ? <CompanyResearch key={id} id={id} symbol={instrument.symbol} overview={profile.data} overviewError={profile.isError} retryOverview={() => { void profile.refetch(); }} /> : null}
     </div>
   );
 }
