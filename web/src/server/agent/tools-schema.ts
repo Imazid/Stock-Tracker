@@ -117,7 +117,6 @@ export const TOOLS: Anthropic.Tool[] = [
 
 /** What a tool sends back to the UI besides the model: sources to list, and cards to render. */
 export interface AgentSource {
-  url?: string;
   label: string;
   source: string;
   observedAt?: string;
