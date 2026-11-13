@@ -1,5 +1,5 @@
 import type { AgentEvent, ChatTurn } from "./run.ts";
-import { COMPANY_RESEARCH_TOOLS } from "./tools-schema.ts";
+import { canUseTool, scopedHistory } from "./tools-schema.ts";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { asToolResult, runTool, type ToolContext, type ToolName, TOOLS } from "./tools.ts";
 
@@ -31,12 +31,8 @@ export async function runOpenAITurn(
   emit: (event: AgentEvent) => void,
   signal: AbortSignal,
 ) {
-  const messages: Message[] = [{ role: "system", content: SYSTEM_PROMPT }, ...history];
-  if (ctx.company) {
-    const current = messages.at(-1)!;
-    current.content = `Active company listing: ${ctx.company.instrumentId}. Active research section: ${ctx.company.section}.\n\n${current.content}`;
-  }
-  const activeTools = ctx.company ? tools.filter((tool) => COMPANY_RESEARCH_TOOLS.has(tool.function.name)) : tools;
+  const messages: Message[] = [{ role: "system", content: SYSTEM_PROMPT }, ...scopedHistory(history, ctx)];
+  const activeTools = tools.filter((tool) => canUseTool(tool.function.name, ctx));
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
   for (let round = 0; round <= maxToolRounds; round++) {
@@ -44,7 +40,7 @@ export async function runOpenAITurn(
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages, tools: activeTools, max_completion_tokens: 900, store: false }),
+      body: JSON.stringify({ model, messages, tools: activeTools, max_completion_tokens: ctx.company ? 1800 : 900, store: false }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
       cache: "no-store",
     });
@@ -80,7 +76,7 @@ export async function runOpenAITurn(
       emit({ type: "tool", id: call.id, name, status: "running" });
       let input: unknown;
       try { input = JSON.parse(raw); } catch { input = null; }
-      const result = !ctx.company || COMPANY_RESEARCH_TOOLS.has(name)
+      const result = canUseTool(name, ctx)
         ? await runTool(name, input, ctx)
         : { data: { error: "This conversation is scoped to company research." }, isError: true };
       emit({ type: "tool", id: call.id, name, status: result.isError ? "error" : "done" });

@@ -123,6 +123,7 @@ export interface AgentSource {
   observedAt?: string;
   status?: string;
   instrumentId?: string;
+  url?: string;
 }
 
 export interface ToolOutcome {
@@ -144,6 +145,19 @@ export interface ToolContext {
   supabase?: SupabaseClient;
   signedIn: boolean;
   now: number;
+}
+
+const companyTools = new Set(["search_instruments", "get_quote", "get_price_history", "get_company_research", "get_company_dataset", "search_filing_text"]);
+
+export function canUseTool(name: string, ctx: ToolContext): boolean {
+  return !ctx.company || companyTools.has(name);
+}
+
+export function scopedHistory<T extends { content: string }>(history: T[], ctx: ToolContext): T[] {
+  if (!ctx.company || !history.length) return history;
+  const current = history[history.length - 1];
+  const { instrumentId, section } = ctx.company;
+  return [...history.slice(0, -1), { ...current, content: `Active company listing: ${instrumentId}. Active research section: ${section}.\n\n${current.content}` }];
 }
 
 // MARK: - Untrusted text
