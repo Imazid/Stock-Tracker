@@ -10,7 +10,8 @@ function trade(id: string, date: string, type: string, shares: number, price: nu
 
 function split(id: string, date: string, newShares: number, oldShares: number, holding = "first"): StockSplit {
   return { id, holding_id: holding, effective_date: date, new_shares: newShares, old_shares: oldShares,
-    updated_at: date, statement_reference: "Statement", portfolio_holdings: null };
+    updated_at: date, statement_reference: "Statement", portfolio_holdings: null,
+    snaptrade_activity_id: null, snaptrade_activity_date: null, snaptrade_activity_label: null, snaptrade_activity_symbol: null };
 }
 
 test("applies a split at Sydney day start, preserving dates, AUD and USD costs, fees and other holdings", () => {

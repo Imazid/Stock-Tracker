@@ -2,13 +2,15 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
-import { SPLIT_MIN_DATE, SPLIT_MAX_RATIO, splitFields, type StockSplit } from "@/lib/portfolio-splits";
+import { SPLIT_MIN_DATE, SPLIT_MAX_RATIO, splitFields, type SplitActivity, type StockSplit } from "@/lib/portfolio-splits";
 import { browserSupabase } from "@/lib/supabase/client";
+import { BrokerActivity } from "./broker-activity";
 
 type Holding = { id: string; asset_symbol: string; asset_exchange: string | null; date_added: string; deleted_at: string | null };
 type Draft = { holding_id: string; effective_date: string; new_shares: string; old_shares: string; statement_reference: string };
 const emptyDraft: Draft = { holding_id: "", effective_date: "", new_shares: "", old_shares: "", statement_reference: "" };
 const todayInSydney = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney", dateStyle: "short" }).format(new Date());
+const utcDay = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
 function db() {
   const client = browserSupabase();
@@ -37,6 +39,10 @@ function holdingLabel(holding: Holding) {
 export function StockSplits({ userId }: { userId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
+  const [activity, setActivity] = useState<SplitActivity>();
+  const [showBroker, setShowBroker] = useState(false);
+  const [brokerStart, setBrokerStart] = useState(() => utcDay(89));
+  const [brokerEnd, setBrokerEnd] = useState(() => utcDay(0));
   const [editing, setEditing] = useState<StockSplit>();
   const [removing, setRemoving] = useState<StockSplit>();
   const [feedback, setFeedback] = useState("");
@@ -49,7 +55,7 @@ export function StockSplits({ userId }: { userId: string }) {
   const today = todayInSydney();
 
   const save = useMutation({
-    mutationFn: async ({ draft, editing }: { draft: Draft; editing?: StockSplit }) => {
+    mutationFn: async ({ draft, editing, activity }: { draft: Draft; editing?: StockSplit; activity?: SplitActivity }) => {
       const newShares = Number(draft.new_shares);
       const oldShares = Number(draft.old_shares);
       if (!draft.holding_id || !draft.effective_date || draft.effective_date < SPLIT_MIN_DATE || draft.effective_date > today ||
@@ -60,15 +66,24 @@ export function StockSplits({ userId }: { userId: string }) {
       const table = db().from("portfolio_stock_splits");
       const write = editing
         ? table.update(values).eq("user_id", userId).eq("id", editing.id).eq("updated_at", editing.updated_at)
-        : table.insert({ ...values, user_id: userId });
+        : table.insert({ ...values, user_id: userId, ...(activity && {
+          snaptrade_activity_id: activity.id, snaptrade_activity_date: activity.date,
+          snaptrade_activity_label: activity.label, snaptrade_activity_symbol: activity.symbol,
+        }) });
       const { data, error } = await write.select("id").maybeSingle();
-      if (error?.code === "23505") throw new Error("This holding already has an adjustment on that date. Edit that entry to correct it.");
+      if (error?.code === "23505") {
+        if (error.message.includes("portfolio_stock_splits_snaptrade_activity_key")) {
+          throw new Error("This SnapTrade event is already recorded. Edit its existing adjustment to correct it.");
+        }
+        throw new Error("This holding already has an adjustment on that date. Edit that entry to correct it.");
+      }
       if (error) throw new Error("Couldn’t save the adjustment. Try again.");
       if (!data) throw new Error("This adjustment changed elsewhere. Refresh the list and try again.");
     },
     onSuccess: async () => {
       setEditing(undefined);
       setDraft(emptyDraft);
+      setActivity(undefined);
       setFeedback("Split adjustment saved.");
       await cache.invalidateQueries({ queryKey });
     },
@@ -99,11 +114,21 @@ export function StockSplits({ userId }: { userId: string }) {
     event.preventDefault();
     setError("");
     setFeedback("");
-    save.mutate({ draft, editing });
+    save.mutate({ draft, editing, activity });
+  }
+
+  function reviewSplit(source: SplitActivity) {
+    setActivity(source);
+    setDraft((current) => ({ ...current, effective_date: current.effective_date || source.date }));
+    setRemoving(undefined);
+    setError("");
+    setFeedback("");
+    document.getElementById("split-holding")?.focus();
   }
 
   function edit(split: StockSplit) {
     setEditing(split);
+    setActivity(undefined);
     setRemoving(undefined);
     setDraft({ holding_id: split.holding_id, effective_date: split.effective_date, new_shares: String(split.new_shares),
       old_shares: String(split.old_shares), statement_reference: split.statement_reference });
@@ -131,6 +156,9 @@ export function StockSplits({ userId }: { userId: string }) {
             <div className="min-w-0 text-sm">
               <p className="font-medium">{split.portfolio_holdings?.asset_symbol ?? "Holding"} · {split.new_shares} for {split.old_shares}</p>
               <p className="[overflow-wrap:anywhere] text-text-2">{split.effective_date}{split.statement_reference && ` · ${split.statement_reference}`}</p>
+              {split.snaptrade_activity_id && <p className="[overflow-wrap:anywhere] text-xs text-text-2">
+                {["SnapTrade reference", split.snaptrade_activity_label, split.snaptrade_activity_symbol, split.snaptrade_activity_date].filter(Boolean).join(" · ")}
+              </p>}
             </div>
             {removing?.id === split.id ? <div className="flex flex-wrap gap-2">
               <Button size="sm" disabled={busy} onClick={() => setRemoving(undefined)}>Cancel</Button>
@@ -142,8 +170,37 @@ export function StockSplits({ userId }: { userId: string }) {
           </li>)}
         </ul>}
         {records.isSuccess && holdings.length === 0 && <p className="text-sm text-text-2">Sync a stock holding to add a split adjustment.</p>}
+        {holdings.length > 0 && <div className="space-y-3">
+          <Button size="sm" aria-expanded={showBroker} aria-controls="split-broker-controls" onClick={() => setShowBroker(!showBroker)}>
+            {showBroker ? "Hide brokerage lookup" : "Find splits in linked accounts"}
+          </Button>
+          {showBroker && <div id="split-broker-controls" className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="First reported date" htmlFor="split-broker-from">
+                <Input id="split-broker-from" type="date" min={SPLIT_MIN_DATE} max={brokerEnd || today} value={brokerStart}
+                  onChange={(event) => setBrokerStart(event.target.value)} />
+              </Field>
+              <Field label="Last reported date" htmlFor="split-broker-through">
+                <Input id="split-broker-through" type="date" min={brokerStart || SPLIT_MIN_DATE} max={today} value={brokerEnd}
+                  onChange={(event) => setBrokerEnd(event.target.value)} />
+              </Field>
+            </div>
+            {brokerStart >= SPLIT_MIN_DATE && brokerEnd >= brokerStart && brokerEnd <= today ?
+              <BrokerActivity key={`${brokerStart}/${brokerEnd}`} mode="splits" start={brokerStart} end={brokerEnd}
+                selectedId={activity?.id} canInclude={!busy && !editing && !activity}
+                imported={new Set(splits.flatMap((split) => split.snaptrade_activity_id ? [split.snaptrade_activity_id] : []))}
+                onReview={reviewSplit} />
+              : <p className="text-sm text-text-2">Choose a valid range of reported dates.</p>}
+          </div>}
+        </div>}
         {holdings.length > 0 && <form onSubmit={submit} className="space-y-3">
           <fieldset disabled={busy} className="space-y-3">
+            {activity && <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="min-w-0 [overflow-wrap:anywhere] text-sm text-text-2" role="status">
+                {["Reviewing SnapTrade event", activity.label, activity.symbol, activity.date].filter(Boolean).join(" · ")}
+              </p>
+              <Button size="sm" onClick={() => setActivity(undefined)}>Clear broker reference</Button>
+            </div>}
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Stock holding" htmlFor="split-holding">
                 <Select id="split-holding" required value={draft.holding_id} onChange={(event) => setDraft({ ...draft, holding_id: event.target.value })}>
