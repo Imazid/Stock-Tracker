@@ -84,6 +84,7 @@
 			membershipExceptions = (
 				Info.txt,
 				UserDefaultExtentions.swift,
+				Config/Secrets.plist,
 			);
 			target = B3B9AE242ED9CE2D005F35F7 /* Stock Tracker */;
 		};
@@ -242,6 +243,7 @@
 				B3B9AE212ED9CE2D005F35F7 /* Sources */,
 				B3B9AE222ED9CE2D005F35F7 /* Frameworks */,
 				B3B9AE232ED9CE2D005F35F7 /* Resources */,
+				7A11C0DE2FA0000100AA0020 /* Prepare app configuration */,
 				B3BEC3332EEA63540063B198 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -358,6 +360,26 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		7A11C0DE2FA0000100AA0020 /* Prepare app configuration */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = (
+				"$(SRCROOT)/scripts/prepare-app-config.sh",
+				"$(SRCROOT)/Stock Tracker/Config",
+			);
+			alwaysOutOfDate = 1;
+			name = "Prepare app configuration";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Secrets.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/prepare-app-config.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5E7A0C1D2E3F4A5B6C7D8E08 /* Resources */ = {
@@ -607,11 +629,11 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Stock-Tracker-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to keep your portfolio private.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -647,11 +669,11 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Y6DJA2Y4B8;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Stock-Tracker-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to keep your portfolio private.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

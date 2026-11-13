@@ -182,7 +182,7 @@ final class EarningsCalendar: ObservableObject {
 
     private func fetch(_ symbol: String) async throws -> EarningsEvent? {
         let key = SecretsConfig.finnhubAPIKey
-        guard !key.isEmpty else { return nil }
+        guard await MarketDataProxy.available(debugKey: key) else { return nil }
         let day = DateFormatter()
         day.calendar = Calendar(identifier: .gregorian)
         day.locale = Locale(identifier: "en_US_POSIX")
@@ -196,8 +196,8 @@ final class EarningsCalendar: ObservableObject {
             URLQueryItem(name: "token", value: key)
         ]
         guard let url = components.url else { throw APIError.invalidURL }
-        let (data, response) = try await session.rateLimitedData(
-            for: URLRequest(url: url), endpoint: "finnhub", config: .newsAPI)
+        let (data, response) = try await MarketDataProxy.data(for: url, using: session, provider: "finnhub",
+                                               direct: URLRequest(url: url), config: .newsAPI)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw APIError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
         }

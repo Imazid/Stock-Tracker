@@ -11,6 +11,7 @@ The provisioning steps below apply when setting up a separate environment.
 | Database, auth | Supabase (Postgres 17) | `supabase/migrations/` |
 | `trading-api`, `agent-scheduler` | Supabase Edge Functions (Deno 2) | practice trading |
 | `broker-connections`, `broker-orders` | Supabase Edge Functions | provider connections and orders |
+| `market-data-proxy`, `snaptrade-proxy`, `ai-proxy` | Supabase Edge Functions | signed-in iOS data, broker aggregation and model access |
 | Web app | Any Node host for Next.js (Vercel fits) | `web/` |
 
 ## 1. Create the backend (one time)
@@ -25,8 +26,7 @@ The provisioning steps below apply when setting up a separate environment.
    supabase db push            # applies supabase/migrations in order
    ```
    Then run the behaviour checks against a **branch database or a throwaway copy**, never production:
-   `psql "$BRANCH_DB_URL" -At -f supabase/tests/provider_order_management.sql` — every line starts
-   with `ok` (one `FAIL (allowed)` no-op line is expected; see the file header).
+   `psql "$BRANCH_DB_URL" -At -f supabase/tests/provider_order_management.sql` and confirm the assertions pass.
 4. Set function secrets (names in `supabase/functions/.env.example`):
    ```
    supabase secrets set ALPACA_DATA_KEY_ID=... ALPACA_DATA_SECRET=...
@@ -37,7 +37,7 @@ The provisioning steps below apply when setting up a separate environment.
    key unreadable** — people would have to reconnect.
 5. Deploy the functions:
    ```
-   supabase functions deploy trading-api agent-scheduler broker-orders broker-connections
+   supabase functions deploy trading-api agent-scheduler broker-orders broker-connections snaptrade-proxy ai-proxy market-data-proxy
    ```
 
 ## 2. Gates (what is switched on)
@@ -69,7 +69,7 @@ keys (`ALPACA_*`, `ANTHROPIC_API_KEY`) must not start with `NEXT_PUBLIC_`.
 
 - Database + functions: `supabase start` in the repo root (API on port 58321), then
   `supabase functions serve --env-file supabase/functions/.env`.
-- Tests: `cd TradingCore && swift test`; `npx -y deno test --allow-read supabase/functions/tests/`
+- Tests: `cd TradingCore && swift test`; `npx -y deno test --no-check=remote --allow-read --allow-env supabase/functions/tests/*.test.ts`
   (unit tests); the Postgres integration test needs a throwaway database
   (`OMS_TEST_DB_URL=... npx -y deno test --allow-net --allow-env --allow-read supabase/functions/tests/oms_pg.integration.test.ts`);
   web: `cd web && npm run lint && npx tsc --noEmit && npm run build`.
@@ -98,3 +98,9 @@ keys (`ALPACA_*`, `ANTHROPIC_API_KEY`) must not start with `NEXT_PUBLIC_`.
 - **Credential key ring:** rotation is additive (add k2, make it active, re-wrap, then retire k1).
   Never remove a key while rows still reference it (`select kek_id, count(*) from
   public.broker_credentials group by 1`).
+
+## 7. iOS build configuration
+
+Copy `Stock Tracker/SecretsConfig.swift.template` to `Stock Tracker/SecretsConfig.swift` and copy the plist example to `Stock Tracker/Config/Secrets.plist`. Set `SupabaseURL` and `SupabaseAnonKey` to the target project's URL and public client key. The build copies only those two values into release bundles. A clean checkout can build with no plist. Debug builds can use local keys for development with no backend.
+
+Set the SnapTrade partner credentials, AI credentials and optional market provider keys in Supabase. The complete names are in `supabase/functions/.env.example`. Use distinct encryption key rings for the SnapTrade and provider-order vaults. The hosted project has Keychain recovery copies in `stock-tracker-credential-kek` and `stock-tracker-broker-credential-kek`.

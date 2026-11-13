@@ -433,7 +433,7 @@ final class FMPService {
     /// Performs `GET /stable/{path}?{query}&apikey=…` and returns the body on HTTP 200.
     /// Every failure is logged with its status and FMP's message (the key is never logged).
     private func get(_ path: String, _ query: [String: String], ttl: TimeInterval = fundamentalsTTL) async -> Data? {
-        guard !apiKey.isEmpty else { return nil }
+        guard MarketDataProxy.available(debugKey: apiKey) else { return nil }
         guard !restrictedPaths.contains(path) else { return nil }
 
         let sortedQuery = query.sorted { $0.key < $1.key }
@@ -448,16 +448,12 @@ final class FMPService {
         guard let url = components.url else { return nil }
 
         do {
-            let (data, response) = try await session.rateLimitedData(
-                for: URLRequest(url: url),
-                endpoint: "fmp",
-                config: .fmp
-            )
+            let (data, response) = try await MarketDataProxy.data(for: url, using: session, provider: "fmp",
+                                                 direct: URLRequest(url: url), config: .fmp)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard status == 200 else {
-                let message = String(data: data, encoding: .utf8)?
-                    .replacingOccurrences(of: apiKey, with: "<key>")
-                    .prefix(200) ?? ""
+                let rawMessage = String(data: data, encoding: .utf8) ?? ""
+                let message = (apiKey.isEmpty ? rawMessage : rawMessage.replacingOccurrences(of: apiKey, with: "<key>")).prefix(200)
                 if message.contains("Restricted Endpoint") {
                     restrictedPaths.insert(path)
                     AppLogger.api.warning("FMP \(path) is not in the current plan (HTTP \(status)); skipping for this session")

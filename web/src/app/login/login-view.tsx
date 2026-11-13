@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { Segmented } from "@/components/ui/Segmented";
+import { safeReturnPath } from "@/lib/safe-return";
 import { useSession } from "@/lib/session";
 import { browserSupabase } from "@/lib/supabase/client";
 
@@ -15,6 +16,7 @@ export function LoginView() {
   const session = useSession();
   const router = useRouter();
   const params = useSearchParams();
+  const next = safeReturnPath(params.get("next"));
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,8 +25,8 @@ export function LoginView() {
   const [info, setInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    if (session.status === "signedIn") router.replace("/");
-  }, [session.status, router]);
+    if (session.status === "signedIn") router.replace(next);
+  }, [session.status, router, next]);
 
   if (session.status === "unconfigured") {
     return <div className="mx-auto max-w-md pt-10"><Card><EmptyState title="Accounts aren't configured" body="This deployment has no Supabase project. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then reload. Market data works without an account." /></Card></div>;
@@ -41,11 +43,11 @@ export function LoginView() {
       if (mode === "signin") {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
         if (err) throw err;
-        router.replace("/");
+        router.replace(next);
       } else {
-        const { data, error: err } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/auth/confirm` } });
+        const { data, error: err } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent(next)}` } });
         if (err) throw err;
-        if (data.session) router.replace("/");
+        if (data.session) router.replace(next);
         else setInfo("Check your email to confirm your account, then sign in.");
       }
     } catch (err) {

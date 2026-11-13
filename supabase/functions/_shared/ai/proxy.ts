@@ -77,7 +77,7 @@ export async function handleAiRequest(userId: string, input: unknown, deps: AiPr
   }
 
   const maxTokens = AI_LIMITS.maxTokens[purpose];
-  const timeoutMs = deps.config.timeoutMs ?? 45_000;
+  const timeoutMs = deps.config.timeoutMs ?? 12_000;
   const attempts: string[] = [];
 
   if (geminiKey) {

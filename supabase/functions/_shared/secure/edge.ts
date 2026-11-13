@@ -29,7 +29,7 @@ export function serviceClient(): SupabaseClient {
 
 /**
  * Resolves the signed-in user from the request's bearer token by asking Supabase Auth.
- * This supports legacy and asymmetric project signing keys.
+ * This supports both legacy and asymmetric project signing keys.
  */
 export async function authenticatedUserId(req: Request, admin: SupabaseClient): Promise<string | null> {
   const header = req.headers.get("Authorization") ?? "";

@@ -55,3 +55,7 @@ incident; web checks in CI and dependency scanning.
 | **KEK loss** | Keyring supports multiple keys and rewrap; operator keeps an offline copy before setting the secret | `secure_envelope.test.ts` (rotation) | Procedure in `IMPLEMENTATION_PLAN.md` §9 |
 
 The throwaway database checks in `supabase/tests/secret_custody_checks.sql` cover RLS denial, credential uniqueness, the append-only event log, account deletion and quota limits.
+
+## Market-data proxy
+
+Native release bundles contain only the public Supabase URL and client key. The market-data function resolves the user with Supabase Auth, rejects requests outside its read-only path and parameter allowlists, and enforces a database-backed limit per user. It sends provider keys only to fixed HTTPS hosts and refuses redirects. An anonymous user can use public sources, subject to their availability.
