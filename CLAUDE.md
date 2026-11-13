@@ -1,7 +1,7 @@
 # Stock Tracker — Claude Code Notes
 
 ## Project Structure
-- **Single target**: "Stock Tracker" — all `.swift` files in `Stock Tracker/` are auto-included
+- **Single target**: "Stock Tracker" — all `.swift` files in `Stock Tracker/` are auto-included; it links the local `TradingCore` package (see Trading below)
 - **Widget extension**: `Stock Tracker Widget Extension/` (separate folder, separate target)
 - **Build destination**: `iPhone 17, OS=26.2` (iPhone 16 not available)
 - **Build command**:
@@ -129,6 +129,17 @@ Security: `Config/Secrets.plist` is copied into the app bundle, so every key shi
 - `staggeredAppear(i)` (short lists, Home sections, broker cards), `priceFlash(value:)` (watchlist / Home rows / holding values pulse green/red when the live price moves), `scrollCardMotion()` (Home cards), `CelebrationCheck` + `ConfettiBurst(trigger:origin:)` (onboarding "You're all set", holdings arriving from a broker), and `DSPriceChart` draws its plot in from the left when a series first shows or the range changes (`revealKey` = first point's date, so live ticks don't replay; only the plot is masked, axes stay).
 - `Motion.isEnabled` is false with Reduce Motion **and under `-UITestFreshInstall`** (taps/screenshots need settled screens) unless `-UITestKeepMotion`. `MotionTests` (opt-in, `TEST_RUNNER_RUN_MOTION=1`) captures confetti / stagger / chart draw-in mid-animation.
 - Ambient loops must stay finite: the confetti timeline pauses itself after 3 s.
+
+## Trading: practice orders, agents, copilot (2026-11-13)
+- **TradingCore/** (local Swift package, linked into the app): the whole trading domain, no UI, no network. `cd TradingCore && swift test` runs 140+ tests in seconds — run it after any change there. Strategy rules are data (`StrategySpec`, JSON); `StrategyEvaluator` reads completed bars only; `RiskEngine` is the single gate (24 checks) every order passes, agent or manual; `PaperBroker` simulates fills (spread, fees, partial fills, DAY/GTC/IOC/FOK); `Ledger` does average-cost accounting; `TradingEngine` is the only place state changes; `AuditLog` is hash-chained and append-only; `Backtester` fills on the next bar's open.
+- **Only paper execution exists.** Live modes/orders are refused with reasons (`liveBlockers`), `LiveVenues` are described but `isExecutionEnabled == false`, and `TradingStore` forces `accountPolicy.live = .disabled` on load. The Alpaca key reads prices only; a SnapTrade connection is read-only and never counts as trade permission. Don't add an order-placing HTTP call to the app.
+- **Never trade on unreal data.** `DataProvenance` tags every bar/quote; the engine and backtester refuse `.synthetic`, and `.fixture` unless `allowFixtureData` (set only by `-UITestTradingFixture`). A failed fetch means no trade.
+- **LLMs never decide trades.** `StrategyParser` turns a sentence into a draft with fixed rules; model-drafted JSON goes through `decodeDraft` (live modes downgraded) and `StrategyValidator`. The copilot (`CopilotEngine`) only reads data or prepares a change card the person confirms.
+- App side: `TradingStore` (persistence in Application Support `Trading/state.json`, data fetch, agent loop while open + background refresh), `TradingMarketData` (Alpaca consolidated daily bars / IEX quotes for US, Alpaca crypto, Yahoo for every other exchange in local currency, labelled delayed), screens in `OrderTicketView`, `PracticePortfolioViews`, `AgentsTabView`, `AgentCreationViews`, `ActivityTabView`, `CopilotView`; shared UI in `TradingUI` ("Practice" chip on everything simulated).
+- **Markets:** US, ASX, crypto, London, Xetra, Paris, Amsterdam, SIX, Tokyo, Hong Kong, Singapore, KRX, NSE (`Venue`). Sessions incl. Asian lunch breaks in `MarketCalendar`; holiday tables for the non-US/ASX venues in `ExchangeHolidays.swift` (extend yearly; an unlisted holiday fails safe via the quote-freshness check). Yahoo quotes London in pence (`GBp`) — `normalisedCurrency` converts; a listing quoted in another currency than its venue's is refused. Tokyo shares trade in units of 100 (not ETFs); other non-US venues whole shares; tick tables and the per-stock board lots of HKEX and SGX (price-tiered 100/10/1 since 5 Oct 2026) aren't enforced (stated in `PaperBroker.capabilities.notes`). Definite transaction taxes are charged (`PaperBroker.taxBps`: UK 0.5% buys, France 0.4% buys, HK 0.1% both, Korea 0.20% sells, India 0.1% both). Practice portfolios and agents hold one currency each (`Currencies`).
+- Navigation: five tabs (Home, Markets, Portfolio, Agents, Activity). Search is a section of Markets — a sixth (system search) tab pushes Activity into "More". UI tests navigate with `app.open("Watchlist" | "Search" | "News" | tab)` from `AppNavigation.swift`.
+- UI tests: `TradingFlowTests` (launch args `-UITestFreshInstall -UITestTradingFixture -hasCompletedOnboarding YES`).
+- Research notes with sources: `docs/trading/provider-capabilities.md`, `regulatory-au.md`, `international-markets.md` (engineering research, not legal advice).
 
 ## Common Swift / Build Pitfalls
 - `StoreKit.Transaction` must be fully qualified (local `Transaction` model causes ambiguity)

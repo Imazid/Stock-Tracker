@@ -20,7 +20,6 @@ struct PracticePortfolioSection: View {
     @EnvironmentObject private var router: TradingRouter
     @Environment(\.theme) private var theme
     @State private var showSetup = false
-    @State private var opened: TradingRouter.Ref?
 
     private var agentBooks: [Ledger] { trading.state.ledgers.filter { $0.kind == .agentPaper } }
 
@@ -53,7 +52,7 @@ struct PracticePortfolioSection: View {
             } else {
                 ForEach(trading.practicePortfolios) { ledger in
                     Button {
-                        opened = TradingRouter.Ref(id: ledger.id)
+                        router.practicePortfolio = TradingRouter.Ref(id: ledger.id)
                     } label: {
                         PracticePortfolioCard(ledger: ledger)
                     }
@@ -82,13 +81,11 @@ struct PracticePortfolioSection: View {
         }
         .sheet(isPresented: $showSetup) {
             NavigationStack {
-                PracticeSetupView { _ in showSetup = false }
+                PracticeSetupView(allowsCurrencyChoice: true) { _ in showSetup = false }
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showSetup = false } } }
             }
         }
-        .sheet(item: $opened) { ref in
-            NavigationStack { PracticePortfolioDetailView(ledgerID: ref.id) }
-        }
+
     }
 }
 

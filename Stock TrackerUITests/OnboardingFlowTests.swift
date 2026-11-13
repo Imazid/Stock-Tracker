@@ -164,10 +164,8 @@ final class OnboardingFlowTests: XCTestCase {
         app.buttons["onboarding.finish"].tap()
         XCTAssertTrue(app.buttons["home.watchlist.AAPL"].waitForExistence(timeout: 30))
 
-        for tab in ["Watchlist", "Portfolio", "News", "Search", "Home"] {
-            let button = app.tabBars.buttons[tab].exists ? app.tabBars.buttons[tab] : app.buttons[tab]
-            XCTAssertTrue(button.waitForExistence(timeout: 5), "\(tab) tab should exist")
-            button.tap()
+        for tab in ["Watchlist", "Portfolio", "News", "Search", "Agents", "Activity", "Home"] {
+            XCTAssertTrue(app.open(tab, timeout: 5), "\(tab) should open")
             Thread.sleep(forTimeInterval: 2.5)
             XCTAssertEqual(app.state, .runningForeground, "App should still be running on \(tab)")
             attach("tab-\(tab)")
