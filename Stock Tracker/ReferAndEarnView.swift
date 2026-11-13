@@ -34,7 +34,7 @@ struct ReferAndEarnView: View {
             .padding(.top, DS.Space.s)
             .padding(.bottom, DS.Space.xxl)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Refer a friend")
         .navigationBarTitleDisplayMode(.inline)
         .task { await referralManager.refresh() }

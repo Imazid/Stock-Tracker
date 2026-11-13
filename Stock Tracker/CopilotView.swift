@@ -84,7 +84,7 @@ private struct CopilotScreen: View {
                     if let last = engine.messages.last { dsAnimate { proxy.scrollTo(last.id, anchor: .top) } }
                 }
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .safeAreaInset(edge: .bottom) { inputBar }
             .navigationTitle("Copilot")
             .navigationBarTitleDisplayMode(.inline)

@@ -64,7 +64,7 @@ struct AgentsTabView: View {
                 .padding(.bottom, 60)
             }
             .refreshable { await trading.tick() }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground(style: .agents)
             .navigationTitle("Agents")
             .toolbar {
                 TradingToolbar()
@@ -153,30 +153,41 @@ struct AgentCard: View {
         let ownsLedger = ledger?.kind == .agentPaper
         let trades = trading.state.fills.filter { $0.source.agentID == agent.id }.count
         VStack(alignment: .leading, spacing: DS.Space.m) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(agent.name).font(.headline).foregroundStyle(theme.primaryText)
-                if agent.mode == .paper { PracticeChip(compact: true) }
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(theme.secondaryText)
+            HStack(alignment: .center, spacing: DS.Space.m) {
+                AgentAvatar(seed: agent.templateID ?? agent.id.uuidString,
+                            systemImage: AgentTemplates.template(agent.templateID)?.symbolName ?? "sparkles")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agent.name)
+                        .font(.headline)
+                        .foregroundStyle(theme.primaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        StatusLabel(systemImage: trading.runningAgentIDs.contains(agent.id) ? "arrow.triangle.2.circlepath" : agent.statusGlyph,
+                                    text: trading.runningAgentIDs.contains(agent.id) ? "Checking now" : agent.statusText,
+                                    tint: agent.needsAttention ? theme.warningColor : theme.secondaryText, compact: true)
+                        if let last = agent.lastRunAt {
+                            Text("· \(TradingFormat.relative(last))").font(.caption).foregroundStyle(theme.secondaryText).lineLimit(1)
+                        }
+                    }
+                }
+                Spacer(minLength: DS.Space.s)
+                VStack(alignment: .trailing, spacing: 6) {
+                    if agent.mode == .paper { PracticeChip(compact: true) }
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(theme.secondaryText)
+                }
             }
             Text(agent.spec.summary)
                 .font(.footnote)
                 .foregroundStyle(theme.secondaryText)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
-            HStack(spacing: DS.Space.s) {
-                StatusLabel(systemImage: trading.runningAgentIDs.contains(agent.id) ? "arrow.triangle.2.circlepath" : agent.statusGlyph,
-                            text: trading.runningAgentIDs.contains(agent.id) ? "Checking now" : agent.statusText,
-                            tint: agent.needsAttention ? theme.warningColor : theme.primaryText, compact: true)
-                if let last = agent.lastRunAt {
-                    Text("· checked \(TradingFormat.relative(last))").font(.caption).foregroundStyle(theme.secondaryText).lineLimit(1)
-                }
-            }
             HStack(alignment: .firstTextBaseline) {
                 Label(agent.mode.displayName, systemImage: agent.mode.glyph)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(theme.secondaryText)
-                Spacer()
+                    .lineLimit(1)
+                Spacer(minLength: DS.Space.s)
                 if let ledger, ownsLedger {
                     GainLossText(value: ledger.totalReturn,
                                  text: "\(TradingFormat.signedMoney(ledger.totalReturn, ledger.currency)) (\(TradingFormat.percent(ledger.totalReturnPct)))",
@@ -222,7 +233,7 @@ struct AgentDetailView: View {
                 ContentUnavailableView("Agent removed", systemImage: "gearshape.2", description: Text("This agent no longer exists."))
             }
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showLimits) { AgentLimitsEditor(agentID: agentID) }
         .sheet(item: $backtest) { box in NavigationStack { BacktestReportView(result: box.result, title: trading.agent(agentID)?.name ?? "Agent") } }
@@ -656,7 +667,7 @@ struct ProposalReviewSheet: View {
                                            description: Text("It may have been cleared from the history."))
                 }
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("Proposed trade")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -766,7 +777,7 @@ struct ProposalReviewSheet: View {
                         approve()
                     } label: {
                         HStack(spacing: 6) {
-                            if isApproving { ProgressView().controlSize(.small).tint(theme.invertedPrimaryText) }
+                            if isApproving { ProgressView().controlSize(.small).tint(DS.primaryLabel) }
                             else { Image(systemName: "checkmark") }
                             Text(isApproving ? "Checking price…" : "Approve")
                         }
@@ -778,14 +789,12 @@ struct ProposalReviewSheet: View {
                 }
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.vertical, DS.Space.m)
-                .background(.bar)
             } else {
                 Button("Done") { dismiss() }
                     .buttonStyle(PrimaryPillButtonStyle())
                     .accessibilityIdentifier("proposal.done")
                     .padding(.horizontal, DS.Space.gutter)
                     .padding(.vertical, DS.Space.m)
-                    .background(.bar)
             }
         }
     }

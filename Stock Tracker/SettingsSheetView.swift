@@ -78,7 +78,7 @@ struct SettingsSheetView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -480,7 +480,7 @@ struct DataSourceView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Data sources")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -543,7 +543,7 @@ struct PrivacyView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Privacy & data")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -619,7 +619,7 @@ struct BuiltInTermsView: View {
             }
             .padding(DS.Space.gutter)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Terms of Service")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -662,7 +662,7 @@ struct BuiltInPrivacyPolicyView: View {
             }
             .padding(DS.Space.gutter)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Privacy Policy")
         .navigationBarTitleDisplayMode(.inline)
     }

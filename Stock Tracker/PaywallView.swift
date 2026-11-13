@@ -46,7 +46,7 @@ struct PaywallView: View {
                 .padding(.horizontal, DS.Space.l)
                 .padding(.bottom, DS.Space.xxl)
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

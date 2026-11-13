@@ -24,6 +24,8 @@ struct PortfolioPerformanceChart: View {
     /// Also show today's move when another range is selected.
     var showsTodayLine = true
     var accessibilityID = "chart.price"
+    /// Revolut's hero: label, balance and change centred over the chart.
+    var centered = false
 
     @EnvironmentObject private var marketData: MarketData
     @Environment(\.theme) private var theme
@@ -51,28 +53,27 @@ struct PortfolioPerformanceChart: View {
         let changePct = (reference ?? 0) > 0 ? change / reference! * 100 : 0
 
         VStack(alignment: .leading, spacing: DS.Space.m) {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(theme.secondaryText)
-                .padding(.bottom, -DS.Space.s)
+            VStack(alignment: centered ? .center : .leading, spacing: DS.Space.m) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(.bottom, -DS.Space.s)
 
-            Text(hidesValues ? "••••••" : marketData.formatPrice(shown))
-                .font(DS.money(40, weight: .bold))
-                .foregroundStyle(theme.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .contentTransition(.numericText())
-                .animation(DS.quick, value: shown)
-                .accessibilityIdentifier("\(accessibilityID).value")
+                MoneyText(text: hidesValues ? "••••••" : marketData.formatPrice(shown), size: centered ? 50 : 44)
+                    .contentTransition(.numericText())
+                    .animation(DS.quick, value: shown)
+                    .accessibilityIdentifier("\(accessibilityID).value")
 
-            VStack(alignment: .leading, spacing: 6) {
-                changeLine(percent: changePct,
-                           amount: change,
-                           label: scrubbed.map { Text(range.scrubLabel(for: $0.date)) } ?? Text(range.periodLabel))
-                if showsTodayLine && range != .oneDay && scrubbed == nil {
-                    changeLine(percent: marketData.dailyProfitLossPercent, amount: daily, label: Text("Today"))
+                VStack(alignment: centered ? .center : .leading, spacing: 6) {
+                    changeLine(percent: changePct,
+                               amount: change,
+                               label: scrubbed.map { Text(range.scrubLabel(for: $0.date)) } ?? Text(range.periodLabel))
+                    if showsTodayLine && range != .oneDay && scrubbed == nil {
+                        changeLine(percent: marketData.dailyProfitLossPercent, amount: daily, label: Text("Today"))
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
 
             DSPriceChart(
                 points: points,

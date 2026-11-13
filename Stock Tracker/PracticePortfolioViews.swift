@@ -102,9 +102,7 @@ struct PracticePortfolioCard: View {
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(theme.secondaryText)
             }
-            Text(TradingFormat.money(ledger.equity, ledger.currency))
-                .font(DS.money(28))
-                .foregroundStyle(theme.primaryText)
+            MoneyText(text: TradingFormat.money(ledger.equity, ledger.currency), size: 30)
                 .contentTransition(.numericText())
             HStack(spacing: DS.Space.m) {
                 GainLossText(value: ledger.totalReturn,
@@ -146,7 +144,7 @@ struct PracticePortfolioDetailView: View {
                 ContentUnavailableView("Portfolio removed", systemImage: "tray", description: Text("This practice portfolio no longer exists."))
             }
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
@@ -215,8 +213,7 @@ struct PracticePortfolioDetailView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.l) {
                 VStack(alignment: .leading, spacing: DS.Space.s) {
-                    Text(TradingFormat.money(ledger.equity, ledger.currency))
-                        .font(DS.money(36))
+                    MoneyText(text: TradingFormat.money(ledger.equity, ledger.currency), size: 40)
                         .contentTransition(.numericText())
                         .accessibilityIdentifier("practice.equity")
                     GainLossText(value: ledger.totalReturn,

@@ -35,6 +35,20 @@
 
 Security: `Config/Secrets.plist` is copied into the app bundle, so every key ships in the IPA. Move OpenAI/Gemini/SnapTrade/Alpaca/FMP behind a backend proxy before release.
 
+## Look: Liquid Glass after Coinbase / Revolut / Fey / Luma (2026-11-13)
+- References from Mobbin: Coinbase (one blue, big numbers, centred amount entry and success), Revolut (gradient hero, round frosted action buttons, cents smaller), Fey (deep dark, glow tinted by the ticker, end-dot charts without grid lines), Luma (backdrop derived from the subject's colour, glass controls).
+- Tokens: `Theme` uses cool neutrals in light (#F4F5F8 page, white cards) and Revolut near-black in dark (#030408 page, navy-grey frosted cards). Section heroes (`BackdropStyle`): Home blue, Portfolio teal, Agents violet gradients fading to black; the Home balance sits centred on it with four `GlassActionButton`s (no card). Primary button = Revolut pale lavender (#D6DEFF, navy text) in dark, brand blue in light (`DS.primaryFill`/`primaryLabel`). `DS.accent` is #0052FF / #5B8CFF for text and links; `DS.accentFill` (#0052FF / #295CFF) fills buttons so white text keeps 4.5:1. Gains and losses are the Coinbase-like `Theme.positiveColor` / `negativeColor`, scheme-aware; the colour-blind modes are unchanged. `DS.display` is bold SF Pro (the New York serif is gone). `DS.money` is SF Pro with tabular digits.
+- `DSGlass.swift`:
+  - `ScreenBackdrop` / `.dsScreenBackground(tint:)` sits behind every screen: base colour plus two radial glows, and goes plain under Reduce Transparency. The stock page tints it with the logo's brand colour (`LogoDisc.brandColor`); black, white and grey logos keep the blue.
+  - `.frostedCard` (what `.dsCard` now draws).
+  - `GlassActionButton` (Revolut round actions; `accessibilityName` keeps long labels such as "Connect a broker" for tests).
+  - `GlassIconButton`, `.glassChip`.
+  - `MoneyText` (cents at 60% in the secondary colour; one accessibility label for the whole amount).
+  - `AgentAvatar` (stable gradient tile per agent/template).
+- Glass rule: Liquid Glass is for controls and floating chrome (primary/secondary pill styles, top-bar circles, action buttons, the result check). Content sits on frosted cards; never put glass on glass. Bottom button bars no longer get `.background(.bar)`, so the glass button floats.
+- `DSRangePicker` is a capsule track with a sliding raised chip. `DSPriceChart` draws an end dot with a halo and no grid lines.
+- `DesignTourTests` (opt-in, `TEST_RUNNER_RUN_DESIGN=1`) screenshots ~22 screens in light and dark. Export with `xcrun xcresulttool export attachments`.
+
 ## Onboarding (redesigned 2026-10-16)
 - Flow: welcome → markets → follow (stock picker) → portfolio (broker / CSV* / manual) → alerts → Face ID** → account** → done. *CSV only on Black (matches Portfolio tab). **Face ID only if enrolled; account only if signed out. Account is last on purpose (value before commitment).
 - Files: `OnboardingModel.swift` (steps, `PickedAsset`, `OnboardingCatalog`, `OnboardingHandoff`), `OnboardingView.swift` (container, top bar, `OnboardingPage` scaffold), `OnboardingIntroSteps.swift`, `OnboardingSetupSteps.swift`. Shared tokens/components in `DesignSystem.swift` (`DS`, pill button styles, `TickerLogo`, `ChangePill`, `SectionHeader`, `EmptyStateCard`).
@@ -45,7 +59,7 @@ Security: `Config/Secrets.plist` is copied into the app bundle, so every key shi
 
 ## Data honesty rules
 - Fresh installs start with an **empty** portfolio and watchlist — never mock holdings (`MarketData.loadInitialData`). No placeholder news either.
-- Theme defaults to **System** for new installs (onboarding stays dark by design) — check light AND dark.
+- Theme defaults to **Dark** for new installs (owner, 2026-11-13: "keep the aesthetic black", after Revolut); System and Light stay in Settings — still check light AND dark. The iOS 27.0 simulator ignores appearance changes, so `DarkModeTests.testSystemAppearanceFollowsTheDevice` needs an iOS 26 sim.
 - Unknown numbers are `0`/`nil` and render as "—" (`detailedStock(from:)`, `QuickStatsSection`, 52-week bar). Never synthesise market cap/volume/ranges — they're shown to users and fed to AI analysis.
 - Permission prompts are contextual: notifications in onboarding or on the first alert (`PriceAlertManager.addAlert`), ATT only after onboarding.
 

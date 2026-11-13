@@ -22,12 +22,25 @@ final class DarkModeTests: XCTestCase {
         super.tearDown()
     }
 
-    /// New installs follow the system appearance (System is the default). The theme the
-    /// views read must follow the device too — including a live switch — or a dark device
-    /// gets the light cream palette with white text.
+    /// New installs are black (the app's look since 2026-11-13), whatever the device says.
+    func testNewInstallsStartDark() {
+        XCUIDevice.shared.appearance = .light
+        app.launchArguments = ["-UITestFreshInstall"]
+        app.launch()
+        onboard(holdings: [])
+        tab("Home")
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15), "Home")
+        Thread.sleep(forTimeInterval: 2)
+        assertBackground(dark: true, "new-install-home")
+    }
+
+    /// With System chosen, the theme the views read follows the device — including a live
+    /// switch — or a dark device gets the light palette with white text.
+    /// Note: the iOS 27.0 simulator ignores appearance changes (simctl and XCUIDevice both;
+    /// Apple's Settings app stays light), so run this on an iOS 26 simulator.
     func testSystemAppearanceFollowsTheDevice() {
         XCUIDevice.shared.appearance = .dark
-        app.launchArguments = ["-UITestFreshInstall"]
+        app.launchArguments = ["-UITestFreshInstall", "-app_theme_mode", "System"]
         app.launch()
         onboard(holdings: [])
         tab("Home")

@@ -138,7 +138,7 @@ struct MarketsTabView: View {
             case .news: NewsView()
             }
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
     }
 }
 

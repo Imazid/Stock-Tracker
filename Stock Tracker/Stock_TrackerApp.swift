@@ -560,7 +560,7 @@ struct LockedView: View {
         .padding(.horizontal, DS.Space.gutter)
         .padding(.bottom, DS.Space.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .onAppear {
             if authManager.useBiometrics {
                 authManager.authenticate()

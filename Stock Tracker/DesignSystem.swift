@@ -34,28 +34,48 @@ enum DS {
         static let sheet: CGFloat = 28
     }
 
-    /// The single brand accent: selection states, links, focus.
-    /// Brand blue. Dark keeps the bright #6BA8FF (8.7:1 on black); light uses #1461CC,
-    /// because #6BA8FF on the cream page was 2.3:1 — links like "Show all statistics",
-    /// "Use current" and "See all" failed WCAG AA. ≥4.7:1 on the light page and cards.
+    /// The single brand accent: selection states, links, focus, the primary button.
+    /// Coinbase-like blue: #0052FF on the light page (6.2:1), #5B8CFF on black (6.6:1).
     static let accent = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.42, green: 0.66, blue: 1.0, alpha: 1)
-            : UIColor(red: 0.08, green: 0.38, blue: 0.80, alpha: 1)
+            ? UIColor(red: 0.36, green: 0.55, blue: 1.0, alpha: 1)
+            : UIColor(red: 0.0, green: 0.32, blue: 1.0, alpha: 1)
+    })
+
+    /// Fill for the primary button: a deeper blue in dark mode so white text keeps 4.5:1
+    /// (the lighter `accent` is for text and links on black).
+    static let accentFill = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.16, green: 0.36, blue: 1.0, alpha: 1)
+            : UIColor(red: 0.0, green: 0.32, blue: 1.0, alpha: 1)
+    })
+
+    /// The primary button: Revolut's pale lavender pill with navy text on black, the brand
+    /// blue with white text on the light page.
+    static let primaryFill = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.84, green: 0.87, blue: 1.0, alpha: 1)    // #D6DEFF
+            : UIColor(red: 0.0, green: 0.32, blue: 1.0, alpha: 1)
+    })
+    static let primaryLabel = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.04, green: 0.09, blue: 0.30, alpha: 1)   // #0A174D
+            : UIColor.white
     })
 
     /// Short, un-bouncy spring for state changes.
     static let spring = Animation.spring(response: 0.28, dampingFraction: 0.88)
     static let quick = Animation.easeOut(duration: 0.18)
 
-    /// Large money/number style: rounded SF with tabular digits.
+    /// Large money/number style: SF Pro with tabular digits (Coinbase / Fey numbers).
     static func money(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-        .system(size: size, weight: weight, design: .rounded).monospacedDigit()
+        .system(size: size, weight: weight, design: .default).monospacedDigit()
     }
 
-    /// Serif display type (New York) for headlines.
+    /// Display type for headlines: bold SF Pro (was New York serif). Callers that asked for
+    /// `.regular` get `.bold`, so a headline still reads as one.
     static func display(_ style: Font.TextStyle = .largeTitle, weight: Font.Weight = .regular) -> Font {
-        .system(style, design: .serif, weight: weight)
+        .system(style, design: .default, weight: weight == .regular ? .bold : weight)
     }
 }
 
@@ -92,40 +112,35 @@ struct PressableButtonStyle: ButtonStyle {
     }
 }
 
-/// Full-width primary action: ink-on-paper in light mode, paper-on-ink in dark.
+/// Full-width primary action: accent-tinted Liquid Glass with white text.
 struct PrimaryPillButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        let isDark = colorScheme == .dark
         configuration.label
             .font(.body.weight(.semibold))
             .frame(maxWidth: .infinity, minHeight: 54)
-            .foregroundStyle(isDark ? Color.black : Color.white)
-            .background(
-                Capsule().fill(isDark ? Color.white : Color.black)
-            )
-            .opacity(isEnabled ? 1 : 0.32)
+            .foregroundStyle(DS.primaryLabel)
+            .glassEffect(.regular.tint(DS.primaryFill).interactive(isEnabled), in: .capsule)
+            .opacity(isEnabled ? 1 : 0.4)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(DS.quick, value: configuration.isPressed)
             .contentShape(Capsule())
     }
 }
 
-/// Full-width secondary action on a quiet fill.
+/// Full-width secondary action: clear Liquid Glass.
 struct SecondaryPillButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        let isDark = colorScheme == .dark
         configuration.label
             .font(.body.weight(.semibold))
             .frame(maxWidth: .infinity, minHeight: 54)
-            .foregroundStyle(isDark ? Color.white : Color.black)
-            .background(
-                Capsule().fill(isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06))
-            )
+            .foregroundStyle(theme.primaryText)
+            .glassEffect(.regular.interactive(isEnabled), in: .capsule)
+            .opacity(isEnabled ? 1 : 0.4)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(DS.quick, value: configuration.isPressed)
             .contentShape(Capsule())
@@ -160,6 +175,11 @@ struct TickerLogo: View {
     var exchange: String = ""
     var size: CGFloat = 40
     @Environment(\.colorScheme) private var colorScheme
+
+    /// The logo's address for a listing (also used to tint a stock page with its brand colour).
+    static func logoURL(symbol: String, kind: AssetKind, exchange: String) -> URL? {
+        TickerLogo(symbol: symbol, kind: kind, exchange: exchange).url
+    }
 
     private var logoSymbol: String {
         let upper = symbol.uppercased()
@@ -368,9 +388,11 @@ struct EmptyStateCard: View {
         VStack(spacing: DS.Space.l) {
             Image(systemName: systemImage)
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 52, height: 52)
-                .background(Circle().fill(DS.accent.opacity(0.14)))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(LinearGradient(colors: [DS.accentFill, theme.glowSecondary],
+                                                         startPoint: .topLeading, endPoint: .bottomTrailing)))
+                .background(Circle().fill(DS.accentFill.opacity(0.35)).blur(radius: 14).scaleEffect(1.3))
                 .accessibilityHidden(true)
 
             VStack(spacing: 6) {
@@ -399,16 +421,8 @@ struct EmptyStateCard: View {
                 .buttonStyle(QuietTextButtonStyle())
             }
         }
-        .padding(DS.Space.xl)
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .fill(theme.subtleFill)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5)
-        )
+        .frostedCard(padding: DS.Space.xl)
     }
 }
 
@@ -423,18 +437,8 @@ extension View {
 
 private struct DSCardModifier: ViewModifier {
     let padding: CGFloat
-    @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
-        content
-            .padding(padding)
-            .background(
-                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                    .fill(theme.subtleFill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                    .strokeBorder(theme.cardBorder.opacity(0.6), lineWidth: 0.5)
-            )
+        content.frostedCard(padding: padding)
     }
 }

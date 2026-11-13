@@ -131,7 +131,7 @@ struct OrderTicketView: View {
                     entryScreen
                 }
             }
-            .background(theme.background.ignoresSafeArea())
+            .dsScreenBackground()
             .navigationTitle("\(side == .buy ? "Buy" : "Sell") \(displayName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -199,7 +199,6 @@ struct OrderTicketView: View {
             }
             .padding(.horizontal, DS.Space.gutter)
             .padding(.vertical, DS.Space.m)
-            .background(.bar)
         }
     }
 
@@ -288,25 +287,37 @@ struct OrderTicketView: View {
                 .accessibilityIdentifier("ticket.entry")
             }
 
+            // The amount, big and centred (Coinbase / Revolut): the number is the screen.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Spacer(minLength: 0)
                 if entry == .amount {
-                    Text(TradingFormat.symbol(currency).trimmingCharacters(in: .whitespaces)).font(DS.money(22, weight: .medium)).foregroundStyle(theme.secondaryText)
+                    Text(TradingFormat.symbol(currency).trimmingCharacters(in: .whitespaces))
+                        .font(DS.money(28, weight: .semibold))
+                        .foregroundStyle(theme.secondaryText)
                 }
                 TextField("0", text: $amountText)
                     .keyboardType(.decimalPad)
-                    .font(DS.money(40))
+                    .font(DS.money(58, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: true, vertical: false)
                     .minimumScaleFactor(0.5)
                     .focused($amountFocused)
                     .accessibilityLabel(entry == .amount ? "Amount" : "Quantity")
                     .accessibilityIdentifier("ticket.amount")
                 if entry == .units {
-                    Text(unitName).font(DS.money(18, weight: .medium)).foregroundStyle(theme.secondaryText)
+                    Text(unitName).font(DS.money(22, weight: .semibold)).foregroundStyle(theme.secondaryText)
                 }
+                Spacer(minLength: 0)
             }
+            .padding(.vertical, DS.Space.s)
+            .contentShape(Rectangle())
+            .onTapGesture { amountFocused = true }
 
             Text(conversionLine)
                 .font(.footnote.monospacedDigit())
                 .foregroundStyle(theme.secondaryText)
+                .frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
                 .accessibilityIdentifier("ticket.conversion")
 
             // Problems you can fix here show next to the number, before Review — not after it.
@@ -544,7 +555,7 @@ struct OrderTicketView: View {
             .padding(.top, DS.Space.m)
             .padding(.bottom, 120)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationTitle("Review")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
@@ -566,7 +577,6 @@ struct OrderTicketView: View {
             }
             .padding(.horizontal, DS.Space.gutter)
             .padding(.vertical, DS.Space.m)
-            .background(.bar)
         }
         .task {
             // Judge the order against a fresh price, not the one from when the ticket opened.
@@ -651,7 +661,7 @@ struct OrderTicketView: View {
             .padding(.top, DS.Space.xl)
             .padding(.bottom, 120)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .navigationBarBackButtonHidden(true)
         .navigationTitle("")
         .safeAreaInset(edge: .bottom) {
@@ -669,7 +679,6 @@ struct OrderTicketView: View {
             }
             .padding(.horizontal, DS.Space.gutter)
             .padding(.vertical, DS.Space.m)
-            .background(.bar)
         }
     }
 
@@ -705,12 +714,26 @@ struct OrderTicketView: View {
             glyph = "clock"
             tint = theme.primaryText
         }
-        return VStack(alignment: .leading, spacing: DS.Space.s) {
-            Image(systemName: glyph).font(.system(size: 34)).foregroundStyle(tint).accessibilityHidden(true)
-            Text(title).font(DS.display(.title)).accessibilityAddTraits(.isHeader).accessibilityIdentifier("ticket.result.title")
-            Text(detail).font(.body).foregroundStyle(theme.secondaryText).fixedSize(horizontal: false, vertical: true)
+        // Centred, Coinbase-style: the outcome in a glowing glass circle, then what happened.
+        return VStack(spacing: DS.Space.m) {
+            ZStack {
+                Circle().fill(tint.opacity(0.22)).frame(width: 120, height: 120).blur(radius: 24)
+                Image(systemName: glyph)
+                    .font(.system(size: 40, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 88, height: 88)
+                    .glassEffect(.regular.tint(tint.opacity(0.18)), in: .circle)
+            }
+            .padding(.bottom, DS.Space.s)
+            .accessibilityHidden(true)
+            Text(title).font(DS.display(.title)).multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader).accessibilityIdentifier("ticket.result.title")
+            Text(detail).font(.body).foregroundStyle(theme.secondaryText).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("ticket.result.detail")
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.Space.l)
     }
 }
 
@@ -821,7 +844,7 @@ struct PracticeSetupView: View {
             .padding(.horizontal, DS.Space.gutter)
             .padding(.vertical, DS.Space.xl)
         }
-        .background(theme.background.ignoresSafeArea())
+        .dsScreenBackground()
         .accessibilityIdentifier("practice.setup")
     }
 }
