@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
     root: repoRoot,
     rules: {
       "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
+        loaders: [require.resolve("@tailwindcss/turbopack")],
         as: "*.css",
       },
     },
