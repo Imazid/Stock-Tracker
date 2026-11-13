@@ -6,7 +6,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/asse
 import { buildJWT, bytesToBase64, importSigningKey, pemToPkcs8, sec1ToPkcs8 } from "../_shared/brokers/coinbase_auth.ts";
 import { codeForFailure, coinbaseAdapter, normaliseFill, normaliseOrder } from "../_shared/brokers/coinbase.ts";
 import { type AdapterContext, BrokerError, type BrokerOrderRequest } from "../_shared/brokers/types.ts";
-import { hang, MockFetch, respond } from "./brokers_mock.ts";
+import { type Handler, hang, MockFetch, respond } from "./brokers_mock.ts";
 
 const KEY_NAME = "organizations/org-1111/apiKeys/key-2222";
 const NOW = Date.parse("2026-11-13T02:00:00Z");
@@ -415,7 +415,15 @@ Deno.test("coinbase: validate refuses a key that can transfer funds", async () =
 Deno.test("coinbase: a view-only key connects read-only, scoped to its portfolio", async () => {
   const permissions = { can_view: true, can_trade: false, can_transfer: false, portfolio_uuid: "pf-1", portfolio_type: "DEFAULT" };
   const portfolios = { portfolios: [{ name: "Default", uuid: "pf-1", type: "DEFAULT", deleted: false }, { name: "Other", uuid: "pf-2", type: "CONSUMER", deleted: false }] };
-  const mock = new MockFetch(respond(200, permissions), respond(200, permissions), respond(200, portfolios));
+  const permissionsResponse = respond(200, permissions);
+  const portfoliosResponse = respond(200, portfolios);
+  const respondToAccountRequest: Handler = (call, signal) => {
+    const path = new URL(call.url).pathname;
+    if (path.endsWith("/portfolios")) return portfoliosResponse(call, signal);
+    assert(path.endsWith("/key_permissions"));
+    return permissionsResponse(call, signal);
+  };
+  const mock = new MockFetch(permissionsResponse, respondToAccountRequest, respondToAccountRequest);
   const result = await coinbaseAdapter.validate(ctx(mock, { allowLive: undefined }));
   assertEquals(result.permissions, ["read"]);
   assertEquals(result.accounts.map((a) => a.providerAccountID), ["pf-1"]);

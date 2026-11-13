@@ -233,9 +233,12 @@ final class ParityVectorTests: XCTestCase {
         var everywhere: [Date] = []
         var t = Fx.date("2025-12-28T00:00:00Z")
         let end = Fx.date("2028-01-05T00:00:00Z")
+        let days: TimeInterval = 9 * 86_400
+        let hours: TimeInterval = 7 * 3_600
+        let minutes: TimeInterval = 13 * 60
         while t < end {
             everywhere.append(t)
-            t = t.addingTimeInterval(9 * 86_400 + 7 * 3_600 + 13 * 60)
+            t = t.addingTimeInterval(days + hours + minutes)
         }
         everywhere += [
             // Tuesday 10 November 2026 hour by hour (opens, lunches and closes from Tokyo to New York).

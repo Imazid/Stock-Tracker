@@ -61,7 +61,11 @@ final class IndicatorTests: XCTestCase {
     }
 
     func testMACDIsFastMinusSlowAndHistogramIsLineMinusSignal() {
-        let values = (0..<80).map { 100 + sin(Double($0) / 5) * 10 + Double($0) * 0.2 }
+        let values = (0..<80).map { index in
+            let position = Double(index)
+            let oscillation = sin(position / 5) * 10
+            return 100 + oscillation + position * 0.2
+        }
         let macd = Indicators.macd(values, fast: 12, slow: 26, signal: 9)
         let fast = Indicators.ema(values, period: 12), slow = Indicators.ema(values, period: 26)
         XCTAssertNil(macd.line[24])

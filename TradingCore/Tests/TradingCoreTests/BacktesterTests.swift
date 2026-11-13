@@ -12,7 +12,11 @@ final class BacktesterTests: XCTestCase {
 
     /// A wave around 100 that produces several entries and exits.
     private func wave(_ count: Int = 240, phase: Double = 0) -> [Double] {
-        (0..<count).map { 100 + sin(Double($0) / 9 + phase) * 14 + Double($0) * 0.03 }
+        (0..<count).map { index in
+            let position = Double(index)
+            let oscillation = sin(position / 9 + phase) * 14
+            return 100 + oscillation + position * 0.03
+        }
     }
 
     func testSyntheticAndUnapprovedFixtureDataAreRefused() {
