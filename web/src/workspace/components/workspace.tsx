@@ -252,7 +252,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
         {signedIn && (journalError && ["portfolio","watchlist"].includes(page)) && <p role="alert" className="notice error">{journalError}</p>}
         {signedIn && page === "portfolio" && <>
           <Portfolio journal={journal} onAsset={selectAsset} onAdd={() => { setHolding(undefined); setDialog("holdingFinder"); }} onEdit={row => { setHolding(row); setHoldingAsset(fromHolding(row)); setDialog("holding"); }}/>
-          <div className="data-note"><Link className="text-button" href="/portfolio">Portfolio performance and CSV export <ExternalLink size={13}/></Link></div>
+          <div className="data-note"><Link className="text-button" href="/portfolio">Portfolio performance and reports <ExternalLink size={13}/></Link></div>
         </>}
         {signedIn && page === "watchlist" && <PersonalList journal={journal} onAsset={selectAsset} onWatch={item => void toggleWatch(item)} onAlert={() => setDialog("alert")} onAlertChange={(id,patch) => void alertChange(id,patch)}/>}
         {signedIn && requiresTrading && !trading && <section className="panel"><Empty icon={<Activity size={20}/>} title={tradingError || "Loading your trading workspace…"}>{tradingError && <button className="button secondary" onClick={() => setRefresh(count => count + 1)}>Retry</button>}</Empty></section>}
