@@ -53,8 +53,9 @@ The product records capital calls, distributions, stale marks, share classes and
 
 ## Verification
 
-- TradingCore passed 173 tests with one skipped. The Edge suite passed 291 tests with six ignored. The private Edge Function type check and migration test suite passed.
+- TradingCore passed 173 tests with one skipped. The Edge suite passed 298 tests with six ignored. The private Edge Function type check and migration test suite passed.
 - The hosted cron job created a MoPA issuer-document alert before a test account opened its inbox. Hosted tests also verified sign-in, tenant isolation, duplicate suppression and per-device opt-out. Disposable database tests covered verified eligibility, revoked publication and settled capital calls.
+- The hosted push scheduler and registration endpoint are deployed. Hosted tests verified that unconfigured push leaves the company inbox available. A disposable Supabase stack verified real session registration, encrypted token storage, worker leasing and replay, a signed request to an APNs test transport, and opt-out. Production APNs delivery awaits the Apple signing key and provisioned builds.
 - The hosted digest dispatcher used the live AI gateway to save a cited summary of the MoPA disclosure. The subscribed account opened the encrypted report, while a second account with alerts enabled received no summary and could not open the first account's report. Replay created no duplicate. Disposable tests also covered concurrent leases, opt-out, evidence edits and retries.
 - Hosted AI catalogue search returned no verified open matches for Australian healthcare and retail, found Heidi's closed Series C, and asked for a currency on an ambiguous valuation filter.
 - The iPhone simulator recognized an image-only ownership statement PDF and enforced the plain-text excerpt limit. A signed-in simulator test opened an encrypted excerpt, recorded the review, and linked it to a manual holding. Hosted tests verified that uppercase iOS UUIDs open the owner's report and excerpt and that another account is denied.
