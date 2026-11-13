@@ -190,6 +190,16 @@ Deno.serve(async (req) => {
         const plaintext = await open(await keys(), data.sealed as SealedSecret, context("report", userId, body.id));
         return jsonResponse(200, JSON.parse(plaintext));
       }
+      case "research_status": {
+        if (typeof body.id !== "string" || !uuid.test(body.id)) return errorResponse(400, "INVALID_REQUEST", "Invalid research run.");
+        const { data, error } = await admin.from("agent_analysis_runs").select("status,created_at,failure_code,failure_message")
+          .eq("id", body.id).eq("user_id", userId).maybeSingle();
+        if (error) throw error;
+        if (!data) return errorResponse(404, "NOT_FOUND", "Research run unavailable.");
+        const expired = data.status === "running" && Date.now() - Date.parse(data.created_at) > 180_000;
+        return jsonResponse(200, { status: expired ? "failed" : data.status,
+          failure_code: data.failure_code, failure_message: data.failure_message });
+      }
       case "research": {
         const { document_ids: ids, opportunity_ids: dealIDs, question, mode } = body;
         if (!Array.isArray(ids) || !Array.isArray(dealIDs) || ids.length + dealIDs.length < 1 ||
@@ -238,44 +248,60 @@ Deno.serve(async (req) => {
         const runId = crypto.randomUUID();
         const run = await admin.from("agent_analysis_runs").insert({ id: runId, user_id: userId, status: "running" });
         if (run.error) throw run.error;
-        try {
-          await audit(ids.length ? "document_ai_consent" : "public_research_started", runId);
-          const limit = Number.parseInt(Deno.env.get("AI_DAILY_LIMIT") ?? "", 10);
-          const report = await buildResearch(userId, question, evidence, mode, {
-            config: {
-              geminiKey: (ids.length === 0 && !Deno.env.get("OPENAI_API_KEY")) ||
-                  (ids.length > 0 && documentProvider === "gemini") ? Deno.env.get("GEMINI_API_KEY") : undefined,
-              openAIKey: ids.length === 0 || documentProvider === "openai" ? Deno.env.get("OPENAI_API_KEY") : undefined,
-              dailyLimit: Number.isFinite(limit) && limit >= 0 ? limit : AI_LIMITS.defaultDailyLimit,
-              timeoutMs: 10_000,
-            },
-            quota: {
-              async consume(uid, ceiling) {
-                const { data, error } = await admin.rpc("consume_ai_quota", { p_user_id: uid, p_limit: ceiling }).single();
-                if (error) {
-                  console.error("private research quota", error.code);
-                  throw new ResearchError(503, "RESEARCH_QUOTA_FAILED", "Research quota could not be checked (" + error.code + ").");
-                }
-                const row = data as { allowed: boolean; used: number };
-                return { allowed: row.allowed, used: row.used };
+        const research = async () => {
+          try {
+            await audit(ids.length ? "document_ai_consent" : "public_research_started", runId);
+            const limit = Number.parseInt(Deno.env.get("AI_DAILY_LIMIT") ?? "", 10);
+            const report = await buildResearch(userId, question, evidence, mode, {
+              config: {
+                geminiKey: (ids.length === 0 && !Deno.env.get("OPENAI_API_KEY")) ||
+                    (ids.length > 0 && documentProvider === "gemini") ? Deno.env.get("GEMINI_API_KEY") : undefined,
+                openAIKey: ids.length === 0 || documentProvider === "openai" ? Deno.env.get("OPENAI_API_KEY") : undefined,
+                dailyLimit: Number.isFinite(limit) && limit >= 0 ? limit : AI_LIMITS.defaultDailyLimit,
+                timeoutMs: mode === "committee" ? 22_000 : 10_000,
               },
-            },
-            fetch,
-          });
-          const payload = { ...report, id: runId, sources, question, created_at: new Date().toISOString() };
-          const sealed = await seal(keyring, JSON.stringify(payload), context("report", userId, runId));
-          const result = await admin.rpc("finish_private_research", {
-            p_user: userId, p_run: runId, p_title: question.trim().slice(0, 160), p_sealed: sealed,
-          });
-          if (result.error) {
-            console.error("private research persistence", result.error.code);
-            throw new ResearchError(503, "RESEARCH_SAVE_FAILED", "Research could not be saved (" + result.error.code + ").");
+              quota: {
+                async consume(uid, ceiling) {
+                  const { data, error } = await admin.rpc("consume_ai_quota", { p_user_id: uid, p_limit: ceiling }).single();
+                  if (error) {
+                    console.error("private research quota", error.code);
+                    throw new ResearchError(503, "RESEARCH_QUOTA_FAILED", "Research quota could not be checked (" + error.code + ").");
+                  }
+                  const row = data as { allowed: boolean; used: number };
+                  return { allowed: row.allowed, used: row.used };
+                },
+              },
+              fetch,
+            });
+            const payload = { ...report, id: runId, sources, question, created_at: new Date().toISOString() };
+            const sealed = await seal(keyring, JSON.stringify(payload), context("report", userId, runId));
+            const result = await admin.rpc("finish_private_research", {
+              p_user: userId, p_run: runId, p_title: question.trim().slice(0, 160), p_sealed: sealed,
+            });
+            if (result.error) {
+              console.error("private research persistence", result.error.code);
+              throw new ResearchError(503, "RESEARCH_SAVE_FAILED", "Research could not be saved (" + result.error.code + ").");
+            }
+            return payload;
+          } catch (error) {
+            await admin.from("agent_analysis_runs").update({
+              status: "failed",
+              failure_code: error instanceof ResearchError ? error.code : "RESEARCH_UNAVAILABLE",
+              failure_message: error instanceof ResearchError ? error.message : "The research run could not finish.",
+            }).eq("id", runId).eq("user_id", userId).eq("status", "running");
+            throw error;
           }
-          return jsonResponse(200, payload);
-        } catch (error) {
-          await admin.from("agent_analysis_runs").update({ status: "failed" }).eq("id", runId).eq("user_id", userId).eq("status", "running");
-          throw error;
+        };
+        const edgeRuntime = (globalThis as typeof globalThis & {
+          EdgeRuntime?: { waitUntil(task: Promise<unknown>): void };
+        }).EdgeRuntime;
+        if (mode === "committee" && body.background === true && edgeRuntime) {
+          edgeRuntime.waitUntil(research().catch((error) => {
+            console.error("private committee failed", error instanceof ResearchError ? error.message : "unexpected error");
+          }));
+          return jsonResponse(202, { id: runId, status: "running" });
         }
+        return jsonResponse(200, await research());
       }
       default:
         return errorResponse(400, "INVALID_ACTION", "Unknown Private Markets action.");

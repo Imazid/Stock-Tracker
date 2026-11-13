@@ -135,6 +135,23 @@ export function parseFinding(text: string, title: string, evidence: Evidence[], 
   return { ...finding, bull: scenario("bull"), base: scenario("base"), bear: scenario("bear") };
 }
 
+function outputSchema(committee: boolean): Record<string, unknown> {
+  const text = { type: "string" };
+  const list = { type: "array", items: text };
+  const properties = {
+    analysis: text,
+    confidence: { type: "string", enum: ["low", "medium", "high"] },
+    evidence: { type: "array", items: {
+      type: "object", properties: { source: text, line: { type: "integer" } },
+      required: ["source", "line"], additionalProperties: false,
+    } },
+    missing: list,
+    questions: list,
+    ...(committee ? { bull: text, base: text, bear: text } : {}),
+  };
+  return { type: "object", properties, required: Object.keys(properties), additionalProperties: false };
+}
+
 export async function buildResearch(userId: string, question: string, evidence: Evidence[], mode: "committee" | "question", deps: AiProxyDeps) {
   async function ask(instruction: string, previous: Finding[] = []) {
     // The gateway caps each message. Source text is never passed as a system message.
@@ -149,7 +166,7 @@ export async function buildResearch(userId: string, question: string, evidence: 
       { role: "user", content: JSON.stringify({ research_question: question }) },
     ];
     const result = await handleAiRequest(userId, { purpose: "chat", messages }, {
-      ...deps, config: { ...deps.config, jsonOutput: true },
+      ...deps, config: { ...deps.config, jsonOutput: true, jsonSchema: outputSchema(previous.length > 0) },
     });
     const payload = result.body as { text?: string; model?: string; error?: { code: string; message: string } };
     if (!payload.text || !payload.model) {

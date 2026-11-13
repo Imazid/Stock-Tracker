@@ -56,6 +56,8 @@ Deno.test("committee requests each role, synthesizes validated reviews and charg
     fetch: (_url, init) => {
       requests++;
       const body = JSON.parse(String(init?.body));
+      assertEquals(body.response_format.type, "json_schema");
+      assertEquals(body.response_format.json_schema.schema.required.includes("bull"), requests === 6);
       assertEquals(body.messages.some((message: { role: string; content: string }) =>
         message.role === "system" && message.content.includes(source.text)), false);
       const scenarios = { bull: "Demand expands", base: "Demand is steady", bear: "Demand contracts" };

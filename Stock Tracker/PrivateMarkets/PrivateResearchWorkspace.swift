@@ -16,6 +16,7 @@ struct PrivateResearchWorkspace: View {
     @State private var busy = false
     @State private var loading = false
     @State private var result: PrivateResearchReport?
+    @State private var runTask: Task<Void, Never>?
     @State private var error: String?
 
     var body: some View {
@@ -86,6 +87,7 @@ struct PrivateResearchWorkspace: View {
                 if let error { Section { Text(error).foregroundStyle(Color.orange) } }
             }
         }
+        .onDisappear { runTask?.cancel() }
         .navigationTitle("AI Investment Research")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -133,14 +135,40 @@ struct PrivateResearchWorkspace: View {
         ]
         error = nil
         busy = true
-        Task {
+        runTask = Task {
             defer { busy = false }
             do {
-                result = try await PrivateMarketsAPI.request("research", fields)
+                if mode == "committee" {
+                    result = try await runCommittee(fields)
+                } else {
+                    result = try await PrivateMarketsAPI.request("research", fields)
+                }
                 await load()
+            } catch is CancellationError {
             } catch { self.error = error.localizedDescription }
         }
     }
+
+    private func runCommittee(_ fields: [String: Any]) async throws -> PrivateResearchReport {
+        struct Started: Decodable { let id: UUID }
+        struct Status: Decodable { let status: String; let failureMessage: String? }
+        var request = fields
+        request["background"] = true
+        let run: Started = try await PrivateMarketsAPI.request("research", request)
+        let target = ["id": run.id.uuidString]
+        for _ in 0..<60 {
+            try await Task.sleep(for: .seconds(3))
+            let progress: Status = try await PrivateMarketsAPI.request("research_status", target)
+            if progress.status == "complete" { return try await PrivateMarketsAPI.request("report", target) }
+            if progress.status == "failed", let message = progress.failureMessage {
+                throw SecureBackend.FunctionError(status: 502, code: "COMMITTEE_UNAVAILABLE", message: message)
+            }
+            if progress.status == "failed" { break }
+        }
+        throw SecureBackend.FunctionError(status: 502, code: "COMMITTEE_UNAVAILABLE",
+                                          message: "The committee could not finish. Try again or ask one research question.")
+    }
+
 }
 
 private struct PrivateSavedReportView: View {

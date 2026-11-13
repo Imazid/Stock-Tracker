@@ -25,6 +25,7 @@ export interface AiProxyConfig {
   dailyLimit?: number;
   timeoutMs?: number;
   jsonOutput?: boolean;
+  jsonSchema?: Record<string, unknown>;
 }
 
 export interface AiQuota {
@@ -83,13 +84,13 @@ export async function handleAiRequest(userId: string, input: unknown, deps: AiPr
 
   if (geminiKey) {
     const model = deps.config.geminiModel ?? "gemini-flash-latest";
-    const result = await callGemini(deps.fetch, geminiKey, model, messages, maxTokens, timeoutMs, deps.config.jsonOutput);
+    const result = await callGemini(deps.fetch, geminiKey, model, messages, maxTokens, timeoutMs, deps.config.jsonOutput, deps.config.jsonSchema);
     if (result.ok) return success(result.text, "gemini", model, quota.used, limit);
     attempts.push(`gemini:${result.status}`);
   }
   if (openAIKey) {
     const model = deps.config.openAIModel ?? "gpt-4o-mini";
-    const result = await callOpenAI(deps.fetch, openAIKey, model, messages, maxTokens, timeoutMs, deps.config.jsonOutput);
+    const result = await callOpenAI(deps.fetch, openAIKey, model, messages, maxTokens, timeoutMs, deps.config.jsonOutput, deps.config.jsonSchema);
     if (result.ok) return success(result.text, "openai", model, quota.used, limit);
     attempts.push(`openai:${result.status}`);
   }
@@ -141,12 +142,15 @@ async function callOpenAI(
   maxTokens: number,
   timeoutMs: number,
   jsonOutput = false,
+  jsonSchema?: Record<string, unknown>,
 ): Promise<CallResult> {
   const body = {
     model,
     temperature: 0.5,
     max_tokens: maxTokens,
-    ...(jsonOutput ? { response_format: { type: "json_object" } } : {}),
+    ...(jsonSchema ? { response_format: { type: "json_schema",
+      json_schema: { name: "private_research", strict: true, schema: jsonSchema } } } :
+      jsonOutput ? { response_format: { type: "json_object" } } : {}),
     messages: [{ role: "system", content: SERVER_POLICY }, ...messages],
   };
   let res: Response;
@@ -177,6 +181,7 @@ async function callGemini(
   maxTokens: number,
   timeoutMs: number,
   jsonOutput = false,
+  jsonSchema?: Record<string, unknown>,
 ): Promise<CallResult> {
   const system = [SERVER_POLICY, ...messages.filter((m) => m.role === "system").map((m) => m.content)].join("\n\n");
   const body = {
@@ -185,7 +190,8 @@ async function callGemini(
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: m.content }] })),
     generationConfig: { maxOutputTokens: maxTokens, temperature: 0.5,
-      ...(jsonOutput ? { responseMimeType: "application/json" } : {}) },
+      ...(jsonOutput ? { responseMimeType: "application/json" } : {}),
+      ...(jsonSchema ? { responseJsonSchema: jsonSchema } : {}) },
   };
   let res: Response;
   try {
