@@ -139,6 +139,11 @@ public struct Ledger: Codable, Identifiable, Sendable {
         var fill = fill
         rollDayIfNeeded(now: fill.time)
         let id = fill.instrument.id
+        // Never sell more than is held (no short selling): a sell for more is cut to the
+        // holding, and only what was really sold is paid for and counted.
+        if fill.side == .sell, let held = position(id)?.quantity, fill.quantity > held {
+            fill.quantity = held
+        }
         let gross = fill.gross
         switch fill.side {
         case .buy:
@@ -157,7 +162,7 @@ public struct Ledger: Codable, Identifiable, Sendable {
         case .sell:
             guard let index = positions.firstIndex(where: { $0.id == id }) else { return fill }
             let held = positions[index].quantity
-            let sold = min(fill.quantity, held)
+            let sold = fill.quantity
             let closing = held - sold <= 1e-9
             let costRemoved = closing ? positions[index].costBasis
                 : Rounding.money(positions[index].costBasis / held * sold)

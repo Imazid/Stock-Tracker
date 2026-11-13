@@ -1,5 +1,6 @@
 // Where the server gets real market data from. A provider answers two questions for a
-// set of instruments — recent bars and the latest quote — and nothing else.
+// set of instruments — recent bars and the latest quote — and, when it can, a third: how
+// much of the instrument trades in a day across the whole market.
 //
 // Rules every provider here follows:
 //   - market data only: a provider never places, reads or even knows about orders;
@@ -38,6 +39,17 @@ export interface MarketDataProvider {
   bars(instruments: Instrument[], timeframe: Timeframe, count: number, now: number): Promise<BarsResult>;
   /** Latest quote per instrument, keyed by instrumentID(). */
   quotes(instruments: Instrument[], now: number): Promise<QuotesResult>;
+  /**
+   * Market-wide average daily traded value, in the instrument's currency, keyed by
+   * instrumentID() — for instruments whose bars carry only one venue's volume. A missing
+   * key means "not known"; it is never a guess. Never throws.
+   */
+  dollarVolume?(instruments: Instrument[], now: number): Promise<Record<string, number>>;
+}
+
+/** Anything that can say how much of an instrument trades in a day, market-wide. */
+export interface DollarVolumeSource {
+  dollarVolume(instruments: Instrument[], now: number): Promise<Record<string, number>>;
 }
 
 /**
@@ -63,7 +75,14 @@ export function failureReason(error: unknown): string {
  * Bars + quotes together. Mirrors the Swift `snapshot(for:timeframe:barCount:)` rule: a
  * bars failure is recorded as "Price history unavailable: <reason>"; a quote failure as
  * "Live quote unavailable: <reason>" only when there is no bars failure for that
- * instrument already. Never throws.
+ * instrument already.
+ *
+ * `dollarVolume` is filled only for instruments whose series says its volume is one
+ * venue's slice (`volumeIsMarketWide === false`), from the provider's `dollarVolume()`
+ * when it has one. No figure means the key is absent — liquidity is then unknown, which
+ * the engine never treats as a small number.
+ *
+ * Never throws, and always returns all four maps.
  */
 export async function snapshot(
   provider: MarketDataProvider,
@@ -76,22 +95,27 @@ export async function snapshot(
   const wanted = uniqueInstruments(instruments);
   if (wanted.length === 0) return result;
 
-  const [bars, quotes] = await Promise.all([
-    settle(() => provider.bars(wanted, timeframe, barCount, now)),
-    settle(() => provider.quotes(wanted, now)),
-  ]);
+  // Quotes don't wait for bars; the volume lookup has to (it depends on what the bars say).
+  const quotesPending = settle(() => provider.quotes(wanted, now));
+  const bars = await settle(() => provider.bars(wanted, timeframe, barCount, now));
 
+  const oneVenueOnly: Instrument[] = [];
   for (const instrument of wanted) {
     const id = instrumentID(instrument);
-
     const series = bars.value === undefined ? undefined : own(bars.value.series, id);
     const barsFailure = bars.value === undefined ? bars.reason : own(bars.value.failures, id);
-    if (series !== undefined && barsFailure === undefined) {
-      result.series[id] = series as BarSeries;
+    if (isRecord(series) && barsFailure === undefined) {
+      result.series[id] = series as unknown as BarSeries;
+      if (series.volumeIsMarketWide === false) oneVenueOnly.push(instrument);
     } else {
       result.failures[id] = `Price history unavailable: ${reasonText(barsFailure)}`;
     }
+  }
 
+  const [quotes, volumes] = await Promise.all([quotesPending, knownDollarVolume(provider, oneVenueOnly, now)]);
+
+  for (const instrument of wanted) {
+    const id = instrumentID(instrument);
     const quote = quotes.value === undefined ? undefined : own(quotes.value.quotes, id);
     const quoteFailure = quotes.value === undefined ? quotes.reason : own(quotes.value.failures, id);
     if (quote !== undefined && quoteFailure === undefined) {
@@ -100,7 +124,26 @@ export async function snapshot(
       result.failures[id] = `Live quote unavailable: ${reasonText(quoteFailure)}`;
     }
   }
+  for (const instrument of oneVenueOnly) {
+    const id = instrumentID(instrument);
+    const known = positiveNumber(own(volumes, id));
+    if (known !== undefined) result.dollarVolume[id] = known;
+  }
   return result;
+}
+
+/**
+ * What the provider knows about market-wide traded value for these instruments. A
+ * provider without the capability, one that rejects, or an answer that isn't an object
+ * all come back as "nothing known".
+ */
+async function knownDollarVolume(provider: MarketDataProvider, instruments: Instrument[], now: number): Promise<unknown> {
+  if (instruments.length === 0 || typeof provider.dollarVolume !== "function") return undefined;
+  try {
+    return await provider.dollarVolume(instruments, now);
+  } catch {
+    return undefined;
+  }
 }
 
 /** A provider that answered with neither data nor a reason still must not look tradable. */

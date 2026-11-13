@@ -5,6 +5,17 @@
 // position or account call, and the credentials it is given are never sent anywhere
 // else. Keep it that way: trading goes through a separate broker layer with its own keys.
 //
+// The sourcing rules are the phone app's (Stock Tracker/TradingMarketData.swift), so the
+// phone and the server decide on the same inputs:
+//   US daily bars   the consolidated tape first (`feed=sip`, ending 16 minutes ago — the
+//                   free plan serves it once it is 15 minutes old): every exchange's
+//                   trades, so the volume is the whole market's. If the plan doesn't
+//                   allow it (HTTP 403/422) or it has no bars for a symbol, IEX instead.
+//   US hourly bars  IEX. One exchange: its volume is a slice, and is marked as one.
+//   crypto bars     Alpaca's own venue. Also a slice, and marked as one.
+//   quotes          the last trade. The bid and ask only when they make a believable
+//                   market. Never a day volume — a snapshot's is one venue's.
+//
 // Shapes below were checked against Alpaca's reference (docs.alpaca.markets/reference:
 // stockbars, stocksnapshots-1, cryptobars-1, cryptosnapshots-1) in November 2026:
 //   bars       {"bars": {"AAPL": [{"t","o","h","l","c","v","n","vw"}]}, "next_page_token"}
@@ -12,7 +23,7 @@
 //              and then by time, so one answer can take several pages.
 //   stocks     snapshots are keyed by symbol at the top level: {"AAPL": {latestTrade, ...}}
 //   crypto     snapshots are nested: {"snapshots": {"BTC/USD": {latestTrade, ...}}}
-//   a snapshot latestTrade {t, p}, latestQuote {t, bp, ap}, dailyBar {t, ..., v}
+//   a snapshot latestTrade {t, p}, latestQuote {t, bp, ap}
 //
 // Nothing is made up here. A symbol Alpaca doesn't answer for, an answer that can't be
 // read, a price that isn't a positive number, a time that isn't a time: each is recorded
@@ -28,12 +39,15 @@ import {
   type Quote,
   type Timeframe,
   venueDisplayName,
+  VENUES,
 } from "../trading/market.ts";
 import {
   barRequestProblem,
   type BarsResult,
   chunked,
+  type DollarVolumeSource,
   failureReason,
+  finiteNumber,
   isRecord,
   lastBars,
   type MarketDataProvider,
@@ -60,6 +74,11 @@ export interface AlpacaDataProviderOptions {
   sleep?: (ms: number) => Promise<void>;
   /** One small event per HTTP attempt. It never carries a header, a key or a query string. */
   log?: (event: Record<string, unknown>) => void;
+  /**
+   * Where market-wide traded value comes from for crypto, whose Alpaca volume is only
+   * Alpaca's own venue. Without one, `dollarVolume()` knows nothing.
+   */
+  volumeSource?: DollarVolumeSource;
 }
 
 const DATA_HOST = "https://data.alpaca.markets";
@@ -70,10 +89,16 @@ const STOCK_SNAPSHOTS = "/v2/stocks/snapshots";
 const CRYPTO_BARS = "/v1beta3/crypto/us/bars";
 const CRYPTO_SNAPSHOTS = "/v1beta3/crypto/us/snapshots";
 
+/** Every US exchange's trades. Free once 15 minutes old; real time needs a paid plan. */
+const CONSOLIDATED_FEED = "sip";
 /** The free plan's only real-time equity feed: one exchange, a few percent of US volume. */
-const STOCK_FEED = "iex";
-const STOCK_SOURCE = "Alpaca (IEX)";
-const CRYPTO_SOURCE = "Alpaca (crypto)";
+const IEX_FEED = "iex";
+/** How far back a consolidated request ends, to stay behind the 15-minute line. */
+const CONSOLIDATED_DELAY_MS = 16 * 60_000;
+
+const CONSOLIDATED_SOURCE = "Alpaca (consolidated)";
+const IEX_SOURCE = "Alpaca (IEX)";
+const CRYPTO_SOURCE = "Alpaca crypto";
 
 /** Alpaca documents no symbol limit per request; these keep URLs and answers modest. */
 const STOCK_CHUNK = 100;
@@ -83,6 +108,10 @@ const PAGE_LIMIT = 10_000;
 /** A bars answer longer than this many pages is treated as a failure, not read forever. */
 const MAX_PAGES = 50;
 const MAX_RETRY_AFTER_MS = 5_000;
+
+/** A bid and ask further apart than this, or this far from the last trade, aren't a market. */
+const MAX_BOOK_SPREAD = 0.01;
+const MAX_BOOK_DISTANCE = 0.01;
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -109,6 +138,18 @@ interface Chunk {
   targets: Target[];
 }
 
+/** One bars request: which feed, and where it stops (no `end` = up to the present). */
+interface BarsQuery {
+  feed?: string;
+  end?: number;
+}
+
+/** How a set of bars is labelled once it becomes a series. */
+interface SeriesLabel {
+  source: string;
+  volumeIsMarketWide: boolean;
+}
+
 interface Attempt {
   body?: unknown;
   error?: ProviderError;
@@ -128,6 +169,7 @@ export class AlpacaDataProvider implements MarketDataProvider {
   readonly #backoffMs: number;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #log?: (event: Record<string, unknown>) => void;
+  readonly #volumeSource?: DollarVolumeSource;
 
   constructor(options: AlpacaDataProviderOptions) {
     this.#keyId = options.keyId;
@@ -139,6 +181,7 @@ export class AlpacaDataProvider implements MarketDataProvider {
     this.#backoffMs = atLeast(options.backoffMs, 0, 300);
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.#log = options.log;
+    this.#volumeSource = options.volumeSource;
   }
 
   supports(instrument: Instrument): boolean {
@@ -181,6 +224,29 @@ export class AlpacaDataProvider implements MarketDataProvider {
     return result;
   }
 
+  /**
+   * Market-wide traded value for crypto, from the volume source this provider was given.
+   * Alpaca itself has no such figure: its crypto volume is its own venue's. Stocks aren't
+   * asked about here — their consolidated bars already carry the whole market's volume.
+   */
+  async dollarVolume(instruments: Instrument[], now: number): Promise<Record<string, number>> {
+    const known: Record<string, number> = {};
+    try {
+      const source = this.#volumeSource;
+      const crypto = uniqueInstruments(instruments).filter((instrument) => instrument.venue === "crypto");
+      if (source === undefined || crypto.length === 0) return known;
+      const answer = await source.dollarVolume(crypto, now);
+      for (const instrument of crypto) {
+        const id = instrumentID(instrument);
+        const value = positiveNumber(own(answer, id));
+        if (value !== undefined) known[id] = value;
+      }
+    } catch {
+      // Not knowing is an answer: the instrument is simply left out.
+    }
+    return known;
+  }
+
   /** Sorts instruments into requests. What can't be asked for is failed here, unrequested. */
   #plan(instruments: Instrument[], failures: Record<string, string>): Chunk[] {
     const stocks: Target[] = [];
@@ -188,7 +254,9 @@ export class AlpacaDataProvider implements MarketDataProvider {
     for (const instrument of instruments) {
       const id = instrumentID(instrument);
       if (!this.supports(instrument)) {
-        failures[id] = `${venueDisplayName(instrument.venue) ?? "This market"} isn't supported by this data source`;
+        // A venue this code has never heard of (bad input) has no name to look up.
+        const market = VENUES.includes(instrument.venue) ? venueDisplayName(instrument.venue) : "This market";
+        failures[id] = `${market} isn't supported by this data source`;
         continue;
       }
       const symbol = typeof instrument.symbol === "string" ? instrument.symbol.toUpperCase() : "";
@@ -207,81 +275,141 @@ export class AlpacaDataProvider implements MarketDataProvider {
   }
 
   async #barsChunk(chunk: Chunk, timeframe: Timeframe, count: number, now: number, result: BarsResult): Promise<void> {
+    if (chunk.kind === "stock" && timeframe === "day") {
+      await this.#stockDailyChunk(chunk.targets, count, now, result);
+      return;
+    }
+    // Hourly stock bars come from IEX and crypto bars from Alpaca's own venue: either way
+    // the volume is one venue's.
+    const stock = chunk.kind === "stock";
+    await this.#fillSeries(
+      chunk.targets,
+      chunk.kind,
+      timeframe,
+      count,
+      now,
+      stock ? { feed: IEX_FEED } : {},
+      { source: stock ? IEX_SOURCE : CRYPTO_SOURCE, volumeIsMarketWide: false },
+      result,
+    );
+  }
+
+  /**
+   * Daily stock bars: the consolidated tape where the plan and the symbol allow it, IEX
+   * where they don't. The switch to IEX is made for exactly two reasons — "not on this
+   * plan" (HTTP 403/422) and "no bars for this symbol". An outage is not one of them: a
+   * consolidated request that times out or returns a 5xx fails its instruments.
+   */
+  async #stockDailyChunk(targets: Target[], count: number, now: number, result: BarsResult): Promise<void> {
+    let unanswered = targets;
     try {
-      const stock = chunk.kind === "stock";
-      const symbols = requestSymbols(chunk);
-      const raw = new Map<string, Bar[]>(symbols.map((symbol) => [symbol, []]));
-
-      const query: [string, string][] = [
-        ["symbols", symbols.join(",")],
-        ["timeframe", timeframe === "day" ? "1Day" : "1Hour"],
-        ["start", rfc3339(windowStart(chunk.kind, timeframe, count, now))],
-        ["limit", String(PAGE_LIMIT)],
-      ];
-      // Split- and dividend-adjusted, or a split draws as a crash. Crypto has neither option.
-      if (stock) query.push(["adjustment", "all"], ["feed", STOCK_FEED]);
-      query.push(["sort", "asc"]);
-      // No `end`: the answer runs to the present and may end with a bar that is still
-      // forming. It is passed on untouched — deciding what is complete is the engine's job.
-
-      // Every page must arrive before any of it is used. Pages are sorted by symbol and
-      // then by time, so stopping early would leave a symbol's history ending in the
-      // past — an old price dressed up as the latest.
-      let pageToken: string | undefined;
-      for (let page = 1; ; page++) {
-        if (page > MAX_PAGES) throw new ProviderError("Alpaca sent more price history than could be read");
-        const body = await this.#get(
-          stock ? STOCK_BARS : CRYPTO_BARS,
-          pageToken === undefined ? query : [...query, ["page_token", pageToken]],
-          symbols.length,
-        );
-        if (!isRecord(body)) throw new ProviderError("Alpaca returned an unreadable response");
-        const bySymbol = body.bars;
-        if (bySymbol !== undefined && bySymbol !== null) { // null is how Alpaca says "no bars"
-          if (!isRecord(bySymbol)) throw new ProviderError("Alpaca returned an unreadable response");
-          for (const symbol of symbols) {
-            const list = own(bySymbol, symbol);
-            if (!Array.isArray(list)) continue;
-            const bars = raw.get(symbol)!;
-            for (const item of list) {
-              const bar = parseBar(item);
-              if (bar !== undefined) bars.push(bar);
-            }
-          }
-        }
-        const next = body.next_page_token;
-        if (typeof next !== "string" || next === "") break;
-        if (next === pageToken) throw new ProviderError("Alpaca returned an unreadable response");
-        pageToken = next;
-      }
-
-      const provenance = provenanceFor(chunk.kind);
-      for (const target of chunk.targets) {
-        const series = makeBarSeries(target.instrument, timeframe, raw.get(target.symbol) ?? [], provenance, now);
-        if (series.bars.length === 0) {
-          result.failures[target.id] = `Alpaca has no price history for ${target.instrument.symbol}`;
-        } else {
-          result.series[target.id] = lastBars(series, count);
-        }
+      const bars = await this.#pagedBars("stock", symbolsOf(targets), "day", count, now, {
+        feed: CONSOLIDATED_FEED,
+        end: now - CONSOLIDATED_DELAY_MS,
+      });
+      unanswered = [];
+      for (const target of targets) {
+        const answered = bars.get(target.symbol) ?? [];
+        if (answered.length === 0) unanswered.push(target);
+        else record(target, answered, "day", count, now, { source: CONSOLIDATED_SOURCE, volumeIsMarketWide: true }, result);
       }
     } catch (error) {
-      for (const target of chunk.targets) {
+      const notOnThisPlan = error instanceof ProviderError && (error.status === 403 || error.status === 422);
+      if (!notOnThisPlan) {
+        for (const target of targets) result.failures[target.id] = failureReason(error);
+        return;
+      }
+    }
+    if (unanswered.length === 0) return;
+    // One more request, for just the symbols the consolidated tape didn't answer for.
+    await this.#fillSeries(unanswered, "stock", "day", count, now, { feed: IEX_FEED }, { source: IEX_SOURCE, volumeIsMarketWide: false }, result);
+  }
+
+  /** One paged bars request turned into series, or the same failure for all of its targets. */
+  async #fillSeries(
+    targets: Target[],
+    kind: Kind,
+    timeframe: Timeframe,
+    count: number,
+    now: number,
+    query: BarsQuery,
+    label: SeriesLabel,
+    result: BarsResult,
+  ): Promise<void> {
+    try {
+      const bars = await this.#pagedBars(kind, symbolsOf(targets), timeframe, count, now, query);
+      for (const target of targets) record(target, bars.get(target.symbol) ?? [], timeframe, count, now, label, result);
+    } catch (error) {
+      for (const target of targets) {
         delete result.series[target.id];
         result.failures[target.id] = failureReason(error);
       }
     }
   }
 
+  /**
+   * Every bar Alpaca has for these symbols in the window, by symbol, exactly as sent
+   * (unreadable times aside). Throws a ProviderError unless every page arrived.
+   */
+  async #pagedBars(kind: Kind, symbols: string[], timeframe: Timeframe, count: number, now: number, options: BarsQuery): Promise<Map<string, Bar[]>> {
+    const bars = new Map<string, Bar[]>(symbols.map((symbol) => [symbol, []]));
+    const query: [string, string][] = [
+      ["symbols", symbols.join(",")],
+      ["timeframe", timeframe === "day" ? "1Day" : "1Hour"],
+      ["start", rfc3339(windowStart(kind, timeframe, count, now))],
+    ];
+    // Without an `end` the answer runs to the present and may finish with a bar that is
+    // still forming. It is passed on untouched — deciding what is complete is the engine's job.
+    if (options.end !== undefined) query.push(["end", rfc3339(options.end)]);
+    query.push(["limit", String(PAGE_LIMIT)]);
+    // Split- and dividend-adjusted, or a split draws as a crash. Crypto has neither option.
+    if (kind === "stock") query.push(["adjustment", "all"]);
+    if (options.feed !== undefined) query.push(["feed", options.feed]);
+    query.push(["sort", "asc"]);
+
+    // Every page must arrive before any of it is used. Pages are sorted by symbol and
+    // then by time, so stopping early would leave a symbol's history ending in the
+    // past — an old price dressed up as the latest.
+    let pageToken: string | undefined;
+    for (let page = 1; ; page++) {
+      if (page > MAX_PAGES) throw new ProviderError("Alpaca sent more price history than could be read");
+      const body = await this.#get(
+        kind === "stock" ? STOCK_BARS : CRYPTO_BARS,
+        pageToken === undefined ? query : [...query, ["page_token", pageToken]],
+        symbols.length,
+      );
+      if (!isRecord(body)) throw new ProviderError("Alpaca returned an unreadable response");
+      const bySymbol = body.bars;
+      if (bySymbol !== undefined && bySymbol !== null) { // null is how Alpaca says "no bars"
+        if (!isRecord(bySymbol)) throw new ProviderError("Alpaca returned an unreadable response");
+        for (const symbol of symbols) {
+          const list = own(bySymbol, symbol);
+          if (!Array.isArray(list)) continue;
+          const collected = bars.get(symbol)!;
+          for (const item of list) {
+            const bar = parseBar(item);
+            if (bar !== undefined) collected.push(bar);
+          }
+        }
+      }
+      const next = body.next_page_token;
+      if (typeof next !== "string" || next === "") break;
+      if (next === pageToken) throw new ProviderError("Alpaca returned an unreadable response");
+      pageToken = next;
+    }
+    return bars;
+  }
+
   async #quotesChunk(chunk: Chunk, result: QuotesResult): Promise<void> {
     try {
       const stock = chunk.kind === "stock";
-      const symbols = requestSymbols(chunk);
+      const symbols = symbolsOf(chunk.targets);
       const query: [string, string][] = [["symbols", symbols.join(",")]];
-      if (stock) query.push(["feed", STOCK_FEED]);
+      if (stock) query.push(["feed", IEX_FEED]);
       const body = await this.#get(stock ? STOCK_SNAPSHOTS : CRYPTO_SNAPSHOTS, query, symbols.length);
       if (!isRecord(body)) throw new ProviderError("Alpaca returned an unreadable response");
 
-      const provenance = provenanceFor(chunk.kind);
+      const provenance = marketProvenance(stock ? IEX_SOURCE : CRYPTO_SOURCE);
       for (const target of chunk.targets) {
         // Stocks are keyed at the top level and crypto under "snapshots"; either is read.
         const snapshot = own(body, target.symbol) ?? own(body.snapshots, target.symbol);
@@ -397,12 +525,21 @@ function atLeast(value: number | undefined, minimum: number, fallback: number): 
   return typeof value === "number" && Number.isFinite(value) && value >= minimum ? value : fallback;
 }
 
-function requestSymbols(chunk: Chunk): string[] {
-  return [...new Set(chunk.targets.map((target) => target.symbol))];
+function symbolsOf(targets: Target[]): string[] {
+  return [...new Set(targets.map((target) => target.symbol))];
 }
 
-function provenanceFor(kind: Kind): DataProvenance {
-  return marketProvenance(kind === "stock" ? STOCK_SOURCE : CRYPTO_SOURCE);
+/**
+ * Turns one instrument's bars into its series (the last `count` valid bars), or into a
+ * failure when none of them is usable.
+ */
+function record(target: Target, bars: Bar[], timeframe: Timeframe, count: number, now: number, label: SeriesLabel, result: BarsResult): void {
+  const series = makeBarSeries(target.instrument, timeframe, bars, marketProvenance(label.source), now, label.volumeIsMarketWide);
+  if (series.bars.length === 0) {
+    result.failures[target.id] = `Alpaca has no price history for ${target.instrument.symbol}`;
+  } else {
+    result.series[target.id] = lastBars(series, count);
+  }
 }
 
 /**
@@ -450,36 +587,39 @@ function parseBar(raw: unknown): Bar | undefined {
 
 /**
  * A quote from one snapshot, or undefined when the snapshot holds no usable last trade.
- * The quote's time is when the venue printed that trade, not when it was fetched.
+ *
+ * The bid and ask are kept only when they make a believable market. IEX is one exchange,
+ * and outside busy hours its book can show a zero ask or a bid far from the last trade.
+ * Those are dropped — both sides together — and the engine then says the spread couldn't
+ * be measured instead of trusting a wrong one.
+ *
+ * The time is the venue's own: when the trade printed, or when the book was last updated
+ * if that book is the one being kept and it is newer. It is never the fetch time.
+ *
+ * `dayVolume` is never set: a snapshot's daily volume is one venue's, not the market's.
  */
 function parseQuote(snapshot: unknown, id: string, provenance: DataProvenance): Quote | undefined {
   if (!isRecord(snapshot)) return undefined;
   const trade = snapshot.latestTrade;
   if (!isRecord(trade)) return undefined;
   const last = positiveNumber(trade.p);
-  const time = parseVenueTime(trade.t);
-  if (last === undefined || time === undefined) return undefined;
+  const tradeTime = parseVenueTime(trade.t);
+  if (last === undefined || tradeTime === undefined) return undefined;
 
-  const quote: Quote = { instrumentID: id, last, time, provenance };
+  const quote: Quote = { instrumentID: id, last, time: tradeTime, provenance };
 
-  // IEX often reports a missing side as 0. That is "no bid", not a price of zero.
   const book = snapshot.latestQuote;
   if (isRecord(book)) {
-    const bid = positiveNumber(book.bp);
-    const ask = positiveNumber(book.ap);
-    if (bid !== undefined) quote.bid = bid;
-    if (ask !== undefined) quote.ask = ask;
-  }
-
-  // Volume counts only when the daily bar is the day the last trade belongs to: it must
-  // have started within the 24 hours before that trade. Before the open the snapshot
-  // still carries yesterday's bar, and yesterday's volume isn't today's.
-  const day = snapshot.dailyBar;
-  if (isRecord(day)) {
-    const volume = positiveNumber(day.v);
-    const dayStart = parseVenueTime(day.t);
-    if (volume !== undefined && dayStart !== undefined && dayStart <= time && time - dayStart < DAY_MS) {
-      quote.dayVolume = volume;
+    const bid = finiteNumber(book.bp);
+    const ask = finiteNumber(book.ap);
+    if (bid !== undefined && ask !== undefined && bid > 0 && ask >= bid) {
+      const mid = (ask + bid) / 2;
+      if ((ask - bid) / mid <= MAX_BOOK_SPREAD && Math.abs(mid / last - 1) <= MAX_BOOK_DISTANCE) {
+        quote.bid = bid;
+        quote.ask = ask;
+        const bookTime = parseVenueTime(book.t);
+        if (bookTime !== undefined) quote.time = Math.max(tradeTime, bookTime);
+      }
     }
   }
   return quote;

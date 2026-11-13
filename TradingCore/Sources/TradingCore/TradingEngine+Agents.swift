@@ -45,7 +45,8 @@ public extension TradingEngine {
         var usable = snapshot
         usable.series = snapshot.series.filter { isUsable($0.value.provenance) }
         // An instrument whose liquidity can't be measured this time loses its old figure too.
-        for instrumentID in usable.series.keys { state.stats[instrumentID] = nil }
+        // (Only daily bars measure liquidity, so an hourly series leaves the last daily figure alone.)
+        for (instrumentID, series) in usable.series where series.timeframe == .day { state.stats[instrumentID] = nil }
         ingest(quotes: Array(snapshot.quotes.values), stats: usable.stats(calendar: calendar, now: now), now: now)
 
         let spec = agent.spec
@@ -243,7 +244,8 @@ public extension TradingEngine {
             }
             let reserved = state.orders.filter { $0.ledgerID == ledger.id && $0.status.isOpen && $0.side == .buy }
                 .reduce(0.0) { $0 + $1.remainingQuantity * ($1.limitPrice ?? $1.referencePrice) }
-            let feeRate = instrument.assetClass == .crypto ? state.paperConfig.cryptoFeeBps / 10_000 : state.paperConfig.equityFeeBps / 10_000
+            let feeRate = (instrument.assetClass == .crypto ? state.paperConfig.cryptoFeeBps : state.paperConfig.equityFeeBps) / 10_000
+                + PaperBroker.taxBps(for: instrument, side: .buy) / 10_000
             let flatFee = instrument.assetClass == .crypto ? 0 : state.paperConfig.equityFeePerOrder
             let spendable = max((ledger.cash - reserved - flatFee) / (1 + feeRate), 0)
             if notional > spendable {
@@ -359,7 +361,7 @@ public extension TradingEngine {
             state.proposals[index].status = .submitted
             let detail: String
             if order.status == .filled, let fill = fills.last {
-                detail = "Filled at \(NumberText.money(fill.price))."
+                detail = "Filled at \(NumberText.money(fill.price, currency: proposal.instrument.currency))."
             } else if order.status == .partiallyFilled {
                 detail = "Partly filled; the rest is still working."
             } else {

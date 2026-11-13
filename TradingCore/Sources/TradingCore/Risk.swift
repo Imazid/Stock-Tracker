@@ -713,7 +713,8 @@ public enum RiskEngine {
 
     // MARK: Text
 
-    static func percentText(_ x: Double) -> String { String(format: "%.1f%%", x) }
+    /// "0.0%", never "-0.0%".
+    static func percentText(_ x: Double) -> String { String(format: "%.1f%%", x == 0 ? 0 : x) }
 
     static func quantityText(_ x: Double, _ rules: InstrumentRules) -> String {
         let text = Rounding.string(x, increment: rules.quantityIncrement)
