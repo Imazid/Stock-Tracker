@@ -318,6 +318,7 @@ struct PrivateUpdatesView: View {
     @EnvironmentObject private var store: PrivateMarketsStore
     @State private var updates: [PrivateCompanyUpdate] = []
     @State private var digests: [PrivateSavedItem] = []
+    @State private var digestOwner: UUID?
     @State private var error: String?
     @State private var loading = false
     @State private var savingMonitor = false
@@ -373,15 +374,16 @@ struct PrivateUpdatesView: View {
                     }
                 }
             }
-            if store.state.monitorDigest == true, auth.userId != nil {
+            if store.state.monitorDigest == true, let owner = auth.userId {
                 Section("AI monitoring summaries") {
-                    if digests.isEmpty && !loading && !savingMonitor {
+                    let availableDigests = digestOwner == owner ? digests : []
+                    if availableDigests.isEmpty && !loading && !savingMonitor {
                         Text("A summary appears after the next scheduled run with new announcements.")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(digests) { item in
+                    ForEach(availableDigests) { item in
                         NavigationLink {
-                            PrivateSavedReportView(item: item)
+                            PrivateSavedReportView(id: item.id, owner: owner)
                         } label: {
                             VStack(alignment: .leading) {
                                 Text(item.title)
@@ -435,6 +437,7 @@ struct PrivateUpdatesView: View {
         .task(id: auth.userId) {
             updates = []
             digests = []
+            digestOwner = nil
             await load()
         }
         .task(id: store.state.monitorEnabled) {
@@ -467,6 +470,7 @@ struct PrivateUpdatesView: View {
         let list: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("monitor_digests", expectedUserID: owner)
         guard auth.userId == owner, store.state.monitorDigest == true else { return }
         digests = list.items
+        digestOwner = owner
     }
 
     private func changeMonitor(enabled: Bool, eligible: Bool, digest: Bool? = nil) {

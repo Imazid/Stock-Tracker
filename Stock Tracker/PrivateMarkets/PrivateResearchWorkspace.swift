@@ -11,6 +11,10 @@ struct PrivateResearchWorkspace: View {
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var documents: [PrivateSavedItem] = []
     @State private var reports: [PrivateSavedItem] = []
+    @State private var runs: [PrivateResearchRun] = []
+    @State private var workspaceOwner: UUID?
+    @State private var loadID = UUID()
+    @State private var runRequestID = UUID()
     @State private var selectedDeals: Set<UUID> = []
     @State private var selectedDocuments: Set<UUID> = []
     @State private var selectedAnnouncements: Set<UUID> = []
@@ -32,7 +36,7 @@ struct PrivateResearchWorkspace: View {
                     Text("Sign in from Account to run and save AI research.")
                     Text("The scenario calculator works on this device.")
                 }
-            } else {
+            } else if let owner = auth.userId, workspaceOwner == owner {
                 Section("Research question") {
                     TextField("Ask about a company, valuation or risk", text: $question, axis: .vertical)
                         .lineLimit(2...5)
@@ -75,13 +79,32 @@ struct PrivateResearchWorkspace: View {
                     Button("Run Investment Committee") { run("committee") }.disabled(!canRun)
                     if busy { SkeletonBlock(height: 12).privateLoadingLabel("Analyzing sources") }
                     if let result {
-                        NavigationLink("Open latest report") { PrivateReportView(report: result) }
+                        NavigationLink("Open latest report") { PrivateSavedReportView(id: result.id, owner: owner, cachedReport: result) }
                     }
+                }
+                if !runs.isEmpty {
+                    Section("Recent research runs") {
+                        ForEach(runs) { run in
+                            VStack(alignment: .leading, spacing: 5) {
+                                if run.status == "running" {
+                                    ProgressView("Research in progress")
+                                        .accessibilityIdentifier("private.research.run.running")
+                                } else {
+                                    Text(run.failureMessage ?? "The research run could not finish.")
+                                        .accessibilityIdentifier("private.research.run.failed")
+                                }
+                                Text(run.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } else if loading {
+                    Section { ProgressView("Checking recent research") }
                 }
                 Section("Saved reports") {
                     if reports.isEmpty && !loading { Text("No saved reports").foregroundStyle(.secondary) }
                     ForEach(reports) { item in
-                        NavigationLink(item.title) { PrivateSavedReportView(item: item) }
+                        NavigationLink(item.title) { PrivateSavedReportView(id: item.id, owner: owner) }
                             .swipeActions {
                                 Button("Delete", role: .destructive) {
                                     guard let owner = auth.userId else { return }
@@ -91,8 +114,9 @@ struct PrivateResearchWorkspace: View {
                                             guard auth.userId == owner else { return }
                                             reports.removeAll { $0.id == item.id }
                                             if result?.id == item.id { result = nil }
+                                            await load(quietly: true)
                                         } catch is CancellationError {
-                                        } catch { self.error = error.localizedDescription }
+                                        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
                                     }
                                 }
                             }
@@ -104,13 +128,39 @@ struct PrivateResearchWorkspace: View {
         .onDisappear { runTask?.cancel() }
         .navigationTitle("AI Investment Research")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            if let selectedDealID, selectedDeals.isEmpty { selectedDeals.insert(selectedDealID) }
-            if !announcements.isEmpty, question.isEmpty {
-                selectedAnnouncements = Set(announcements.prefix(3).map(\.id))
-                question = "Summarise these company announcements. Explain what changed and what the sources leave unanswered."
+        .task(id: auth.userId) {
+            if workspaceOwner != auth.userId {
+                runTask?.cancel()
+                loadID = UUID()
+                runRequestID = UUID()
+                documents = []
+                reports = []
+                runs = []
+                selectedDeals = []
+                selectedDocuments = []
+                selectedAnnouncements = []
+                question = ""
+                consent = false
+                result = nil
+                busy = false
+                loading = false
+                error = nil
+                if let selectedDealID { selectedDeals.insert(selectedDealID) }
+                if !announcements.isEmpty {
+                    selectedAnnouncements = Set(announcements.prefix(3).map(\.id))
+                    question = "Summarise these company announcements. Explain what changed and what the sources leave unanswered."
+                }
+                workspaceOwner = auth.userId
             }
             await load()
+        }
+        .task(id: runs.filter { $0.status == "running" }.map(\.id)) {
+            guard let owner = auth.userId, workspaceOwner == owner else { return }
+            while !Task.isCancelled, auth.userId == owner, runs.contains(where: { $0.status == "running" }) {
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+                await load(quietly: true)
+            }
         }
         .refreshable { await load() }
     }
@@ -132,20 +182,38 @@ struct PrivateResearchWorkspace: View {
         })
     }
 
-    private func load() async {
-        guard let owner = auth.userId else { return }
-        loading = true
-        defer { loading = false }
+    private func load(quietly: Bool = false) async {
+        guard let owner = auth.userId, owner == workspaceOwner, !quietly || !loading else { return }
+        let requestID = UUID()
+        loadID = requestID
+        if !quietly {
+            loading = true
+            error = nil
+        }
+        defer { if loadID == requestID { loading = false } }
         do {
-            let documentList: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("documents", expectedUserID: owner)
+            let runList: [PrivateResearchRun]
+            do {
+                let response: PrivateMarketsAPI.ResearchRuns = try await PrivateMarketsAPI.request("research_runs", expectedUserID: owner)
+                runList = response.runs
+            } catch let error as SecureBackend.FunctionError where error.code == "INVALID_ACTION" {
+                // A backend still rolling out this action can continue to serve saved research.
+                runList = []
+            }
+            // An omitted completed run already has a saved report in the same database transaction.
             let reportList: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("reports", expectedUserID: owner)
+            let documentList: PrivateMarketsAPI.Items? = quietly ? nil :
+                try await PrivateMarketsAPI.request("documents", expectedUserID: owner)
             try Task.checkCancellation()
-            guard auth.userId == owner else { return }
-            documents = documentList.items
+            guard auth.userId == owner, loadID == requestID else { return }
             reports = reportList.items
-            selectedDocuments.formIntersection(documents.map(\.id))
+            runs = runList
+            if let documentList {
+                documents = documentList.items
+                selectedDocuments.formIntersection(documents.map(\.id))
+            }
         } catch is CancellationError {
-        } catch { self.error = error.localizedDescription }
+        } catch { if auth.userId == owner, loadID == requestID { self.error = error.localizedDescription } }
     }
 
     private func run(_ mode: String) {
@@ -155,10 +223,12 @@ struct PrivateResearchWorkspace: View {
             "opportunity_ids": selectedDeals.map(\.uuidString), "ai_consent": consent,
             "announcement_ids": selectedAnnouncements.map(\.uuidString)
         ]
+        let requestID = UUID()
+        runRequestID = requestID
         error = nil
         busy = true
         runTask = Task {
-            defer { busy = false }
+            defer { if runRequestID == requestID { busy = false } }
             do {
                 let report: PrivateResearchReport
                 if mode == "committee" {
@@ -167,11 +237,17 @@ struct PrivateResearchWorkspace: View {
                     report = try await PrivateMarketsAPI.request("research", fields, expectedUserID: owner)
                 }
                 try Task.checkCancellation()
-                guard auth.userId == owner else { return }
+                guard auth.userId == owner, runRequestID == requestID else { return }
                 result = report
                 await load()
             } catch is CancellationError {
-            } catch { self.error = error.localizedDescription }
+            } catch {
+                if auth.userId == owner, runRequestID == requestID {
+                    let message = error.localizedDescription
+                    await load(quietly: true)
+                    if auth.userId == owner, runRequestID == requestID { self.error = message }
+                }
+            }
         }
     }
 
@@ -198,14 +274,17 @@ struct PrivateResearchWorkspace: View {
 }
 
 struct PrivateSavedReportView: View {
-    let item: PrivateSavedItem
+    let id: UUID
+    let owner: UUID
+    var cachedReport: PrivateResearchReport?
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var report: PrivateResearchReport?
     @State private var error: String?
 
     var body: some View {
         Group {
-            if let report { PrivateReportView(report: report) }
+            if auth.userId != owner { ContentUnavailableView("Report unavailable", systemImage: "doc.text") }
+            else if let report { PrivateReportView(report: report) }
             else if let error { ContentUnavailableView("Report unavailable", systemImage: "exclamationmark.circle", description: Text(error)) }
             else {
                 ScrollView {
@@ -218,16 +297,22 @@ struct PrivateSavedReportView: View {
                 }
             }
         }
-        .task {
-            guard let owner = auth.userId else { return }
+        .task(id: auth.userId) {
+            report = nil
+            error = nil
+            guard auth.userId == owner else { return }
+            if let cachedReport {
+                report = cachedReport
+                return
+            }
             do {
                 let response: PrivateResearchReport = try await PrivateMarketsAPI.request(
-                    "report", ["id": item.id.uuidString], expectedUserID: owner)
+                    "report", ["id": id.uuidString], expectedUserID: owner)
                 try Task.checkCancellation()
                 if auth.userId == owner { report = response }
             } catch is CancellationError {
             }
-            catch { self.error = error.localizedDescription }
+            catch { if auth.userId == owner { self.error = error.localizedDescription } }
         }
     }
 }
@@ -348,11 +433,14 @@ private struct PrivateScenarioCalculator: View {
 }
 
 struct PrivateDealRoom: View {
+    private struct Draft: Identifiable { let id: UUID }
+
     @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
     @State private var items: [PrivateSavedItem] = []
+    @State private var itemsOwner: UUID?
     @State private var loading = false
-    @State private var adding = false
+    @State private var draft: Draft?
     @State private var error: String?
 
     var body: some View {
@@ -360,17 +448,18 @@ struct PrivateDealRoom: View {
             Section("Your authorized excerpts") {
                 if auth.userId == nil {
                     Text("Sign in from Account to store private research excerpts.")
-                } else {
+                } else if let owner = auth.userId {
+                    let availableItems = itemsOwner == owner ? items : []
                     if loading {
                         VStack(spacing: 0) {
                             ForEach(0..<3) { _ in SearchRowSkeleton() }
                         }
                         .privateLoadingLabel("Loading documents")
                     }
-                    if items.isEmpty && !loading { Text("No excerpts saved").foregroundStyle(.secondary) }
-                    ForEach(items) { item in
+                    if availableItems.isEmpty && !loading { Text("No excerpts saved").foregroundStyle(.secondary) }
+                    ForEach(availableItems) { item in
                         NavigationLink {
-                            PrivateExcerptView(item: item)
+                            PrivateExcerptView(item: item, owner: owner)
                         } label: {
                             LabeledContent(item.title, value: item.createdAt.formatted(date: .abbreviated, time: .omitted))
                         }
@@ -384,12 +473,12 @@ struct PrivateDealRoom: View {
                                             items.removeAll { $0.id == item.id }
                                             try store.removeOwnershipEvidence(item.id, owner: owner)
                                         } catch is CancellationError {
-                                        } catch { self.error = error.localizedDescription }
+                                        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
                                     }
                                 }
                             }
                     }
-                    Button("Add research excerpt") { adding = true }
+                    Button("Add research excerpt") { draft = Draft(id: owner) }
                 }
                 if let error { Text(error).foregroundStyle(Color.orange) }
             }
@@ -403,8 +492,17 @@ struct PrivateDealRoom: View {
         }
         .navigationTitle("Deal Room")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $adding, onDismiss: { Task { await load() } }) { PrivateExcerptEditor() }
-        .task { await load() }
+        .sheet(item: $draft, onDismiss: { Task { await load() } }) { draft in
+            PrivateExcerptEditor(owner: draft.id)
+        }
+        .task(id: auth.userId) {
+            items = []
+            itemsOwner = nil
+            loading = false
+            error = nil
+            draft = nil
+            await load()
+        }
         .refreshable { await load() }
     }
 
@@ -412,26 +510,30 @@ struct PrivateDealRoom: View {
         guard let owner = auth.userId else { return }
         loading = true
         error = nil
-        defer { loading = false }
+        defer { if auth.userId == owner { loading = false } }
         do {
             let response: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("documents", expectedUserID: owner)
             try Task.checkCancellation()
             guard auth.userId == owner else { return }
             items = response.items
+            itemsOwner = owner
         } catch is CancellationError {
-        } catch { self.error = error.localizedDescription }
+        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
     }
 }
 
 private struct PrivateExcerptView: View {
     let item: PrivateSavedItem
+    let owner: UUID
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var excerpt: String?
     @State private var error: String?
 
     var body: some View {
         Group {
-            if let excerpt {
+            if auth.userId != owner {
+                ContentUnavailableView("Excerpt unavailable", systemImage: "doc.text")
+            } else if let excerpt {
                 ScrollView {
                     Text(excerpt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding()
                 }
@@ -441,10 +543,12 @@ private struct PrivateExcerptView: View {
                 ProgressView("Opening excerpt")
             }
         }
-        .navigationTitle(item.title)
+        .navigationTitle(auth.userId == owner ? item.title : "Deal Room")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            guard let owner = auth.userId else { return }
+        .task(id: auth.userId) {
+            excerpt = nil
+            error = nil
+            guard auth.userId == owner else { return }
             struct Response: Decodable { let excerpt: String }
             do {
                 let response: Response = try await PrivateMarketsAPI.request("document", ["id": item.id.uuidString], expectedUserID: owner)
@@ -453,7 +557,7 @@ private struct PrivateExcerptView: View {
                 excerpt = response.excerpt
             } catch is CancellationError {
             } catch {
-                self.error = error.localizedDescription
+                if auth.userId == owner { self.error = error.localizedDescription }
             }
         }
     }
@@ -569,6 +673,7 @@ private struct PrivateOwnershipReviewView: View {
 }
 
 private struct PrivateExcerptEditor: View {
+    let owner: UUID
     @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
@@ -583,20 +688,22 @@ private struct PrivateExcerptEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Document and page or section", text: $title)
-                TextField("Text excerpt", text: $excerpt, axis: .vertical).lineLimit(6...12)
-                Text("\(excerpt.utf16.count) / 4,500 characters").font(.footnote).foregroundStyle(.secondary)
-                Button("Extract text from PDF or text file") { importing = true }.disabled(extraction != nil || saving)
-                if extraction != nil { ProgressView("Extracting text on this device") }
-                if usedOCR {
-                    Text("Review the recognized text against the scan before saving, especially dates and amounts.")
+                if auth.userId == owner {
+                    TextField("Document and page or section", text: $title)
+                    TextField("Text excerpt", text: $excerpt, axis: .vertical).lineLimit(6...12)
+                    Text("\(excerpt.utf16.count) / 4,500 characters").font(.footnote).foregroundStyle(.secondary)
+                    Button("Extract text from PDF or text file") { importing = true }.disabled(extraction != nil || saving)
+                    if extraction != nil { ProgressView("Extracting text on this device") }
+                    if usedOCR {
+                        Text("Review the recognized text against the scan before saving, especially dates and amounts.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Toggle("I have permission to store this excerpt", isOn: $authorized)
+                    Text("Only the selected text is saved. Remove personal identifiers and confidential material outside your permission.")
                         .font(.footnote).foregroundStyle(.secondary)
+                    if saving { ProgressView("Encrypting and saving") }
+                    if let error { Text(error).foregroundStyle(Color.orange) }
                 }
-                Toggle("I have permission to store this excerpt", isOn: $authorized)
-                Text("Only the selected text is saved. Remove personal identifiers and confidential material outside your permission.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                if saving { ProgressView("Encrypting and saving") }
-                if let error { Text(error).foregroundStyle(Color.orange) }
             }
             .navigationTitle("Research Excerpt")
             .navigationBarTitleDisplayMode(.inline)
@@ -604,7 +711,7 @@ private struct PrivateExcerptEditor: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save", action: save)
-                        .disabled(!authorized || saving || extraction != nil || !(40...4_500).contains(excerpt.utf16.count) ||
+                        .disabled(auth.userId != owner || !authorized || saving || extraction != nil || !(40...4_500).contains(excerpt.utf16.count) ||
                                   title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.utf16.count > 160)
                 }
             }
@@ -640,14 +747,14 @@ private struct PrivateExcerptEditor: View {
     }
 
     private func save() {
-        guard let owner = auth.userId else { return }
+        guard auth.userId == owner else { return }
         saving = true
         Task {
             defer { saving = false }
             do {
                 try await PrivateMarketsAPI.send("save_document", ["title": title, "excerpt": excerpt, "authorized": authorized],
                                                  expectedUserID: owner)
-                dismiss()
+                if auth.userId == owner { dismiss() }
             } catch is CancellationError {
             } catch { self.error = error.localizedDescription }
         }

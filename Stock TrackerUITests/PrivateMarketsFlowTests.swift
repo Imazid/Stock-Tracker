@@ -245,6 +245,27 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testResearchWorkspaceReloadsRecentRuns() throws {
+        try launchWithLocalSession("PRIVATE_RESEARCH_TEST_SESSION")
+        openPrivateMarkets()
+        let run = app.descendants(matching: .any)["private.research.run.running"].firstMatch
+        let destination = app.buttons["private.destination.sparkles"]
+        for _ in 0..<3 where !run.exists {
+            if destination.exists { destination.tap() }
+            if app.navigationBars["AI Investment Research"].waitForExistence(timeout: 5) {
+                for _ in 0..<3 where !run.exists { app.swipeUp() }
+                if run.waitForExistence(timeout: 5) { break }
+            }
+        }
+        XCTAssertTrue(run.exists, app.debugDescription)
+        let failure = app.staticTexts.containing(NSPredicate(
+            format: "identifier == %@ AND label == %@", "private.research.run.failed", "The research run timed out."
+        )).firstMatch
+        for _ in 0..<3 where !failure.exists { app.swipeUp() }
+        XCTAssertTrue(failure.exists, app.debugDescription)
+    }
+
+    @MainActor
     func testProviderVerificationIsSeparateFromInvestorDeclaration() throws {
         try launchWithLocalSession("PRIVATE_ELIGIBILITY_TEST_SESSION")
         openPrivateMarkets()

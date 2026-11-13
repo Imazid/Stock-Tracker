@@ -60,6 +60,15 @@ function dealEvidence(deal: CatalogDeal): string {
 const context = (kind: string, userId: string, id: string) => `private_${kind}:${userId}:${id}`;
 const keys = () => parseKeyring(Deno.env.get("CREDENTIAL_KEKS"), Deno.env.get("CREDENTIAL_ACTIVE_KEK"));
 const fail = (status: number, code: string, message: string) => { throw new ResearchError(status, code, message); };
+const researchStatusFields = "id,status,created_at,failure_code,failure_message";
+const researchTimeoutMs = 180_000;
+
+function researchStatus(row: { status: string; created_at: string; failure_code: unknown; failure_message: unknown }) {
+  const expired = row.status === "running" && Date.now() - Date.parse(row.created_at) > researchTimeoutMs;
+  return expired
+    ? { ...row, status: "failed", failure_code: "RESEARCH_TIMED_OUT", failure_message: "The research run timed out." }
+    : row;
+}
 
 function aiDependencies(admin: ReturnType<typeof serviceClient>, documentProvider?: "openai" | "gemini"): AiProxyDeps {
   const openAIKey = Deno.env.get("OPENAI_API_KEY");
@@ -502,13 +511,19 @@ Deno.serve(async (req) => {
       }
       case "research_status": {
         if (typeof body.id !== "string" || !uuid.test(body.id)) return errorResponse(400, "INVALID_REQUEST", "Invalid research run.");
-        const { data, error } = await admin.from("agent_analysis_runs").select("status,created_at,failure_code,failure_message")
+        const { data, error } = await admin.from("agent_analysis_runs").select(researchStatusFields)
           .eq("id", body.id).eq("user_id", userId).maybeSingle();
         if (error) throw error;
         if (!data) return errorResponse(404, "NOT_FOUND", "Research run unavailable.");
-        const expired = data.status === "running" && Date.now() - Date.parse(data.created_at) > 180_000;
-        return jsonResponse(200, { status: expired ? "failed" : data.status,
-          failure_code: data.failure_code, failure_message: data.failure_message });
+        return jsonResponse(200, researchStatus(data));
+      }
+      case "research_runs": {
+        const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const { data, error } = await admin.from("agent_analysis_runs").select(researchStatusFields)
+          .eq("user_id", userId).neq("status", "complete").gte("created_at", since)
+          .order("created_at", { ascending: false }).order("id").limit(20);
+        if (error) throw error;
+        return jsonResponse(200, { runs: data.map(researchStatus) });
       }
       case "research": {
         const { document_ids: ids, opportunity_ids: dealIDs, announcement_ids: announcementIDs = [], question, mode } = body;

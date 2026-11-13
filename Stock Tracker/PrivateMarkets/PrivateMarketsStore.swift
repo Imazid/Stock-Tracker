@@ -99,6 +99,13 @@ struct PrivateSavedItem: Decodable, Identifiable {
     let createdAt: Date
 }
 
+struct PrivateResearchRun: Decodable, Identifiable {
+    let id: UUID
+    let status: String
+    let createdAt: Date
+    let failureMessage: String?
+}
+
 struct PrivateResearchReport: Decodable {
     struct Source: Decodable, Identifiable {
         let id: String
@@ -211,6 +218,7 @@ struct PrivateProviderEligibility: Decodable, Identifiable {
 enum PrivateMarketsAPI {
     struct Catalog: Decodable { let deals: [PrivateDeal] }
     struct Items: Decodable { let items: [PrivateSavedItem] }
+    struct ResearchRuns: Decodable { let runs: [PrivateResearchRun] }
     struct Updates: Decodable { let updates: [PrivateCompanyUpdate] }
     struct MonitorInbox: Decodable { let alerts: [PrivateMarketAlert] }
     struct PushRegistration: Decodable { let registered: Bool }
