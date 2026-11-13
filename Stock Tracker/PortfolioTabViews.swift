@@ -23,6 +23,7 @@ struct PortfolioPerformanceTab: View {
 
     @EnvironmentObject private var marketData: MarketData
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    @EnvironmentObject private var authManager: SupabaseAuthManager
     @Environment(\.theme) private var theme
     @AppStorage("portfolioValueHidden") private var valueHidden = false
     @AppStorage("portfolioPerformanceRange") private var rangeRaw = TimeRange.oneYear.rawValue
@@ -86,6 +87,9 @@ struct PortfolioPerformanceTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
+            if authManager.authState == .signedIn, let userId = authManager.userId {
+                PortfolioPerformanceLedger(userId: userId).id(userId)
+            }
             comparisonCard
             contributionCard
             if !realisedItems.isEmpty { realisedCard }
