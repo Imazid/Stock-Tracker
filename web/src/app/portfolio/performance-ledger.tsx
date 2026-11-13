@@ -12,7 +12,12 @@ import { uuid } from "@/lib/uuid";
 
 type FlowKind = "deposit" | "withdrawal";
 type Flow = { date: string; kind: FlowKind; amount: number };
-type Period = {
+type ReturnMethods = {
+  return_pct: number | null;
+  time_weighted_return_pct: number | null;
+  money_weighted_return_pct: number | null;
+};
+type Period = ReturnMethods & {
   id: string;
   starts_on: string;
   ends_on: string;
@@ -22,9 +27,9 @@ type Period = {
   deposits_usd: number;
   withdrawals_usd: number;
   investment_change_usd: number;
-  return_pct: number | null;
+  transfer_values_usd: Record<string, number>;
 };
-type Summary = Pick<Period, "starts_on" | "ends_on" | "investment_change_usd" | "return_pct"> & { periods: number };
+type Summary = ReturnMethods & Pick<Period, "starts_on" | "ends_on" | "investment_change_usd"> & { periods: number };
 type FlowInput = { id: string; date: string; kind: FlowKind; amount: string };
 
 async function readPeriods(userId: string) {
@@ -32,10 +37,22 @@ async function readPeriods(userId: string) {
   if (!db) throw new Error("Accounts are unavailable.");
   const [periods, summary] = await Promise.all([
     db.from("portfolio_performance_results").select("*").eq("user_id", userId).order("ends_on", { ascending: false }).limit(101),
-    db.from("portfolio_performance_summary").select("starts_on,ends_on,periods,investment_change_usd,return_pct").eq("user_id", userId).maybeSingle(),
+    db.from("portfolio_performance_summary").select("starts_on,ends_on,periods,investment_change_usd,return_pct,time_weighted_return_pct,money_weighted_return_pct").eq("user_id", userId).maybeSingle(),
   ]);
   if (periods.error || summary.error) throw periods.error ?? summary.error;
   return { rows: periods.data as Period[], summary: summary.data as Summary | null };
+}
+
+function displayReturn(value: number | null) {
+  return value === null ? "Unavailable" : percent(value);
+}
+
+function returnMetrics(methods: ReturnMethods) {
+  return [
+    ["Time-weighted return", displayReturn(methods.time_weighted_return_pct)],
+    ["Money-weighted return", displayReturn(methods.money_weighted_return_pct)],
+    ["Modified Dietz return", displayReturn(methods.return_pct)],
+  ];
 }
 
 export function PerformanceLedger({ userId }: { userId: string }) {
@@ -74,13 +91,16 @@ export function PerformanceLedger({ userId }: { userId: string }) {
             actions={<Button onClick={() => void periods.refetch()}>Retry</Button>} />
           : !periods.data.rows.length ? <EmptyState title="No reconciled periods yet" body="Use opening and closing values from your statements, including cash, and record transfers into or out of the portfolio." />
           : <>
-            <p className="text-xs text-text-3">Returns use Modified Dietz with end-of-day cash flows. Compare periods using the same holdings and accounts, valued in USD.</p>
+            <p className="text-xs text-text-3">Time-weighted return uses a valuation after transfers on each transfer date. Money-weighted return uses the size and dates of transfers. All returns cover the displayed period.</p>
             {periods.data.summary && periods.data.summary.periods > 1 && (
               <div className="rounded-lg border border-border bg-surface-2 p-3">
-                <h3 className="font-medium">Latest continuous return</h3>
+                <h3 className="font-medium">Latest continuous returns</h3>
                 <p className="text-xs text-text-3">{periods.data.summary.starts_on} to {periods.data.summary.ends_on} · {periods.data.summary.periods} periods</p>
-                <p className="tabular text-lg font-semibold">{periods.data.summary.return_pct === null ? "Unavailable" : percent(periods.data.summary.return_pct)}</p>
-                <p className="tabular text-sm text-text-2">Investment change {signedMoney(periods.data.summary.investment_change_usd, "USD")}</p>
+                <dl className="mt-2 grid grid-cols-2 gap-2 tabular sm:grid-cols-3">
+                  {[...returnMetrics(periods.data.summary), ["Investment change", signedMoney(periods.data.summary.investment_change_usd, "USD")]].map(([label, value]) => (
+                    <div key={label}><dt className="text-xs text-text-3">{label}</dt><dd>{value}</dd></div>
+                  ))}
+                </dl>
               </div>
             )}
             {periods.data.rows.length > 100 && <p role="status" className="text-xs text-warn">Showing the 100 most recent periods.</p>}
@@ -106,7 +126,7 @@ export function PerformanceLedger({ userId }: { userId: string }) {
                       ["Deposits", money(period.deposits_usd, "USD")],
                       ["Withdrawals", money(period.withdrawals_usd, "USD")],
                       ["Investment change", signedMoney(period.investment_change_usd, "USD")],
-                      ["Period return", period.return_pct === null ? "Unavailable" : percent(period.return_pct)],
+                      ...returnMetrics(period),
                     ].map(([label, value]) => <div key={label}><dt className="text-xs text-text-3">{label}</dt><dd>{value}</dd></div>)}
                   </dl>
                 </li>
@@ -123,6 +143,9 @@ function PeriodEditor({ userId, period, onClose, onSave }: { userId: string; per
   const [start, setStart] = useState(period?.starts_on ?? "");
   const [end, setEnd] = useState(period?.ends_on ?? "");
   const [flows, setFlows] = useState<FlowInput[]>(() => period?.external_flows.map((flow) => ({ ...flow, id: uuid(), amount: String(flow.amount) })) ?? []);
+  const [transferValues, setTransferValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(period?.transfer_values_usd ?? {}).map(([date, value]) => [date, String(value)])));
+  const valuationDates = [...new Set(flows.map((flow) => flow.date).filter((date) => date > start && date < end))].sort();
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [id] = useState(() => period?.id ?? uuid());
@@ -147,6 +170,8 @@ function PeriodEditor({ userId, period, onClose, onSave }: { userId: string; per
         id, user_id: userId, starts_on: start, ends_on: end,
         opening_value_usd: Number(form.get("opening")), closing_value_usd: Number(form.get("closing")),
         external_flows: flows.map(({ date, kind, amount }) => ({ date, kind, amount: Number(amount) })),
+        transfer_values_usd: Object.fromEntries(valuationDates.filter((date) => transferValues[date]?.trim())
+          .map((date) => [date, Number(transferValues[date])])),
       }, { onConflict: "id" });
       if (error) {
         setError(error.code === "23P01" ? "This period overlaps an existing period. Edit that period or choose different dates." : "Couldn’t save the period. Check the values and try again.");
@@ -179,6 +204,16 @@ function PeriodEditor({ userId, period, onClose, onSave }: { userId: string; per
           <Button size="sm" variant="ghost" onClick={() => setFlows((current) => current.filter((item) => item.id !== flow.id))} aria-label={`Remove transfer ${index + 1}`}>Remove</Button>
         </fieldset>
       ))}
+      {valuationDates.length > 0 && <fieldset className="grid gap-3 rounded-md border border-border p-2 sm:grid-cols-2">
+        <legend className="px-1 text-sm font-medium">Transfer-day valuations</legend>
+        <p className="text-xs text-text-2 sm:col-span-2">For time-weighted return, enter the total value including cash after all transfers on each date. The closing value covers transfers on the closing date.</p>
+        {valuationDates.map((date) => (
+          <Field key={date} label={`Value after transfers on ${date} (USD)`} htmlFor={`transfer-value-${date}`}>
+            <Input id={`transfer-value-${date}`} type="number" min="0" max="9999999999999.99" step="0.01"
+              value={transferValues[date] ?? ""} onChange={(event) => setTransferValues((current) => ({ ...current, [date]: event.target.value }))} />
+          </Field>
+        ))}
+      </fieldset>}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={saving || flows.length >= 366} onClick={() => setFlows((current) => [...current, { id: uuid(), date: "", kind: "deposit", amount: "" }])}>Add transfer</Button>
         <Button size="sm" disabled={saving} onClick={onClose}>Cancel</Button>
