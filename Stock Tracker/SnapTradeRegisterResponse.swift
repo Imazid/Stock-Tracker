@@ -100,142 +100,30 @@ struct SnapTradeAmount: Codable {
 
 // MARK: - Holdings Models
 
-/// Response wrapper for account holdings
-struct SnapTradeAccountHoldingsResponse: Codable {
-    let account: SnapTradeAccountSimple?
-    let positions: [SnapTradePosition]?
-    let totalValue: SnapTradeAmount?
-    
-    enum CodingKeys: String, CodingKey {
-        case account
-        case positions
-        case totalValue = "total_value"
-    }
+struct SnapTradePositionsResponse: Decodable {
+    let results: [SnapTradePosition]
 }
 
-struct SnapTradeAccountSimple: Codable {
-    let id: String
-    let number: String
-    let name: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case id
-        case number
-        case name
+struct SnapTradePosition: Decodable {
+    struct Instrument: Decodable {
+        let kind: String
+        let symbol: String?
+        let description: String?
+        let currency: String?
+        let exchange: String?
     }
-}
 
-struct SnapTradePosition: Codable {
-    let symbol: SnapTradeBrokerageSymbol
-    let units: Double?
-    let price: Double?
-    let openPnl: Double?
-    let fractionalUnits: Double?
-    let averagePurchasePrice: Double?
-    let currency: SnapTradeCurrency?
+    let instrument: Instrument
+    let units: String?
+    let price: String?
+    let costBasis: String?
+    let currency: String?
+    let cashEquivalent: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case symbol
-        case units
-        case price
-        case openPnl = "open_pnl"
-        case fractionalUnits = "fractional_units"
-        case averagePurchasePrice = "average_purchase_price"
-        case currency
-    }
-}
-
-/// The inner "UniversalSymbol" — contains the actual ticker string.
-struct SnapTradeUniversalSymbol: Codable {
-    let id: String?
-    let symbol: String
-    let rawSymbol: String?
-    let description: String?
-    let currency: SnapTradeCurrency?
-    let exchange: SnapTradeExchange?
-    let type: SnapTradeSecurityType?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case symbol
-        case rawSymbol = "raw_symbol"
-        case description
-        case currency
-        case exchange
-        case type
-    }
-}
-
-/// The outer "BrokerageSymbol" wrapper returned in Position objects.
-/// Its `.symbol` field is a nested UniversalSymbol object, not a string.
-struct SnapTradeBrokerageSymbol: Codable {
-    let id: String?
-    let symbol: SnapTradeUniversalSymbol
-    let localId: String?
-    let description: String?
-    let currency: SnapTradeCurrency?
-    let exchange: SnapTradeExchange?
-    let type: SnapTradeSecurityType?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case symbol
-        case localId = "local_id"
-        case description
-        case currency
-        case exchange
-        case type
-    }
-}
-
-/// Legacy alias kept for any callers that reference SnapTradeSymbol directly.
-typealias SnapTradeSymbol = SnapTradeBrokerageSymbol
-
-struct SnapTradeCurrency: Codable {
-    let id: String?
-    let code: String
-    let name: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case id
-        case code
-        case name
-    }
-}
-
-struct SnapTradeExchange: Codable {
-    let id: String?
-    let code: String?
-    let micCode: String?
-    let name: String?
-    let timezone: String?
-    let startTime: String?
-    let closeTime: String?
-    let suffix: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case id
-        case code
-        case micCode = "mic_code"
-        case name
-        case timezone
-        case startTime = "start_time"
-        case closeTime = "close_time"
-        case suffix
-    }
-}
-
-struct SnapTradeSecurityType: Codable {
-    let id: String?
-    let code: String?
-    let description: String?
-    let isSupported: Bool?
-    
-    enum CodingKeys: String, CodingKey {
-        case id
-        case code
-        case description
-        case isSupported = "is_supported"
+        case instrument, units, price, currency
+        case costBasis = "cost_basis"
+        case cashEquivalent = "cash_equivalent"
     }
 }
 

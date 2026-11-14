@@ -29,6 +29,7 @@ export type SnapTradeOperation =
   | "listBrokerages"
   | "listAuthorizations"
   | "listAccounts"
+  | "accountAllPositions"
   | "accountPositions"
   | "accountHoldings"
   | "accountActivities"
@@ -42,6 +43,7 @@ export const SNAPTRADE_OPERATIONS: readonly SnapTradeOperation[] = [
   "listBrokerages",
   "listAuthorizations",
   "listAccounts",
+  "accountAllPositions",
   "accountPositions",
   "accountHoldings",
   "accountActivities",
@@ -163,14 +165,21 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
       return withUser(userId, deps, (u) => forward(deps, "GET", "/authorizations", u, null));
     case "listAccounts":
       return withUser(userId, deps, (u) => forward(deps, "GET", "/accounts", u, null));
+    case "accountAllPositions":
     case "accountPositions":
     case "accountHoldings": {
       const accountId = params.accountId;
       if (typeof accountId !== "string" || !UUID.test(accountId)) {
         return fail(400, "INVALID_ACCOUNT_ID", "accountId must be a SnapTrade account UUID");
       }
-      const suffix = operation === "accountPositions" ? "positions" : "holdings";
-      return withUser(userId, deps, (u) => forward(deps, "GET", `/accounts/${accountId}/${suffix}`, u, null));
+      return withUser(userId, deps, (u) => {
+        if (operation === "accountAllPositions") {
+          return forward(deps, "GET", `/accounts/${accountId}/positions/all`, u, null, "");
+        }
+        // Older releases still expect the legacy response shapes.
+        const suffix = operation === "accountPositions" ? "positions" : "holdings";
+        return forward(deps, "GET", `/accounts/${accountId}/${suffix}`, u, null);
+      });
     }
     case "accountActivities": {
       const { accountId, startDate, endDate, offset = 0 } = params;
@@ -312,8 +321,9 @@ async function forward(
   path: string,
   query: Record<string, string>,
   body: Record<string, unknown> | null,
+  prefix = API_PREFIX,
 ): Promise<ProxyResponse> {
-  const result = await call(deps, method, path, query, body);
+  const result = await call(deps, method, path, query, body, prefix);
   if ("error" in result) return result.error;
   return { status: result.status, body: scrubSecrets(result.json) };
 }

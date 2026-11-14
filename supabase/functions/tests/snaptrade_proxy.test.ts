@@ -148,6 +148,27 @@ Deno.test("account ids are validated before they reach a URL path", async () => 
   assertEquals(calls.map((c) => c.url.pathname), [`/api/v1/accounts/${ACCOUNT}/positions`]);
 });
 
+Deno.test("the current positions operation signs the documented route using the caller's stored identity", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "position-secret" });
+  const positions = {
+    results: [{ instrument: { kind: "stock", symbol: "BHP.AX", exchange: "XASX" }, units: "2.125" }],
+    data_freshness: { as_of: "2026-10-02T00:00:00Z" },
+  };
+  const { deps, calls } = harness(() => json(200, { ...positions, userSecret: "position-secret" }), store);
+  const result = await handleSnapTradeRequest(USER, {
+    operation: "accountAllPositions",
+    params: { accountId: ACCOUNT, userId: OTHER },
+  }, deps);
+  assertEquals(result, { status: 200, body: positions });
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].method, "GET");
+  assertEquals(calls[0].url.pathname, `/accounts/${ACCOUNT}/positions/all`);
+  assertEquals(calls[0].url.searchParams.get("userId"), `st-${USER}`);
+  assertEquals(calls[0].url.searchParams.get("userSecret"), "position-secret");
+  assert(calls[0].headers.get("Signature"));
+});
+
 Deno.test("legacy Keychain identities are verified with SnapTrade before being stored", async () => {
   const rejected = harness(() => json(401, { detail: "Unable to verify signature sent", code: "1076" }));
   const r1 = await handleSnapTradeRequest(USER, { operation: "importLegacyUser", params: { snapTradeUserId: "old-user", userSecret: "old-secret-123" } }, rejected.deps);

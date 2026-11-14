@@ -202,85 +202,42 @@ class SnapTradeNetworkService {
     
     // MARK: - Holdings
     
-    /// Fetch holdings for a specific account
-    /// Fetch positions via /positions (returns plain array — ASX/CHESS shares).
-    private func fetchPositionsArray(
+    /// Read one complete positions response per account.
+    private func fetchAccountHoldings(
         accountId: String,
         userId: String,
         userSecret: String
-    ) async throws -> [SnapTradePosition] {
-        if isServerBacked { return try await viaServer("accountPositions", ["accountId": accountId]) }
-        let request = try createRequest(
-            path: "/accounts/\(accountId)/positions",
-            method: "GET",
-            queryParams: ["userId": userId, "userSecret": userSecret]
-        )
-        return try await executeRequest(request)
-    }
-
-    /// Fetch positions via /holdings (returns wrapper object — may include international shares).
-    private func fetchHoldingsWrapper(
-        accountId: String,
-        userId: String,
-        userSecret: String
-    ) async throws -> [SnapTradePosition] {
+    ) async throws -> [BrokerHolding] {
+        let response: SnapTradePositionsResponse
         if isServerBacked {
-            let wrapper: SnapTradeAccountHoldingsResponse = try await viaServer("accountHoldings", ["accountId": accountId])
-            guard let positions = wrapper.positions else { throw SnapTradeError.missingData }
-            return positions
+            response = try await viaServer("accountAllPositions", ["accountId": accountId])
+        } else {
+            let request = try createRequest(
+                path: "/accounts/\(accountId)/positions/all",
+                queryParams: ["userId": userId, "userSecret": userSecret],
+                baseURL: "https://api.snaptrade.com"
+            )
+            response = try await executeRequest(request)
         }
-        let request = try createRequest(
-            path: "/accounts/\(accountId)/holdings",
-            method: "GET",
-            queryParams: ["userId": userId, "userSecret": userSecret]
-        )
-        let wrapper: SnapTradeAccountHoldingsResponse = try await executeRequest(request)
-        guard let positions = wrapper.positions else { throw SnapTradeError.missingData }
-        return positions
-    }
-
-    /// Fetch ALL positions for an account by merging both endpoints.
-    /// CommSec (and similar brokers) report ASX shares via /positions and
-    /// international shares only via /holdings — both are needed for a complete view.
-    func fetchAccountHoldings(
-        accountId: String,
-        userId: String,
-        userSecret: String
-    ) async throws -> [SnapTradePosition] {
-        SecureLogger.info("Fetching holdings for account")
-
-        async let positionsResult = fetchPositionsArray(accountId: accountId, userId: userId, userSecret: userSecret)
-        async let holdingsResult = fetchHoldingsWrapper(accountId: accountId, userId: userId, userSecret: userSecret)
-        let (fromPositions, fromHoldings) = try await (positionsResult, holdingsResult)
-
-        // Merge the endpoints by listed instrument within this account.
-        var merged: [[String]: SnapTradePosition] = [:]
-        for position in fromPositions + fromHoldings {
-            let listing = position.symbol.symbol
-            let exchange = position.symbol.exchange?.code ?? listing.exchange?.code ?? ""
-            let venue = ["ASX", "XASX"].contains(exchange.uppercased()) ? "ASX" : exchange.uppercased()
-            merged[[listing.symbol.uppercased(), venue]] = position
-        }
-        return Array(merged.values)
+        return try response.results.compactMap { try BrokerHolding.from(snapTradePosition: $0, accountId: accountId) }
     }
 
     func fetchAllHoldings(
         accountIds: [String],
         userId: String,
         userSecret: String
-    ) async throws -> [(accountId: String, positions: [SnapTradePosition])] {
-        try await withThrowingTaskGroup(of: (String, [SnapTradePosition]).self) { group in
+    ) async throws -> [BrokerHolding] {
+        try await withThrowingTaskGroup(of: [BrokerHolding].self) { group in
             for accountId in accountIds {
                 group.addTask {
-                    let positions = try await self.fetchAccountHoldings(
+                    try await self.fetchAccountHoldings(
                         accountId: accountId, userId: userId, userSecret: userSecret
                     )
-                    return (accountId, positions)
                 }
             }
-            var results: [(String, [SnapTradePosition])] = []
-            for try await result in group { results.append(result) }
-            return results
+            var holdings: [BrokerHolding] = []
+            for try await result in group { holdings.append(contentsOf: result) }
+            return holdings
         }
     }
 
@@ -290,7 +247,8 @@ class SnapTradeNetworkService {
         path: String,
         method: String = "GET",
         queryParams: [String: String] = [:],
-        body: [String: Any]? = nil
+        body: [String: Any]? = nil,
+        baseURL: String? = nil
     ) throws -> URLRequest {
         
         // Add clientId and timestamp to every request (required by all SnapTrade endpoints)
@@ -306,7 +264,7 @@ class SnapTradeNetworkService {
             .joined(separator: "&")
         
         // Build URL
-        var components = URLComponents(string: "\(baseURL)\(path)")!
+        var components = URLComponents(string: "\(baseURL ?? self.baseURL)\(path)")!
         components.queryItems = sortedParams.map {
             URLQueryItem(name: $0.key, value: $0.value)
         }
