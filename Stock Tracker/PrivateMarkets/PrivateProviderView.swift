@@ -411,9 +411,9 @@ struct PrivateUpdatesView: View {
                 } else if updates.isEmpty && !loading {
                     Text("No verified updates are published for the companies you track.")
                 }
-                let announcements = updates.filter { $0.kind == "announcement" }
+                let announcements = updates.filter(\.isResearchSource)
                 if !announcements.isEmpty {
-                    NavigationLink("Summarise published announcements") {
+                    NavigationLink("Summarise published updates") {
                         PrivateResearchWorkspace(deals: [], announcements: announcements)
                     }
                 }
@@ -424,7 +424,9 @@ struct PrivateUpdatesView: View {
                             Text(item.kind == "open_round" ? "Funding round" : "Expression of interest")
                                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         }
-                        Text("\(item.company.name) · \(item.publishedAt.formatted(date: .abbreviated, time: .shortened))")
+                        let date = item.roundAnnouncedOn?.formatted(date: .abbreviated, time: .omitted) ??
+                            item.publishedAt.formatted(date: .abbreviated, time: .shortened)
+                        Text("\(item.company.name) · \(date)")
                             .font(.footnote).foregroundStyle(.secondary)
                         Text(item.significance)
                         if item.sourceUrl.privateSourceIsSafe { Link("Read source", destination: item.sourceUrl) }

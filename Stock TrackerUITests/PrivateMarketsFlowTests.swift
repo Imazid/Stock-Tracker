@@ -298,6 +298,54 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testCompanyUpdatesShowsPublishedFinancing() async throws {
+        try launchWithLocalSession("PRIVATE_FINANCING_TEST_SESSION")
+        openPrivateMarkets()
+        let explorer = app.buttons["private.destination.building.2"]
+        let heidi = app.buttons["private.explorer.company.D72C4060-1AE7-4A2F-8F2E-9F4BF1577E01"]
+        for _ in 0..<3 where !heidi.exists {
+            if explorer.exists && explorer.isHittable { explorer.tap() }
+            if heidi.waitForExistence(timeout: 6) { break }
+        }
+        XCTAssertTrue(heidi.exists, app.debugDescription)
+        heidi.tap()
+        let round = app.buttons["private.funding.round.Series C"]
+        XCTAssertTrue(round.waitForExistence(timeout: 8))
+        round.tap()
+        let follow = app.buttons["Follow company"]
+        for _ in 0..<3 where !follow.isHittable { app.swipeUp() }
+        XCTAssertTrue(follow.isHittable, app.debugDescription)
+        follow.tap()
+        XCTAssertTrue(app.buttons["Unfollow company"].exists)
+
+        let updates = app.buttons["private.companyUpdates"]
+        for _ in 0..<4 where !updates.isHittable {
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            if back.isHittable { back.tap() }
+        }
+        XCTAssertTrue(updates.isHittable)
+        updates.tap()
+        let completed = app.staticTexts["Series C closed"]
+        for _ in 0..<3 where !completed.isHittable {
+            if completed.waitForExistence(timeout: 5) && completed.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(completed.isHittable, app.debugDescription)
+        let evidence = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "2026-09-22")).firstMatch
+        XCTAssertTrue(evidence.exists)
+        XCTAssertTrue(evidence.label.contains("USD 100000000"))
+        let summary = app.buttons["Summarise published updates"]
+        if !summary.isHittable { app.swipeDown() }
+        XCTAssertTrue(summary.isHittable)
+        summary.tap()
+        XCTAssertTrue(app.navigationBars["AI Investment Research"].waitForExistence(timeout: 10))
+        let fundingSource = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Series C closed")).firstMatch
+        for _ in 0..<3 where !fundingSource.exists { app.swipeUp() }
+        XCTAssertTrue(fundingSource.exists, app.debugDescription)
+        XCTAssertEqual(fundingSource.value as? String, "1")
+    }
+
+    @MainActor
     func testResearchWorkspaceReloadsRecentRuns() throws {
         try launchWithLocalSession("PRIVATE_RESEARCH_TEST_SESSION")
         openPrivateMarkets()

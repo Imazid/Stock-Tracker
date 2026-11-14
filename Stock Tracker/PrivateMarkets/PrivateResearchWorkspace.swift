@@ -53,7 +53,7 @@ struct PrivateResearchWorkspace: View {
                     }
                 }
                 if !announcements.isEmpty {
-                    Section("Published company announcements") {
+                    Section("Published company updates") {
                         ForEach(announcements) { item in
                             Toggle("\(item.company.name) · \(item.title)",
                                    isOn: selection(item.id, in: $selectedAnnouncements))
@@ -153,7 +153,7 @@ struct PrivateResearchWorkspace: View {
                 }
                 if !announcements.isEmpty {
                     selectedAnnouncements = Set(announcements.prefix(3).map(\.id))
-                    question = "Summarise these company announcements. Explain what changed and what the sources leave unanswered."
+                    question = "Summarise these published company updates. Explain what changed, what the sources disclose about dilution, and what remains unanswered."
                 }
                 workspaceOwner = auth.userId
             }

@@ -103,12 +103,18 @@ function catalogue(admin: ReturnType<typeof serviceClient>) {
     .eq("round.share_classes.published", true).order("verified_at", { ascending: false }).order("id");
 }
 
-type Announcement = { title: string; significance: string; published_at: string; source_url: string; company: { name: string } };
+type Announcement = {
+  title: string;
+  significance: string;
+  published_at: string;
+  source_url: string;
+  company_name: string;
+};
 
 function announcementEvidence(item: Announcement, id: string): Evidence {
-  const title = item.company.name + ": " + item.title;
+  const title = item.company_name + ": " + item.title;
   const summary = [
-    "Company: " + item.company.name, "Announcement: " + item.title,
+    "Company: " + item.company_name, "Announcement: " + item.title,
     "Published: " + item.published_at, item.significance,
   ].join("\n");
   return { id, title, text: summary.slice(0, 2_800) };
@@ -136,7 +142,7 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
   const question = "Summarise recent published announcements and identify what still needs verification.";
   const results = await Promise.allSettled(jobs.map(async (job) => {
     const evidence = job.sources.map((source, index) => announcementEvidence({
-      company: { name: source.company }, title: source.title, significance: source.summary,
+      company_name: source.company, title: source.title, significance: source.summary,
       published_at: source.published_at, source_url: source.url,
     }, "O" + (index + 1)));
     const report = await buildResearch(job.owner_id, question, evidence, "digest", aiDependencies(admin));
@@ -346,10 +352,10 @@ Deno.serve(async (req) => {
           return errorResponse(400, "INVALID_REQUEST", "Send up to 100 watched company IDs.");
         }
         if (!ids.length) return jsonResponse(200, { updates: [] });
-        const { data, error } = await admin.from("corporate_actions")
-          .select("id,title,significance,source_url,source_label,published_at,company:private_companies!inner(name)")
-          .eq("published", true).eq("company.published", true).lte("published_at", new Date().toISOString())
-          .in("company_id", ids).order("published_at", { ascending: false }).limit(100);
+        const { data, error } = await admin.from("published_private_company_updates")
+          .select("id,title,significance,source_url,source_label,published_at,round_announced_on,company_name")
+          .in("company_id", ids).order("published_at", { ascending: false }).order("id").limit(100)
+          .returns<(Announcement & { id: string; source_label: string | null; round_announced_on: string | null })[]>();
         if (error) throw error;
         const now = new Date();
         const since = new Date(now.getTime() - 86_400_000);
@@ -361,7 +367,7 @@ Deno.serve(async (req) => {
           .gte("round.verified_at", since.toISOString())
           .lte("round.verified_at", now.toISOString())
           .gt("round.closes_at", now.toISOString())
-          .order("verified_at", { ascending: false }).limit(100)
+          .order("verified_at", { ascending: false }).order("id").limit(100)
           .returns<{ id: string; status: string; source_url: string; verified_at: string;
             round: { stage: string; company: { name: string } } }[]>();
         if (roundsError) throw roundsError;
@@ -371,9 +377,13 @@ Deno.serve(async (req) => {
             "The source published an expression of interest.",
           source_url: item.source_url, published_at: item.verified_at, company: item.round.company,
         }));
-        const announcements = data.map((item) => ({ ...item, kind: "announcement" }));
+        const announcements = data.map(({ company_name, round_announced_on, ...item }) => ({
+          ...item, kind: round_announced_on ? "closed_round" : "announcement", round_announced_on,
+          company: { name: company_name },
+        }));
         return jsonResponse(200, {
-          updates: [...announcements, ...funding].sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at)).slice(0, 100),
+          updates: [...announcements, ...funding].sort((a, b) =>
+            Date.parse(b.published_at) - Date.parse(a.published_at) || a.id.localeCompare(b.id)).slice(0, 100),
         });
       }
       case "profile": {
@@ -577,10 +587,9 @@ Deno.serve(async (req) => {
           }
         }
         if (announcementIDs.length) {
-          const { data, error } = await admin.from("corporate_actions")
-            .select("title,significance,published_at,source_url,company:private_companies!inner(name)")
-            .eq("published", true).eq("company.published", true).lte("published_at", new Date().toISOString())
-            .in("id", announcementIDs).order("published_at", { ascending: false })
+          const { data, error } = await admin.from("published_private_company_updates")
+            .select("title,significance,published_at,source_url,company_name")
+            .in("id", announcementIDs).order("published_at", { ascending: false }).order("id")
             .returns<Announcement[]>();
           if (error) throw error;
           if (data.length !== announcementIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published announcements are unavailable.");

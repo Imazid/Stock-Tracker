@@ -1,0 +1,91 @@
+\set QUIET 1
+\pset tuples_only on
+\pset format unaligned
+begin;
+
+insert into auth.users (id, email) values
+  ('f1000000-0000-4000-8000-000000000001', 'funding-watch@example.test'),
+  ('f1000000-0000-4000-8000-000000000002', 'funding-unrelated@example.test');
+insert into public.private_companies (id, name, sector, country, source_url, verified_at, published) values
+  ('f1000000-0000-4000-8000-000000000010', 'Funding fixture', 'Technology', 'AU', 'https://example.test/company', now(), true);
+insert into public.funding_rounds
+  (id, company_id, stage, raised, valuation, currency, announced_on, source_url, verified_at, published)
+select id, 'f1000000-0000-4000-8000-000000000010', stage, raised, valuation, 'AUD',
+       (now() at time zone 'UTC')::date + day_offset, 'https://example.test/' || slug, now(), published
+from (values
+  ('f1000000-0000-4000-8000-000000000020'::uuid, 'Series A', 3000000, 18000000, -1, 'series-a', true),
+  ('f1000000-0000-4000-8000-000000000021', 'Series B', null, null, 2, 'future', true),
+  ('f1000000-0000-4000-8000-000000000022', 'Series B', 234, null, -1, 'draft', false),
+  ('f1000000-0000-4000-8000-000000000023', 'Series B', 234, null, -1, 'only-open', true),
+  ('f1000000-0000-4000-8000-000000000024', 'Seed', 123, null, -1, 'issuer-release', true),
+  ('f1000000-0000-4000-8000-000000000025', 'Seed', 222, null, -20, 'historical', true),
+  ('f1000000-0000-4000-8000-000000000026', 'Series C', 456, null, -1, 'conflicting-claims', true)
+) as fixtures(id, stage, raised, valuation, day_offset, slug, published);
+insert into public.investment_opportunities
+  (round_id, provider, category, status, eligibility, jurisdictions, source_url, verified_at, published)
+select id, case when source_url like '%only-open' then 'birchal' else 'issuer' end,
+       'Series A', case when source_url like '%only-open' then 'open' else 'closed' end,
+       'provider review', '{}', source_url, now(), true
+from public.funding_rounds where company_id = 'f1000000-0000-4000-8000-000000000010';
+insert into public.investment_opportunities
+  (round_id, provider, category, status, eligibility, jurisdictions, source_url, verified_at, published)
+values
+  ('f1000000-0000-4000-8000-000000000020', 'birchal', 'Series A', 'closed', 'provider review', '{}', 'https://example.test/another-listing', now(), true),
+  ('f1000000-0000-4000-8000-000000000026', 'birchal', 'Series B or later', 'interest', 'provider review', '{}', 'https://example.test/interest', now(), true);
+insert into public.corporate_actions (id, company_id, title, significance, source_url, published_at, published)
+values ('f1000000-0000-4000-8000-000000000030', 'f1000000-0000-4000-8000-000000000010',
+  'The issuer reported a seed round', 'The issuer announced the funding close.', 'https://example.test/issuer-release', now() - interval '1 day', true);
+
+set role service_role;
+select case when array_agg(id order by id) = array[
+    'f1000000-0000-4000-8000-000000000020', 'f1000000-0000-4000-8000-000000000025', 'f1000000-0000-4000-8000-000000000030']::uuid[]
+  then 'ok   closed rounds use one canonical source and omit drafts, future and conflicting listings'
+  else 'FAIL publication and deduplication' end
+  from public.published_private_company_updates where company_id = 'f1000000-0000-4000-8000-000000000010';
+select case when count(*) = 1 and min(round_announced_on) = (now() at time zone 'UTC')::date - 1
+    and min(source_url) = 'https://example.test/series-a'
+    and min(significance) like '%AUD 3000000.%AUD 18000000.%'
+  then 'ok   the financing update uses the published date, amount, valuation and source'
+  else 'FAIL financing provenance' end
+  from public.published_private_company_updates where id = 'f1000000-0000-4000-8000-000000000020';
+
+select public.configure_private_monitor('f1000000-0000-4000-8000-000000000001','f1000000-0000-4000-8000-000000000011',
+  array['f1000000-0000-4000-8000-000000000010']::uuid[], false, true, true);
+select public.configure_private_monitor('f1000000-0000-4000-8000-000000000002','f1000000-0000-4000-8000-000000000012',
+  '{}'::uuid[], false, true, true);
+select public.run_private_market_monitor();
+select public.run_private_market_monitor();
+select case when count(*) filter (where kind = 'announcement') = 2
+    and count(*) filter (where subject_id = 'f1000000-0000-4000-8000-000000000020'
+     and source_label = 'Funding round source') = 1
+  then 'ok   the watcher gets one sourced alert for each recent event'
+  else 'FAIL alert window or replay' end
+  from public.private_market_alert_inbox('f1000000-0000-4000-8000-000000000001');
+select case when count(*) = 0 then 'ok   a second account gets no financing alert' else 'FAIL inbox isolation' end
+  from public.private_market_alert_inbox('f1000000-0000-4000-8000-000000000002');
+select case when count(*) = 1 then 'ok   the opted-in summary includes the round as a cited source'
+  else 'FAIL summary lacks financing evidence' end
+  from public.claim_private_market_digests() d, jsonb_array_elements(d.sources) as source
+  where d.owner_id = 'f1000000-0000-4000-8000-000000000001' and source->>'id' = 'f1000000-0000-4000-8000-000000000020';
+
+reset role;
+select case when public.private_market_push_through('f1000000-0000-4000-8000-000000000001',
+    'f1000000-0000-4000-8000-000000000011', 0) is not null
+  then 'ok   scoped financing updates can advance the push cursor' else 'FAIL financing push unavailable' end;
+
+update public.funding_rounds set published = false where id = 'f1000000-0000-4000-8000-000000000020';
+select case when not exists (select 1 from public.private_market_alert_inbox('f1000000-0000-4000-8000-000000000001')
+    where subject_id = 'f1000000-0000-4000-8000-000000000020')
+  then 'ok   withdrawing the round removes it from the monitoring inbox' else 'FAIL stale round alert' end;
+update public.corporate_actions set published = false where id = 'f1000000-0000-4000-8000-000000000030';
+update public.funding_rounds set published = false where id = 'f1000000-0000-4000-8000-000000000024';
+update public.investment_opportunities set published = false
+  where round_id = 'f1000000-0000-4000-8000-000000000026';
+select case when public.private_market_push_through('f1000000-0000-4000-8000-000000000001',
+    'f1000000-0000-4000-8000-000000000011', 0) is null
+  then 'ok   withdrawn financing evidence cannot send a pending push' else 'FAIL stale push' end;
+set role authenticated;
+select case when not has_table_privilege(current_user, 'public.published_private_company_updates', 'select')
+  then 'ok   the internal view is restricted to the backend' else 'FAIL direct view access' end;
+reset role;
+rollback;

@@ -147,7 +147,10 @@ struct PrivateCompanyUpdate: Decodable, Identifiable {
     let sourceUrl: URL
     let sourceLabel: String?
     let publishedAt: Date
+    let roundAnnouncedOn: Date?
     let company: Company
+
+    var isResearchSource: Bool { kind == "announcement" || kind == "closed_round" }
 }
 
 struct PrivateMarketAlert: Decodable, Identifiable {
@@ -518,8 +521,10 @@ final class PrivateMarketsStore: ObservableObject {
                 guard scope == userID, state.notify, !Task.isCancelled else { break }
                 let content = UNMutableNotificationContent()
                 content.title = "Private Markets update"
-                content.body = update.kind == "open_round" || update.kind == "interest" ?
-                    "A company you track has a funding update." : "A company you track has published an update."
+                content.body = switch update.kind {
+                case "open_round", "interest", "closed_round": "A company you track has a funding update."
+                default: "A company you track has published an update."
+                }
                 content.userInfo = ["privateMarkets": true]
                 do {
                     try await UNUserNotificationCenter.current().add(.init(
