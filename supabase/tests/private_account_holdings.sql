@@ -1,3 +1,6 @@
+\set QUIET 1
+\pset tuples_only on
+\pset format unaligned
 begin;
 
 insert into auth.users (id,email) values
