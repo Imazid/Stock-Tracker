@@ -59,6 +59,8 @@ struct PortfolioBenchmarkSheet: View {
         case failure(String)
     }
 
+    private enum Selection: Hashable { case period, fund }
+
     let userId: UUID
     let periods: [PortfolioBenchmarkPeriod]
 
@@ -67,6 +69,7 @@ struct PortfolioBenchmarkSheet: View {
     @State private var fund: Fund = Benchmark.preferred == .asx200 ? .stw : .spy
     @State private var retry = 0
     @State private var loaded: (request: Request, state: State)?
+    @State private var navigation: [Selection] = []
 
     private var period: PortfolioBenchmarkPeriod? {
         periods.first { $0.id == selectedPeriod } ?? periods.first
@@ -84,19 +87,20 @@ struct PortfolioBenchmarkSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigation) {
             List {
                 if let period, let request {
                     Section {
-                        Picker("Return period", selection: Binding(get: { period.id }, set: { selectedPeriod = $0 })) {
-                            ForEach(periods) { option in Text(option.title).tag(option.id) }
+                        NavigationLink(value: Selection.period) {
+                            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                                Text("Return period")
+                                Text(period.title).font(.footnote).foregroundStyle(.secondary)
+                            }
                         }
-                        .pickerStyle(.navigationLink)
                         .accessibilityIdentifier("portfolio.returns.benchmark.period")
-                        Picker("Benchmark", selection: $fund) {
-                            ForEach(Fund.allCases, id: \.self) { fund in Text(fund.label).tag(fund) }
+                        NavigationLink(value: Selection.fund) {
+                            LabeledContent("Benchmark", value: fund.label)
                         }
-                        .pickerStyle(.navigationLink)
                         .accessibilityIdentifier("portfolio.returns.benchmark.fund")
                     } footer: {
                         Text("Compares the portfolio’s time-weighted return with the ETF’s distribution-adjusted return in USD. The ETF uses its local market close on or before each date.")
@@ -114,10 +118,41 @@ struct PortfolioBenchmarkSheet: View {
             .navigationTitle("Benchmark comparison")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .navigationDestination(for: Selection.self) { selection in
+                switch selection {
+                case .period:
+                    List(periods) { option in
+                        choice(option.title, selected: option.id == period?.id) { selectedPeriod = option.id }
+                            .accessibilityIdentifier("benchmark.period.\(option.start).\(option.end).\(option.continuous)")
+                    }
+                    .navigationTitle("Return period")
+                case .fund:
+                    List(Fund.allCases, id: \.self) { option in
+                        choice(option.label, selected: option == fund) { fund = option }
+                            .accessibilityIdentifier("benchmark.fund.\(option.rawValue)")
+                    }
+                    .navigationTitle("Benchmark")
+                }
+            }
         }
         .task(id: request) {
             if let request, !periodTooLong { await load(request) }
         }
+    }
+
+    private func choice(_ title: String, selected: Bool, select: @escaping () -> Void) -> some View {
+        Button {
+            select()
+            navigation = []
+        } label: {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer(minLength: DS.Space.s)
+                if selected { Image(systemName: "checkmark").accessibilityHidden(true) }
+            }
+            .frame(minHeight: 44)
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     @ViewBuilder
