@@ -346,6 +346,42 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertEqual(stake.value as? String, "2")
     }
 
+    func testExitScenariosModelPreferredPayoutBeforeCommonShares() {
+        openPrivateMarkets()
+        let research = app.buttons["private.destination.sparkles"]
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        research.tap()
+        app.buttons["Ownership, dilution and exit scenarios"].tap()
+        XCTAssertTrue(app.navigationBars["Scenario Calculator"].waitForExistence(timeout: 5))
+
+        func enter(_ label: String, _ value: String) {
+            let field = app.textFields[label]
+            for _ in 0..<4 where !field.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(field.isHittable)
+            field.tap()
+            field.typeText(value)
+            let done = app.buttons["Done"].firstMatch
+            if done.isHittable { done.tap() }
+        }
+        enter("Investment amount", "100")
+        enter("Post-money valuation", "1000")
+        let preference = app.switches["private.scenario.preference"]
+        for _ in 0..<3 where !preference.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(preference.isHittable)
+        let control = preference.switches.firstMatch
+        (control.exists ? control : preference).tap()
+        enter("Preferred ownership at exit (%)", "20")
+        enter("Total liquidation preference", "1000")
+        enter("Bear exit value", "500")
+        let bear = app.staticTexts["private.scenario.bear.proceeds"]
+        XCTAssertTrue(bear.waitForExistence(timeout: 5))
+        XCTAssertTrue(bear.label.contains("0.00×"))
+        enter("Bull exit value", "10000")
+        let bull = app.staticTexts["private.scenario.bull.proceeds"]
+        XCTAssertTrue(bull.waitForExistence(timeout: 5))
+        XCTAssertTrue(bull.label.contains("10.00×"))
+    }
+
     @MainActor
     func testOwnershipExcerptCanBeReviewedAndLinked() async throws {
         let host = "http://127.0.0.1:58531"

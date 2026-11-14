@@ -282,6 +282,30 @@ public struct PrivateMetrics: Sendable {
 }
 
 public enum PrivateMath {
+    public enum ExitShareClass: Hashable, Sendable {
+        case common, preferred
+    }
+
+    /// A single preferred class with equal terms within the class and no participation cap.
+    /// `preferredOwnership` and `ownership` are fractions of total equity on an as-converted basis.
+    public static func exitProceeds(equityValue: Decimal, ownership: Decimal, shareClass: ExitShareClass,
+                                    preferredOwnership: Decimal, liquidationPreference: Decimal,
+                                    participating: Bool) -> Decimal? {
+        guard equityValue >= 0, ownership >= 0, preferredOwnership > 0, preferredOwnership < 1,
+              liquidationPreference >= 0 else { return nil }
+        let commonOwnership = 1 - preferredOwnership
+        let classOwnership = shareClass == .preferred ? preferredOwnership : commonOwnership
+        guard ownership <= classOwnership else { return nil }
+
+        let preferencePaid = min(liquidationPreference, equityValue)
+        let conversionPayout = equityValue * preferredOwnership
+        let preferredPayout = participating
+            ? preferencePaid + (equityValue - preferencePaid) * preferredOwnership
+            : max(preferencePaid, conversionPayout)
+        let classPayout = shareClass == .preferred ? preferredPayout : equityValue - preferredPayout
+        return (ownership / classOwnership) * classPayout
+    }
+
     public static func ownership(investment: Decimal, postMoney: Decimal, nextRoundPostMoney: Decimal?, nextRoundRaise: Decimal?) -> Decimal? {
         guard investment > 0, postMoney > 0, investment <= postMoney else { return nil }
         let initial = investment / postMoney

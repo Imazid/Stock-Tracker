@@ -832,6 +832,8 @@ private struct PrivateDealDetail: View {
             }
             Section("Research & applications") {
                 NavigationLink("Research this opportunity") { PrivateResearchWorkspace(deals: [deal], selectedDealID: deal.id) }
+                NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
+                    .accessibilityIdentifier("private.deal.scenarios")
                 if deal.displayedStatus == "Open at verification", auth.userId != nil, deal.offerDocumentUrl?.privateSourceIsSafe == true {
                     NavigationLink("Provider application readiness") { PrivateProviderHandoff(deal: deal) }
                 }

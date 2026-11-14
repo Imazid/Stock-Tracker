@@ -94,6 +94,32 @@ final class PrivateMarketsTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(fund.valuation(asOf: year)).isStale(asOf: year.addingTimeInterval(91 * 86_400)))
     }
 
+    func testExitPreferenceAndConversionAcrossCommonAndPreferredShares() throws {
+        func payout(_ value: Decimal, _ share: Decimal, _ shareClass: PrivateMath.ExitShareClass, participating: Bool = false) -> Decimal? {
+            PrivateMath.exitProceeds(equityValue: value, ownership: share, shareClass: shareClass,
+                                     preferredOwnership: 0.2, liquidationPreference: 1_000, participating: participating)
+        }
+        XCTAssertEqual(payout(500, 0.1, .common), 0)
+        XCTAssertEqual(payout(500, 0.1, .preferred), 250)
+        XCTAssertEqual(payout(3_000, 0.1, .common), 250)
+        XCTAssertEqual(payout(3_000, 0.1, .preferred), 500)
+        XCTAssertEqual(payout(10_000, 0.1, .common), 1_000)
+        XCTAssertEqual(payout(10_000, 0.1, .preferred), 1_000)
+        XCTAssertEqual(payout(10_000, 0.1, .common, participating: true), 900)
+        XCTAssertEqual(payout(10_000, 0.1, .preferred, participating: true), 1_400)
+        XCTAssertEqual(payout(0, 0.1, .preferred, participating: true), 0)
+        XCTAssertNil(payout(3_000, 0.3, .preferred))
+        XCTAssertNil(payout(3_000, 0.85, .common))
+        XCTAssertNil(payout(-1, 0.1, .common))
+        for value: Decimal in [0, 500, 3_000, 5_000, 10_000] {
+            for participating in [false, true] {
+                let common = try XCTUnwrap(payout(value, 0.8, .common, participating: participating))
+                let preferred = try XCTUnwrap(payout(value, 0.2, .preferred, participating: participating))
+                XCTAssertEqual(common + preferred, value)
+            }
+        }
+    }
+
     func testSaleSeparatesRealizedAndUnrealizedGainWhenBasisIsKnown() {
         let first = Date(timeIntervalSince1970: 0)
         let mark = first.addingTimeInterval(86_400)

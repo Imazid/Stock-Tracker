@@ -33,7 +33,9 @@ struct PrivateResearchWorkspace: View {
     var body: some View {
         List {
             Section("Scenario calculator") {
-                NavigationLink("Ownership, dilution and exit scenarios") { PrivateScenarioCalculator() }
+                NavigationLink("Ownership, dilution and exit scenarios") {
+                    PrivateScenarioCalculator(round: deals.count == 1 ? deals.first?.round : nil)
+                }
             }
             if auth.userId == nil {
                 Section("Research") {
@@ -372,7 +374,12 @@ private struct PrivateReportView: View {
                     NavigationLink("Open previous report") { PrivateSavedReportView(id: previous, owner: owner) }
                 }
             }
-            if let committee = report.committee { section(committee) }
+            if let committee = report.committee {
+                section(committee)
+                Section {
+                    NavigationLink("Model exit scenarios") { PrivateScenarioCalculator() }
+                }
+            }
             ForEach(report.findings) { section($0) }
             Section("Sources") {
                 ForEach(report.sources) { source in
@@ -455,8 +462,16 @@ struct PrivateScenarioCalculator: View {
     @State private var bear = ""
     @State private var base = ""
     @State private var bull = ""
+    @State private var modelPreference = false
+    @State private var shareClass: PrivateMath.ExitShareClass = .common
+    @State private var preferredOwnership = ""
+    @State private var preferenceAmount = ""
+    @State private var participating = false
+    @FocusState private var focusedInput: String?
+    private let round: PrivateDeal.Round?
 
-    init(question: PrivateScenarioQuestion? = nil) {
+    init(question: PrivateScenarioQuestion? = nil, round: PrivateDeal.Round? = nil) {
+        self.round = round
         let dilution = question?.calculatesDilution == true
         func input(_ amount: Decimal?) -> String {
             amount?.formatted(.number.grouping(.never).precision(.fractionLength(0...8))) ?? ""
@@ -464,7 +479,9 @@ struct PrivateScenarioCalculator: View {
         _useExistingStake = State(initialValue: dilution)
         _existingStake = State(initialValue: input(question?.existingOwnership.map { $0 * 100 }))
         _investment = State(initialValue: input(question?.investment))
-        _postMoney = State(initialValue: dilution ? "" : input(question?.postMoney))
+        let publishedPostMoney = round?.valuationMethod?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "post-money"
+            ? round?.valuation : nil
+        _postMoney = State(initialValue: dilution ? "" : input(question?.postMoney ?? publishedPostMoney))
         _nextRaise = State(initialValue: input(question?.newCapital))
         _nextPost = State(initialValue: dilution ? input(question?.postMoney) : "")
     }
@@ -487,6 +504,16 @@ struct PrivateScenarioCalculator: View {
 
     var body: some View {
         Form {
+            if let round {
+                Section("Published round") {
+                    LabeledContent(round.company.name, value: round.stage)
+                    LabeledContent("Currency", value: round.currency)
+                    if let valuation = round.valuation {
+                        LabeledContent(round.valuationMethod ?? "Disclosed valuation", value: PrivateInput.money(valuation, currency: round.currency))
+                    }
+                    if round.sourceUrl.privateSourceIsSafe { Link("Read funding round source", destination: round.sourceUrl) }
+                }
+            }
             Section("Initial investment") {
                 Toggle("Start with an ownership percentage", isOn: $useExistingStake)
                 if useExistingStake {
@@ -501,36 +528,69 @@ struct PrivateScenarioCalculator: View {
                 input("New capital raised", $nextRaise)
                 input("Next post-money valuation", $nextPost)
                 LabeledContent("Ownership after round", value: Self.percent(finalOwnership))
+                Text("Assumes you do not participate in the new round and there are no option pool changes or conversions.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Payout terms") {
+                Toggle("Model a preferred share class", isOn: $modelPreference)
+                    .accessibilityIdentifier("private.scenario.preference")
+                if modelPreference {
+                    Picker("Your share class", selection: $shareClass) {
+                        Text("Common").tag(PrivateMath.ExitShareClass.common)
+                        Text("Preferred").tag(PrivateMath.ExitShareClass.preferred)
+                    }
+                    input("Preferred ownership at exit (%)", $preferredOwnership)
+                    input("Total liquidation preference", $preferenceAmount)
+                    Toggle("Participating preferred", isOn: $participating)
+                    Text("Enter the preferred class’s share of fully diluted equity and its total payout preference in the same currency. Use terms from the investment documents.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Text(modelPreference
+                     ? "Use exit equity value after debt. The model assumes equal terms within one preferred class and uncapped participation when enabled. Fees and taxes are excluded."
+                     : "Exit proceeds are pro rata. Use one currency throughout. Fees and taxes are excluded.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Assumed exit equity values") {
                 scenario("Bear", $bear)
                 scenario("Base", $base)
                 scenario("Bull", $bull)
             }
-            Section {
-                Text("Use one currency throughout. The next round assumes no additional investment from you, option pool changes or conversions. Exit proceeds assume a pro rata payout with no fees, taxes or preferences.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
         }
         .navigationTitle("Scenario Calculator")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { focusedInput = nil }
+            }
+        }
     }
 
     private func input(_ title: String, _ value: Binding<String>) -> some View {
-        TextField(title, text: value).keyboardType(.decimalPad)
+        TextField(title, text: value).keyboardType(.decimalPad).focused($focusedInput, equals: title)
     }
 
     private func scenario(_ title: String, _ value: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             input(title + " exit value", value)
-            if let share = finalOwnership, let exit = PrivateInput.amount(value.wrappedValue) {
-                let proceeds = share * exit
+            if let share = finalOwnership, let exit = PrivateInput.amount(value.wrappedValue), let proceeds = proceeds(share: share, exit: exit) {
                 let multiple = !useExistingStake ? PrivateInput.amount(investment).flatMap { $0 > 0 ? proceeds / $0 : nil } : nil
                 let amount = proceeds.formatted(.number.precision(.fractionLength(2)))
                 Text(multiple.map { "Proceeds \(amount) · \($0.formatted(.number.precision(.fractionLength(2))))×" } ?? "Proceeds \(amount)")
                     .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("private.scenario.\(title.lowercased()).proceeds")
+            } else if !value.wrappedValue.isEmpty && modelPreference {
+                Text("Check ownership and payout terms.").font(.footnote).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func proceeds(share: Decimal, exit: Decimal) -> Decimal? {
+        guard modelPreference else { return share * exit }
+        guard let preferred = PrivateInput.amount(preferredOwnership), let preference = PrivateInput.amount(preferenceAmount) else { return nil }
+        return PrivateMath.exitProceeds(equityValue: exit, ownership: share, shareClass: shareClass,
+                                       preferredOwnership: preferred / 100, liquidationPreference: preference,
+                                       participating: participating)
     }
 
     static func percent(_ value: Decimal?) -> String {
