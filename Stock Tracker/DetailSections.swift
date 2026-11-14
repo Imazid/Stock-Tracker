@@ -134,53 +134,71 @@ struct LedgerRow: View {
 // MARK: - Your position
 
 struct DetailPositionCard: View {
-    let holding: PortfolioHolding
+    let holdings: [PortfolioHolding]
+    let portfolioNames: [UUID: String]
     let live: Asset
     let format: DetailFormatter
+    let quoteAvailable: Bool
+    let hidesValues: Bool
     @Environment(\.theme) private var theme
 
     var body: some View {
-        let value = holding.shares * live.price
-        let cost = holding.shares * holding.avgCost
-        let total = value - cost
-        let totalPct = cost > 0 ? total / cost : 0
-        let today = holding.shares * live.change
-        let totalTint = abs(total) < 0.005 ? theme.primaryText : (total >= 0 ? theme.positiveColor : theme.negativeColor)
-        let todayTint = abs(today) < 0.005 ? theme.primaryText : (today >= 0 ? theme.positiveColor : theme.negativeColor)
-
-        DetailSection(title: "Your position", identifier: "detail.position") {
-            VStack(spacing: 0) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Market value")
-                            .font(.caption)
-                            .foregroundStyle(theme.secondaryText)
-                        Text(format.money(value))
-                            .font(DS.money(26, weight: .bold))
-                            .foregroundStyle(theme.primaryText)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Shares")
-                            .font(.caption)
-                            .foregroundStyle(theme.secondaryText)
-                        Text(holding.shares.formatted(.number.precision(.fractionLength(0...4))))
-                            .font(.title3.weight(.semibold).monospacedDigit())
-                    }
-                }
-                .padding(.bottom, DS.Space.s)
-                Divider().overlay(theme.cardBorder.opacity(0.4))
-                LedgerRow(label: "Average cost", value: format.money(holding.avgCost))
-                Divider().overlay(theme.cardBorder.opacity(0.4))
-                LedgerRow(label: "Today's return", value: format.signedMoney(today), tint: todayTint,
-                          detail: String(format: "%+.2f%%", live.changePercent))
-                Divider().overlay(theme.cardBorder.opacity(0.4))
-                LedgerRow(label: "Total return", value: format.signedMoney(total), tint: totalTint,
-                          detail: format.percent(totalPct, signed: true))
+        DetailSection(title: "Your positions", identifier: "detail.position") {
+            ForEach(holdings) { holding in
+                position(holding)
             }
-            .dsCard()
         }
     }
+
+    private func position(_ holding: PortfolioHolding) -> some View {
+        let basis = holding.costBasis
+        let value = holding.shares * live.price
+        let hasValue = quoteAvailable && value.isFinite && value > 0
+        let knownBasis = holding.avgCost.isFinite && holding.avgCost > 0 && basis.isFinite
+        let gain = value - basis
+        let returnPct = gain / basis
+        let showGain = hasValue && knownBasis && gain.isFinite && returnPct.isFinite
+        let hasRate = format.currency == "USD" || format.rates[format.currency].map { $0.isFinite && $0 > 0 } == true
+        let positionFormat = hasRate ? format : DetailFormatter(currency: "USD", rates: [:])
+        let gainColor = gain == 0 ? theme.primaryText : gain > 0 ? theme.positiveColor : theme.negativeColor
+
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(holding.brokerAccount?.label ?? String(localized: "Manual holding"))
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("detail.position.account.\(holding.id)")
+            if let portfolioName = portfolioNames[holding.id] {
+                Text(portfolioName)
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .accessibilityIdentifier("detail.position.portfolio.\(holding.id)")
+            }
+            if hidesValues {
+                Text("Position figures hidden")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(.top, DS.Space.xs)
+                    .accessibilityIdentifier("detail.position.hidden")
+            } else {
+                LedgerRow(label: holding.asset.kind == .crypto ? "Units" : "Shares", value: holding.asset.unitsText(holding.shares))
+                    .accessibilityIdentifier("detail.position.units.\(holding.id)")
+                line
+                LedgerRow(label: "Market value", value: hasValue ? positionFormat.money(value) : unavailable)
+                    .accessibilityIdentifier("detail.position.value.\(holding.id)")
+                line
+                LedgerRow(label: "Recorded average cost", value: knownBasis ? positionFormat.money(holding.avgCost) : unavailable)
+                    .accessibilityIdentifier("detail.position.cost.\(holding.id)")
+                line
+                LedgerRow(label: "Unrealised gain or loss", value: showGain ? positionFormat.signedMoney(gain) : unavailable,
+                          tint: showGain ? gainColor : nil,
+                          detail: showGain ? positionFormat.percent(returnPct, signed: true) : nil)
+                    .accessibilityIdentifier("detail.position.gain.\(holding.id)")
+            }
+        }
+        .dsCard()
+    }
+
+    private var unavailable: String { String(localized: "Unavailable") }
+    private var line: some View { Divider().overlay(theme.cardBorder.opacity(0.4)) }
 }
 
 /// Shown when the person doesn't own it (Yahoo's "Holding AAPL now?").

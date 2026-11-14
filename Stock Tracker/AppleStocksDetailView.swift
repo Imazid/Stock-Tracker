@@ -31,6 +31,7 @@ struct AppleStocksDetailView: View {
     @EnvironmentObject private var alertManager: PriceAlertManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
+    @AppStorage("portfolioValueHidden") private var valueHidden = false
 
     @State private var sheet: DetailSheet?
     @State private var toast: DetailToast?
@@ -62,8 +63,17 @@ struct AppleStocksDetailView: View {
                         isPoints: kind == .index)
     }
 
-    private var holding: PortfolioHolding? {
-        marketData.portfolio.first { model.matches($0.asset) }
+    private var holdings: [PortfolioHolding] {
+        marketData.allPortfolioHoldings.filter { model.matches($0.asset) && $0.shares.isFinite && $0.shares > 0 }
+    }
+
+    private var portfolioNames: [UUID: String] {
+        var names: [UUID: String] = [:]
+        for (index, group) in marketData.portfolioGroups.enumerated() {
+            let positions = index == marketData.activePortfolioIndex ? marketData.portfolio : group.holdings
+            for holding in positions { names[holding.id] = group.name }
+        }
+        return names
     }
 
     private var watchEntry: Asset? {
@@ -108,8 +118,10 @@ struct AppleStocksDetailView: View {
                     AssetTradeBar(asset: live)
 
                     if canTrack {
-                        if let holding {
-                            DetailPositionCard(holding: holding, live: live, format: format)
+                        if !holdings.isEmpty {
+                            DetailPositionCard(holdings: holdings, portfolioNames: portfolioNames, live: live, format: format,
+                                               quoteAvailable: lastUpdated != nil && !quoteFailed && !live.looksUnpriced,
+                                               hidesValues: valueHidden)
                         } else {
                             DetailOwnPrompt(symbol: live.symbol, onLinkBroker: { sheet = .broker }) { sheet = .portfolio }
                         }
@@ -274,7 +286,7 @@ struct AppleStocksDetailView: View {
                     Button {
                         sheet = .portfolio
                     } label: {
-                        Label(holding == nil ? "Add to portfolio" : "Add more to portfolio", systemImage: "briefcase")
+                        Label(holdings.isEmpty ? "Add to portfolio" : "Add more to portfolio", systemImage: "briefcase")
                     }
                     .accessibilityIdentifier("detail.menu.addToPortfolio")
                 }
@@ -731,9 +743,7 @@ final class AssetDetailViewModel: ObservableObject {
 
     /// Same instrument: symbol, kind and market (ASX "BHP" is not NYSE "BHP").
     func matches(_ other: Asset) -> Bool {
-        other.symbol.uppercased() == seed.symbol.uppercased()
-            && other.kind == seed.kind
-            && QuoteService.isASX(other) == QuoteService.isASX(seed)
+        other.quoteIdentity == seed.quoteIdentity
     }
 
     func trackedAsset(in data: MarketData) -> Asset? {
