@@ -266,79 +266,108 @@ struct UnifiedPrivateAllocation: View {
         let usd: Double
     }
 
-    private var publicHoldings: [PortfolioHolding] {
-        market.portfolioGroups.enumerated().flatMap { index, group in
-            index == market.activePortfolioIndex ? market.portfolio : group.holdings
-        }
-    }
-
-    private var privateHoldings: [PrivateHolding] {
-        store.allocationHoldings
-    }
-
-    private var slices: [Slice] {
+    private var breakdown: (slices: [Slice], listedExcluded: Int, privateExcluded: Int, includesStaleMark: Bool) {
         var values: [String: Double] = [:]
-        for holding in publicHoldings {
-            let key = holding.asset.kind == .crypto ? "Crypto" : "Listed equities & ETFs"
-            values[key, default: 0] += holding.currentValue
+        var listedExcluded = 0
+        var privateExcluded = 0
+        var includesStaleMark = false
+        for holding in market.allTrackedHoldings where holding.shares > 0 {
+            guard let value = market.pricedPositionValue(holding) else {
+                listedExcluded += 1
+                continue
+            }
+            let category: String
+            if holding.asset.kind == .crypto {
+                category = "Crypto"
+            } else if holding.asset.isListedETF {
+                category = "ETFs"
+            } else {
+                category = "Listed equities"
+            }
+            values[category, default: 0] += value
         }
-        for holding in privateHoldings {
-            guard let mark = holding.valuation(), let rate = market.verifiedFXRates[holding.currency] else { continue }
-            values[holding.assetClass.rawValue, default: 0] += NSDecimalNumber(decimal: mark.value).doubleValue / rate
+        for holding in store.allocationHoldings {
+            guard let mark = holding.valuation(), let rate = market.verifiedFXRates[holding.currency] else {
+                privateExcluded += 1
+                continue
+            }
+            let value = NSDecimalNumber(decimal: mark.value).doubleValue / rate
+            guard value.isFinite, value >= 0 else {
+                privateExcluded += 1
+                continue
+            }
+            guard value > 0 else { continue }
+            values[holding.assetClass.rawValue, default: 0] += value
+            includesStaleMark = includesStaleMark || mark.isStale()
         }
-        return values.filter { $0.value.isFinite && $0.value > 0 }.map { Slice(id: $0.key, usd: $0.value) }
-            .sorted { $0.usd > $1.usd }
-    }
-
-    private var excluded: Int {
-        privateHoldings.filter { $0.valuation() == nil || market.verifiedFXRates[$0.currency] == nil }.count
+        var slices = values.map { Slice(id: $0.key, usd: $0.value) }
+        slices.sort { left, right in
+            if left.usd == right.usd { return left.id < right.id }
+            return left.usd > right.usd
+        }
+        return (slices, listedExcluded, privateExcluded, includesStaleMark)
     }
 
     var body: some View {
-        let allocation = slices
+        let snapshot = breakdown
+        let allocation = snapshot.slices
         let total = allocation.reduce(0) { $0 + $1.usd }
         let code = market.verifiedFXRates[market.preferredCurrency] != nil ? market.preferredCurrency : "USD"
         let fx = market.verifiedFXRates[code] ?? 1
+        let displayedTotal = total * fx
         VStack(alignment: .leading, spacing: 12) {
             Text("Unified allocation").font(.headline).accessibilityAddTraits(.isHeader)
             Text("All tracked listed portfolios and this private portfolio. Private values use dated marks.")
                 .font(.footnote).foregroundStyle(.secondary)
             if hide {
                 Text("Portfolio values are hidden.").font(.footnote).foregroundStyle(.secondary)
-            } else if allocation.isEmpty {
+            } else if total <= 0 || !displayedTotal.isFinite {
                 Text("Allocation appears when holdings have a supported value.").font(.footnote).foregroundStyle(.secondary)
             } else {
-                Text((total * fx).formatted(.currency(code: code)))
-                    .font(.title2.weight(.semibold).monospacedDigit())
-                Chart(allocation) { slice in
-                    SectorMark(angle: .value("Value in USD", slice.usd), innerRadius: .ratio(0.72), angularInset: 2)
-                        .cornerRadius(4)
-                        .foregroundStyle(by: .value("Asset class", slice.id))
-                }
-                .chartForegroundStyleScale(range: [Color.blue, .cyan, .purple, .mint, .orange, .pink, .teal, .indigo])
-                .chartLegend(.hidden)
-                .frame(height: 118)
-                .accessibilityHidden(true)
-                ForEach(allocation) { slice in
-                    LabeledContent(slice.id, value: (slice.usd / total).formatted(.percent.precision(.fractionLength(1))))
-                        .font(.subheadline)
-                }
+                allocationChart(allocation, total: total, displayedTotal: displayedTotal.formatted(.currency(code: code)))
             }
-            if excluded > 0 {
-                Text("\(excluded) private holdings excluded because a valuation or verified FX rate is unavailable.")
+            if snapshot.listedExcluded > 0 {
+                Text("Listed positions excluded for an unavailable quote: \(snapshot.listedExcluded)")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if snapshot.privateExcluded > 0 {
+                Text("Private positions excluded for a missing valuation or verified FX rate: \(snapshot.privateExcluded)")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if store.unavailableLinkedProviderCount > 0 {
                 Text("Some linked provider positions are unavailable and excluded from allocation.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if privateHoldings.contains(where: { $0.valuation()?.isStale() == true && market.verifiedFXRates[$0.currency] != nil }) {
+            if snapshot.includesStaleMark {
                 Label("Includes stale valuations where a conversion is available.", systemImage: "clock.badge.exclamationmark")
                     .font(.footnote).foregroundStyle(Color.orange)
             }
         }
         .padding(.vertical, 8)
         .accessibilityIdentifier("private.allocation")
+    }
+
+    @ViewBuilder
+    private func allocationChart(_ slices: [Slice], total: Double, displayedTotal: String) -> some View {
+        Text(displayedTotal)
+            .font(.title2.weight(.semibold).monospacedDigit())
+            .accessibilityIdentifier("private.allocation.total")
+        Chart(slices) { slice in
+            SectorMark(angle: .value("Value in USD", slice.usd), innerRadius: .ratio(0.72), angularInset: 2)
+                .cornerRadius(4)
+                .foregroundStyle(by: .value("Asset class", slice.id))
+        }
+        .chartForegroundStyleScale(range: [Color.blue, .cyan, .purple, .mint, .orange, .pink, .teal, .indigo, .yellow])
+        .chartLegend(.hidden)
+        .frame(height: 118)
+        .accessibilityHidden(true)
+        ForEach(slices) { slice in
+            let percentage = (slice.usd / total).formatted(.percent.precision(.fractionLength(1)))
+            LabeledContent(slice.id, value: percentage)
+                .font(.subheadline)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("private.allocation.slice.\(slice.id)")
+        }
     }
 }
 

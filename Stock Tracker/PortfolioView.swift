@@ -167,6 +167,7 @@ struct PortfolioView: View {
             List {
                 if marketData.portfolio.isEmpty {
                     emptyState
+                    privateAllocationSection
                     closedSection
                     if cloudAuth.authState == .signedIn, let userId = cloudAuth.userId {
                         Button { sheet = .brokerCash(userId) } label: {
@@ -213,17 +214,13 @@ struct PortfolioView: View {
 
                     switch segment {
                     case .holdings:    holdingsSection
-                    case .allocation:  PortfolioAllocationTab().portfolioRow(bottom: DS.Space.xxl)
+                    case .allocation:
+                        privateAllocationSection
+                        PortfolioAllocationTab().portfolioRow(bottom: DS.Space.xxl)
                     case .performance: PortfolioPerformanceTab(onUpgrade: { sheet = .paywall(feature: "Benchmark comparison", tier: .black) })
                                            .portfolioRow(bottom: DS.Space.xxl)
                     case .income:      PortfolioIncomeTab().portfolioRow(bottom: DS.Space.xxl)
                     }
-                }
-                if !privateMarkets.allocationHoldings.isEmpty || privateMarkets.unavailableLinkedProviderCount > 0 {
-                    UnifiedPrivateAllocation()
-                        .portfolioRow(bottom: DS.Space.m)
-                    Button("Open Private Markets") { selectTab(.privateMarkets) }
-                        .portfolioRow(bottom: DS.Space.l)
                 }
                 // Practice (paper) portfolios sit apart from real holdings, always labelled.
                 PracticePortfolioSection()
@@ -475,11 +472,20 @@ struct PortfolioView: View {
     // MARK: Holdings
 
     @ViewBuilder
+    private var privateAllocationSection: some View {
+        if !privateMarkets.allocationHoldings.isEmpty || privateMarkets.unavailableLinkedProviderCount > 0 {
+            UnifiedPrivateAllocation()
+                .portfolioRow(bottom: DS.Space.m)
+            Button("Open Private Markets") { selectTab(.privateMarkets) }
+                .portfolioRow(bottom: DS.Space.l)
+        }
+    }
+
+    @ViewBuilder
     private var holdingsSection: some View {
         let open = marketData.portfolio.filter { $0.shares > 0 }
         let values = Dictionary(uniqueKeysWithValues: open.compactMap { holding -> (UUID, Double)? in
-            guard holding.currentValue.isFinite, holding.currentValue > 0, !marketData.hasNoLivePrice(holding.asset) else { return nil }
-            return (holding.id, holding.currentValue)
+            marketData.pricedPositionValue(holding).map { (holding.id, $0) }
         })
         let total = values.values.reduce(0, +)
         let visible = visibleHoldings(open, values: values)

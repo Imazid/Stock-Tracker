@@ -20,6 +20,12 @@ extension MarketData {
         quoteFailed(for: asset) || asset.looksUnpriced
     }
 
+    func pricedPositionValue(_ holding: PortfolioHolding) -> Double? {
+        guard holding.shares > 0, !hasNoLivePrice(holding.asset) else { return nil }
+        let value = holding.currentValue
+        return value.isFinite && value > 0 ? value : nil
+    }
+
     /// "+$12.30" / "−$4.10" in the display currency.
     func signedMoney(_ value: Double) -> String {
         (value >= 0 ? "+" : "−") + formatPrice(abs(value))

@@ -407,6 +407,91 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["holding.position"].waitForExistence(timeout: 8))
     }
 
+    func testUnifiedAllocationUsesOnlyPricedPositionsAndSeparatesETFs() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_UNIFIED_ALLOCATION"] == "1",
+                          "Start the unified allocation quote relay")
+        let email = "unified-allocation-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userID = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let date = ISO8601DateFormatter().string(from: .now)
+        let positions: [(String, String, Double)] = [
+            ("AAPL", "NASDAQ", 2), ("QQQ", "NASDAQ", 1), ("UNPRICED", "NASDAQ", 1),
+        ]
+        let rows = positions.map { symbol, exchange, units in
+            ["id": UUID().uuidString.lowercased(), "user_id": userID, "asset_symbol": symbol,
+             "asset_name": symbol, "asset_kind": "Stock", "asset_exchange": exchange,
+             "shares": units, "avg_cost": 40, "date_added": date] as [String: Any]
+        }
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: rows), token: token).status, 201)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-preferredCurrency", "USD"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        let allocation = app.buttons["portfolio.segment.allocation"]
+        XCTAssertTrue(allocation.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.open("Private Markets"))
+        app.buttons["private.destination.briefcase"].tap()
+        let add = app.buttons["private.holding.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 15))
+        add.tap()
+        let name = app.textFields["private.holding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Allocation fixture")
+        app.buttons["Currency"].tap()
+        let usd = app.buttons["USD"]
+        for _ in 0..<4 where !usd.isHittable { app.swipeUp() }
+        usd.tap()
+        app.buttons["private.holding.save"].tap()
+        let position = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(position.waitForExistence(timeout: 8))
+        position.tap()
+        let valuation = app.buttons["private.valuation.add"]
+        for _ in 0..<4 where !valuation.isHittable { app.swipeUp() }
+        valuation.tap()
+        let amount = app.textFields["private.ledger.amount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText("300")
+        let source = app.textFields["private.ledger.source"]
+        source.tap()
+        source.typeText("Test statement")
+        let method = app.textFields["private.ledger.method"]
+        method.tap()
+        method.typeText("Statement NAV")
+        app.buttons["private.ledger.save"].tap()
+        XCTAssertTrue(app.navigationBars["Record Valuation"].waitForNonExistence(timeout: 5))
+
+        XCTAssertTrue(app.open("Portfolio"))
+        for _ in 0..<7 where !allocation.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(allocation.isHittable)
+        allocation.tap()
+        let total = app.staticTexts["private.allocation.total"]
+        let valued = expectation(for: NSPredicate(format: "label CONTAINS '500.00'"), evaluatedWith: total)
+        XCTAssertEqual(XCTWaiter.wait(for: [valued], timeout: 20), .completed, total.label)
+        for category in ["ETFs", "Listed equities", "Startup equity"] {
+            let slice = app.descendants(matching: .any)["private.allocation.slice.\(category)"].firstMatch
+            for _ in 0..<5 where !slice.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(slice.exists)
+            XCTAssertTrue(slice.label.contains(category))
+            XCTAssertTrue(([slice.label, slice.value as? String ?? ""].joined()).contains(category == "Startup equity" ? "60.0%" : "20.0%"))
+        }
+        let excluded = app.staticTexts["Listed positions excluded for an unavailable quote: 1"]
+        for _ in 0..<4 where !excluded.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(excluded.exists)
+        app.buttons["portfolio.privacy"].tap()
+        XCTAssertTrue(total.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Portfolio values are hidden."].exists)
+    }
+
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ISSUER_EXPOSURE"] == "1",
                           "Start the issuer allocation quote fixture relay")

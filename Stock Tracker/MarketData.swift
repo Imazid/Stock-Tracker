@@ -62,6 +62,13 @@ final class MarketData: ObservableObject {
     @Published var isRefreshingQuotes: Bool = false
     @Published var portfolioGroups: [PortfolioGroup] = []
     @Published var activePortfolioIndex: Int = 0
+
+    var allTrackedHoldings: [PortfolioHolding] {
+        portfolio + portfolioGroups.enumerated().flatMap { index, group in
+            index == activePortfolioIndex ? [] : group.holdings
+        }
+    }
+
     @Published var watchlistGroups: [WatchlistGroup] = []
     @Published var activeWatchlistIndex: Int = 0
 
@@ -439,7 +446,6 @@ final class MarketData: ObservableObject {
         portfolio = portfolioGroups[index].holdings
         portfolioHistory = portfolioGroups[index].history
         saveToDisk()
-        // Inactive portfolios aren't priced in the background; price this one now.
         Task { await refreshFromAPI() }
     }
 
@@ -500,6 +506,15 @@ final class MarketData: ObservableObject {
         watchlist = synced.watchlist
         quoteFailures = Set((stocks + crypto).filter { quoteService.quoteFailed(for: $0) }.map(\.quoteIdentity))
 
+        for index in portfolioGroups.indices where index != activePortfolioIndex {
+            portfolioGroups[index].holdings = quoteService.syncCollections(
+                portfolio: portfolioGroups[index].holdings,
+                watchlist: [],
+                stocks: stocks,
+                crypto: crypto
+            ).portfolio
+        }
+
         // Sync prices for all non-active watchlist groups
         let allAssets = stocks + crypto
         for i in watchlistGroups.indices where i != activeWatchlistIndex {
@@ -528,6 +543,13 @@ final class MarketData: ObservableObject {
         for i in portfolio.indices where portfolio[i].asset.quoteIdentity == asset.quoteIdentity {
             portfolio[i].asset = apply(portfolio[i].asset)
         }
+        for group in portfolioGroups.indices where group != activePortfolioIndex {
+            for index in portfolioGroups[group].holdings.indices
+            where portfolioGroups[group].holdings[index].asset.quoteIdentity == asset.quoteIdentity {
+                let old = portfolioGroups[group].holdings[index].asset
+                portfolioGroups[group].holdings[index].asset = apply(old)
+            }
+        }
         for i in watchlist.indices where watchlist[i].quoteIdentity == asset.quoteIdentity {
             watchlist[i] = apply(watchlist[i])
         }
@@ -541,7 +563,7 @@ final class MarketData: ObservableObject {
     }
 
     private func mergeTrackedAssetsIntoCanonicalCollections() {
-        for asset in portfolio.map(\.asset) + watchlist {
+        for asset in allTrackedHoldings.filter({ $0.shares > 0 }).map(\.asset) + watchlist {
             upsertTrackedAsset(asset)
         }
     }
