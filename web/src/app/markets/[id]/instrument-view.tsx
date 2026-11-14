@@ -254,7 +254,7 @@ export function InstrumentView({ id }: { id: string }) {
           ) : null}
         </div>
       </div>
-      {instrument && <AssetRiskCard key={id} id={instrument.id} />}
+      {instrument && <AssetRiskCard key={`risk-${id}`} id={instrument.id} />}
       {instrument && !index && <ListingPositions instrument={instrument} quote={q} />}
       {instrument?.venue === "crypto" ? <CryptoResearch key={id} id={instrument.id} /> : null}
       {instrument && !index && instrument.venue !== "crypto" ? <CompanyResearch key={id} id={id} symbol={instrument.symbol} overview={profile.data} overviewError={profile.isError} retryOverview={() => { void profile.refetch(); }} /> : null}
