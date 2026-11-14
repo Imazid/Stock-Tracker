@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { AlertTriangle, ArrowUpRight, Bell, PieChart, Plus, Star, Trash2, Wallet } from "lucide-react";
 import { backend, service } from "../lib/backend";
 import { dateText, fromHolding, fromWatch, instrumentID, message, money, qty, storedExchange, storedKind, storedTicker, type Holding, type Instrument, type Journal, type Quotes } from "../lib/models";
@@ -60,7 +61,12 @@ export function Portfolio({ userId, journal, onAsset, onAdd, onEdit }: { userId:
     </div>
     {error && <div className="notice"><AlertTriangle size={16}/>{error}</div>}
     <PortfolioHistory userId={userId} />
-    <section className="panel table-panel"><div className="panel-heading"><h2>Holdings</h2><button className="button primary small" onClick={onAdd}><Plus size={15}/> Add holding</button></div>
+    <section className="panel table-panel"><div className="panel-heading"><h2>Holdings</h2>
+      <div className="inline-actions flex-wrap">
+        {open.length > 0 && <Link className="button secondary small" href="/portfolio#holdings">Compare holdings</Link>}
+        <button className="button primary small" onClick={onAdd}><Plus size={15}/> Add holding</button>
+      </div>
+    </div>
       {rows.length ? <div className="table-scroll"><table><thead><tr><th>Asset</th><th>Units</th><th>Average cost</th><th>Value</th><th>Unrealised</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
         {rows.map(({row, asset, usd}) => <tr key={row.id}><td><button className="plain" onClick={() => onAsset(asset)}><AssetText asset={asset}/></button></td><td>{qty(row.shares)}</td><td>{money(row.avg_cost)}</td><td>{row.shares === 0 ? money(0) : usd === undefined ? "—" : money(usd * row.shares)}</td><td><Change value={row.shares > 0 && row.avg_cost > 0 && usd !== undefined ? (usd / row.avg_cost - 1) * 100 : null}/></td><td><button className="button small secondary" onClick={() => onEdit(row)}>Edit</button></td></tr>)}
       </tbody></table></div> : <Empty icon={<Wallet size={20}/>} title="No holdings yet" text="Holdings saved in Stock Tracker will appear here."/>}

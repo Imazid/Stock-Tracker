@@ -5,19 +5,10 @@ import { getJSON } from "@/lib/api";
 import { toView } from "@/lib/instrument-view";
 import type { QuoteResponse } from "@/lib/market-types";
 import { portfolioInstrument } from "@/lib/portfolio-exposure";
-import type { HoldingBrokerAccount } from "@/lib/portfolio-transfers";
 import { browserSupabase } from "@/lib/supabase/client";
+import type { PortfolioHolding } from "@/lib/portfolio-holdings";
 
-interface HoldingRow {
-  id: string;
-  asset_symbol: string;
-  asset_name: string;
-  asset_kind: "Stock" | "Crypto";
-  asset_exchange: string | null;
-  broker_account: HoldingBrokerAccount | null;
-  shares: number;
-  avg_cost: number;
-}
+type HoldingRow = Omit<PortfolioHolding, "instrument">;
 
 async function readPortfolio(userId: string, signal: AbortSignal) {
   const db = browserSupabase();
@@ -56,5 +47,6 @@ export function usePortfolioPositions(userId?: string) {
     })),
   });
   const quotes = new Map(ids.map((id, index) => [id, prices[index]]));
-  return { portfolio, holdings, pricedListings, quotes, loadingPrices: prices.some((price) => price.isPending) };
+  const pendingQuotes = new Set(ids.filter((_, index) => prices[index].isPending));
+  return { portfolio, holdings, pricedListings, quotes, pendingQuotes, loadingPrices: pendingQuotes.size > 0 };
 }

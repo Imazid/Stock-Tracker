@@ -3,9 +3,10 @@ import { getJSON } from "@/lib/api";
 import type { PortfolioReferenceRates } from "@/lib/portfolio-exposure";
 import type { PortfolioGains } from "@/lib/portfolio-gains";
 
-export function usePortfolioGains(userId: string) {
+export function usePortfolioGains(userId?: string) {
   return useQuery({
     queryKey: ["portfolio-gains", userId],
+    enabled: Boolean(userId),
     queryFn: async ({ signal }) => {
       const report = await getJSON<PortfolioGains>("/api/portfolio/gains", signal);
       if (report.owner !== userId) throw new Error("The account changed while loading gains.");

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { portfolioExposure, portfolioInstrument, type PortfolioReferenceRates } from "../../lib/portfolio-exposure.ts";
 import type { InstrumentView, QuoteResponse } from "../../lib/market-types.ts";
+import { findHoldings, holdingComparison, type PortfolioHolding } from "../../lib/portfolio-holdings.ts";
 import { issuerClassifications } from "./issuer-classifications.ts";
 import { portfolioReferenceRates } from "./reference-rates.ts";
 
@@ -23,6 +24,50 @@ const rates: PortfolioReferenceRates = {
   AUD: { USD: { rate: "1.5", date: "2026-11-13" } },
   USD: { AUD: { rate: "0.666666666667", date: "2026-11-13" } },
 };
+
+test("compares individual accounts in USD and preserves the valued denominator when filtering", () => {
+  const aud = instrument("asx", "BHP", "AUD");
+  const etf = instrument("us", "SPY", "USD");
+  const crypto = instrument("crypto", "BTC", "USD");
+  const missingFx = instrument("lse", "VOD", "GBP");
+  const wrongQuote = instrument("us", "VTI", "USD");
+  function position(id: string, listing: InstrumentView | null, shares: number): PortfolioHolding {
+    return {
+      id, instrument: listing, shares, avg_cost: 10, asset_symbol: listing?.symbol ?? "UNKNOWN",
+      asset_name: listing === aud ? "BHP Group" : listing?.name ?? "Unknown listing",
+      asset_kind: listing?.venue === "crypto" ? "Crypto" : "Stock", asset_exchange: listing?.venueShort ?? null,
+      broker_account: { account_id: id, label: `Broker ••••${id}`, institution: "Broker", observed_at: "2026-11-13T01:00:00Z", tracking: true },
+    };
+  }
+  const holdings = [position("1111", aud, 2), position("2222", aud, 1), position("3333", etf, 1),
+    position("4444", crypto, 1), position("5555", missingFx, 1), position("6666", wrongQuote, 1), position("7777", null, 1)];
+  const quotes = new Map([
+    [aud.id, quote(aud, 60)], [etf.id, quote({ ...etf, assetClass: "etf" }, 90)],
+    [crypto.id, { ...quote(crypto, 200), quote: { ...quote(crypto, 200).quote, stale: true, changePct: 90 } }],
+    [missingFx.id, quote(missingFx, 120)], [wrongQuote.id, quote({ ...wrongQuote, currency: "AUD" }, 200)],
+  ]);
+  const comparison = holdingComparison(holdings, (id) => quotes.get(id), rates, new Map([["1111", 5], ["2222", -10], ["3333", 0]]));
+  const ranked = findHoldings(comparison.rows, "", "all", "value");
+  assert.deepEqual(ranked.slice(0, 3).map((row) => row.holding.id), ["3333", "1111", "2222"]);
+  assert.equal(comparison.valued, 3);
+  assert.deepEqual(comparison.fxDates, ["2026-11-13"]);
+  const filtered = findHoldings(comparison.rows, "bhp 1111", "equity", "value");
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].local, 120);
+  assert(Math.abs(filtered[0].weight! - 80 / 210 * 100) < 0.000001);
+  assert.equal(findHoldings(comparison.rows, "", "etf", "value")[0].symbol, "SPY");
+  assert.equal(findHoldings(comparison.rows, "", "unclassified", "symbol")[0].symbol, "UNKNOWN");
+  assert.equal(findHoldings(comparison.rows, "", "all", "loss")[0].gain, -10);
+  assert.equal(findHoldings(comparison.rows, "", "all", "gain")[1].gain, 0);
+  const stale = ranked.find((row) => row.symbol === "BTC");
+  assert.equal(stale?.change, 90);
+  assert.equal(stale?.currentChange, undefined);
+  assert.equal(stale?.local, undefined);
+  assert.equal(stale?.weight, undefined);
+  assert.equal(ranked.find((row) => row.symbol === "VOD")?.local, 120);
+  assert.equal(ranked.find((row) => row.symbol === "VOD")?.weight, undefined);
+  assert.equal(ranked.find((row) => row.symbol === "VTI")?.quote, undefined);
+});
 
 test("combines accounts by listing and values each breakdown in the chosen reporting currency", () => {
   const bhp = instrument("asx", "BHP", "AUD");
@@ -128,5 +173,8 @@ test("uses the broker listing for bare international symbols and rejects conflic
   assert.equal(portfolioInstrument({ ...stock, exchange: "Unmapped exchange" }), null);
   assert.equal(portfolioInstrument({ ...stock, symbol: "BRK.B", exchange: "NYSE" })?.symbol, "BRK.B");
   assert.equal(portfolioInstrument({ ...stock, symbol: "AAPL", exchange: null })?.venue, "us");
+  assert.equal(portfolioInstrument({ ...stock, symbol: "SPY", exchange: "NYSE ARCA" })?.assetClass, "etf");
+  assert.equal(portfolioInstrument({ ...stock, symbol: "STW.AX", exchange: "ASX" })?.assetClass, "etf");
+  assert.equal(portfolioInstrument({ ...stock, symbol: "IVV", exchange: null }), null);
   assert.equal(portfolioInstrument({ ...stock, symbol: "UNMAPPED", exchange: null }), null);
 });

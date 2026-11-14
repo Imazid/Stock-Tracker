@@ -40,7 +40,7 @@ function initialPage(): Page {
   return sections.find(section => section.id === window.location.hash.slice(1))?.id ?? "overview";
 }
 
-export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: boolean; brokerageEnabled: boolean }) {
+export default function Workspace({ aiEnabled, brokerageEnabled, logosEnabled }: { aiEnabled: boolean; brokerageEnabled: boolean; logosEnabled: boolean }) {
   const queryClient = useQueryClient();
   const [page,setPage] = useState<Page>("overview");
   const [asset,setAsset] = useState<Instrument>(popular[0]);
@@ -266,7 +266,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
             <Link className="button secondary small" href="/portfolio?recordTransfer=1#portfolio-returns">Record external transfer</Link>
             <button type="button" className="button secondary small" onClick={() => navigate("strategy")}>Create strategy</button>
           </div>
-          <PortfolioDashboard key={userID} userId={userID} brokerageEnabled={brokerageEnabled} aiEnabled={aiEnabled}
+          <PortfolioDashboard key={userID} userId={userID} brokerageEnabled={brokerageEnabled} aiEnabled={aiEnabled} logosEnabled={logosEnabled}
             pendingApprovals={trading?.proposals.filter(proposal => proposal.status === "pending").length} openAgents={() => navigate("agents")}
             openConnections={() => navigate("settings")} />
         </>}

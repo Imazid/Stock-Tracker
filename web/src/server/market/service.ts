@@ -58,7 +58,7 @@ function withChange(q: Pick<QuoteView, "last" | "previousClose">): { change?: nu
   return { change, changePct: (change / q.previousClose) * 100 };
 }
 
-async function quoteFromSources(instrument: Instrument, now: number): Promise<QuoteView> {
+async function quoteFromSources(instrument: Instrument, now: number): Promise<QuoteView & { isEtf?: boolean }> {
   const reasons: string[] = [];
   const id = instrumentID(instrument);
   const fetchedAt = new Date(now).toISOString();
@@ -123,7 +123,7 @@ async function quoteFromSources(instrument: Instrument, now: number): Promise<Qu
       volume: q.volume, volumeScope: yahooVolumeScope(instrument), currency, source: YAHOO_SOURCE,
       observedAt: new Date(q.observedAt).toISOString(), fetchedAt,
       status: yahooStatus(instrument, q.delayMinutes),
-      delayMinutes: q.delayMinutes, stale: s.stale, staleReason: s.reason,
+      delayMinutes: q.delayMinutes, stale: s.stale, staleReason: s.reason, isEtf: q.isEtf,
       notes: q.delayMinutes === undefined && instrument.venue !== "crypto" ? [...notes, "Yahoo doesn't state this feed's delay, so it's treated as delayed."] : notes,
     };
   } catch (error) {
@@ -134,10 +134,11 @@ async function quoteFromSources(instrument: Instrument, now: number): Promise<Qu
 
 export async function getQuote(instrument: Instrument): Promise<QuoteResponse> {
   const now = Date.now();
-  const quote = await cached(`quote:${instrumentID(instrument)}`, 10_000, () => quoteFromSources(instrument, now));
+  const { isEtf, ...quote } = await cached(`quote:${instrumentID(instrument)}`, 10_000, () => quoteFromSources(instrument, now));
   // Re-judge freshness at read time: a cached answer can age past the line.
   const s = staleness(instrument, Date.parse(quote.observedAt), quote.delayMinutes, Date.now());
-  return { instrument: toView(instrument), quote: { ...quote, stale: s.stale, staleReason: s.reason }, market: marketState(instrument.venue, now) };
+  const listing = isEtf && instrument.assetClass === "equity" ? { ...instrument, assetClass: "etf" as const } : instrument;
+  return { instrument: toView(listing), quote: { ...quote, stale: s.stale, staleReason: s.reason }, market: marketState(instrument.venue, now) };
 }
 
 const CANDLE_TTL: Record<ChartRange, number> = { "1D": 30_000, "5D": 60_000, "1M": 120_000, "3M": 600_000, "6M": 600_000, "1Y": 900_000, "5Y": 3_600_000 };
