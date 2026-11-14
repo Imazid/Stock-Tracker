@@ -108,6 +108,96 @@ select case when count(*)=5 and count(*) filter (where body_sha256 in (repeat('a
   then 'ok   only accepted deliveries retain a replay receipt' else 'FAIL replay receipt count' end
   from provider_operations.private_event_deliveries where user_id='f3000000-0000-4000-8000-000000000001';
 reset role;
+update public.investment_opportunities set provider_offer_reference = 'offer-A'
+where id = 'f3000000-0000-4000-8000-000000000030';
+
+insert into public.investment_commitments
+  (id,user_id,provider,provider_connection_id,jurisdiction,rule_version,opportunity_id,reviewed_document_url,
+   requested_amount,currency,acknowledged_at,retail_csf_cooling_off_required)
+  select 'f3000000-0000-4000-8000-000000000041','f3000000-0000-4000-8000-000000000002','birchal',
+    'f3000000-0000-4000-8000-000000000004','AU',version,'f3000000-0000-4000-8000-000000000030',
+    'https://example.test/delivery',500,'AUD',now()-interval '12 days',true
+  from public.private_market_rules where jurisdiction='AU';
+
+set role authenticated;
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','mobile-ref',repeat('a',64),'application','delivery-other',now(),'{}')$q$,
+  '42501','reference delivery is service only');
+select case when not has_column_privilege('authenticated','public.investment_opportunities','provider_offer_reference','SELECT')
+  and not has_column_privilege('anon','public.investment_opportunities','provider_offer_reference','SELECT')
+  then 'ok   provider offer references stay internal' else 'FAIL provider reference visible' end;
+reset role;
+set role service_role;
+
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','used',repeat('a',64),'application','delivery-other',now()-interval '10 days',
+  '{"offer_reference":"offer-A","reference":"receipt-1","status":"application_received"}')$q$,
+  '42501','another investor cannot claim an existing provider receipt');
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','wrong-offer',repeat('a',64),'application','delivery-other',now()-interval '10 days',
+  '{"offer_reference":"offer-B","reference":"second-receipt","status":"application_received"}')$q$,
+  '42501','an unmapped offer cannot capture a handoff');
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','old',repeat('a',64),'application','delivery-other',now()-interval '13 days',
+  '{"offer_reference":"offer-A","reference":"second-receipt","status":"application_received"}')$q$,
+  '42501','the first receipt cannot predate the current handoff');
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','early-confirmation',repeat('a',64),'application','delivery-other',now()-interval '10 days',
+  '{"offer_reference":"offer-A","reference":"second-receipt","status":"confirmed","units":"2","invested_amount":"500"}')$q$,
+  '42501','only an application receipt can establish the first match');
+
+select case when public.accept_private_provider_reference_delivery(
+  'birchal','by-offer',repeat('a',64),'application','delivery-other',now()-interval '10 days',
+  jsonb_build_object('offer_reference','offer-A','reference','second-receipt','status','application_received',
+    'application_currency','AUD','application_amount','500.4321','cooling_off_ends_at',now()-interval '5 days')) = 'accepted'
+  then 'ok   signed provider receipt can bind using provider references only' else 'FAIL provider receipt reference match' end;
+select case when provider_reference='second-receipt' and status='application_received' and provider_application_amount=500.4321
+  then 'ok   provider receipt updated the correct owner and amount' else 'FAIL provider receipt state' end
+  from public.investment_commitments where id='f3000000-0000-4000-8000-000000000041';
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','before-window',repeat('a',64),'application','delivery-other',now()-interval '6 days',
+  '{"offer_reference":"offer-A","reference":"second-receipt","status":"confirmed","units":"2","invested_amount":"500"}')$q$,
+  '22023','matching by provider references honors the cooling-off deadline');
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','before-confirmation',repeat('a',64),'holding_activity','delivery-other',now()-interval '4 days',
+  '{"offer_reference":"offer-A","application_reference":"second-receipt","activity":"valuation","reference":"mark-2","currency":"AUD","source":"Statement"}')$q$,
+  '42501','holding updates require a confirmed holding');
+
+select case when public.accept_private_provider_reference_delivery(
+  'birchal','reference-settlement',repeat('b',64),'application','delivery-other',now()-interval '4 days',
+  '{"offer_reference":"offer-A","reference":"second-receipt","status":"confirmed","units":"3.12345678","invested_amount":"500.4321"}') = 'accepted'
+  then 'ok   provider references reconcile confirmed ownership' else 'FAIL provider reference settlement' end;
+select case when public.accept_private_provider_reference_delivery(
+  'birchal','by-offer',repeat('a',64),'application','delivery-other',now()-interval '10 days',
+  jsonb_build_object('offer_reference','offer-A','reference','second-receipt','status','application_received',
+    'application_currency','AUD','application_amount','500.4321','cooling_off_ends_at',now()-interval '5 days')) = 'duplicate'
+  then 'ok   first receipt retries succeed after ownership is confirmed' else 'FAIL replay after settlement' end;
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','by-offer',repeat('d',64),'application','delivery-other',now()-interval '10 days',
+  '{"offer_reference":"offer-A","reference":"second-receipt","status":"application_received"}')$q$,
+  '23505','provider reference retries must match the original body');
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','someone-else',repeat('e',64),'holding_activity','delivery-owner',now()-interval '3 days',
+  '{"offer_reference":"offer-A","application_reference":"second-receipt","activity":"valuation","reference":"mark-2","currency":"AUD","source":"Statement"}')$q$,
+  '42501','provider references do not expose another investor’s holding');
+select case when public.accept_private_provider_reference_delivery(
+  'birchal','reference-mark',repeat('c',64),'holding_activity','delivery-other',now()-interval '3 days',
+  jsonb_build_object('offer_reference','offer-A','application_reference','second-receipt','activity','valuation',
+    'reference','mark-2','currency','AUD','source','Statement','method','NAV','amount','720.125',
+    'record_date',(now()-interval '3 days')::date)) = 'accepted'
+  then 'ok   provider references resolve a holding valuation' else 'FAIL reference valuation delivery' end;
+select case when public.accept_private_provider_reference_delivery(
+  'birchal','reference-sale',repeat('d',64),'holding_disposition','delivery-other',now()-interval '2 days',
+  jsonb_build_object('offer_reference','offer-A','application_reference','second-receipt','reference','sale-2',
+    'currency','AUD','source','Statement','reversed',false,'settled_on',(now()-interval '2 days')::date,
+    'sold_units','1.12345678','net_proceeds','100.1234')) = 'accepted'
+  then 'ok   provider references resolve a settled sale' else 'FAIL reference sale delivery' end;
+select case when h.remaining_units=2 and v.value=720.125
+  then 'ok   provider references preserve exact position and mark values' else 'FAIL reference holding values' end
+  from public.private_holdings h join public.valuation_history v on v.holding_id=h.id
+  where h.commitment_id='f3000000-0000-4000-8000-000000000041' and v.provider_reference='mark-2';
+reset role;
+
 delete from auth.users where id='f3000000-0000-4000-8000-000000000001';
 select case when not exists (select 1 from provider_operations.private_event_deliveries where user_id='f3000000-0000-4000-8000-000000000001')
   then 'ok   deleting the account clears its delivery receipts' else 'FAIL retained delivery receipts' end;

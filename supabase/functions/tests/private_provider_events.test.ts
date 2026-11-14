@@ -95,6 +95,50 @@ Deno.test("account linking forwards only a signed digest and the verification ev
   assertEquals(delivered, 1);
 });
 
+Deno.test("signed application and holding events accept provider references as their only target", async () => {
+  const application = { offer_reference: "offer-A", reference: "receipt-1", status: "application_received" };
+  const holding = {
+    offer_reference: "offer-A", application_reference: "receipt-1", reference: "mark-1", currency: "AUD",
+    source: "Provider statement", activity: "valuation",
+  };
+  const sale = {
+    offer_reference: "offer-A", application_reference: "receipt-1", reference: "sale-1", currency: "AUD",
+    source: "Provider statement", reversed: false, settled_on: "2027-01-01", sold_units: "1", net_proceeds: "100",
+  };
+  const accepted = [
+    { ...sample, details: application },
+    { ...sample, kind: "holding_activity", details: holding },
+    { ...sample, kind: "holding_disposition", details: sale },
+  ];
+  for (const event of accepted) {
+    const response = await handleProviderDelivery(await request(JSON.stringify(event)), {
+      key: () => toBase64(rawKey), now: () => now,
+      accept: (entry) => {
+        assertEquals(entry.p_kind, event.kind);
+        assertEquals(entry.p_details, event.details);
+        return Promise.resolve("accepted");
+      },
+    });
+    assertEquals(response.status, 200);
+  }
+
+  for (const event of [
+    { ...sample, details: { ...application, commitment_id: sample.details.commitment_id } },
+    { ...sample, details: { reference: "receipt-1", status: "application_received" } },
+    { ...sample, details: { ...application, offer_reference: " offer-A" } },
+    { ...sample, details: { ...application, reference: "receipt-1 " } },
+    { ...sample, kind: "holding_activity", details: { ...holding, application_reference: null } },
+    { ...sample, kind: "holding_activity", details: { ...holding, holding_id: sample.details.commitment_id } },
+    { ...sample, kind: "holding_disposition", details: { ...sale, offer_reference: null } },
+  ]) {
+    const response = await handleProviderDelivery(await request(JSON.stringify(event)), {
+      key: () => toBase64(rawKey), now: () => now,
+      accept: () => { throw new Error("Unexpected ledger access"); },
+    });
+    assertEquals(response.status, 400);
+  }
+});
+
 Deno.test("unknown fields, a user ID, loose decimal values and oversized payloads are refused", async () => {
   const deps = {
     key: () => toBase64(rawKey),

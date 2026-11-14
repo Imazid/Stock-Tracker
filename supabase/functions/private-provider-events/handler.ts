@@ -17,16 +17,19 @@ const verification = {
   expires_at: timestamp, accountant_reviewed_at: timestamp,
 };
 const application = {
-  commitment_id: uuid, reference: text(200), status, cooling_off_ends_at: timestamp, units,
+  commitment_id: uuid, offer_reference: text(200), reference: text(200), status, cooling_off_ends_at: timestamp, units,
   invested_amount: money, application_amount: money, application_currency: currency, supplementary_deadline: timestamp,
   supplementary_document_url: text(2048),
 };
+const holdingTarget = {
+  holding_id: uuid, offer_reference: text(200), application_reference: text(200),
+};
 const holdingActivity = {
-  holding_id: uuid, reference: text(200), currency, source: text(400), activity,
+  ...holdingTarget, reference: text(200), currency, source: text(400), activity,
   amount: money, record_date: date, method: text(400), settled_on: date,
 };
 const holdingDisposition = {
-  holding_id: uuid, reference: text(200), currency, source: text(400), reversed: null,
+  ...holdingTarget, reference: text(200), currency, source: text(400), reversed: null,
   settled_on: date, sold_units: units, net_proceeds: money, disposed_cost: money,
 };
 
@@ -36,9 +39,9 @@ const shapes = {
     fields: { ...verification, code_digest: /^[a-f0-9]{64}$/ },
     required: ["jurisdiction", "evidence_reference", "verified_class", "expires_at", "code_digest"],
   },
-  application: { fields: application, required: ["commitment_id", "reference", "status"] },
-  holding_activity: { fields: holdingActivity, required: ["holding_id", "reference", "currency", "source", "activity"] },
-  holding_disposition: { fields: holdingDisposition, required: ["holding_id", "reference", "currency", "source", "reversed"] },
+  application: { fields: application, required: ["reference", "status"] },
+  holding_activity: { fields: holdingActivity, required: ["reference", "currency", "source", "activity"] },
+  holding_disposition: { fields: holdingDisposition, required: ["reference", "currency", "source", "reversed"] },
 } satisfies Record<string, { fields: Record<string, RegExp | null>; required: string[] }>;
 type Kind = keyof typeof shapes;
 
@@ -98,6 +101,19 @@ function parseEvent(bytes: Bytes): Omit<Delivery, "p_provider" | "p_body_sha256"
   const details = body.details;
   if (shape.required.some((field) => !Object.hasOwn(details, field) || details[field] === null) ||
       (kind === "verification" && !Object.hasOwn(details, "verified_class"))) throw badEvent();
+  if (kind === "application" || kind === "holding_activity" || kind === "holding_disposition") {
+    const byId = Object.hasOwn(details, kind === "application" ? "commitment_id" : "holding_id");
+    const byOffer = Object.hasOwn(details, "offer_reference");
+    if (byId === byOffer) throw badEvent();
+    if (byId) {
+      const id = kind === "application" ? details.commitment_id : details.holding_id;
+      if (!matches(id, uuid) || Object.hasOwn(details, "application_reference")) throw badEvent();
+    } else {
+      const applicationRef = kind === "application" ? details.reference : details.application_reference;
+      if (!matches(details.offer_reference, text(200)) || details.offer_reference.trim() !== details.offer_reference ||
+        !matches(applicationRef, text(200)) || applicationRef.trim() !== applicationRef) throw badEvent();
+    }
+  }
   for (const [field, value] of Object.entries(details)) {
     if (!Object.hasOwn(shape.fields, field)) throw badEvent();
     if (value === null) continue;

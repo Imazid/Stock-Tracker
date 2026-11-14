@@ -10,13 +10,13 @@ Deno.serve((request) =>
     },
     now: Date.now,
     accept: async (delivery) => {
-      if (delivery.p_kind === "account_link") {
-        const { p_kind: _, ...link } = delivery;
-        const { data, error } = await serviceClient().rpc("redeem_private_account_link", link);
-        if (error) throw error;
-        return data;
-      }
-      const { data, error } = await serviceClient().rpc("accept_private_provider_delivery", delivery);
+      const { p_kind, ...event } = delivery;
+      const client = serviceClient();
+      const { data, error } = p_kind === "account_link"
+        ? await client.rpc("redeem_private_account_link", event)
+        : Object.hasOwn(event.p_details, "offer_reference")
+        ? await client.rpc("accept_private_provider_reference_delivery", delivery)
+        : await client.rpc("accept_private_provider_delivery", delivery);
       if (error) throw error;
       return data;
     },
