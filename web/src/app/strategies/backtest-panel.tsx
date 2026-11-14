@@ -1,12 +1,15 @@
 "use client";
 
-import type { StrategySpec } from "@engine/strategy.ts";
-import { sha256Hex } from "@engine/sha256.ts";
+import { ruleLines, type StrategySpec } from "@engine/strategy.ts";
 import type { BacktestMetrics } from "@studio/backtester.ts";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, Play, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DEFAULT_INDICATORS, EquityChart, PriceChart } from "@/components/market/PriceChart";
+import { backtestFingerprint, type BacktestArchive } from "@/lib/backtest-archive";
+import { useSession } from "@/lib/session";
+import { browserSupabase } from "@/lib/supabase/client";
+import { uuid } from "@/lib/uuid";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -50,10 +53,6 @@ const EXIT_REASON: Record<string, string> = {
 };
 const exitText = (reason: string | undefined) => (reason ? EXIT_REASON[reason] ?? reason : undefined);
 
-function fingerprint(r: BacktestResponse): string {
-  return sha256Hex(JSON.stringify(r.result)).slice(0, 12);
-}
-
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
   return (
     <div className="rounded-lg border border-border bg-surface-2/50 px-3 py-2">
@@ -93,12 +92,29 @@ export function BacktestPanel({ spec, valid, capital, positionLimit }: {
   const [s, setS] = useState<Settings>(() => ({
     ...DEFAULTS, startingCash: capital ?? DEFAULTS.startingCash, maxPositionPct: positionLimit ?? DEFAULTS.maxPositionPct,
   }));
-  const [last, setLast] = useState<BacktestResponse | null>(null);
+  const [completed, setCompleted] = useState<{ id: string; report: BacktestResponse; owner?: string } | null>(null);
+  const session = useSession();
+  const owner = session.status === "signedIn" ? session.user.id : undefined;
+  const current = completed?.owner === owner ? completed : null;
+  const last = current?.report ?? null;
+  const cache = useQueryClient();
+  const save = useMutation({
+    mutationFn: async ({ id, report, owner }: { id: string; report: BacktestResponse; owner: string }) => {
+      const db = browserSupabase();
+      if (!db || (await db.auth.getUser()).data.user?.id !== owner) throw new Error("Sign in again to save this report.");
+      const { chart, ...snapshot } = report;
+      void chart;
+      const archive: BacktestArchive = { ...snapshot, schemaVersion: 1, title: report.inputs.spec.title.trim().slice(0, 200) || "Backtest" };
+      const { error } = await db.from("backtest_runs").upsert({ user_id: owner, id, report: archive }, { onConflict: "user_id,id", ignoreDuplicates: true });
+      if (error) throw new Error(error.code === "23514" ? "This report is too large or could not be archived." : "The report could not be saved. Try again.");
+    },
+    onSuccess: (_, { owner }) => cache.invalidateQueries({ queryKey: ["backtest-runs", owner] }),
+  });
   const [rerunMatch, setRerunMatch] = useState<boolean | null>(null);
   const currency = spec.universe[0]?.currency ?? "USD";
   const run = useMutation({
-    mutationFn: (asOf?: number) => post({
-      spec, window: s.window, benchmark: s.benchmark || undefined, asOf,
+    mutationFn: (inputs?: BacktestResponse["inputs"]) => post(inputs ?? {
+      spec, window: s.window, benchmark: s.benchmark || undefined,
       config: { startingCash: s.startingCash, slippageBps: s.slippageBps, equityFeePerOrder: s.equityFeePerOrder, equityFeeBps: s.equityFeeBps, cryptoFeeBps: s.cryptoFeeBps, maxPositionPct: s.maxPositionPct, maxOpenPositions: s.maxOpenPositions, outOfSampleFraction: s.outOfSampleFraction },
     }),
   });
@@ -106,27 +122,14 @@ export function BacktestPanel({ spec, valid, capital, positionLimit }: {
 
   const start = () => {
     setRerunMatch(null);
-    run.mutate(undefined, { onSuccess: (r) => setLast(r) });
+    save.reset();
+    run.mutate(undefined, { onSuccess: (report) => setCompleted({ id: uuid(), report, owner }) });
   };
   const rerun = () => {
     if (!last) return;
-    run.mutate(last.inputs.asOf, { onSuccess: (r) => setRerunMatch(fingerprint(r) === fingerprint(last)) });
+    run.mutate(last.inputs, { onSuccess: (r) => setRerunMatch(backtestFingerprint(r.result) === backtestFingerprint(last.result)) });
   };
 
-  const r = last?.result;
-  const markers = useMemo(() => {
-    if (!last?.chart || !r) return [];
-    const out: { time: number; side: "buy" | "sell"; text?: string }[] = [];
-    for (const t of r.trades) {
-      const id = `${t.instrument.venue}:${t.instrument.symbol}`;
-      if (id !== last.chart.instrumentId) continue;
-      out.push({ time: Math.floor(t.entryTime / 1000), side: "buy", text: "Buy" });
-      if (t.exitTime !== undefined) out.push({ time: Math.floor(t.exitTime / 1000), side: "sell", text: exitText(t.exitReason) ?? "Sell" });
-    }
-    return out;
-  }, [last, r]);
-  const chartCandles = useMemo(() => (last?.chart?.bars ?? []).map((b) => ({ ...b, time: Math.floor(b.time / 1000) })), [last]);
-  const indicators = useMemo(() => ({ ...DEFAULT_INDICATORS, volume: false }), []);
 
   return (
     <Card>
@@ -146,18 +149,48 @@ export function BacktestPanel({ spec, valid, capital, positionLimit }: {
         <Field label="Max open positions" htmlFor="bt-open"><Input id="bt-open" type="number" min={1} max={100} value={s.maxOpenPositions} onChange={(e) => set("maxOpenPositions", Number(e.target.value))} /></Field>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-3">
-        <Button variant="primary" onClick={start} disabled={!valid || run.isPending}><Play className="h-4 w-4" />{run.isPending ? "Running…" : "Run backtest"}</Button>
-        {last ? <Button onClick={rerun} disabled={run.isPending} title="Same strategy, settings, data and as-of time"><RotateCcw className="h-4 w-4" />Re-run identically</Button> : null}
+        <Button variant="primary" onClick={start} disabled={!valid || run.isPending || save.isPending}><Play className="h-4 w-4" />{run.isPending ? "Running…" : "Run backtest"}</Button>
+        {last ? <Button onClick={rerun} disabled={run.isPending} title="Same strategy, settings and as-of time"><RotateCcw className="h-4 w-4" />Rerun saved inputs</Button> : null}
+        {current && owner && <Button disabled={save.isPending || save.isSuccess} onClick={() => save.mutate({ id: current.id, report: current.report, owner })}>
+          {save.isSuccess ? "Report saved" : save.isPending ? "Saving report…" : "Save report"}
+        </Button>}
+        {current && !owner && <a href="/login?next=/strategies" className="text-xs text-primary-fg underline">Sign in to save reports</a>}
         {!valid ? <span className="text-xs text-warn">Fix the strategy&apos;s errors first.</span> : null}
-        {rerunMatch === true ? <Badge tone="up">Identical result ({fingerprint(last!)})</Badge> : rerunMatch === false ? <Badge tone="down">Result differed — the data changed upstream</Badge> : null}
+        {rerunMatch === true ? <Badge tone="up">Identical result ({backtestFingerprint(last!.result)})</Badge> : rerunMatch === false ? <Badge tone="down">Result differed from the original</Badge> : null}
       </div>
+      {current && save.isError && <p role="status" className="px-4 pb-3 text-sm text-down">{save.error.message}</p>}
       {run.isError ? (
         <div className="px-4 pb-4"><Notice tone="down" title="The backtest didn't run">{(run.error as Error).message}
           {run.error instanceof ApiError && Array.isArray(run.error.details?.failures) ? <ul className="mt-1 list-disc pl-4 text-xs">{(run.error.details!.failures as { instrumentId: string; reasons: string[] }[]).map((f) => <li key={f.instrumentId}>{f.instrumentId}: {f.reasons.join("; ")}</li>)}</ul> : null}
         </Notice></div>
       ) : null}
 
-      {!r ? (!run.isPending ? <EmptyState title="No backtest yet" body="Run it to see returns, drawdown, risk-adjusted metrics, every trade and the assumptions behind them." /> : <div className="space-y-2 p-4"><div className="skeleton h-24" /><div className="skeleton h-48" /></div>) : (
+      {last ? <BacktestReport last={last} /> : !run.isPending ? <EmptyState title="No backtest yet" body="Run it to see returns, drawdown, risk-adjusted metrics, every trade and the assumptions behind them." />
+        : <div className="space-y-2 p-4"><div className="skeleton h-24" /><div className="skeleton h-48" /></div>}
+    </Card>
+  );
+}
+
+export function BacktestReport({ last }: { last: BacktestResponse }) {
+  const r = last.result;
+  const spec = last.inputs.spec;
+  const currency = spec.universe[0]?.currency ?? "USD";
+  const markers = useMemo(() => {
+    if (!last?.chart || !r) return [];
+    const out: { time: number; side: "buy" | "sell"; text?: string }[] = [];
+    for (const t of r.trades) {
+      const id = `${t.instrument.venue}:${t.instrument.symbol}`;
+      if (id !== last.chart.instrumentId) continue;
+      out.push({ time: Math.floor(t.entryTime / 1000), side: "buy", text: "Buy" });
+      if (t.exitTime !== undefined) out.push({ time: Math.floor(t.exitTime / 1000), side: "sell", text: exitText(t.exitReason) ?? "Sell" });
+    }
+    return out;
+  }, [last, r]);
+  const chartCandles = useMemo(() => (last?.chart?.bars ?? []).map((b) => ({ ...b, time: Math.floor(b.time / 1000) })), [last]);
+  const indicators = useMemo(() => ({ ...DEFAULT_INDICATORS, volume: false }), []);
+
+  const testedRules = ruleLines(spec);
+  return (
         <div className="space-y-5 border-t border-border px-4 py-4">
           {r.warnings.length > 0 ? <Notice tone="warn" title="Read before trusting this">{<ul className="list-disc pl-4">{r.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}</Notice> : null}
           <section aria-label="Overall metrics">
@@ -209,6 +242,10 @@ export function BacktestPanel({ spec, valid, capital, positionLimit }: {
               </div>
             )}
           </section>
+          {testedRules.length > 0 && <section aria-label="Rules tested">
+            <h3 className="mb-2 text-sm font-semibold">Rules tested</h3>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-text-2">{testedRules.map((line, index) => <li key={index}>{line}</li>)}</ul>
+          </section>}
           <section aria-label="Assumptions" className="grid gap-4 lg:grid-cols-2">
             <div>
               <h3 className="mb-2 text-sm font-semibold">Assumptions</h3>
@@ -217,21 +254,19 @@ export function BacktestPanel({ spec, valid, capital, positionLimit }: {
             <div>
               <h3 className="mb-2 text-sm font-semibold">What was run</h3>
               <dl className="space-y-1 text-xs text-text-2">
-                <div><dt className="inline text-text-3">Engine: </dt><dd className="inline">{last!.engine}</dd></div>
-                <div><dt className="inline text-text-3">As of: </dt><dd className="inline">{dateTime(new Date(last!.inputs.asOf).toISOString())}</dd></div>
-                <div><dt className="inline text-text-3">Result fingerprint: </dt><dd className="inline font-mono">{fingerprint(last!)}</dd></div>
+                <div><dt className="inline text-text-3">Engine: </dt><dd className="inline">{last.engine}</dd></div>
+                <div><dt className="inline text-text-3">As of: </dt><dd className="inline">{dateTime(new Date(last.inputs.asOf).toISOString())}</dd></div>
+                <div><dt className="inline text-text-3">Result fingerprint: </dt><dd className="inline font-mono">{backtestFingerprint(last.result)}</dd></div>
                 <div><dt className="inline text-text-3">Real market data only: </dt><dd className="inline">{r.usedRealMarketData ? "yes" : "no"}</dd></div>
-                {[...last!.datasets, ...(last!.benchmarkDataset ? [last!.benchmarkDataset] : [])].map((d) => (
-                  <div key={d.instrumentId + d.sha256}><dt className="inline text-text-3">{d.instrumentId}: </dt>
+                {[...last.datasets, ...(last.benchmarkDataset ? [last.benchmarkDataset] : [])].map((d, index) => (
+                  <div key={index}><dt className="inline text-text-3">{index === last.datasets.length ? "Benchmark " : ""}{d.instrumentId}: </dt>
                     <dd className="inline">{d.source}, {d.bars} {d.timeframe === "day" ? "daily" : "hourly"} bars {d.firstBar?.slice(0, 10)} → {d.lastBar?.slice(0, 10)}, {d.currency}, sha256 <span className="font-mono">{d.sha256.slice(0, 12)}</span></dd></div>
                 ))}
-                {last!.failures.map((f) => <div key={f.instrumentId} className="text-warn">{f.instrumentId} left out: {f.reasons.join("; ")}</div>)}
+                {last.failures.map((f) => <div key={f.instrumentId} className="text-warn">{f.instrumentId} left out: {f.reasons.join("; ")}</div>)}
               </dl>
             </div>
           </section>
           <p className="text-[11px] text-text-3">A backtest is a simulation on past prices. It isn&apos;t a forecast, and a good result doesn&apos;t make a strategy safe to trade with real money.</p>
         </div>
-      )}
-    </Card>
   );
 }

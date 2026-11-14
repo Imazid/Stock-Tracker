@@ -17,6 +17,7 @@
 import Foundation
 import Combine
 import OSLog
+import Supabase
 import UIKit
 import UserNotifications
 import TradingCore
@@ -750,7 +751,8 @@ final class TradingStore: ObservableObject {
     // MARK: - Backtests
 
     /// Replays a strategy over real history. Throws when prices can't be loaded or aren't real.
-    func backtest(_ draft: AgentDraft, years: Int, agentID: UUID? = nil) async throws -> BacktestResult {
+    func backtest(_ draft: AgentDraft, years: Int, agentID: UUID? = nil) async throws -> BacktestBox {
+        let owner = try? await SupabaseManager.auth.session.user.id
         let spec = draft.spec
         let allCrypto = !spec.universe.isEmpty && spec.universe.allSatisfy { $0.assetClass == .crypto }
         let count = years * (allCrypto ? 365 : 252) + spec.warmupBars + 10
@@ -763,11 +765,38 @@ final class TradingStore: ObservableObject {
         let benchmark = try? await data.bars(for: benchmarkInstrument, timeframe: spec.timeframe, count: count)
         var config = BacktestConfig(agent: draft, paper: state.paperConfig)
         config.allowFixtureData = usesFixtureData
-        let series = snapshot.series
         let now = Date()
-        let result = try await Task.detached(priority: .userInitiated) {
-            try Backtester.run(spec: spec, series: series, benchmark: benchmark, config: config, asOf: now)
+        let archive = try await Task.detached(priority: .userInitiated) {
+            var completedSeries = snapshot.series.mapValues { series in
+                var completed = series
+                completed.bars = MarketCalendar.standard.completedBars(series, now: now)
+                return completed
+            }
+            completedSeries = completedSeries.filter { !$0.value.bars.isEmpty }
+            let result = try Backtester.run(spec: spec, series: completedSeries, benchmark: benchmark, config: config, asOf: now)
+            let window = "\(years)y"
+            let sources = try spec.universe.compactMap { instrument in
+                try completedSeries[instrument.id].map { try BacktestDatasetReference(series: $0, window: window) }
+            }
+            let benchmarkSource = try benchmark.flatMap { series -> BacktestDatasetReference? in
+                guard result.benchmarkReturnPct != nil else { return nil }
+                var completed = series
+                completed.bars = MarketCalendar.standard.completedBars(series, now: now)
+                return try BacktestDatasetReference(series: completed, window: window)
+            }
+            var failures = spec.universe.filter { completedSeries[$0.id] == nil }.map { instrument in
+                BacktestArchive.Failure(instrumentId: instrument.id, reasons: [snapshot.failures[instrument.id] ?? "No completed bars returned."])
+            }
+            if benchmarkSource == nil {
+                failures.append(BacktestArchive.Failure(instrumentId: benchmarkInstrument.id, reasons: ["Benchmark unavailable for the tested period."]))
+            }
+            let title = String((draft.name.isEmpty ? spec.title : draft.name).prefix(200))
+            return BacktestArchive(schemaVersion: 1, title: title.isEmpty ? "Backtest" : title,
+                                   engine: "TradingCore Swift", ranAt: now.ISO8601Format(.iso8601.time(includingFractionalSeconds: true)),
+                                   inputs: .init(spec: spec, config: config, window: window, benchmark: benchmarkInstrument.id, asOf: now),
+                                   result: result, datasets: sources, benchmarkDataset: benchmarkSource, failures: failures)
         }.value
+        let result = archive.result
         // On the phone the audit trail records that a backtest was run. (A backtest changes
         // nothing in an account, so it isn't sent to the server.)
         if home == .device { mutate {
@@ -780,7 +809,7 @@ final class TradingStore: ObservableObject {
                                       "realMarketData": String(result.usedRealMarketData)],
                             now: Date())
         } }
-        return result
+        return BacktestBox(archive: archive, owner: owner)
     }
 
     /// A broad index fund on the same exchange, so a strategy is compared with simply
