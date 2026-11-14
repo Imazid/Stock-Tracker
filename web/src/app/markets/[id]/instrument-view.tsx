@@ -20,7 +20,8 @@ import { useOrderPath } from "@/hooks/oms";
 import { useWatchlist, useWatchlistMutations } from "@/hooks/watchlist";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { compact, dateTime, money } from "@/lib/format";
+import { isMarketIndex } from "@/lib/market-indexes";
+import { compact, dateTime, money, plainNumber } from "@/lib/format";
 import { CHART_RANGES, type ChartRange } from "@/lib/market-types";
 import { pushRecent } from "@/lib/recent";
 import { useSession } from "@/lib/session";
@@ -66,10 +67,14 @@ export function InstrumentView({ id }: { id: string }) {
   const info = useInstrument(id);
   const quote = useQuote(id, { refetchMs: 20_000 });
   const candles = useCandles(id, range);
-  const orderPath = useOrderPath(info.data?.instrument);
-
   const instrument = info.data?.instrument ?? quote.data?.instrument;
-  const profile = useCompanyProfile(id, Boolean(instrument && instrument.venue !== "crypto"));
+  const index = isMarketIndex(instrument?.symbol ?? "");
+  const orderPath = useOrderPath(index ? undefined : instrument);
+  const profile = useCompanyProfile(id, Boolean(instrument && !index && instrument.venue !== "crypto"));
+  const display = (value: number | undefined, currency: string) => {
+    if (!index) return money(value, currency);
+    return value === undefined ? "—" : `${plainNumber(value)} pts`;
+  };
   const researchProfile = profile.data?.profile;
   const logo = researchProfile?.logo && /^https:\/\/(?:images\.)?financialmodelingprep\.com\//.test(researchProfile.logo) ? researchProfile.logo : undefined;
   useEffect(() => {
@@ -127,8 +132,8 @@ export function InstrumentView({ id }: { id: string }) {
           <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
             {quote.isLoading ? <div className="skeleton h-8 w-40" /> : q ? (
               <>
-                <span className="tabular text-3xl font-semibold tracking-tight text-text">{money(q.last, q.currency)}</span>
-                <ChangeText change={q.change} changePct={q.changePct} currency={q.currency} className="text-sm font-medium" />
+                <span className="tabular text-3xl font-semibold tracking-tight text-text">{display(q.last, q.currency)}</span>
+                <ChangeText change={index ? undefined : q.change} changePct={q.changePct} currency={q.currency} className="text-sm font-medium" />
               </>
             ) : <span className="text-sm text-text-3">No live price right now</span>}
           </div>
@@ -136,10 +141,10 @@ export function InstrumentView({ id }: { id: string }) {
             {q ? <StatusChip status={q.status} delayMinutes={q.delayMinutes} /> : null}
             {market ? <MarketChip market={market} /> : null}
           </div>
-          {q ? <div className="mt-1.5"><SourceLine source={q.source} currency={q.currency} observedAt={q.observedAt} stale={q.stale} staleReason={q.staleReason} /></div> : null}
+          {q ? <div className="mt-1.5"><SourceLine source={q.source} currency={index ? "Index points" : q.currency} observedAt={q.observedAt} stale={q.stale} staleReason={q.staleReason} /></div> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {instrument ? <WatchButton instrument={instrument} /> : null}
+          {instrument && !index ? <WatchButton instrument={instrument} /> : null}
           {instrument && orderPath.available ? (
             <>
               <ButtonLink href={`/orders/new?instrument=${encodeURIComponent(instrument.id)}&side=buy`} variant="buy" size="sm">Buy</ButtonLink>
@@ -204,7 +209,7 @@ export function InstrumentView({ id }: { id: string }) {
               <span>{candles.data.source}</span>
               <span>{candles.data.interval} bars</span>
               <StatusChip status={candles.data.status} delayMinutes={candles.data.delayMinutes} />
-              <span>{candles.data.currency}</span>
+              <span>{index ? "Index points" : candles.data.currency}</span>
               <span>{candles.data.adjustment}</span>
               <span>{SCOPE_LABEL[candles.data.volumeScope]}</span>
               {candles.data.observedAt ? <span>Last bar {dateTime(candles.data.observedAt)}</span> : null}
@@ -219,11 +224,10 @@ export function InstrumentView({ id }: { id: string }) {
             <CardHeader title="Key numbers" subtitle={q ? `From ${q.source}` : undefined} />
             {q ? (
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border px-4 py-3">
-                <Stat label={instrument?.venue === "crypto" ? "24h ago" : "Previous close"} value={money(q.previousClose, q.currency)} />
-                <Stat label="Volume" value={compact(q.volume)} hint={SCOPE_LABEL[q.volumeScope]} />
-                <Stat wide label="Day range" value={q.dayLow !== undefined && q.dayHigh !== undefined ? `${money(q.dayLow, q.currency)} – ${money(q.dayHigh, q.currency)}` : "—"} />
-                <Stat label="Bid" value={money(q.bid, q.currency)} />
-                <Stat label="Ask" value={money(q.ask, q.currency)} />
+                <Stat label={instrument?.venue === "crypto" ? "24h ago" : "Previous close"} value={display(q.previousClose, q.currency)} />
+                {index ? null : <Stat label="Volume" value={compact(q.volume)} hint={SCOPE_LABEL[q.volumeScope]} />}
+                <Stat wide label="Day range" value={q.dayLow !== undefined && q.dayHigh !== undefined ? `${display(q.dayLow, q.currency)} – ${display(q.dayHigh, q.currency)}` : "—"} />
+                {index ? null : <><Stat label="Bid" value={money(q.bid, q.currency)} /><Stat label="Ask" value={money(q.ask, q.currency)} /></>}
                 <Stat wide label="Observed" value={dateTime(q.observedAt)} />
               </dl>
             ) : <div className="space-y-2 border-t border-border p-4">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-8" />)}</div>}
@@ -239,14 +243,14 @@ export function InstrumentView({ id }: { id: string }) {
               </div>
             ) : <div className="skeleton m-4 h-16" />}
           </Card>
-          {instrument && !orderPath.available ? (
+          {instrument && !index && !orderPath.available ? (
             <p className="px-1 text-[11px] leading-relaxed text-text-3">
               {orderPath.loading ? "Checking order routing…" : orderPath.unavailable ?? "Connect an eligible paper account in Connections to prepare an order."}
             </p>
           ) : null}
         </div>
       </div>
-      {instrument && instrument.venue !== "crypto" ? <CompanyResearch key={id} id={id} symbol={instrument.symbol} overview={profile.data} overviewError={profile.isError} retryOverview={() => { void profile.refetch(); }} /> : null}
+      {instrument && !index && instrument.venue !== "crypto" ? <CompanyResearch key={id} id={id} symbol={instrument.symbol} overview={profile.data} overviewError={profile.isError} retryOverview={() => { void profile.refetch(); }} /> : null}
     </div>
   );
 }

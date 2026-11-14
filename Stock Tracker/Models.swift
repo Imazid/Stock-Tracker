@@ -530,11 +530,13 @@ struct WatchlistGroup: Identifiable, Codable {
     var id: UUID
     var name: String
     var assets: [Asset]
+    var savedDates: [String: Date]?
 
-    init(id: UUID = UUID(), name: String, assets: [Asset] = []) {
+    init(id: UUID = UUID(), name: String, assets: [Asset] = [], savedDates: [String: Date]? = nil) {
         self.id = id
         self.name = name
         self.assets = assets
+        self.savedDates = savedDates
     }
 }
 

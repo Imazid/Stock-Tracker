@@ -13,6 +13,7 @@ import TradingCore
 
 enum MarketsSection: String, CaseIterable, Identifiable {
     case watchlist = "Watchlist"
+    case explore = "Explore"
     case search = "Search"
     case news = "News"
     var id: String { rawValue }
@@ -156,6 +157,7 @@ struct MarketsTabView: View {
                 Group {
                     switch router.marketsSection {
                     case .watchlist: AppleStocksWatchlistView()
+                    case .explore: MarketExploreView()
                     case .search: StockSearchView()
                     case .news: NewsView()
                     }

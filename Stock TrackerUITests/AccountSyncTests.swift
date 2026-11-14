@@ -34,6 +34,64 @@ final class AccountSyncTests: XCTestCase {
         }
     }
 
+    func testExploreShowsSourcedRankingsAndOpensSavedList() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_EXPLORE"] == "1",
+                          "Start the signed-in Explore relay")
+        let email = "explore-ios-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        let result = try request("POST", "/functions/v1/market-workspace",
+                                 body: JSONSerialization.data(withJSONObject: ["action": "explore"]), token: token)
+        XCTAssertEqual(result.status, 200)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        let movers = try XCTUnwrap(data["us"] as? [String: Any])
+        let source = try XCTUnwrap(movers["source"] as? String)
+        let session = try request("GET", "/auth/v1/user", token: token)
+        let user = try XCTUnwrap(JSONSerialization.jsonObject(with: session.data) as? [String: Any])
+        let owner = try XCTUnwrap(user["id"] as? String)
+        let seed = try request("POST", "/rest/v1/rpc/apply_watchlist_change",
+                               body: JSONSerialization.data(withJSONObject: [
+            "p_user_id": owner, "p_id": UUID().uuidString, "p_group_id": UUID().uuidString,
+            "p_action": "import", "p_name": "Research", "p_assets": [[
+                "listing_id": "us:AAPL", "symbol": "AAPL", "name": "Apple", "kind": "Stock", "exchange": "US",
+            ]],
+        ]), token: token)
+        XCTAssertEqual(seed.status, 204)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                               "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                               "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light"]
+        app.launch()
+        XCTAssertTrue(app.open("Explore", timeout: 25))
+        let sourceLabel = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", source)).firstMatch
+        XCTAssertTrue(sourceLabel.waitForExistence(timeout: 20))
+        let losers = app.segmentedControls["explore.moverDirection"].buttons["Losers"]
+        if !losers.isHittable { app.swipeUp() }
+        losers.tap()
+        XCTAssertTrue(losers.isSelected)
+        XCTAssertTrue(app.staticTexts["Trending crypto"].exists)
+
+        let research = app.buttons["explore.watchlist.Research"]
+        for _ in 0..<9 where !research.isHittable { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["Recently added"].exists)
+        XCTAssertTrue(research.isHittable)
+        research.tap()
+        XCTAssertTrue(app.buttons["watchlist.row.AAPL"].waitForExistence(timeout: 8))
+
+        XCTAssertTrue(app.open("Search"))
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 8))
+        field.tap()
+        field.typeText("^GSPC")
+        let index = app.buttons["search.result.index.^GSPC"]
+        XCTAssertTrue(index.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["search.result.index.^GSPC.toggle"].exists)
+    }
+
     func testNamedWatchlistsSyncBetweenAppAndAccount() throws {
         let email = "watchlists-ios-\(UUID().uuidString.lowercased())@example.com"
         let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [

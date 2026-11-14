@@ -2,11 +2,11 @@ import XCTest
 
 extension XCUIApplication {
     /// Opens a place in the app by name: one of the root tabs (Home, Markets, Portfolio,
-    /// Private Markets, Agents, Activity) or a Markets section (Watchlist, Search, News). Older tests used
+    /// Private Markets, Agents, Activity) or a Markets section (Watchlist, Explore, Search, News). Older tests used
     /// "Watchlist", "News" and "Search" as tabs; they now live inside Markets.
     @discardableResult
     func open(_ name: String, timeout: TimeInterval = 10) -> Bool {
-        if ["Watchlist", "Search", "News"].contains(name) {
+        if ["Watchlist", "Explore", "Search", "News"].contains(name) {
             guard tapTab("Markets", timeout: timeout) else { return false }
             let segment = segmentedControls["markets.section"].buttons[name]
             guard segment.waitForExistence(timeout: timeout) else { return false }

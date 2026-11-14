@@ -41,7 +41,7 @@ const MAX_ATTEMPTS = 2;
 const MAX_RETRY_WAIT_MS = 2_000;
 
 /** The coins the app can price, by ticker → CoinGecko id (QuoteService.coinGeckoIDMap). */
-const COIN_IDS: ReadonlyMap<string, string> = new Map([
+export const COIN_IDS: ReadonlyMap<string, string> = new Map([
   ["BTC", "bitcoin"],
   ["ETH", "ethereum"],
   ["SOL", "solana"],

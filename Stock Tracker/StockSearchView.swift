@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct StockSearchView: View {
-    @StateObject private var model = SymbolSearchModel()
+    @StateObject private var model = SymbolSearchModel(includesIndexes: true)
     @StateObject private var speech = SearchVoiceRecognizer()
     @Environment(\.theme) private var theme
 

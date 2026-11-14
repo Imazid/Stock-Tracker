@@ -50,6 +50,9 @@ for migration in supabase/migrations/*.sql; do
   run_sql < "$migration" >/dev/null
 done
 
+# GoTrue is not installed in the migration container. Add the field its real Auth schema supplies.
+run_sql --username=supabase_admin -c 'set role supabase_auth_admin; alter table auth.users add column if not exists email_confirmed_at timestamptz;' >/dev/null
+
 status=0
 for check in supabase/tests/*.sql; do
   echo "check  $check"
