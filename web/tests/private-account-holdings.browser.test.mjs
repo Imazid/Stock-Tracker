@@ -134,7 +134,7 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
       await article.getByRole("button", { name: "Add cash flow", exact: true }).click();
       await article.getByLabel("Cash flow type").selectOption("sale");
       await article.getByLabel("Net sale proceeds").fill("400.1234567890000001");
-      await article.getByLabel("Units sold").fill("0.0234567799999999");
+      await article.getByLabel("Units sold", { exact: true }).fill("0.0234567799999999");
       await article.getByLabel("Cost basis of units sold (optional)").fill("300");
       await article.getByLabel("Settlement date").fill("2026-07-02");
       await article.getByLabel("Cash flow source").fill("Partial sale settlement statement");

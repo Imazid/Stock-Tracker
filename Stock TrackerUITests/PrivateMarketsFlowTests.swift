@@ -664,8 +664,8 @@ final class PrivateMarketsFlowTests: XCTestCase {
         source.typeText("iPhone full sale statement")
         app.buttons["private.accountCashFlow.save"].tap()
         XCTAssertTrue(app.navigationBars["Add Cash Flow"].waitForNonExistence(timeout: 12), app.debugDescription)
-        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "iPhone full sale statement")).firstMatch
-        for _ in 0..<4 where !receipt.isHittable { app.swipeUp(velocity: .slow) }
+        let receipt = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "iPhone full sale statement")).firstMatch
+        for _ in 0..<4 where !receipt.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(receipt.exists, app.debugDescription)
     }
 
