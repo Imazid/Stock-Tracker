@@ -620,6 +620,37 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAccountCashFlowCanBeRecordedOnIPhone() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_HOLDINGS_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let row = app.buttons.matching(identifier: "private.holding.accountRow")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Browser QA venture fund")).firstMatch
+        for _ in 0..<4 where !row.isHittable {
+            _ = row.waitForExistence(timeout: 4)
+            if !row.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(row.isHittable, app.debugDescription)
+        row.tap()
+        let add = app.buttons["private.accountCashFlow.add"]
+        for _ in 0..<4 where !add.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(add.isHittable, app.debugDescription)
+        add.tap()
+        let amount = app.textFields["private.accountCashFlow.amount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText("25.123456789")
+        let source = app.textFields["private.accountCashFlow.source"]
+        source.tap()
+        source.typeText("iPhone contribution statement")
+        app.buttons["private.accountCashFlow.save"].tap()
+        XCTAssertTrue(app.navigationBars["Add Cash Flow"].waitForNonExistence(timeout: 12), app.debugDescription)
+        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "iPhone contribution statement")).firstMatch
+        for _ in 0..<4 where !receipt.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(receipt.exists, app.debugDescription)
+    }
+
+    @MainActor
     func testManualHoldingCanPublishToWeb() throws {
         try launchWithLocalSession("PRIVATE_MANUAL_PUBLICATION_TEST_SESSION")
         openPrivateMarkets()

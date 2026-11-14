@@ -1,3 +1,4 @@
+import type { AccountCashFlow } from "./account-cash-flow";
 import type { PortfolioHolding } from "./private-data";
 
 const dayMs = 86_400_000;
@@ -81,5 +82,30 @@ export function privatePositionPerformance(holding: PortfolioHolding, today: str
       dpi: position.fund && paid > 0 ? distributed / paid : null,
       xirr: comparable ? annualizedReturn([...flows, { day: carryingDay, amount: carrying }]) : null,
     },
+  };
+}
+
+
+export function accountPositionPerformance(holding: {
+  paid: string; returned: string; assetClass: string;
+  valuation?: { date: string; value: string }; cashFlows?: AccountCashFlow[];
+}) {
+  const settled = (holding.cashFlows ?? []).filter((flow) => ["contribution", "paid", "distribution"].includes(flow.status));
+  const paid = Number(holding.paid);
+  const returned = Number(holding.returned);
+  const day = holding.valuation?.date.slice(0, 10);
+  const comparable = paid > 0 && day !== undefined && settled.every((flow) => flow.date <= day);
+  const carrying = Number(holding.valuation?.value);
+  const fund = isFund(holding.assetClass);
+  return {
+    fund,
+    comparable,
+    netGain: comparable ? carrying + returned - paid : null,
+    multiple: comparable ? (carrying + returned) / paid : null,
+    dpi: fund && paid > 0 ? returned / paid : null,
+    xirr: comparable ? annualizedReturn([
+      ...settled.map((flow) => ({ day: flow.date, amount: Number(flow.amount) * (flow.status === "distribution" ? 1 : -1) })),
+      { day, amount: carrying },
+    ]) : null,
   };
 }

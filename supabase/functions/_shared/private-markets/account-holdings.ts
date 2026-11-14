@@ -1,3 +1,4 @@
+import { type AccountCashFlow, accountCashFlowBalances } from "./account-cash-flow.ts";
 import { type SnapshotValuation, validManualSnapshot, validSnapshotValuation } from "./manual-snapshot.ts";
 
 const sydneyDay = new Intl.DateTimeFormat("sv-SE", { dateStyle: "short", timeZone: "Australia/Sydney" });
@@ -13,7 +14,7 @@ export function accountValuationDate(value: unknown): value is string {
 }
 
 export type SavedAccountHolding = Record<string, unknown> & {
-  valuation?: SnapshotValuation; valuationHistory?: SnapshotValuation[];
+  valuation?: SnapshotValuation; valuationHistory?: SnapshotValuation[]; cashFlows?: AccountCashFlow[];
 };
 
 export function accountValuations(holding?: SavedAccountHolding) {
@@ -53,4 +54,9 @@ export function accountHolding(value: unknown, now: Date) {
   const valuation = accountValuation(fields.valuation, now);
   if (fields.valuation !== undefined && !accountValuationDate(valuation?.date)) return null;
   return { ...canonical, valuation: valuation ?? undefined };
+}
+
+
+export function withAccountCashFlows(holding: SavedAccountHolding, cashFlows: AccountCashFlow[]): SavedAccountHolding {
+  return { ...holding, cashFlows, ...accountCashFlowBalances(cashFlows) };
 }

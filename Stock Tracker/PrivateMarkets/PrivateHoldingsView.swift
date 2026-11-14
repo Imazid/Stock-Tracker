@@ -250,6 +250,7 @@ private struct AccountPrivateHoldingDetail: View {
                     if let markError { Text(markError).foregroundStyle(.orange) }
                 }
                 .disabled(updatingMark || removing)
+                AccountCashFlowSection(owner: owner, holding: current)
                 if let evidence = current.ownershipEvidence {
                     let excerpt = opened?.owner == owner && opened?.excerptID == evidence.excerptID ? opened?.text : nil
                     Section("Reviewed ownership excerpt") {
@@ -339,6 +340,215 @@ private struct AccountPrivateHoldingDetail: View {
             if auth.userId == owner { editError = failure.localizedDescription }
         } catch {
             if auth.userId == owner { editError = error.localizedDescription }
+        }
+    }
+}
+
+private struct AccountCashFlowEdit: Identifiable {
+    let id = UUID()
+    let revision: UUID?
+    var record: PrivateMarketsAPI.AccountHolding.CashFlow?
+    var resolution: PrivateMarketsAPI.AccountHolding.CashFlow.Status?
+}
+
+private struct AccountCashFlowSection: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    let owner: UUID
+    let holding: PrivateMarketsAPI.AccountHolding
+    @State private var editor: AccountCashFlowEdit?
+    @State private var removal: AccountCashFlowEdit?
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        Section("Cash flows") {
+            ForEach((holding.cashFlows ?? []).sorted { $0.date > $1.date }) { flow in
+                VStack(alignment: .leading, spacing: 6) {
+                    AccountCashFlowLabel(flow: flow, currency: holding.currency)
+                    HStack {
+                        Button("Edit") { open(flow) }
+                        if flow.status == .pending {
+                            Button("Record payment") { open(flow, as: .paid) }
+                            Button("Cancel call") { open(flow, as: .cancelled) }
+                        }
+                        Button("Remove", role: .destructive) {
+                            removal = .init(revision: store.accountHoldingsRevision, record: flow)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            Button("Add cash flow") { open() }.accessibilityIdentifier("private.accountCashFlow.add")
+            if let error { Text(error).foregroundStyle(.orange) }
+        }
+        .disabled(busy)
+        .sheet(item: $editor) { edit in AccountCashFlowEditor(owner: owner, holding: holding.id, edit: edit) }
+        .confirmationDialog("Remove this cash flow?", isPresented: Binding(
+            get: { removal != nil }, set: { if !$0 { removal = nil } }
+        ), titleVisibility: .visible, presenting: removal) { edit in
+            Button("Remove cash flow", role: .destructive) { Task { await remove(edit) } }
+        }
+        if holding.cashFlows?.isEmpty == false {
+            let metrics = holding.holding.metrics()
+            Section("Performance") {
+                if let paid = holding.paid { LabeledContent("Capital deployed", value: holding.currency + " " + paid) }
+                if let returned = holding.returned { LabeledContent("Distributions", value: holding.currency + " " + returned) }
+                if let pending = holding.pendingCalls { LabeledContent("Pending calls", value: holding.currency + " " + pending) }
+                if let multiple = metrics.multiple {
+                    LabeledContent(holding.assetClass.isFund ? "TVPI" : "MOIC", value: multiple.formatted(.number.precision(.fractionLength(2))) + "×")
+                } else {
+                    Text("Valuation-based returns require deployed capital and a valuation dated on or after all settled flows.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if let dpi = metrics.dpi {
+                    LabeledContent("DPI", value: dpi.formatted(.number.precision(.fractionLength(2))) + "×")
+                }
+                if let xirr = metrics.xirr { LabeledContent("XIRR", value: xirr.formatted(.percent.precision(.fractionLength(2)))) }
+            }
+        }
+    }
+
+    private func open(_ record: PrivateMarketsAPI.AccountHolding.CashFlow? = nil,
+                      as resolution: PrivateMarketsAPI.AccountHolding.CashFlow.Status? = nil) {
+        error = nil
+        editor = .init(revision: store.accountHoldingsRevision, record: record, resolution: resolution)
+    }
+
+    private func remove(_ edit: AccountCashFlowEdit) async {
+        guard auth.userId == owner, let record = edit.record, !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            try await store.removeAccountCashFlow(record.id, holding: holding.id, owner: owner, revision: edit.revision)
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
+            await store.refreshAccountHoldings(for: owner)
+            if auth.userId == owner { error = failure.localizedDescription }
+        } catch {
+            if auth.userId == owner { self.error = error.localizedDescription }
+        }
+    }
+}
+
+private struct AccountCashFlowLabel: View {
+    let flow: PrivateMarketsAPI.AccountHolding.CashFlow
+    let currency: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent(flow.status.title, value: currency + " " + flow.amount)
+            Text(PrivateDeal.Round.Listing.formattedDay(flow.date) + " · " + (flow.resolutionSource ?? flow.source))
+            if let due = flow.dueOn {
+                Text("Originally due " + PrivateDeal.Round.Listing.formattedDay(due) + " · " + flow.source)
+            }
+        }
+        .font(.subheadline)
+    }
+}
+
+private struct AccountCashFlowEditor: View {
+    typealias Status = PrivateMarketsAPI.AccountHolding.CashFlow.Status
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @Environment(\.dismiss) private var dismiss
+    let owner: UUID
+    let holding: UUID
+    let edit: AccountCashFlowEdit
+    @State private var status: Status
+    @State private var amount: String
+    @State private var date: Date
+    @State private var source: String
+    @State private var error: String?
+    @State private var saving = false
+    @State private var changed = false
+
+    init(owner: UUID, holding: UUID, edit: AccountCashFlowEdit) {
+        self.owner = owner
+        self.holding = holding
+        self.edit = edit
+        let record = edit.record
+        let status = edit.resolution ?? record?.status ?? .contribution
+        _status = State(initialValue: status)
+        _amount = State(initialValue: record?.amount ?? "")
+        _date = State(initialValue: edit.resolution == nil ? record.flatMap { CashIncomeDay.date($0.date) } ?? .now : .now)
+        _source = State(initialValue: status.isResolution ? record?.resolutionSource ?? "" : record?.source ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if edit.record == nil {
+                    Picker("Cash flow type", selection: $status) {
+                        ForEach([Status.contribution, .pending, .distribution], id: \.self) { Text($0.title).tag($0) }
+                    }
+                }
+                if status.isResolution, let record = edit.record {
+                    Text("Original notice " + (record.dueOn ?? record.date) + " · " + record.source)
+                } else {
+                    TextField("Cash flow amount", text: $amount).keyboardType(.decimalPad)
+                        .accessibilityIdentifier("private.accountCashFlow.amount")
+                }
+                if status == .pending {
+                    DatePicker("Due date", selection: $date, displayedComponents: .date)
+                        .environment(\.timeZone, CashIncomeDay.timeZone)
+                } else {
+                    DatePicker(status.isResolution ? "Resolution date" : "Cash flow date", selection: $date,
+                               in: ...Date.now, displayedComponents: .date)
+                        .environment(\.timeZone, CashIncomeDay.timeZone)
+                }
+                TextField(status.isResolution ? "Resolution source" : "Cash flow source", text: $source)
+                    .accessibilityIdentifier("private.accountCashFlow.source")
+                if let error { Text(error).foregroundStyle(.orange) }
+            }
+            .disabled(saving || auth.userId != owner)
+            .navigationTitle(edit.record == nil ? "Add Cash Flow" : status.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }
+                        .disabled(saving || changed || auth.userId != owner)
+                        .accessibilityIdentifier("private.accountCashFlow.save")
+                }
+            }
+            .interactiveDismissDisabled(saving)
+            .onChange(of: auth.userId) { _, _ in if auth.userId != owner { dismiss() } }
+        }
+    }
+
+    private func save() async {
+        guard auth.userId == owner, !saving, !changed else { return }
+        let note = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let day = CashIncomeDay.string(date)
+        guard let amount = PrivateInput.accountAmount(amount.trimmingCharacters(in: .whitespacesAndNewlines)),
+              amount.range(of: "[1-9]", options: .regularExpression) != nil,
+              !note.isEmpty, note.utf16.count <= 400, status == .pending || day <= CashIncomeDay.string(.now) else {
+            error = "Enter a positive amount, a valid date and a source."
+            return
+        }
+        var fields = ["id": (edit.record?.id ?? edit.id).uuidString, "status": status.rawValue, "amount": amount,
+                      "date": day, "source": note]
+        if status.isResolution, let record = edit.record {
+            fields["source"] = record.source
+            fields["dueOn"] = record.dueOn ?? record.date
+            fields["resolutionSource"] = note
+        }
+        saving = true
+        error = nil
+        defer { saving = false }
+        do {
+            try await store.saveAccountCashFlow(fields, holding: holding, owner: owner, revision: edit.revision)
+            if auth.userId == owner { dismiss() }
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
+            await store.refreshAccountHoldings(for: owner)
+            if auth.userId == owner {
+                changed = true
+                error = failure.localizedDescription + " Close this editor and reopen the latest entry."
+            }
+        } catch {
+            if auth.userId == owner { self.error = error.localizedDescription }
         }
     }
 }
@@ -505,7 +715,7 @@ private struct AccountPrivateHoldingEditor: View {
                     }
                     TextField("Currency", text: $currency)
                         .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                        .disabled(edit.holding?.valuation != nil)
+                        .disabled(edit.holding?.valuation != nil || !(edit.holding?.cashFlows ?? []).isEmpty)
                     TextField("Shares or units", text: $units).keyboardType(.decimalPad)
                     TextField("Ownership percentage", text: $ownership).keyboardType(.decimalPad)
                     TextField("Committed capital", text: $commitment).keyboardType(.decimalPad)
@@ -1755,6 +1965,13 @@ struct PrivateCapitalView: View {
                     }
                 }
             }
+            ForEach(store.accountHoldings.filter { $0.cashFlows?.isEmpty == false }) { holding in
+                Section(holding.name + " · Account records") {
+                    ForEach((holding.cashFlows ?? []).sorted { $0.date > $1.date }) { flow in
+                        AccountCashFlowLabel(flow: flow, currency: holding.currency)
+                    }
+                }
+            }
             ForEach(store.providerHoldings) { position in
                 let holding = position.holding
                 let flows = holding.cashFlows.filter { $0.kind == .capitalCall || $0.kind == .distribution }
@@ -1778,7 +1995,7 @@ struct PrivateCapitalView: View {
             let hasProviderActivity = store.providerHoldings.contains { position in
                 position.calls?.isEmpty == false || position.cancelledCalls?.isEmpty == false || position.distributions?.isEmpty == false
             }
-            if !hasManualActivity && !hasProviderActivity {
+            if !hasManualActivity && !hasProviderActivity && !store.accountHoldings.contains(where: { $0.cashFlows?.isEmpty == false }) {
                 ContentUnavailableView("No capital calls or distributions", systemImage: "arrow.left.arrow.right",
                                        description: Text("Record cash flows on a holding to track payments and proceeds."))
             }
@@ -1790,7 +2007,7 @@ struct PrivateCapitalView: View {
     }
 
     private func refresh() async {
-        if let owner = auth.userId { await store.refreshProviderHoldings(for: owner) }
+        if let owner = auth.userId { await store.refreshInvestmentHoldings(for: owner) }
     }
 }
 

@@ -89,6 +89,46 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
       await july.waitFor({ state: "detached" });
       await june.getByText("Used for carrying value", { exact: true }).waitFor();
     }
+    if (process.env.PRIVATE_ACCOUNT_CASH_FLOW === "1") {
+      await article.getByText("Cash flows", { exact: true }).click();
+      async function flow(type, amount, date, source) {
+        await article.getByRole("button", { name: "Add cash flow", exact: true }).click();
+        await article.getByLabel("Cash flow type").selectOption(type);
+        await article.getByLabel("Cash flow amount").fill(amount);
+        await article.getByLabel("Cash flow date").fill(date);
+        await article.getByLabel("Cash flow source").fill(source);
+        await article.getByRole("button", { name: "Save cash flow", exact: true }).click();
+        await article.getByText(source, { exact: false }).waitFor();
+      }
+      await flow("contribution", "1000.123456789", "2025-06-01", "Initial contribution notice");
+      await flow("pending", "100.0000000000000001", "2026-11-30", "Original call notice");
+      const call = article.getByRole("listitem").filter({ hasText: "Original call notice" });
+      await call.getByRole("button", { name: "Record payment", exact: true }).click();
+      await article.getByLabel("Payment date").fill("2026-05-30");
+      await article.getByLabel("Resolution source").fill("Capital call receipt");
+      await article.getByRole("button", { name: "Save cash flow", exact: true }).click();
+      await call.getByText(/Originally due/).waitFor();
+      await call.getByText(/Capital call receipt/).waitFor();
+      await flow("pending", "50", "2026-12-01", "Original cancelled call");
+      const cancelled = article.getByRole("listitem").filter({ hasText: "Original cancelled call" });
+      await cancelled.getByRole("button", { name: "Record cancellation", exact: true }).click();
+      await article.getByLabel("Cancellation date").fill("2026-05-31");
+      await article.getByLabel("Resolution source").fill("Fund cancelled the call");
+      await article.getByRole("button", { name: "Save cash flow", exact: true }).click();
+      await cancelled.getByText(/Fund cancelled the call/).waitFor();
+      await flow("distribution", "200.123456789", "2026-06-01", "Distribution statement");
+      await article.locator("dd").getByText("AUD 1,100.1234567890000001", { exact: true }).waitFor();
+      await article.getByText("Performance", { exact: true }).click();
+      await article.getByText("1.32×", { exact: true }).waitFor();
+      await article.getByText("0.18×", { exact: true }).waitFor();
+      await flow("distribution", "10", "2026-07-01", "Later distribution");
+      await article.getByText(/Valuation-based returns require/).waitFor();
+      await page.getByRole("radio", { name: "Capital activity", exact: true }).click();
+      const activity = page.getByRole("region", { name: "Self-reported capital activity" });
+      await activity.getByText(/Capital call receipt/).waitFor();
+      await activity.getByText(/Fund cancelled the call/).waitFor();
+      await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
+    }
     if (process.env.PRIVATE_ACCOUNT_KEEP_HOLDING !== "1") {
       await article.getByRole("button", { name: "Remove holding", exact: true }).click();
       await article.getByRole("button", { name: "Confirm removal", exact: true }).click();

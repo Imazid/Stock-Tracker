@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
+import type { AccountCashFlow } from "./account-cash-flow";
+import { accountPositionPerformance } from "./private-performance";
 import { dateLabel, groupedDecimal, privateMarkets, dayInSydney, PrivateMarketsError } from "./private-data";
 
 type ManualCapitalRecord = {
@@ -21,6 +23,7 @@ export type ManualHolding = {
   netGain?: string; realizedGain?: string; unrealizedGain?: string; multiple?: string; dpi?: string; xirr?: string;
   ownershipEvidence?: { excerptID: string; reviewedOn: string };
   capitalActivity?: ManualCapitalRecord[];
+  cashFlows?: AccountCashFlow[];
 };
 export type ManualPortfolio = { revision: string | null; snapshot: { updated_at: string; holdings: ManualHolding[] } | null };
 
@@ -75,8 +78,9 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
   const values = [
     ["Remaining units", holding.units === undefined ? "Undisclosed" : groupedDecimal(holding.units)],
     ["Carrying value", money(valuation?.value)], ["Committed", money(holding.commitment)],
-    ...(published ? [["Capital deployed", money(holding.paid)], ["Returned capital and proceeds", money(holding.returned)],
-      ["Pending calls at publication", money(holding.pendingCalls)]] : []),
+    ...(published || holding.cashFlows?.length ? [["Capital deployed", money(holding.paid)],
+      ["Returned capital and proceeds", money(holding.returned)],
+      [published ? "Pending calls at publication" : "Pending calls", money(holding.pendingCalls)]] : []),
   ];
   const fund = ["Venture fund", "Private equity", "Syndicate or SPV"].includes(holding.assetClass);
   const performance = [
@@ -86,6 +90,15 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
     ...(fund ? [["DPI", holding.dpi === undefined ? "Unavailable" : ratio.format(Number(holding.dpi)) + "×"]] : []),
     ["XIRR", holding.xirr === undefined ? "Unavailable" : percent.format(Number(holding.xirr))],
   ];
+  const live = !published && holding.cashFlows?.length ? accountPositionPerformance(holding) : null;
+  const livePerformance = live ? [
+    ["Total gain or loss", live.netGain === null ? "Unavailable" : new Intl.NumberFormat("en-AU", {
+      style: "currency", currency,
+    }).format(live.netGain)],
+    [live.fund ? "TVPI" : "MOIC", live.multiple === null ? "Unavailable" : ratio.format(live.multiple) + "×"],
+    ...(live.fund ? [["DPI", live.dpi === null ? "Unavailable" : ratio.format(live.dpi) + "×"]] : []),
+    ["XIRR", live.xirr === null ? "Unavailable" : percent.format(live.xirr)],
+  ] : [];
   return <Card as="article" className="min-w-0 break-words">
     <CardHeader title={holding.name} subtitle={holding.assetClass} actions={<Badge>Self-reported</Badge>} />
     <div className="space-y-3 border-t border-border p-4 text-sm">
@@ -108,10 +121,11 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
     </div>
     {holding.ownershipEvidence && <OwnershipExcerpt key={holding.ownershipEvidence.excerptID} owner={owner} evidence={holding.ownershipEvidence} />}
     {controls}
-    {published && <details className="border-t border-border px-4 py-3 text-sm">
-      <summary className="cursor-pointer font-medium">Performance at publication</summary>
+    {(published || live) && <details className="border-t border-border px-4 py-3 text-sm">
+      <summary className="cursor-pointer font-medium">{published ? "Performance at publication" : "Performance"}</summary>
+      {live && !live.comparable && <p className="mt-2 text-text-2">Valuation-based returns require deployed capital and a valuation dated on or after all settled flows.</p>}
       <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {performance.map(([label, value]) => <div key={label}>
+        {(published ? performance : livePerformance).map(([label, value]) => <div key={label}>
           <dt className="text-xs text-text-3">{label}</dt><dd className="font-medium tabular-nums">{value}</dd>
         </div>)}
       </dl>

@@ -8,6 +8,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { SourceLink } from "./catalog";
+import { accountHoldingsQuery } from "./account-holdings";
 import { manualPortfolioQuery } from "./manual-portfolio";
 import { dateLabel, dayInSydney, groupedDecimal, privateMarkets, providerName, sourceHref, type CapitalActivityItem } from "./private-data";
 
@@ -15,7 +16,7 @@ type Section = "calls" | "history";
 type CapitalActivityPage = { items: CapitalActivityItem[]; next_offset: number | null };
 
 const statusLabels = {
-  upcoming: "Upcoming", overdue: "Overdue", paid: "Paid", cancelled: "Cancelled", distribution: "Distribution", sale: "Settled sale",
+  contribution: "Contribution", upcoming: "Upcoming", overdue: "Overdue", paid: "Paid", cancelled: "Cancelled", distribution: "Distribution", sale: "Settled sale",
 };
 
 function CapitalActivityList({ owner, section, title, empty }: { owner: string; section: Section; title: string; empty: string }) {
@@ -63,12 +64,17 @@ function CapitalActivityList({ owner, section, title, empty }: { owner: string; 
 
 function ManualCapitalActivity({ owner }: { owner: string }) {
   const activity = useQuery(manualPortfolioQuery(owner));
+  const account = useQuery(accountHoldingsQuery(owner));
   const [limit, setLimit] = useState(25);
   const snapshot = activity.error ? null : activity.data?.snapshot;
-  const today = dayInSydney(activity.dataUpdatedAt);
-  const records = snapshot?.holdings.flatMap((holding) => (holding.capitalActivity ?? []).map((record) => ({
-    ...record, holdingId: holding.id, name: holding.name, currency: holding.currency,
+  const today = dayInSydney(Math.max(activity.dataUpdatedAt, account.dataUpdatedAt));
+  const published = snapshot?.holdings.flatMap((holding) => (holding.capitalActivity ?? []).map((record) => ({
+    ...record, holdingId: holding.id, name: holding.name, currency: holding.currency, origin: "snapshot",
   }))) ?? [];
+  const shared = (account.error ? [] : account.data?.holdings ?? []).flatMap((holding) => (holding.cashFlows ?? []).map((record) => ({
+    ...record, holdingId: holding.id, name: holding.name, currency: holding.currency, origin: "account",
+  })));
+  const records = [...shared, ...published];
   const pending = records.filter((record) => record.status === "pending").sort((a, b) => a.date.localeCompare(b.date));
   const history = records.filter((record) => record.status !== "pending").sort((a, b) => b.date.localeCompare(a.date));
   const ordered = [...pending, ...history];
@@ -76,15 +82,16 @@ function ManualCapitalActivity({ owner }: { owner: string }) {
   return <Card as="section" aria-label="Self-reported capital activity">
     <CardHeader title="Self-reported capital activity" subtitle={snapshot
       ? `Snapshot published from iPhone ${dateLabel(snapshot.updated_at, "time")}.`
-      : "Include capital activity when publishing your portfolio snapshot on iPhone."} actions={
-      <Button size="sm" disabled={activity.isFetching} onClick={() => void activity.refetch()}>Refresh</Button>
+      : shared.length ? "Cash flows recorded in your account holdings." : "Include capital activity when publishing your portfolio snapshot on iPhone."} actions={
+      <Button size="sm" disabled={activity.isFetching || account.isFetching} onClick={() => { void activity.refetch(); void account.refetch(); }}>Refresh</Button>
     } />
-    {activity.isPending && <p role="status" className="border-t border-border p-4 text-sm text-text-2">Checking for published capital activity…</p>}
+    {(activity.isPending || account.isPending) && <p role="status" className="border-t border-border p-4 text-sm text-text-2">Checking for self-reported capital activity…</p>}
     {activity.error && <div className="border-t border-border p-4"><Notice tone="down">{activity.error.message}</Notice></div>}
+    {account.error && <div className="border-t border-border p-4"><Notice tone="down">{account.error.message}</Notice></div>}
     {snapshot && !ordered.length && <EmptyState title="No self-reported capital activity in this snapshot" className="border-t border-border" />}
     <ul>{ordered.slice(0, limit).map((record) => {
       const status = record.status === "pending" ? (record.date < today ? "overdue" : "upcoming") : record.status;
-      return <li key={`${record.holdingId}:${record.id}`} className="space-y-1 border-t border-border p-4 text-sm">
+      return <li key={`${record.origin}:${record.holdingId}:${record.id}`} className="space-y-1 border-t border-border p-4 text-sm">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h3 className="min-w-0 break-words font-medium text-text">{record.name}</h3>
           <Badge tone={status === "overdue" ? "warn" : "neutral"}>{statusLabels[status]}</Badge>

@@ -1,6 +1,7 @@
+import { accountCashFlow } from "../_shared/private-markets/account-cash-flow.ts";
 import {
   accountHolding, accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
-  withAccountValuations,
+  withAccountCashFlows, withAccountValuations,
 } from "../_shared/private-markets/account-holdings.ts";
 import { validManualSnapshot } from "../_shared/private-markets/manual-snapshot.ts";
 import { exportOffset, exportSection, privateExportPage } from "../_shared/private-markets/export.ts";
@@ -28,6 +29,7 @@ const activeSessionActions = new Set([
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
   "account_holdings", "save_account_holding", "remove_account_holding", "save_account_valuation", "remove_account_valuation",
+  "save_account_cash_flow", "remove_account_cash_flow",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -495,7 +497,7 @@ Deno.serve(async (req) => {
       return errorResponse(403, "AI_CONSENT_REQUIRED", "Allow Stock Tracker to send this request to the AI provider.");
     }
     // PostgreSQL UUIDs are case-insensitive. The encryption context is case-sensitive.
-    for (const key of ["id", "opportunity_id"]) {
+    for (const key of ["id", "opportunity_id", "flow_id"]) {
       const value = body[key];
       if (typeof value === "string" && uuid.test(value)) body[key] = value.toLowerCase();
     }
@@ -717,14 +719,18 @@ Deno.serve(async (req) => {
       case "save_account_holding":
       case "remove_account_holding":
       case "save_account_valuation":
-      case "remove_account_valuation": {
+      case "remove_account_valuation":
+      case "save_account_cash_flow":
+      case "remove_account_cash_flow": {
         const reading = body.action === "account_holdings";
         const saving = body.action === "save_account_holding";
         const savingMark = body.action === "save_account_valuation";
         const removingMark = body.action === "remove_account_valuation";
+        const savingFlow = body.action === "save_account_cash_flow";
+        const removingFlow = body.action === "remove_account_cash_flow";
         const expected = body.expected_revision;
         const allowed = reading ? ["action"] : ["action", "expected_revision", saving ? "holding" : "id",
-          ...(savingMark ? ["valuation"] : removingMark ? ["date"] : [])];
+          ...(savingMark ? ["valuation"] : removingMark ? ["date"] : savingFlow ? ["cash_flow"] : removingFlow ? ["flow_id"] : [])];
         if (Object.keys(body).some((key) => !allowed.includes(key)) ||
           (!reading && expected !== null && (typeof expected !== "string" || !uuid.test(expected)))) {
           return errorResponse(400, "INVALID_HOLDING", "Review the holding and try again.");
@@ -753,10 +759,11 @@ Deno.serve(async (req) => {
           const existing = holdings.findIndex((item) => item.id === id);
           const prior = holdings[existing];
           const marks = accountValuations(prior);
-          if (prior && marks.length && prior.currency !== holding.currency) {
-            return errorResponse(422, "VALUATION_CURRENCY", "Recorded valuations use the holding currency. Remove them before changing it.");
+          const cashFlows = prior?.cashFlows ?? [];
+          if (prior && (marks.length || cashFlows.length) && prior.currency !== holding.currency) {
+            return errorResponse(422, "VALUATION_CURRENCY", "Recorded valuations and cash flows use the holding currency. Remove them before changing it.");
           }
-          const saved = withAccountValuations(holding, marks, holding.valuation);
+          const saved = withAccountCashFlows(withAccountValuations(holding, marks, holding.valuation), cashFlows);
           if (existing < 0) {
             if (holdings.length >= 100) return errorResponse(422, "HOLDING_LIMIT", "This account already has 100 account holdings.");
             holdings.push(saved);
@@ -780,6 +787,28 @@ Deno.serve(async (req) => {
                 return errorResponse(404, "NOT_FOUND", "Valuation unavailable.");
               }
               holdings[index] = withAccountValuations(holding, marks, body.date);
+            }
+          } else if (savingFlow || removingFlow) {
+            const holding = holdings[index];
+            const flows = holding.cashFlows ?? [];
+            if (savingFlow) {
+              const flow = accountCashFlow(body.cash_flow, new Date());
+              if (!flow) return errorResponse(400, "INVALID_CASH_FLOW", "Review the amount, date and source.");
+              const previous = flows.find((row) => row.id === flow.id);
+              if (flow.status === "paid" || flow.status === "cancelled") {
+                if (!previous || (previous.status !== "pending" && previous.status !== flow.status) ||
+                    flow.amount !== previous.amount || flow.source !== previous.source ||
+                    flow.dueOn !== (previous.dueOn ?? previous.date)) {
+                  return errorResponse(422, "INVALID_CALL_RESOLUTION", "Resolve an existing call and retain its original amount, due date and notice.");
+                }
+              } else if (previous && previous.status !== flow.status) {
+                return errorResponse(422, "INVALID_CASH_FLOW", "Keep the recorded type when correcting an existing entry.");
+              }
+              holdings[index] = withAccountCashFlows(holding, [...flows.filter((row) => row.id !== flow.id), flow]);
+            } else {
+              const remaining = flows.filter((row) => row.id !== body.flow_id);
+              if (remaining.length === flows.length) return errorResponse(404, "NOT_FOUND", "Cash flow unavailable.");
+              holdings[index] = withAccountCashFlows(holding, remaining);
             }
           } else {
             holdings.splice(index, 1);

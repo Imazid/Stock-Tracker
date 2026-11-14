@@ -406,6 +406,41 @@ enum PrivateMarketsAPI {
             let method: String
             var id: Date { date }
         }
+        struct CashFlow: Decodable, Identifiable {
+            enum Status: String, Decodable, CaseIterable {
+                case contribution, pending, paid, cancelled, distribution
+
+                var title: String {
+                    switch self {
+                    case .contribution: "Contribution"
+                    case .pending: "Capital call due"
+                    case .paid: "Capital call paid"
+                    case .cancelled: "Capital call cancelled"
+                    case .distribution: "Distribution"
+                    }
+                }
+                var isResolution: Bool { self == .paid || self == .cancelled }
+            }
+
+            let id: UUID
+            let status: Status
+            let amount: String
+            let date: String
+            let source: String
+            let dueOn: String?
+            let resolutionSource: String?
+
+            var ledgerFlow: PrivateCashFlow? {
+                guard let value = Decimal(string: amount, locale: Locale(identifier: "en_US_POSIX")),
+                      let day = CashIncomeDay.date(date), status != .cancelled else { return nil }
+                let kind: PrivateCashFlow.Kind = switch status {
+                case .contribution: .contribution
+                case .distribution: .distribution
+                case .pending, .paid, .cancelled: .capitalCall
+                }
+                return .init(id: id, kind: kind, amount: value, date: day, settled: status != .pending, source: source)
+            }
+        }
         struct OwnershipEvidence: Decodable { let excerptID: UUID; let reviewedOn: Date }
 
         let id: UUID
@@ -421,6 +456,10 @@ enum PrivateMarketsAPI {
         let valuationHistory: [Mark]?
         var marks: [Mark] { valuationHistory ?? valuation.map { [$0] } ?? [] }
         let ownershipEvidence: OwnershipEvidence?
+        let cashFlows: [CashFlow]?
+        let paid: String?
+        let returned: String?
+        let pendingCalls: String?
 
         var holding: PrivateHolding {
             let locale = Locale(identifier: "en_US_POSIX")
@@ -434,7 +473,7 @@ enum PrivateMarketsAPI {
             return PrivateHolding(id: id, name: name, assetClass: assetClass, currency: currency,
                                   commitment: decimal(commitment), units: decimal(units), ownershipPercent: decimal(ownership),
                                   shareClass: shareClass ?? "", lockupUntil: lockupUntil, valuations: mark.map { [$0] } ?? [],
-                                  ownershipEvidenceID: ownershipEvidence?.excerptID, ownershipReviewedOn: ownershipEvidence?.reviewedOn)
+                                  cashFlows: cashFlows?.compactMap(\.ledgerFlow) ?? [], ownershipEvidenceID: ownershipEvidence?.excerptID, ownershipReviewedOn: ownershipEvidence?.reviewedOn)
         }
     }
     struct Handoff: Decodable { let commitmentId: UUID; let handoffUrl: URL }
@@ -614,6 +653,7 @@ final class PrivateMarketsStore: ObservableObject {
         accountHoldings = response.holdings
         accountHoldingsError = nil
         hasLoadedAccountHoldings = true
+        syncCapitalReminders()
     }
 
     func saveAccountHolding(_ holding: [String: Any], owner: UUID, revision: UUID?) async throws {
@@ -631,6 +671,16 @@ final class PrivateMarketsStore: ObservableObject {
 
     func removeAccountValuation(_ day: String, holding: UUID, owner: UUID, revision: UUID?) async throws {
         try await updateAccountHoldings("remove_account_valuation", fields: ["id": holding.uuidString, "date": day],
+                                        owner: owner, revision: revision)
+    }
+
+    func saveAccountCashFlow(_ flow: [String: String], holding: UUID, owner: UUID, revision: UUID?) async throws {
+        try await updateAccountHoldings("save_account_cash_flow", fields: ["id": holding.uuidString, "cash_flow": flow],
+                                        owner: owner, revision: revision)
+    }
+
+    func removeAccountCashFlow(_ flow: UUID, holding: UUID, owner: UUID, revision: UUID?) async throws {
+        try await updateAccountHoldings("remove_account_cash_flow", fields: ["id": holding.uuidString, "flow_id": flow.uuidString],
                                         owner: owner, revision: revision)
     }
 
@@ -903,7 +953,7 @@ final class PrivateMarketsStore: ObservableObject {
         guard let id = try? await SupabaseManager.auth.session.user.id else { return }
         if scope == nil { selectAccount(id) }
         guard scope == id, state.capitalReminders == true || state.notify || state.monitorEnabled != nil else { return }
-        await refreshProviderHoldings(for: id)
+        await refreshInvestmentHoldings(for: id)
         if state.notify && state.monitorEnabled != true { _ = try? await checkUpdates(for: id) }
         await refreshMonitor(for: id)
     }
@@ -1134,7 +1184,7 @@ final class PrivateMarketsStore: ObservableObject {
             cancelCapitalReminders(scope: owner)
             return
         }
-        let positions = independentManualHoldings + providerHoldings.map(\.holding)
+        let positions = independentManualHoldings + providerHoldings.map(\.holding) + accountHoldings.map(\.holding)
         let reminders = PrivateMath.capitalCallReminders(in: positions)
         reminderTask = Task {
             await previousTask?.value

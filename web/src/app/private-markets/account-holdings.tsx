@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
+import { AccountCashFlows, type AccountCashFlow, type CashFlowChange } from "./account-cash-flow";
 import { ManualHoldingCard, type ManualHolding } from "./manual-portfolio";
 import { dateLabel, dayInSydney, groupedDecimal, privateMarkets } from "./private-data";
 
 type Mark = NonNullable<ManualHolding["valuation"]>;
-type AccountHolding = ManualHolding & { valuationHistory?: Mark[] };
+type AccountHolding = ManualHolding & { valuationHistory?: Mark[]; cashFlows?: AccountCashFlow[] };
 type AccountHoldings = { revision: string | null; updated_at: string | null; holdings: AccountHolding[] };
 type ValuationChange = { id: string; valuation: Mark } | { id: string; date: string };
 type EditableHolding = Pick<ManualHolding, "id" | "name" | "assetClass" | "currency" |
@@ -26,7 +27,7 @@ export function accountHoldingsQuery(owner: string) {
 const classes = ["Startup equity", "Venture fund", "Private equity", "Syndicate or SPV", "Private secondary", "Other alternative"];
 
 function HoldingForm({ owner, holding, now, busy, save, cancel }: {
-  owner: string; holding: ManualHolding | null; now: number; busy: boolean;
+  owner: string; holding: AccountHolding | null; now: number; busy: boolean;
   save: (holding: EditableHolding) => void; cancel: () => void;
 }) {
   const formID = useId();
@@ -82,7 +83,7 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
       <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
         <Field label="Company or fund name" htmlFor={field("name")}><Input id={field("name")} name="name" required maxLength={160} defaultValue={holding?.name} /></Field>
         <Field label="Asset class" htmlFor={field("assetClass")}><Select id={field("assetClass")} name="assetClass" defaultValue={holding?.assetClass}>{classes.map((name) => <option key={name}>{name}</option>)}</Select></Field>
-        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} readOnly={!!holding?.valuation} defaultValue={holding?.currency ?? "AUD"} /></Field>
+        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} readOnly={!!holding?.valuation || !!holding?.cashFlows?.length} defaultValue={holding?.currency ?? "AUD"} /></Field>
         {numeric.map(([key, label, value]) => <Field key={key} label={label} htmlFor={field(key)}><Input id={field(key)} name={key} inputMode="decimal" maxLength={39} defaultValue={value} /></Field>)}
         <Field label="Share class" htmlFor={field("shareClass")}><Input id={field("shareClass")} name="shareClass" maxLength={160} defaultValue={holding?.shareClass} /></Field>
         <Field label="Lock-up ends" htmlFor={field("lockup")}><Input id={field("lockup")} type="date" name="lockup" defaultValue={holding?.lockupUntil?.slice(0, 10)} /></Field>
@@ -180,12 +181,13 @@ export function AccountHoldingsPanel({ owner }: { owner: string }) {
   const cache = useQueryClient();
   const options = accountHoldingsQuery(owner);
   const result = useQuery(options);
-  const [editor, setEditor] = useState<{ holding: ManualHolding | null; revision: string | null }>();
+  const [editor, setEditor] = useState<{ holding: AccountHolding | null; revision: string | null }>();
   const [deleting, setDeleting] = useState<{ id: string; revision: string | null }>();
   const mutation = useMutation({
-    mutationFn: ({ revision, ...change }: ({ holding: EditableHolding } | { id: string } | ValuationChange) & { revision: string | null }) => {
+    mutationFn: ({ revision, ...change }: ({ holding: EditableHolding } | { id: string } | ValuationChange | CashFlowChange) & { revision: string | null }) => {
       const action = "holding" in change ? "save_account_holding" : "valuation" in change ? "save_account_valuation"
-        : "date" in change ? "remove_account_valuation" : "remove_account_holding";
+        : "date" in change ? "remove_account_valuation" : "cash_flow" in change ? "save_account_cash_flow"
+        : "flow_id" in change ? "remove_account_cash_flow" : "remove_account_holding";
       return privateMarkets<AccountHoldings>(action, { owner, expected_revision: revision, ...change });
     },
     onMutate: () => cache.cancelQueries({ queryKey: options.queryKey }),
@@ -218,6 +220,11 @@ export function AccountHoldingsPanel({ owner }: { owner: string }) {
       cancel={() => { mutation.reset(); setEditor(undefined); }} />}
     {current?.holdings.map((holding) => <ManualHoldingCard key={holding.id} owner={owner} holding={holding} now={result.dataUpdatedAt} published={false}
       controls={<>
+        <AccountCashFlows holding={holding} revision={current.revision} now={result.dataUpdatedAt}
+          busy={!!editor || mutation.isPending} save={(change, revision) => {
+          mutation.reset();
+          mutation.mutate({ ...change, revision });
+        }} />
         <AccountValuationHistory holding={holding} revision={current.revision} now={result.dataUpdatedAt}
           busy={!!editor || mutation.isPending} save={(change, revision) => {
           mutation.reset();
