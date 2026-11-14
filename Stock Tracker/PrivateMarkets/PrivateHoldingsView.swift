@@ -250,7 +250,10 @@ private struct AccountPrivateHoldingDetail: View {
                     if let markError { Text(markError).foregroundStyle(.orange) }
                 }
                 .disabled(updatingMark || removing)
-                AccountCashFlowSection(owner: owner, holding: current)
+                NavigationLink("Cash flows and performance") {
+                    AccountCashFlowView(owner: owner, holdingID: id)
+                }
+                .accessibilityIdentifier("private.accountCashFlow.open")
                 if let evidence = current.ownershipEvidence {
                     let excerpt = opened?.owner == owner && opened?.excerptID == evidence.excerptID ? opened?.text : nil
                     Section("Reviewed ownership excerpt") {
@@ -351,17 +354,38 @@ private struct AccountCashFlowEdit: Identifiable {
     var resolution: PrivateMarketsAPI.AccountHolding.CashFlow.Status?
 }
 
-private struct AccountCashFlowSection: View {
+private struct AccountCashFlowView: View {
     @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
     let owner: UUID
-    let holding: PrivateMarketsAPI.AccountHolding
+    let holdingID: UUID
     @State private var editor: AccountCashFlowEdit?
     @State private var removal: AccountCashFlowEdit?
     @State private var busy = false
     @State private var error: String?
 
     var body: some View {
+        if auth.userId == owner, let holding = store.accountHoldings.first(where: { $0.id == holdingID }) {
+            List {
+                records(holding)
+            }
+            .navigationTitle("Cash Flows & Performance")
+            .navigationBarTitleDisplayMode(.inline)
+            .disabled(busy)
+            .sheet(item: $editor) { edit in AccountCashFlowEditor(owner: owner, holding: holdingID, edit: edit) }
+            .confirmationDialog("Remove this cash flow?", isPresented: Binding(
+                get: { removal != nil }, set: { if !$0 { removal = nil } }
+            ), titleVisibility: .visible, presenting: removal) { edit in
+                Button("Remove cash flow", role: .destructive) { Task { await remove(edit) } }
+            }
+            .refreshable { await store.refreshAccountHoldings(for: owner) }
+        } else {
+            ContentUnavailableView("Holding unavailable", systemImage: "briefcase")
+        }
+    }
+
+    @ViewBuilder
+    private func records(_ holding: PrivateMarketsAPI.AccountHolding) -> some View {
         Section("Cash flows") {
             ForEach((holding.cashFlows ?? []).sorted { $0.date > $1.date }) { flow in
                 VStack(alignment: .leading, spacing: 6) {
@@ -381,13 +405,6 @@ private struct AccountCashFlowSection: View {
             }
             Button("Add cash flow") { open() }.accessibilityIdentifier("private.accountCashFlow.add")
             if let error { Text(error).foregroundStyle(.orange) }
-        }
-        .disabled(busy)
-        .sheet(item: $editor) { edit in AccountCashFlowEditor(owner: owner, holding: holding.id, edit: edit) }
-        .confirmationDialog("Remove this cash flow?", isPresented: Binding(
-            get: { removal != nil }, set: { if !$0 { removal = nil } }
-        ), titleVisibility: .visible, presenting: removal) { edit in
-            Button("Remove cash flow", role: .destructive) { Task { await remove(edit) } }
         }
         if holding.cashFlows?.isEmpty == false {
             let metrics = holding.holding.metrics()
@@ -420,7 +437,7 @@ private struct AccountCashFlowSection: View {
         busy = true
         defer { busy = false }
         do {
-            try await store.removeAccountCashFlow(record.id, holding: holding.id, owner: owner, revision: edit.revision)
+            try await store.removeAccountCashFlow(record.id, holding: holdingID, owner: owner, revision: edit.revision)
         } catch is CancellationError {
         } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
             await store.refreshAccountHoldings(for: owner)

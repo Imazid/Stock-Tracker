@@ -632,12 +632,16 @@ final class PrivateMarketsFlowTests: XCTestCase {
         }
         XCTAssertTrue(row.isHittable, app.debugDescription)
         row.tap()
+        let cash = app.buttons["private.accountCashFlow.open"]
+        for _ in 0..<4 where !cash.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(cash.isHittable, app.debugDescription)
+        cash.tap()
         let add = app.buttons["private.accountCashFlow.add"]
         for _ in 0..<4 where !add.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(add.isHittable, app.debugDescription)
         add.tap()
         let amount = app.textFields["private.accountCashFlow.amount"]
-        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        XCTAssertTrue(amount.waitForExistence(timeout: 8), app.debugDescription)
         amount.tap()
         amount.typeText("25.123456789")
         let source = app.textFields["private.accountCashFlow.source"]
