@@ -298,6 +298,9 @@ struct PrivateApplication: Decodable, Identifiable {
     let providerReference: String?
     let confirmedAt: Date?
     let coolingOffEndsAt: Date?
+    let supplementaryNoticeAt: Date?
+    let supplementaryWithdrawalEndsAt: Date?
+    let supplementaryDocumentUrl: URL?
     let acknowledgedAt: Date
     let providerReceivedAt: Date?
     let withdrawalRequestedAt: Date?

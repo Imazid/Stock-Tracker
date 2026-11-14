@@ -106,6 +106,39 @@ select pg_temp.expect_application_error($q$select * from public.prepare_private_
   '22023','reopening an earlier handoff rechecks the provider-reported cap balance');
 update public.investment_commitments set status='rejected',provider_reference='disposable-prior-handoff'
 where opportunity_id='ea000000-0000-4000-8000-000000000032';
+select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
+  (select commitment_id from application),'receipt','supplementary_notice',now()-interval '3 minutes 15 seconds',
+  p_supplementary_deadline => now()+interval '14 days',
+  p_supplementary_document_url => 'https://www.birchal.com.example.test/offer')$q$,
+  '22023','supplementary notices require an approved provider link');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
+  'receipt','supplementary_notice',now()-interval '3 minutes 15 seconds',
+  p_supplementary_deadline => now()+interval '14 days',
+  p_supplementary_document_url => 'https://www.birchal.com/offer/supplement');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
+  'receipt','supplementary_notice',now()-interval '3 minutes 20 seconds',
+  p_supplementary_deadline => now()+interval '15 days',
+  p_supplementary_document_url => 'https://www.birchal.com/offer/replacement');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
+  'receipt','supplementary_notice',now()-interval '3 minutes 20 seconds',
+  p_supplementary_deadline => now()+interval '15 days',
+  p_supplementary_document_url => 'https://www.birchal.com/offer/replacement');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
+  'receipt','supplementary_notice',now()-interval '3 minutes 10 seconds',
+  p_supplementary_deadline => now()+interval '7 days',
+  p_supplementary_document_url => 'https://www.birchal.com/offer/shorter');
+select case when status='withdrawal_requested' and withdrawal_requested_at=now()-interval '3 minutes'
+    and provider_event_at=withdrawal_requested_at
+    and provider_received_at=now()-interval '4 minutes' and cooling_off_ends_at=now()+interval '5 days'
+    and supplementary_withdrawal_ends_at=now()+interval '15 days'
+    and supplementary_document_url='https://www.birchal.com/offer/replacement'
+  then 'ok   late supplementary notices preserve the withdrawal request and keep the longest applicable window'
+  else 'FAIL supplementary notice replaced application state or shortened the window' end
+from public.investment_commitments where id=(select commitment_id from application);
+select case when count(*)=2 then 'ok   replay and shorter notices do not duplicate the audit'
+  else 'FAIL supplementary notice audit count' end
+from public.investment_audit_logs
+where action='provider_supplementary_notice' and subject_id=(select commitment_id from application);
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
   'receipt','withdrawal_declined',now()-interval '2 minutes');
 select case when status='application_received' and withdrawal_declined_at is not null and provider_received_at is not null
@@ -183,6 +216,18 @@ create temporary table wholesale_application as
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
   'wholesale-receipt','application_received',now()-interval '1 minute',
   p_application_amount => 450,p_application_currency => 'AUD');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
+  'wholesale-receipt','supplementary_notice',now()-interval '30 seconds',
+  p_supplementary_deadline => now()+interval '14 days',
+  p_supplementary_document_url => 'https://www.birchal.com/offer/replacement');
+select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
+  (select commitment_id from wholesale_application),'wholesale-receipt','confirmed',now(),null,5,400)$q$,
+  '22023','a supplementary withdrawal window blocks wholesale settlement');
+-- Advance the fixture past its notice deadline to verify the settlement path.
+update public.investment_commitments set acknowledged_at=now()-interval '16 days',
+  provider_received_at=now()-interval '16 days', supplementary_notice_at=now()-interval '15 days',
+  supplementary_withdrawal_ends_at=now()-interval '1 day'
+where id=(select commitment_id from wholesale_application);
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
   'wholesale-receipt','application_received',now()-interval '1 minute',
   p_application_amount => 600,p_application_currency => 'AUD');

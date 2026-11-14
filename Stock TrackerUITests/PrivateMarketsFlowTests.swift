@@ -558,6 +558,12 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let timeline = app.staticTexts["Withdrawal requested"]
         if !timeline.isHittable { app.swipeUp() }
         XCTAssertTrue(timeline.waitForExistence(timeout: 8))
+        if ProcessInfo.processInfo.environment["PRIVATE_LIFECYCLE_CHECK_SUPPLEMENTARY_NOTICE"] == "1" {
+            let document = app.descendants(matching: .any)["private.application.supplementaryDocument"].firstMatch
+            for _ in 0..<4 where !document.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(document.exists)
+            XCTAssertTrue(app.staticTexts["Supplementary withdrawal deadline"].exists)
+        }
         let help = app.descendants(matching: .any)["private.application.withdrawalHelp"].firstMatch
         if !help.isHittable { app.swipeUp() }
         XCTAssertTrue(help.waitForExistence(timeout: 8), app.debugDescription)

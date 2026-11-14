@@ -198,16 +198,27 @@ private struct PrivateApplicationDetail: View {
                     if let date = record.withdrawnAt { dated("Withdrawal confirmed", date) }
                     if let date = record.confirmedAt { dated("Ownership confirmed", date) }
                 }
+                if let notice = record.supplementaryNoticeAt, let deadline = record.supplementaryWithdrawalEndsAt {
+                    Section("Supplementary offer notice") {
+                        dated("Notice sent by provider", notice)
+                        dated("Supplementary withdrawal deadline", deadline)
+                        if let url = record.supplementaryDocumentUrl, url.privateSourceIsSafe {
+                            Link("Open supplementary offer document", destination: url)
+                                .accessibilityIdentifier("private.application.supplementaryDocument")
+                        }
+                    }
+                }
                 if record.status == "application_received" || record.status == "withdrawal_requested" {
                     Section("Withdrawal") {
                         if let deadline = record.coolingOffEndsAt {
-                            dated("Deadline reported by provider", deadline)
-                            if deadline <= .now {
-                                Text("The recorded deadline has passed. Check your provider for any other withdrawal options.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
+                            dated("Cooling-off deadline reported by provider", deadline)
+                        } else if record.supplementaryWithdrawalEndsAt == nil {
                             Text("Check your provider account for any deadline and the steps to withdraw.")
+                                .foregroundStyle(.secondary)
+                        }
+                        if let deadline = [record.coolingOffEndsAt, record.supplementaryWithdrawalEndsAt].compactMap({ $0 }).max(),
+                           deadline <= .now {
+                            Text("Check your provider for any other withdrawal options.")
                                 .foregroundStyle(.secondary)
                         }
                         if record.status == "withdrawal_requested" {
