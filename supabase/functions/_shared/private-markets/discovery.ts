@@ -98,10 +98,34 @@ export async function interpretDiscovery(userId: string, question: string, secto
   if (!answer.text) throw new ResearchError(result.status, answer.error?.code ?? "DISCOVERY_FAILED",
     answer.error?.message ?? "Catalogue search is unavailable.");
   const filters = parseDiscovery(answer.text);
+  const hasAmount = [filters.max_minimum, filters.max_valuation, filters.min_raise_target, filters.max_raise_target]
+    .some((value) => value > 0);
+  if (hasAmount && filters.currency && !hasExplicitCurrency(question, filters.currency)) {
+    filters.currency = "";
+    filters.unsupported.push("Currency for the requested amount");
+  }
   const normalize = (value: string) => value.normalize("NFKC").toLowerCase();
   const selected = new Set(filters.sectors.map(normalize));
   if (sectors.length && sectors.every((sector) => selected.has(normalize(sector)))) filters.sectors = [];
   return filters;
+}
+
+function hasExplicitCurrency(question: string, currency: string): boolean {
+  const words = question.normalize("NFKC").toUpperCase();
+  const spellings: Record<string, string> = {
+    AUD: "A\\$|AU\\$|AUSTRALIAN DOLLARS?",
+    USD: "US\\$|U\\.?S\\.? DOLLARS?|UNITED STATES DOLLARS?",
+    NZD: "NZ\\$|NEW ZEALAND DOLLARS?",
+    CAD: "CA\\$|C\\$|CANADIAN DOLLARS?",
+    SGD: "S\\$|SG\\$|SINGAPORE DOLLARS?",
+    EUR: "€|EUROS?",
+    GBP: "£|POUNDS STERLING|BRITISH POUNDS?",
+    JPY: "JAPANESE YEN",
+    INR: "₹|INDIAN RUPEES?",
+  };
+  const aliases = spellings[currency] ?? "";
+  // Allow a currency code beside digits, such as AUD5000 or 5000AUD.
+  return new RegExp(`(?<![A-Z])(?:${currency}${aliases ? "|" + aliases : ""})(?![A-Z])`).test(words);
 }
 
 export function parseDiscovery(text: string): DiscoveryCriteria {
