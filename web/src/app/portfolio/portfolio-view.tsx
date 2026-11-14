@@ -12,6 +12,7 @@ import { getJSON } from "@/lib/api";
 import { money, plainNumber } from "@/lib/format";
 import { rowToInstrument, toView } from "@/lib/instrument-view";
 import type { QuoteResponse } from "@/lib/market-types";
+import type { HoldingBrokerAccount } from "@/lib/portfolio-transfers";
 import { portfolioMovement } from "@/lib/portfolio-movement";
 import { MovementCard } from "./movement-card";
 import { LotReport } from "./lot-report";
@@ -26,6 +27,7 @@ interface HoldingRow {
   asset_name: string;
   asset_kind: "Stock" | "Crypto";
   asset_exchange: string | null;
+  broker_account: HoldingBrokerAccount | null;
   shares: number;
   avg_cost: number;
 }
@@ -39,7 +41,7 @@ async function readPortfolio(userId: string) {
   const db = browserSupabase();
   if (!db) throw new Error("Accounts are unavailable.");
   const [holdings, snapshots] = await Promise.all([
-    db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost")
+    db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account")
       .eq("user_id", userId).is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(201),
     db.from("portfolio_snapshots").select("snapshot_date,total_value").eq("user_id", userId)
       .order("snapshot_date", { ascending: false }).limit(30),
@@ -119,6 +121,10 @@ export function PortfolioView() {
                           {holding.instrument.symbol} <span className="text-xs font-normal text-text-3">{holding.instrument.venueShort}</span>
                         </Link>
                         <p className="truncate text-xs text-text-2">{holding.asset_name}</p>
+                        {holding.broker_account && <p className="break-words text-xs text-text-3">
+                          {holding.broker_account.label}
+                          {holding.broker_account.tracking ? ` · As of ${new Date(holding.broker_account.observed_at).toLocaleDateString()}` : " · Kept manually"}
+                        </p>}
                       </div>
                       <div className="tabular text-sm">
                         <p>{plainNumber(holding.shares, 8)} {holding.asset_kind === "Crypto" ? holding.instrument.symbol : "shares"}</p>

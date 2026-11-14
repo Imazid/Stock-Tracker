@@ -159,6 +159,14 @@ struct PricePoint: Identifiable {
 
 // MARK: - Portfolio
 
+struct HoldingBrokerAccount: Codable, Equatable, Sendable {
+    let account_id: String
+    let label: String
+    let institution: String
+    var observed_at: String
+    var tracking: Bool
+}
+
 struct PortfolioHolding: Identifiable, Codable {
     let id: UUID
     var asset: Asset
@@ -166,6 +174,7 @@ struct PortfolioHolding: Identifiable, Codable {
     var avgCost: Double
     let dateAdded: Date
     var transactions: [Transaction]
+    var brokerAccount: HoldingBrokerAccount?
     
     init(
         id: UUID = UUID(),
@@ -173,7 +182,8 @@ struct PortfolioHolding: Identifiable, Codable {
         shares: Double,
         avgCost: Double,
         dateAdded: Date = Date(),
-        transactions: [Transaction] = []
+        transactions: [Transaction] = [],
+        brokerAccount: HoldingBrokerAccount? = nil
     ) {
         self.id = id
         self.asset = asset
@@ -181,6 +191,7 @@ struct PortfolioHolding: Identifiable, Codable {
         self.avgCost = avgCost
         self.dateAdded = dateAdded
         self.transactions = transactions
+        self.brokerAccount = brokerAccount
     }
     
     /// Current market value = current price * shares

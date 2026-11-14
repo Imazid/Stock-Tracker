@@ -13,8 +13,10 @@
 //
 
 import Foundation
+import Auth
 import SwiftUI
 import Combine
+import CryptoKit
 
 @MainActor
 final class SnapTradeViewModel: ObservableObject {
@@ -73,6 +75,7 @@ final class SnapTradeViewModel: ObservableObject {
     // MARK: - Dependencies
 
     private let repository: SnapTradeRepository
+    private var accountGeneration = UUID()
     private static let importedKey = "snaptrade_imported_holding_ids"
 
     /// Ids of portfolio holdings that came from the broker.
@@ -92,7 +95,7 @@ final class SnapTradeViewModel: ObservableObject {
         #if DEBUG
         if Self.usesFixture { return }
         #endif
-        if repository.isAuthenticated {
+        if repository.isAuthenticated, !SecureBackend.shouldUseServer {
             Task {
                 await syncAll()
                 await loadDirectory()   // logos for the Accounts card
@@ -115,19 +118,31 @@ final class SnapTradeViewModel: ObservableObject {
         return accounts.map(\.institutionName).filter { seen.insert($0).inserted }
     }
 
-    func isImported(_ holding: PortfolioHolding) -> Bool { importedIDs.contains(holding.id) }
-
-    /// The broker an imported holding came from, as displayed (nil for holdings added by hand).
-    func institution(for holding: PortfolioHolding) -> String? {
-        institutionKey(for: holding).map { displayName(forInstitution: $0) }
+    func isImported(_ holding: PortfolioHolding) -> Bool {
+        holding.brokerAccount?.tracking ?? importedIDs.contains(holding.id)
     }
 
-    /// The account's raw institution name (what `institutions` lists), for matching.
+    func institution(for holding: PortfolioHolding) -> String? {
+        guard isImported(holding) else { return nil }
+        if let account = holding.brokerAccount { return account.label }
+        return institutionKey(for: holding).map { displayName(forInstitution: $0) }
+    }
+
     func institutionKey(for holding: PortfolioHolding) -> String? {
         guard isImported(holding) else { return nil }
+        if let account = holding.brokerAccount { return account.institution }
         let symbol = holding.asset.symbol
-        guard let accountID = holdings.first(where: { normalisedSymbol($0.symbol) == symbol })?.accountId else { return nil }
-        return accounts.first { $0.id == accountID }?.institutionName
+        let ids = Set(holdings.filter { normalisedSymbol($0.symbol) == symbol }.map(\.accountId))
+        guard ids.count == 1, let id = ids.first else { return nil }
+        return accounts.first { $0.id == id }?.institutionName
+    }
+
+    func trackedHolding(for position: BrokerHolding, in portfolio: [PortfolioHolding]) -> PortfolioHolding? {
+        let symbol = normalisedSymbol(position.symbol)
+        return portfolio.first {
+            $0.brokerAccount?.tracking == true && $0.brokerAccount?.account_id == position.accountId.lowercased()
+                && $0.asset.symbol == symbol && $0.asset.exchange == positionExchange(position)
+        }
     }
 
     // MARK: - Directory
@@ -218,7 +233,7 @@ final class SnapTradeViewModel: ObservableObject {
     /// it's gone (it used to only forget the login on this iPhone).
     func disconnect() async {
         #if DEBUG
-        if Self.usesFixture { repository.disconnect(); clearConnection(); return }
+        if Self.usesFixture { repository.disconnect(); clearConnection(keepPositions: true); return }
         #endif
         isLoading = true
         loadingMessage = "Disconnecting…"
@@ -235,10 +250,21 @@ final class SnapTradeViewModel: ObservableObject {
         }
         isLoading = false
         loadingMessage = ""
-        clearConnection()
+        clearConnection(keepPositions: true)
     }
 
-    private func clearConnection() {
+    func accountChanged() {
+        accountGeneration = UUID()
+        clearConnection(keepPositions: false)
+    }
+
+    private func clearConnection(keepPositions: Bool) {
+        if keepPositions, let marketData {
+            for holding in marketData.portfolio where isImported(holding) {
+                stopTracking(holding, marketData: marketData)
+            }
+            importedIDs = []
+        }
         isAuthenticated = false
         accounts = []
         holdings = []
@@ -246,82 +272,72 @@ final class SnapTradeViewModel: ObservableObject {
         lastSyncFailed = false
         lastImport = nil
         pendingRemovals = []
-        importedIDs = []
+        isLoading = false
+        loadingMessage = ""
     }
 
     // MARK: - Accounts & holdings
 
-    func fetchAccounts() async {
-        isLoading = true
-        loadingMessage = "Loading accounts…"
-        errorMessage = nil
-        do {
-            accounts = try await repository.fetchAccounts()
-            isLoading = false
-            loadingMessage = ""
-        } catch {
-            lastSyncFailed = true
-            handleError(error)
-        }
-    }
-
-    func fetchAllHoldings() async {
-        isLoading = true
-        loadingMessage = "Loading holdings…"
-        errorMessage = nil
-        do {
-            var fetched = try await repository.fetchAllHoldings()
-            loadingMessage = "Updating prices…"
-            fetched = await repository.enrichHoldings(fetched)
-            holdings = fetched
-            lastSyncedAt = Date()
-            lastSyncFailed = false
-            isLoading = false
-            loadingMessage = ""
-            autoImport()
-        } catch {
-            lastSyncFailed = true
-            handleError(error)
-        }
-    }
-
-    func fetchHoldings(for accountId: String) async {
-        isLoading = true
-        loadingMessage = "Loading account holdings…"
-        errorMessage = nil
-        do {
-            let fetched = try await repository.fetchHoldings(for: accountId)
-            holdings.removeAll { $0.accountId == accountId }
-            holdings.append(contentsOf: fetched)
-            isLoading = false
-            loadingMessage = ""
-        } catch {
-            handleError(error)
-        }
-    }
-
-    /// Accounts, then holdings (which then go into the portfolio).
     func syncAll() async {
         #if DEBUG
         if Self.usesFixture { if isAuthenticated { fixtureSync() }; return }
         #endif
+        guard !isLoading else { return }
+        let owner = SupabaseManager.auth.currentUser?.id
+        let generation = accountGeneration
+        let requestedAt = Date()
+        if SecureBackend.shouldUseServer {
+            guard let owner, SyncManager.shared.hasLoadedPortfolio(for: owner) else { return }
+        }
+        isLoading = true
+        loadingMessage = "Loading brokerage positions…"
         errorMessage = nil
-        await fetchAccounts()
-        if !accounts.isEmpty {
-            await fetchAllHoldings()
+        defer {
+            if generation == accountGeneration {
+                isLoading = false
+                loadingMessage = ""
+            }
+        }
+        do {
+            let registered = try await repository.refreshRegistration()
+            guard generation == accountGeneration, SupabaseManager.auth.currentUser?.id == owner else { return }
+            isAuthenticated = registered
+            guard registered else {
+                accounts = []
+                holdings = []
+                pendingRemovals = []
+                return
+            }
+            let linked = try await repository.fetchAccounts()
+            guard generation == accountGeneration, SupabaseManager.auth.currentUser?.id == owner else { return }
+            let fetched = try await repository.fetchAllHoldings(accountIds: linked.map(\.id))
+            guard generation == accountGeneration, SupabaseManager.auth.currentUser?.id == owner else { return }
+            accounts = linked
+            holdings = fetched
+            lastSyncedAt = requestedAt
+            lastSyncFailed = false
+            autoImport()
+        } catch {
+            guard generation == accountGeneration, SupabaseManager.auth.currentUser?.id == owner else { return }
+            lastSyncFailed = true
+            pendingRemovals = []
+            errorTitle = "Couldn’t sync brokerage positions"
+            errorMessage = "Try again when all linked accounts are available. The last synced positions are still shown."
+            showError = true
         }
     }
 
     /// Puts new and changed broker positions into the portfolio; holds removals for review.
     func autoImport() {
-        guard let marketData else { return }
+        guard let marketData, lastSyncedAt != nil, !lastSyncFailed else { return }
         var plan = makeSyncPlan(marketData: marketData)
-        pendingRemovals = plan.removals
+        let priorRemovals = Dictionary(uniqueKeysWithValues: pendingRemovals.map { ($0.id, $0) })
+        pendingRemovals = plan.removals.map { priorRemovals[$0.id] ?? $0 }
         plan.removals = []
-        guard !plan.adds.isEmpty || !plan.updates.isEmpty || !plan.skipped.isEmpty else { return }
+        guard !plan.adds.isEmpty || !plan.updates.isEmpty || !plan.zeroed.isEmpty || !plan.skipped.isEmpty || !plan.review.isEmpty || lastImport != nil else { return }
         let summary = apply(plan, marketData: marketData)
         // Only worth a banner when something changed or needs saying.
-        if summary.added + summary.updated + summary.overLimit > 0 || summary.skipped != lastImport?.skipped {
+        if summary.added + summary.updated + summary.overLimit > 0 || summary.skipped != lastImport?.skipped || summary.review != lastImport?.review {
             lastImport = summary
         }
     }
@@ -330,47 +346,40 @@ final class SnapTradeViewModel: ObservableObject {
     func confirmPendingRemovals() {
         guard let marketData, !pendingRemovals.isEmpty else { return }
         var plan = SyncPlan()
-        plan.removals = pendingRemovals
+        let ids = Set(pendingRemovals.map(\.id))
+        plan.removals = marketData.portfolio.filter { ids.contains($0.id) }
         apply(plan, marketData: marketData)
         pendingRemovals = []
     }
 
     /// Keeps them as holdings the person tracks themselves (syncs stop touching them).
     func keepPendingRemovals() {
-        importedIDs.subtract(pendingRemovals.map(\.id))
+        guard let marketData else { return }
+        let reviewed = pendingRemovals.map { old in
+            var holding = marketData.portfolio.first { $0.id == old.id } ?? old
+            holding.shares = old.shares
+            return holding
+        }
+        for holding in reviewed { stopTracking(holding, marketData: marketData) }
         pendingRemovals = []
     }
 
     // MARK: - Portfolio merge
 
     struct SyncPlan {
-        struct Add {
-            let asset: Asset
-            let quantity: Double
-            let costPerUnit: Double
-            let currency: String
-            let costKnown: Bool
-        }
-        struct Update {
-            let holdingID: UUID
-            let symbol: String
-            let quantity: Double
-            let avgCostUSD: Double
-            let provenance: TradeProvenance
-        }
-
-        var adds: [Add] = []
-        var updates: [Update] = []
+        var adds: [PortfolioHolding] = []
+        var updates: [PortfolioHolding] = []
+        var changedCount = 0
         var removals: [PortfolioHolding] = []
-        /// Broker symbols already tracked manually — left alone.
+        var zeroed: [PortfolioHolding] = []
         var skipped: [String] = []
-
-        var isEmpty: Bool { adds.isEmpty && updates.isEmpty && removals.isEmpty }
+        var review: [String] = []
     }
 
     struct SyncSummary: Equatable {
         var added = 0, updated = 0, removed = 0, overLimit = 0
         var skipped: [String] = []
+        var review: [String] = []
 
         var message: String {
             var parts: [String] = []
@@ -378,112 +387,172 @@ final class SnapTradeViewModel: ObservableObject {
             if updated > 0 { parts.append("\(updated) updated") }
             if removed > 0 { parts.append("\(removed) removed") }
             if parts.isEmpty { parts.append("Already up to date") }
-            var text = parts.joined(separator: ", ")
-            if overLimit > 0 { text += ". \(overLimit) not added — your plan's holding limit was reached" }
-            if !skipped.isEmpty { text += ". Already tracked manually: \(skipped.joined(separator: ", "))" }
-            return text + "."
+            var text = parts.joined(separator: ", ") + "."
+            if overLimit > 0 { text += " \(overLimit) exceeded your plan’s holding limit." }
+            if !skipped.isEmpty { text += " Already tracked manually: \(skipped.joined(separator: ", "))." }
+            if !review.isEmpty {
+                text += " Review older broker holdings for \(review.joined(separator: ", ")). Remove the combined holding after checking its history, then sync again."
+            }
+            return text
         }
     }
 
     private static let knownCrypto: Set<String> = ["BTC", "ETH", "SOL", "ADA", "BNB", "XRP", "DOGE", "DOT", "MATIC", "POL",
                                                    "LINK", "AVAX", "UNI", "LTC", "ATOM"]
 
-    /// What a sync would change, without changing anything.
+    private func positionExchange(_ position: BrokerHolding) -> String {
+        if isCrypto(position) { return "Crypto" }
+        let exchange = position.exchange?.uppercased() ?? ""
+        if ["ASX", "XASX"].contains(exchange) || position.symbol.uppercased().hasSuffix(".AX") { return "ASX" }
+        switch exchange {
+        case "XNYS", "NYSE": return "NYSE"
+        case "XNAS", "NASDAQ": return "NASDAQ"
+        case "": return "US"
+        default: return exchange
+        }
+    }
+
+    private func linkedHoldingID(owner: UUID?, account: String, asset: Asset) -> UUID {
+        let fields = [owner?.uuidString ?? "", account, asset.kind.rawValue, asset.exchange, asset.symbol]
+        var bytes = Array(SHA256.hash(data: Data(fields.joined(separator: "\u{0}").utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                          bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
     func makeSyncPlan(marketData: MarketData) -> SyncPlan {
         var plan = SyncPlan()
-        let imported = importedIDs
-        let groups = Dictionary(grouping: holdings, by: { normalisedSymbol($0.symbol) })
-        var seenImported = Set<UUID>()
-
-        for (symbol, lots) in groups {
-            let quantity = lots.reduce(0) { $0 + $1.quantity }
-            guard quantity > 0, let first = lots.first else { continue }
-            let currency = first.currency.isEmpty ? "USD" : first.currency.uppercased()
-            let factor = FXRates.shared.toUSDFactor(from: currency) ?? 1
-            let costUSD = lots.reduce(0.0) { total, lot in
-                let conversion = FXRates.shared.toUSDFactor(from: lot.currency) ?? 1
-                return total + (lot.averageCost ?? lot.currentPrice ?? 0) * lot.quantity * conversion
-            } / quantity
-            let costKnown = lots.allSatisfy { lot in
-                guard lot.currency.uppercased() == currency, let average = lot.averageCost else { return false }
-                return average.isFinite && average >= 0
+        let current = marketData.portfolio
+        let known = Set(accounts.map { $0.id.lowercased() })
+        let eligible = holdings.filter {
+            $0.quantity.isFinite && $0.quantity > 0 && known.contains($0.accountId.lowercased())
+        }
+        let bySymbol = Dictionary(grouping: eligible) { normalisedSymbol($0.symbol) }
+        let groups = Dictionary(grouping: eligible) {
+            [$0.accountId.lowercased(), normalisedSymbol($0.symbol), positionExchange($0)]
+        }
+        let stamp = lastSyncedAt ?? Date()
+        let observed = stamp.ISO8601Format(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        let owner = SupabaseManager.auth.currentUser?.id
+        var seen = Set<UUID>()
+        for (key, positions) in groups.sorted(by: { $0.key.lexicographicallyPrecedes($1.key) }) {
+            guard let first = positions.first, let account = accounts.first(where: { $0.id.lowercased() == key[0] }) else { continue }
+            let symbol = key[1]
+            let kind: AssetKind = isCrypto(first) ? .crypto : .stock
+            let related = current.filter {
+                $0.asset.symbol == symbol && $0.asset.kind == kind &&
+                    ($0.asset.exchange == key[2] || ($0.brokerAccount == nil && $0.asset.exchange == "US"))
             }
-            let costPerUnit = costKnown
-                ? lots.reduce(0.0) { $0 + ($1.averageCost ?? 0) * $1.quantity } / quantity
-                : costUSD / factor
-            let secType = first.securityType?.uppercased() ?? ""
-            let isCrypto = secType.contains("CRYPTO") || secType.contains("DIGITAL") || Self.knownCrypto.contains(symbol)
-            let exchange = isCrypto ? "Crypto"
-                : ((first.exchange ?? "").uppercased().contains("ASX") || first.symbol.uppercased().hasSuffix(".AX") ? "ASX" : "US")
-            let kind: AssetKind = isCrypto ? .crypto : .stock
-
-            if let existing = marketData.portfolio.first(where: { $0.asset.symbol == symbol && $0.asset.kind == kind }) {
-                if imported.contains(existing.id) {
-                    seenImported.insert(existing.id)
-                    if abs(existing.shares - quantity) > 1e-9 || abs(existing.avgCost - costUSD) > 0.005 ||
-                        existing.transactions.first?.provenance == nil {
-                        let provenance = marketData.tradeProvenance(source: .brokerPosition, currency: currency,
-                                                                   unitPrice: costKnown ? costPerUnit : nil, fees: nil, factor: factor)
-                        plan.updates.append(.init(holdingID: existing.id, symbol: symbol, quantity: quantity,
-                                                  avgCostUSD: costUSD, provenance: provenance))
-                    }
-                } else {
-                    plan.skipped.append(symbol)
-                }
+            let linked = related.first { $0.brokerAccount?.account_id == key[0] && $0.asset.exchange == key[2] }
+            let legacy = related.filter { holding in
+                holding.brokerAccount == nil && (importedIDs.contains(holding.id) ||
+                    (!holding.transactions.isEmpty && holding.transactions.allSatisfy { $0.provenance?.source == .brokerPosition }))
+            }
+            let listingCount = Set((bySymbol[symbol] ?? []).map { [$0.accountId.lowercased(), positionExchange($0)] }).count
+            if linked == nil, !legacy.isEmpty, (legacy.count != 1 || listingCount != 1 || !legacy.allSatisfy({
+                !$0.transactions.isEmpty && $0.transactions.allSatisfy { $0.provenance?.source == .brokerPosition } &&
+                    abs($0.shares - positions.reduce(0) { $0 + $1.quantity }) <= 1e-9
+            })) {
+                plan.review.append(symbol)
                 continue
             }
-
-            let priceUSD = (first.currentPrice ?? 0) * factor
-            let asset = Asset(symbol: symbol, name: first.displayName, price: priceUSD, change: 0, changePercent: 0,
-                              volume: 0, kind: kind, exchange: exchange)
-            plan.adds.append(.init(asset: asset, quantity: quantity, costPerUnit: costPerUnit, currency: currency, costKnown: costKnown))
+            if linked == nil, legacy.isEmpty, related.contains(where: { $0.brokerAccount == nil }) {
+                plan.skipped.append(symbol)
+                continue
+            }
+            if let linked, linked.brokerAccount?.tracking == false { continue }
+            let existing = linked ?? legacy.first
+            let quantity = positions.reduce(0) { $0 + $1.quantity }
+            guard quantity.isFinite, quantity > 0 else { continue }
+            let costUSD = positions.reduce(0.0) { total, position in
+                guard let average = position.averageCost, average.isFinite, average >= 0,
+                      let factor = FXRates.shared.toUSDFactor(from: position.currency) else { return total }
+                return total + average * position.quantity * factor
+            } / quantity
+            let hasCost = positions.allSatisfy {
+                guard let average = $0.averageCost, average.isFinite, average >= 0 else { return false }
+                return FXRates.shared.toUSDFactor(from: $0.currency) != nil
+            }
+            let safeCost = hasCost && costUSD.isFinite ? costUSD : 0
+            let price = (first.currentPrice ?? 0) * (FXRates.shared.toUSDFactor(from: first.currency) ?? 0)
+            let asset = Asset(symbol: symbol, name: first.displayName, price: price.isFinite ? price : 0,
+                              change: 0, changePercent: 0, volume: 0, kind: kind, exchange: key[2])
+            let institution = String((account.institutionName.isEmpty ? "Brokerage account" : account.institutionName).prefix(80))
+            let suffix = account.accountNumber.isEmpty ? String(account.id.suffix(4)) : String(account.accountNumber.suffix(4))
+            let label = String("\(displayName(forInstitution: institution)) · ••••\(suffix)".prefix(100))
+            let accountRecord = HoldingBrokerAccount(account_id: key[0], label: label, institution: institution,
+                                                     observed_at: observed, tracking: true)
+            if var holding = existing {
+                seen.insert(holding.id)
+                if holding.brokerAccount?.account_id != accountRecord.account_id || holding.brokerAccount?.label != label ||
+                    abs(holding.shares - quantity) > 1e-9 || abs(holding.avgCost - safeCost) > 0.005 {
+                    plan.changedCount += 1
+                }
+                holding.brokerAccount = accountRecord
+                if holding.asset.exchange != asset.exchange { holding.asset = asset }
+                holding.shares = quantity
+                holding.avgCost = safeCost
+                plan.updates.append(holding)
+            } else {
+                let id = linkedHoldingID(owner: owner, account: key[0], asset: asset)
+                let snapshotID = linkedHoldingID(owner: id, account: key[0], asset: asset)
+                let snapshot = Transaction(id: snapshotID, date: stamp, shares: quantity, pricePerShare: safeCost, type: .buy,
+                    provenance: marketData.tradeProvenance(source: .brokerPosition, currency: nil, unitPrice: nil, fees: nil, factor: 1))
+                plan.adds.append(PortfolioHolding(id: id, asset: asset, shares: quantity, avgCost: safeCost,
+                                                  dateAdded: stamp, transactions: [snapshot], brokerAccount: accountRecord))
+            }
         }
-
-        plan.removals = marketData.portfolio.filter { imported.contains($0.id) && !seenImported.contains($0.id) }
-        plan.skipped.sort()
-        // Biggest first: when the plan's holding limit cuts the import short, it keeps the
-        // positions that matter most (it used to keep whichever came first).
-        plan.adds.sort { $0.quantity * $0.asset.price > $1.quantity * $1.asset.price }
+        plan.removals = current.filter { holding in
+            guard let account = holding.brokerAccount else { return false }
+            return account.tracking && known.contains(account.account_id) && !seen.contains(holding.id)
+        }
+        plan.changedCount += plan.removals.filter { $0.shares > 0 }.count
+        plan.zeroed = plan.removals.map { holding in
+            var zero = holding
+            zero.shares = 0
+            zero.brokerAccount?.observed_at = observed
+            return zero
+        }
+        plan.skipped = Array(Set(plan.skipped)).sorted()
+        plan.review = Array(Set(plan.review)).sorted()
+        plan.adds.sort { $0.currentValue > $1.currentValue }
         return plan
     }
 
-    /// Applies a plan made by `makeSyncPlan`.
     @discardableResult
     func apply(_ plan: SyncPlan, marketData: MarketData) -> SyncSummary {
-        var summary = SyncSummary(skipped: plan.skipped)
-        var ids = importedIDs
-
-        for update in plan.updates {
-            guard let holding = marketData.portfolio.first(where: { $0.id == update.holdingID }) else { continue }
-            let firstDate = holding.transactions.map(\.date).min() ?? Date()
-            let tx = Transaction(date: firstDate, shares: update.quantity, pricePerShare: update.avgCostUSD,
-                                 type: .buy, provenance: update.provenance)
-            if marketData.replaceTransactions(holdingID: holding.id, with: [tx]) == .ok { summary.updated += 1 }
-        }
-
-        for add in plan.adds {
-            switch marketData.addHolding(asset: add.asset, shares: add.quantity, costPerUnit: add.costPerUnit,
-                                         costCurrency: add.currency, source: .brokerPosition, sourceCostKnown: add.costKnown) {
-            case .ok:
-                if let id = marketData.portfolio.first(where: { $0.asset.symbol == add.asset.symbol && $0.asset.kind == add.asset.kind })?.id {
-                    ids.insert(id)
-                }
-                summary.added += 1
-            case .limitReached:
+        var summary = SyncSummary(skipped: plan.skipped, review: plan.review)
+        var accepted: [PortfolioHolding] = []
+        for holding in plan.adds {
+            if SubscriptionManager.shared.canAddPortfolioHolding(currentCount: marketData.portfolio.count + accepted.count) {
+                accepted.append(holding)
+            } else {
                 summary.overLimit += 1
-            case .invalid:
-                break
             }
         }
-
-        for holding in plan.removals {
-            marketData.removeFromPortfolio(holding)
-            ids.remove(holding.id)
-            summary.removed += 1
+        let changed = plan.updates + plan.zeroed + accepted
+        if !changed.isEmpty && marketData.saveBrokerHoldings(changed) {
+            importedIDs.subtract(plan.updates.map(\.id))
+            summary.updated = plan.changedCount
+            summary.added = accepted.count
         }
-
-        importedIDs = ids
+        for holding in plan.removals {
+            if marketData.removeFromPortfolio(holding) { summary.removed += 1 }
+        }
         return summary
+    }
+
+    private func stopTracking(_ holding: PortfolioHolding, marketData: MarketData) {
+        if var account = holding.brokerAccount {
+            var manual = holding
+            account.tracking = false
+            account.observed_at = Date().ISO8601Format(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+            manual.brokerAccount = account
+            if marketData.saveBrokerHoldings([manual]) { importedIDs.remove(holding.id) }
+        } else {
+            importedIDs.remove(holding.id)
+        }
     }
 
     private func normalisedSymbol(_ raw: String) -> String {
@@ -535,30 +604,43 @@ final class SnapTradeViewModel: ObservableObject {
         fixtureSyncCount += 1
         isAuthenticated = true
         var positions = [
-            BrokerHolding(id: "fx-cba", accountId: "fx-commsec", symbol: "CBA.AX", description: "Commonwealth Bank of Australia",
+            BrokerHolding(id: "fx-cba", accountId: "a8cc1385-31a7-4c4d-9955-6789589cc956", symbol: "CBA.AX", description: "Commonwealth Bank of Australia",
                           quantity: 20, currentPrice: 170.00, averageCost: 104.50, currency: "AUD", exchange: "ASX", securityType: "cs"),
-            BrokerHolding(id: "fx-bhp", accountId: "fx-commsec", symbol: "BHP.AX", description: "BHP Group",
+            BrokerHolding(id: "fx-bhp", accountId: "a8cc1385-31a7-4c4d-9955-6789589cc956", symbol: "BHP.AX", description: "BHP Group",
                           quantity: 50, currentPrice: 60.00, averageCost: 38.10, currency: "AUD", exchange: "ASX", securityType: "cs"),
-            BrokerHolding(id: "fx-btc", accountId: "fx-coinbase", symbol: "BTC", description: "Bitcoin",
+            BrokerHolding(id: "fx-btc", accountId: "3ef9b308-6463-4307-b2a2-88d4af9ac560", symbol: "BTC", description: "Bitcoin",
                           quantity: 0.05, currentPrice: 80_400, averageCost: 61_000, currency: "USD", exchange: nil, securityType: "crypto")
         ]
         if fixtureSyncCount > 1, let drop = UserDefaults.standard.string(forKey: "UITestBrokerFixtureDrop") {
             positions.removeAll { $0.symbol.hasPrefix(drop) }
         }
+        let secondAccount = "0cc77f5f-2b5f-481a-95cb-e44b9c0ad97f"
+        let multiAccount = ProcessInfo.processInfo.arguments.contains("-UITestBrokerMultiAccount")
+        if multiAccount {
+            let moved = fixtureSyncCount > 1
+            if moved { positions.removeAll { $0.id == "fx-bhp" } }
+            positions.append(BrokerHolding(id: "fx-bhp-second", accountId: secondAccount, symbol: "BHP.AX",
+                description: "BHP Group", quantity: moved ? 70 : 20, currentPrice: 60,
+                averageCost: 42, currency: "AUD", exchange: "ASX", securityType: "cs"))
+        }
         func value(_ account: String) -> Double {
             positions.filter { $0.accountId == account }.reduce(0) { $0 + $1.marketValue }
         }
         accounts = [
-            BrokerAccount(id: "fx-commsec", name: "Individual", accountNumber: "40123456", institutionName: "CommSec",
+            BrokerAccount(id: "a8cc1385-31a7-4c4d-9955-6789589cc956", name: "Individual", accountNumber: "40123456", institutionName: "CommSec",
                           accountType: "Individual",
-                          balance: AccountBalance(total: Money(amount: value("fx-commsec") + 1_250, currency: "AUD"),
+                          balance: AccountBalance(total: Money(amount: value("a8cc1385-31a7-4c4d-9955-6789589cc956") + 1_250, currency: "AUD"),
                                                   cash: Money(amount: 1_250, currency: "AUD")),
                           createdDate: nil),
-            BrokerAccount(id: "fx-coinbase", name: "Coinbase", accountNumber: "77001234", institutionName: "Coinbase",
+            BrokerAccount(id: "3ef9b308-6463-4307-b2a2-88d4af9ac560", name: "Coinbase", accountNumber: "77001234", institutionName: "Coinbase",
                           accountType: "Crypto",
-                          balance: AccountBalance(total: Money(amount: value("fx-coinbase"), currency: "USD"), cash: nil),
+                          balance: AccountBalance(total: Money(amount: value("3ef9b308-6463-4307-b2a2-88d4af9ac560"), currency: "USD"), cash: nil),
                           createdDate: nil)
         ]
+        if multiAccount {
+            accounts.append(BrokerAccount(id: secondAccount, name: "Second account", accountNumber: "12344321",
+                institutionName: "CommSec", accountType: "Individual", balance: nil, createdDate: nil))
+        }
         holdings = positions
         lastSyncedAt = Date()
         lastSyncFailed = false

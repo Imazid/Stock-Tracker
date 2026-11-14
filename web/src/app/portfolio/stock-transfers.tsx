@@ -28,7 +28,7 @@ function db() {
 }
 
 function holdingLabel(holding: TransferHolding) {
-  return [holding.asset_symbol, holding.asset_exchange, holding.date_added.slice(0, 10),
+  return [holding.asset_symbol, holding.asset_exchange, holding.broker_account?.label, holding.date_added.slice(0, 10),
     holding.deleted_at ? "Archived" : null, holding.id.slice(0, 8)].filter(Boolean).join(" · ");
 }
 
@@ -105,8 +105,10 @@ export function StockTransfers({ userId }: { userId: string }) {
     decimalKey(String(snapshot.shares)) === decimalKey(draft.shares)) ?? [];
 
   function update(field: keyof Draft, value: string) {
+    const accountLabel = holdings.data?.find((holding) => holding.id === value)?.broker_account?.label ?? "";
     setDraft((current) => ({ ...current, [field]: value,
-      ...(field === "from_holding_id" ? { to_holding_id: "" } : {}),
+      ...(field === "from_holding_id" ? { to_holding_id: "", from_account: accountLabel, to_account: "" } : {}),
+      ...(field === "to_holding_id" ? { to_account: accountLabel } : {}),
       ...(["from_holding_id", "to_holding_id", "received_on", "shares"].includes(field) ? { receiving_snapshot_id: "" } : {}),
     }));
   }
