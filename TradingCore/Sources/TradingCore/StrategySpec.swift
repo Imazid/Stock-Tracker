@@ -167,8 +167,12 @@ public struct Condition: Codable, Hashable, Sendable {
 
     public func label(_ timeframe: Timeframe = .day) -> String {
         switch op {
-        case .all: return (conditions ?? []).map { $0.label(timeframe) }.joined(separator: " and ")
-        case .any: return (conditions ?? []).map { $0.label(timeframe) }.joined(separator: " or ")
+        case .all, .any:
+            let connector = op == .all ? " and " : " or "
+            return (conditions ?? []).map { child in
+                let text = child.label(timeframe)
+                return child.isGroup && child.op != op ? "(\(text))" : text
+            }.joined(separator: connector)
         case .above: return "\(left?.label(timeframe) ?? "?") is above \(right?.label(timeframe) ?? "?")"
         case .below: return "\(left?.label(timeframe) ?? "?") is below \(right?.label(timeframe) ?? "?")"
         case .crossesAbove: return "\(left?.label(timeframe) ?? "?") crosses above \(right?.label(timeframe) ?? "?")"

@@ -2,6 +2,12 @@ import XCTest
 @testable import TradingCore
 
 final class StrategyValidatorTests: XCTestCase {
+    func testConditionLabelPreservesNestedGroupMeaning() {
+        let rule = Condition.all([.any([.above(.close, .sma(20)), .below(.rsi(), .constant(30))]),
+                                  .above(.volume, .volumeAverage(10))])
+        XCTAssertEqual(rule.label(), "(Close is above 20-day average or RSI (14) is below 30) and Volume is above 10-day average volume")
+    }
+
     func testEveryTemplateIsValid() {
         for template in AgentTemplates.all {
             let spec = template.build(template.defaultUniverse)

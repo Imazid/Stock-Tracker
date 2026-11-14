@@ -29,10 +29,20 @@ import {
 } from "../_shared/trading/risk.ts";
 import * as Rounding from "../_shared/trading/rounding.ts";
 import {
-  barsToFetch, decodeStrategySpec, isValid, maxPeriod, maxUniverse, operandWarmup, ruleLines, type StrategySpec, validate, warmupBars,
+  barsToFetch, conditionLabel, decodeStrategySpec, isValid, maxPeriod, maxUniverse, Op, operandWarmup, ruleLines, type StrategySpec, validate, warmupBars,
 } from "../_shared/trading/strategy.ts";
 import { capitalized, compactText, durationText, NumberText, percentText, swiftDouble, trimNumber } from "../_shared/trading/text.ts";
 import { Fx, loadVectors, Mismatches } from "./fixtures.ts";
+
+Deno.test("condition labels preserve nested group meaning", () => {
+  assertEquals(conditionLabel({ op: "all", conditions: [
+    { op: "any", conditions: [
+      { op: "above", left: Op.close, right: Op.sma(20) },
+      { op: "below", left: Op.rsi(), right: Op.constant(30) },
+    ] },
+    { op: "above", left: Op.volume, right: Op.volumeAverage(10) },
+  ] }), "(Close is above 20-day average or RSI (14) is below 30) and Volume is above 10-day average volume");
+});
 
 Deno.test("rounding matches the Swift core", async () => {
   const v = await loadVectors("rounding");

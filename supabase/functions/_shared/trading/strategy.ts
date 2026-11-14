@@ -131,8 +131,12 @@ export function conditionLabel(c: Condition, timeframe: Timeframe = "day"): stri
   const left = c.left ? operandLabel(c.left, timeframe) : "?";
   const right = c.right ? operandLabel(c.right, timeframe) : "?";
   switch (c.op) {
-    case "all": return (c.conditions ?? []).map((child) => conditionLabel(child, timeframe)).join(" and ");
-    case "any": return (c.conditions ?? []).map((child) => conditionLabel(child, timeframe)).join(" or ");
+    case "all":
+    case "any":
+      return (c.conditions ?? []).map((child) => {
+        const label = conditionLabel(child, timeframe);
+        return isGroup(child) && child.op !== c.op ? `(${label})` : label;
+      }).join(c.op === "all" ? " and " : " or ");
     case "above": return `${left} is above ${right}`;
     case "below": return `${left} is below ${right}`;
     case "crossesAbove": return `${left} crosses above ${right}`;

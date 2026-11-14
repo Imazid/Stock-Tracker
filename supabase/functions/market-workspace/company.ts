@@ -25,6 +25,7 @@ export async function companyResearch(symbol: string, now: number, key: string |
       const response = await fetch(`https://finnhub.io/api/v1/${path}?${query}`, {
         headers: { "X-Finnhub-Token": key },
         signal: AbortSignal.timeout(8_000),
+        redirect: "error",
       });
       return response.ok ? await response.json() : null;
     } catch {
@@ -39,12 +40,19 @@ export async function companyResearch(symbol: string, now: number, key: string |
   const metric = record(record(metricsRaw).metric);
   const earnings = records(earningsRaw).slice(0, 4).map((row) => ({
     date: text(row.period, 12), actual: number(row.actual), estimate: number(row.estimate), surprise: number(row.surprisePercent),
-  })).filter((row) => row.date);
+  })).filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date) && row.date <= date(now) && (row.actual !== null || row.estimate !== null));
+  const urls = new Set<string>();
   const news = records(newsRaw).map((row) => ({
     title: text(row.headline), url: httpsLink(row.url), source: text(row.source, 50), time: (number(row.datetime) ?? 0) * 1000,
-  })).filter((row) => row.title && row.url && row.time > 0).sort((a, b) => b.time - a.time).slice(0, 6);
+  })).filter((row) => row.title && row.url && row.source && row.time >= now - 14 * 86_400_000 && row.time <= now)
+    .sort((a, b) => b.time - a.time).filter(({ url }) => {
+      if (urls.has(url)) return false;
+      urls.add(url);
+      return true;
+    }).slice(0, 6);
   const values = {
-    marketCapMillions: number(profile.marketCapitalization), pe: number(metric.peTTM ?? metric.peNormalizedAnnual),
+    marketCapMillions: text(profile.currency, 8) ? number(profile.marketCapitalization) : null,
+    pe: number(metric.peTTM ?? metric.peNormalizedAnnual),
     revenueGrowth: number(metric.revenueGrowthTTMYoy), margin: number(metric.netProfitMarginTTM), beta: number(metric.beta),
     high52: number(metric["52WeekHigh"]), low52: number(metric["52WeekLow"]),
   };
@@ -54,5 +62,6 @@ export async function companyResearch(symbol: string, now: number, key: string |
   return {
     profile: { name: text(profile.name), industry: text(profile.finnhubIndustry), exchange: text(profile.exchange), website: httpsLink(profile.weburl), currency: text(profile.currency, 8) || "USD" },
     values, earnings, news, asOf: now, source: "Finnhub",
+    newsAvailable: Array.isArray(newsRaw),
   };
 }

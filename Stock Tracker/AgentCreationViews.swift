@@ -163,6 +163,9 @@ struct DraftBox: Identifiable, Hashable {
 struct BacktestBox: Identifiable {
     let id = UUID()
     let result: BacktestResult
+    let title: String
+    let currency: String
+    let testedRuleLines: [String]
 }
 
 // MARK: - Review and edit a draft
@@ -182,11 +185,23 @@ struct AgentDraftEditor: View {
     @State private var isBacktesting = false
     @State private var backtest: BacktestBox?
     @State private var isCreating = false
+    @State private var editedRule: DraftRule?
+    @State private var descriptionText = ""
+    private let originalRuleLines: [String]
+
+    private enum DraftRule: String, Identifiable {
+        case entry, exit
+
+        var id: String { rawValue }
+        var title: LocalizedStringKey { self == .entry ? "Buy condition" : "Sell condition" }
+        var path: WritableKeyPath<StrategySpec, Condition?> { self == .entry ? \.entry : \.exit }
+    }
 
     init(draft: AgentDraft, parsed: ParsedAgentRequest?, onCreated: @escaping () -> Void) {
         _draft = State(initialValue: draft)
         self.parsed = parsed
         self.onCreated = onCreated
+        originalRuleLines = draft.spec.ruleLines
         _budgetText = State(initialValue: String(format: "%.0f", draft.budget))
     }
 
@@ -213,15 +228,24 @@ struct AgentDraftEditor: View {
         var copy = draft
         let budget = Double(budgetText.replacingOccurrences(of: ",", with: "")) ?? 0
         copy.budget = budget
+        copy.spec.summary = strategyDescription
         if var policy = copy.riskPolicy {
             // Keep the limits the person set as percentages; re-derive the money limits from the budget.
-            let standard = RiskPolicy.standard(budget: budget, maxPositionPct: copy.maxPositionPct, crypto: copy.isCryptoOnly)
+            let standard = RiskPolicy.standard(budget: budget, maxPositionPct: copy.maxPositionPct,
+                                               crypto: copy.isCryptoOnly, currency: copy.currency)
             policy.maxOrderNotional = standard.maxOrderNotional
             policy.maxDailyNotional = standard.maxDailyNotional
             policy.maxPositionPct = copy.maxPositionPct
             copy.riskPolicy = policy
         }
         return copy
+    }
+
+    private var strategyDescription: String {
+        let custom = descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !custom.isEmpty { return custom }
+        let lines = draft.spec.ruleLines
+        return lines == originalRuleLines ? draft.spec.summary : lines.joined(separator: " ")
     }
 
     var body: some View {
@@ -236,26 +260,33 @@ struct AgentDraftEditor: View {
                 }
 
                 TradingSection(title: "What it does") {
-                    Text(draft.spec.summary).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                    ForEach(draft.spec.ruleLines, id: \.self) { line in
-                        Label {
-                            Text(line).font(.footnote).fixedSize(horizontal: false, vertical: true)
-                        } icon: {
-                            Image(systemName: "arrow.turn.down.right").font(.caption)
+                    TextField("Custom description", text: $descriptionText, axis: .vertical)
+                        .font(.subheadline)
+                        .accessibilityIdentifier("agent.draft.description")
+                    if draft.spec.kind == .rules {
+                        if !needsPortfolio || draft.spec.entry != nil { ruleButton(.entry) }
+                        ruleButton(.exit)
+                    } else {
+                        ForEach(draft.spec.ruleLines, id: \.self) { line in
+                            Text(line).font(.footnote).foregroundStyle(theme.secondaryText)
                         }
-                        .foregroundStyle(theme.secondaryText)
                     }
-                    Text("Decisions use completed daily bars only.")
+                    Text("Decisions use completed \(draft.spec.timeframe.barName) bars only.")
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
                 }
 
                 if !needsPortfolio { assetsCard } else { guardCard }
 
+                if draft.spec.kind == .rebalance, let config = Binding($draft.spec.rebalance) {
+                    rebalanceCard(config)
+                }
+
                 modeCard
 
                 if draft.mode == .paper { moneyCard }
 
+                if draft.spec.kind == .rules, !needsPortfolio { sizingCard }
                 if draft.spec.kind == .rules || draft.spec.kind == .dca { protectionsCard }
 
                 TradingSection(title: "How often it checks") {
@@ -319,7 +350,7 @@ struct AgentDraftEditor: View {
         .safeAreaInset(edge: .bottom) {
             Button(isCreating ? "Starting…" : (draft.mode == .paper ? "Start in practice" : "Start agent")) { create() }
                 .buttonStyle(PrimaryPillButtonStyle())
-                .disabled(!problems.isEmpty || isCreating)
+                .disabled(!problems.isEmpty || isCreating || isBacktesting)
                 .accessibilityIdentifier("agent.draft.start")
                 .padding(.horizontal, DS.Space.gutter)
                 .padding(.vertical, DS.Space.m)
@@ -328,12 +359,23 @@ struct AgentDraftEditor: View {
             InstrumentPickerView(title: "Add an asset", currency: draft.spec.universe.isEmpty ? nil : currency,
                                  excluding: Set(draft.spec.universe.map(\.id))) { instrument in
                 draft.spec.universe.append(instrument)
-                rebuildTargetsIfNeeded()
+                if let config = draft.spec.rebalance {
+                    let remainder = 100 - config.targets.values.reduce(0, +)
+                    draft.spec.rebalance?.targets[instrument.id] = max(0, remainder)
+                }
                 showPicker = false
             }
         }
+        .sheet(item: $editedRule) { side in
+            StrategyRuleEditor(title: side.title, rule: draft.spec[keyPath: side.path], timeframe: draft.spec.timeframe) { rule in
+                draft.spec[keyPath: side.path] = rule
+            }
+        }
         .sheet(item: $backtest) { box in
-            NavigationStack { BacktestReportView(result: box.result, title: draft.name) }
+            NavigationStack {
+                BacktestReportView(result: box.result, title: box.title,
+                                   currency: box.currency, testedRuleLines: box.testedRuleLines)
+            }
         }
         .alert("Live trading isn't available", isPresented: Binding(get: { lockedMode != nil }, set: { if !$0 { lockedMode = nil } })) {
             Button("OK", role: .cancel) {}
@@ -343,6 +385,31 @@ struct AgentDraftEditor: View {
     }
 
     // MARK: Cards
+
+    private func ruleButton(_ side: DraftRule) -> some View {
+        Button {
+            editedRule = side
+        } label: {
+            HStack(alignment: .center, spacing: DS.Space.m) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(side.title).font(.subheadline.weight(.semibold))
+                    if let rule = draft.spec[keyPath: side.path] {
+                        Text(rule.label(draft.spec.timeframe))
+                            .font(.footnote)
+                            .foregroundStyle(theme.secondaryText)
+                    } else {
+                        Text("Add condition").font(.footnote)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+            }
+            .frame(minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("agent.draft.rule.\(side.rawValue)")
+    }
 
     private func understoodCard(_ parsed: ParsedAgentRequest) -> some View {
         TradingSection(title: "What I understood") {
@@ -375,7 +442,7 @@ struct AgentDraftEditor: View {
                         Text(instrument.symbol).font(.footnote.weight(.semibold))
                         Button {
                             draft.spec.universe.removeAll { $0.id == instrument.id }
-                            rebuildTargetsIfNeeded()
+                            draft.spec.rebalance?.targets.removeValue(forKey: instrument.id)
                         } label: {
                             Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                                 .frame(width: 22, height: 22)
@@ -399,13 +466,43 @@ struct AgentDraftEditor: View {
                 .foregroundStyle(DS.accent)
                 .accessibilityIdentifier("agent.draft.addAsset")
             }
-            if draft.spec.kind == .rebalance, let targets = draft.spec.rebalance?.targets {
-                Text(targets.sorted { $0.value > $1.value }
-                    .map { "\($0.key.split(separator: ":").last.map(String.init) ?? $0.key) \(Int($0.value.rounded()))%" }
-                    .joined(separator: " · "))
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    private func rebalanceCard(_ config: Binding<RebalanceConfig>) -> some View {
+        TradingSection(title: "Rebalancing") {
+            ForEach(draft.spec.universe) { instrument in
+                let weight = Binding(get: { config.wrappedValue.targets[instrument.id] ?? 0 },
+                                     set: { config.wrappedValue.targets[instrument.id] = $0 })
+                strategyNumber("\(instrument.symbol) target (%)", value: weight, id: "target.\(instrument.id)")
             }
+            strategyNumber("Drift threshold (percentage points)", value: config.driftThresholdPct, id: "drift")
+            Text("Unallocated equity stays in cash.")
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    private var sizingCard: some View {
+        TradingSection(title: "Order sizing") {
+            Picker("Size each order by", selection: $draft.spec.sizing.mode) {
+                Text("Percent of equity").tag(SizingMode.percentOfEquity)
+                Text("Fixed amount").tag(SizingMode.fixedNotional)
+            }
+            let percent = draft.spec.sizing.mode == .percentOfEquity
+            strategyNumber(percent ? "Size (%)" : "Amount (\(currency))", value: $draft.spec.sizing.value, id: "size")
+            Stepper("Wait \(draft.spec.reentryCooldownBars) bars after a sale",
+                    value: $draft.spec.reentryCooldownBars, in: 0...500)
+                .accessibilityIdentifier("agent.draft.cooldown")
+        }
+    }
+
+    private func strategyNumber(_ title: LocalizedStringKey, value: Binding<Double>, id: String) -> some View {
+        LabeledContent(title) {
+            TextField(title, value: value, format: .number.grouping(.never))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("agent.draft.\(id)")
         }
     }
 
@@ -514,6 +611,14 @@ struct AgentDraftEditor: View {
                 optionalStepper("Stop loss", value: $draft.spec.protections.stopLossPct, fallback: 8, range: 1...50, id: "stopLoss")
                 optionalStepper("Trailing stop", value: $draft.spec.protections.trailingStopPct, fallback: 10, range: 1...50, id: "trailing")
                 optionalStepper("Take profit", value: $draft.spec.protections.takeProfitPct, fallback: 20, range: 1...200, id: "takeProfit")
+                let maxHolding = $draft.spec.protections.maxHoldingBars
+                Toggle("Limit holding time", isOn: Binding(get: { maxHolding.wrappedValue != nil },
+                                                           set: { maxHolding.wrappedValue = $0 ? 20 : nil }))
+                    .accessibilityIdentifier("agent.draft.holdingLimit.toggle")
+                if let maxHolding = Binding(maxHolding) {
+                    Stepper("Sell after \(maxHolding.wrappedValue) bars", value: maxHolding, in: 1...2_000)
+                        .accessibilityIdentifier("agent.draft.holdingLimit")
+                }
                 Text("Stops are checked when each day's bar closes, so a sudden drop inside the day is acted on at the close.")
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
@@ -561,11 +666,6 @@ struct AgentDraftEditor: View {
 
     // MARK: Actions
 
-    private func rebuildTargetsIfNeeded() {
-        guard draft.spec.kind == .rebalance else { return }
-        draft.spec.rebalance = AgentTemplates.etfRebalancing(draft.spec.universe).rebalance
-    }
-
     private func create() {
         guard !isCreating else { return }
         isCreating = true
@@ -590,7 +690,8 @@ struct AgentDraftEditor: View {
         let snapshot = resolved
         Task {
             do {
-                backtest = BacktestBox(result: try await trading.backtest(snapshot, years: 2))
+                backtest = BacktestBox(result: try await trading.backtest(snapshot, years: 2), title: snapshot.name,
+                                       currency: snapshot.currency, testedRuleLines: snapshot.spec.ruleLines)
             } catch {
                 problem = "The backtest couldn't run: \(error.localizedDescription)"
             }
@@ -689,12 +790,12 @@ struct AgentLimitsEditor: View {
 struct BacktestReportView: View {
     let result: BacktestResult
     var title: String
+    let currency: String
+    let testedRuleLines: [String]
 
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
-
-    private var currency: String { result.trades.first?.instrument.currency ?? "USD" }
 
     var body: some View {
         let m = result.overall
@@ -785,6 +886,14 @@ struct BacktestReportView: View {
                     }
                     .foregroundStyle(theme.warningColor)
                     .accessibilityIdentifier("backtest.warnings")
+                }
+
+                if !testedRuleLines.isEmpty {
+                    TradingSection(title: "Rules tested") {
+                        ForEach(Array(testedRuleLines.enumerated()), id: \.offset) { _, rule in
+                            Text(rule).font(.footnote).foregroundStyle(theme.secondaryText)
+                        }
+                    }
                 }
 
                 TradingSection(title: "Assumptions") {

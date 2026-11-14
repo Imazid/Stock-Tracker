@@ -727,6 +727,162 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
     }
 
+    func testSignedInStrategyEditsBacktestsAndStartsPaperAgent() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STRATEGY_STUDIO"] == "1",
+                          "Start the signed-in strategy relay with historical market data")
+        let email = "strategy-studio-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        app.launchArguments = ["-UITestFreshInstall", "-hasCompletedOnboarding", "YES",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.open("Agents"))
+        app.buttons["agents.new"].tap()
+        let prompt = app.descendants(matching: .any)["agent.new.prompt"].firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.tap()
+        prompt.typeText("Trade the 20 and 50 day moving average crossover for AAPL in a paper portfolio")
+        app.buttons["agent.new.draft"].tap()
+
+        let buy = app.buttons["agent.draft.rule.entry"]
+        XCTAssertTrue(buy.waitForExistence(timeout: 10))
+        XCTAssertTrue(buy.label.contains("20-day average"), buy.label)
+        buy.tap()
+        let period = app.textFields["strategy.rule.left.period"]
+        XCTAssertTrue(period.waitForExistence(timeout: 10))
+        app.buttons["strategy.rule.left.period.clear"].tap()
+        period.tap()
+        period.typeText("15")
+        app.buttons["strategy.rule.apply"].tap()
+        XCTAssertTrue(buy.waitForExistence(timeout: 8))
+        XCTAssertTrue(buy.label.contains("15-day average"), buy.label)
+
+        let backtest = app.buttons["agent.draft.backtest"]
+        for _ in 0..<10 where !backtest.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(backtest.isHittable && backtest.isEnabled)
+        backtest.tap()
+        XCTAssertTrue(app.navigationBars["Backtest"].waitForExistence(timeout: 90), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["backtest.testData"].exists)
+        let provider = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Prices: Alpaca")).firstMatch
+        XCTAssertTrue(provider.exists, app.debugDescription)
+        let assumptions = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "at the next bar's open")).firstMatch
+        for _ in 0..<8 where !assumptions.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(assumptions.isHittable)
+        XCTAssertTrue(app.staticTexts["Buy when 15-day average crosses above 50-day average."].exists)
+        attach("strategy-backtest-assumptions")
+        app.buttons["backtest.done"].tap()
+
+        let start = app.buttons["agent.draft.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 8))
+        XCTAssertEqual(start.label, "Start in practice")
+        start.tap()
+        let agentCard = app.buttons["agents.card.Trend Following Agent"]
+        XCTAssertTrue(agentCard.waitForExistence(timeout: 25), app.debugDescription)
+        let saved = try request("POST", "/functions/v1/trading-api",
+                                body: JSONSerialization.data(withJSONObject: ["action": "state"]), token: token)
+        XCTAssertEqual(saved.status, 200)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: saved.data) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        let state = try XCTUnwrap(data["state"] as? [String: Any])
+        let agents = try XCTUnwrap(state["agents"] as? [[String: Any]])
+        let agent = try XCTUnwrap(agents.first { $0["name"] as? String == "Trend Following Agent" })
+        XCTAssertEqual(agent["mode"] as? String, "paper")
+        XCTAssertEqual(agent["status"] as? String, "active")
+        let versions = try XCTUnwrap(agent["versions"] as? [[String: Any]])
+        let spec = try XCTUnwrap(versions.last?["spec"] as? [String: Any])
+        let entry = try XCTUnwrap(spec["entry"] as? [String: Any])
+        let left = try XCTUnwrap(entry["left"] as? [String: Any])
+        XCTAssertEqual(left["period"] as? Int, 15)
+    }
+
+    func testSignedInAssetResearchSearchChartEvidenceAIAndWatchlist() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_RESEARCH_JOURNEY"] == "1",
+                          "Start the signed-in research journey relay")
+        let email = "research-journey-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        app.launchArguments = ["-UITestFreshInstall", "-hasCompletedOnboarding", "YES",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.open("Search"))
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        search.typeText("AAPL")
+        let result = app.buttons["search.result.us.AAPL"]
+        XCTAssertTrue(result.waitForExistence(timeout: 25))
+        result.tap()
+        let chart = app.descendants(matching: .any)["detail.chart"].firstMatch
+        XCTAssertTrue(chart.waitForExistence(timeout: 25))
+        app.buttons["1M"].firstMatch.tap()
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            chart.exists && !self.app.staticTexts["Chart unavailable"].exists &&
+                !self.app.staticTexts["No price history for this period"].exists &&
+                !self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Loading chart'")).firstMatch.exists
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 25), .completed)
+
+        let research = app.buttons["detail.companyResearch"]
+        for _ in 0..<7 where !research.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(research.isHittable)
+        research.tap()
+        XCTAssertTrue(app.navigationBars["AAPL Research"].waitForExistence(timeout: 10))
+        let ask = app.buttons["companyResearch.ask"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 40))
+        let fact = app.staticTexts["companyResearch.factValue"].firstMatch
+        XCTAssertTrue(fact.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["companyResearch.filingSource"].firstMatch.exists)
+        let news = app.descendants(matching: .any)["companyResearch.headline"].firstMatch
+        for _ in 0..<6 where !news.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(news.isHittable)
+        XCTAssertFalse(news.label.isEmpty)
+        attach("research-journey-sourced-news")
+        for _ in 0..<7 where !ask.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(ask.isHittable)
+        ask.tap()
+        XCTAssertTrue(app.navigationBars["Ask about AAPL"].waitForExistence(timeout: 10))
+        let question = app.descendants(matching: .any)["companyQuestion.input"].firstMatch
+        question.tap()
+        question.typeText("What does the annual filing show about Apple’s net sales?")
+        let send = app.buttons["companyQuestion.ask"]
+        XCTAssertFalse(send.isEnabled)
+        app.switches["companyQuestion.consent"].tap()
+        XCTAssertTrue(send.isEnabled)
+        send.tap()
+        let answer = app.staticTexts["companyQuestion.answer"]
+        XCTAssertTrue(answer.waitForExistence(timeout: 55), app.debugDescription)
+        let citation = app.descendants(matching: .any)["companyQuestion.citation"].firstMatch
+        XCTAssertTrue(citation.exists)
+        XCTAssertTrue(citation.label.localizedCaseInsensitiveContains("net sales"), citation.label)
+        attach("research-journey-cited-answer")
+
+        app.navigationBars["Ask about AAPL"].buttons.firstMatch.tap()
+        app.buttons["companyResearch.done"].tap()
+        let watch = app.buttons["detail.watchlist"]
+        XCTAssertTrue(watch.waitForExistence(timeout: 8))
+        XCTAssertEqual(watch.label, "Add to Watchlist")
+        watch.tap()
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Remove from Watchlist'"), object: watch)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed)
+        var stored: [[String: Any]] = []
+        for _ in 0..<10 {
+            stored = try rows("watchlist_assets", select: "symbol", token: token)
+            if stored.contains(where: { $0["symbol"] as? String == "AAPL" }) { break }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        XCTAssertTrue(stored.contains { $0["symbol"] as? String == "AAPL" })
+    }
+
     func testSignedInHoldingOpensCompanyReport() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_COMPANY_REPORT"] == "1",
                           "Start the signed-in company report relay")
