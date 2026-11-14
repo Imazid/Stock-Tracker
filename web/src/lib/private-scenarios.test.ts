@@ -23,7 +23,8 @@ test("priced round and dilution use the stated post-money values", () => {
 test("scenario returns use invested capital and each exit's holding period", () => {
   assert.deepEqual(scenarioReturns(5_000, 20_000, null), { multiple: 4, annualised: null });
   assert.deepEqual(scenarioReturns(5_000, 20_000, 2), { multiple: 4, annualised: 1 });
-  assert.ok(Math.abs(scenarioReturns(5_000, 10_000, 0.5).annualised - 3) < 1e-12);
+  const sixMonthReturn = scenarioReturns(5_000, 10_000, 0.5)?.annualised;
+  assert.ok(typeof sixMonthReturn === "number" && Math.abs(sixMonthReturn - 3) < 1e-12);
   assert.deepEqual(scenarioReturns(5_000, 0, 5), { multiple: 0, annualised: -1 });
   assert.deepEqual(scenarioReturns(5_000, 1_250, 2), { multiple: 0.25, annualised: -0.5 });
   assert.deepEqual(scenarioReturns(5_000, 5_000, 3), { multiple: 1, annualised: 0 });
