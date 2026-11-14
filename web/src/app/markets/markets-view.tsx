@@ -90,10 +90,10 @@ export function MarketsView() {
                 : <ul className="divide-y divide-border border-t border-border">{results?.map((r) => <InstrumentRow key={r.id} instrument={r} spark={false} />)}</ul>}
         </Card>
       ) : (
-        <div className="grid gap-5">
+        <div className="grid grid-cols-1 gap-5">
           <Card>
             <CardHeader title="Market indexes" />
-            <ul className="grid divide-y divide-border border-t border-border sm:grid-cols-2 sm:divide-y-0">
+            <ul className="grid grid-cols-1 divide-y divide-border border-t border-border sm:grid-cols-2 sm:divide-y-0">
               {marketIndexes.map((item) => toView(item)).map(item => <InstrumentRow key={item.id} instrument={item} spark={false} />)}
             </ul>
           </Card>
@@ -107,7 +107,7 @@ export function MarketsView() {
             </Card>
           ) : null}
           <Card>
-            <CardHeader title="Browse markets" className="flex-wrap" actions={
+            <CardHeader title="Browse markets" className="flex-wrap [&>div:last-child]:min-w-0 [&>div:last-child]:shrink" actions={
               <Segmented className="max-w-full flex-wrap" label="Market" value={group} onChange={setGroup} options={(Object.keys(GROUPS) as GroupKey[]).map((k) => ({ value: k, label: GROUPS[k].label }))} />
             } />
             <ul className="divide-y divide-border border-t border-border">{groupItems.map((i) => <InstrumentRow key={i.id} instrument={i} />)}</ul>

@@ -29,10 +29,10 @@ function MoverRow({ row }: { row: MarketMover }) {
     <li>
       <Link href={`/markets/${encodeURIComponent(item.id)}`} className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-surface-2">
         <span className="min-w-0">
-          <span className="block text-sm font-semibold">{item.symbol}</span>
+          <span className="block truncate text-sm font-semibold">{item.symbol}</span>
           <span className="block truncate text-xs text-text-3">{item.name}</span>
         </span>
-        <span className="flex shrink-0 items-center gap-3 tabular text-sm">
+        <span className="flex shrink-0 items-center gap-2 tabular text-sm sm:gap-3">
           {money(row.price, item.currency)}
           <ChangePill changePct={row.changePct} />
         </span>
@@ -56,7 +56,7 @@ export function MarketRankings() {
   const refresh = <Button size="sm" onClick={() => query.refetch()} disabled={query.isFetching}>Try again</Button>;
 
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-2">
+    <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
       <Card className="min-w-0">
         <CardHeader title="Biggest movers" className="flex-wrap" actions={
           <Segmented label="Movers market" value={market} onChange={setMarket} options={[{ value: "us", label: "US" }, { value: "asx", label: "ASX" }]} />
@@ -113,7 +113,7 @@ export function ExploreWatchlists() {
     return true;
   }).slice(0, 4);
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-2">
+    <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
       {lists.data?.length ? <Card>
         <CardHeader title="Your watchlists" />
         <ul className="divide-y divide-border border-t border-border">
