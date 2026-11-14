@@ -200,8 +200,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         for _ in 0..<4 where !placement.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(placement.isHittable)
         placement.tap()
-        let history = app.staticTexts["Statement history only"].firstMatch
-        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Statement Allocation"].waitForExistence(timeout: 5), app.debugDescription)
+        let history = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Statement history only")).firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 5), app.debugDescription)
         history.tap()
         app.buttons["private.statement.savePlacement"].tap()
         XCTAssertTrue(app.staticTexts["private.statement.placementStatus"].waitForExistence(timeout: 5))
