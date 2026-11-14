@@ -4,7 +4,7 @@
 
 import { catalogInstruments } from "@engine/catalog.ts";
 import { MarketCalendar } from "@engine/calendar.ts";
-import { type Instrument, instrumentID, makeInstrument } from "@engine/market.ts";
+import { type Instrument, instrumentID, makeInstrument, parseYahooSymbol } from "@engine/market.ts";
 import type {
   CandlesView,
   ChartRange,
@@ -16,6 +16,7 @@ import type {
 } from "@/lib/market-types";
 import { ALPACA_CRYPTO_SOURCE, ALPACA_IEX_SOURCE, alpacaCandles, alpacaConfigured, alpacaQuote, alpacaSupports } from "./alpaca";
 import { cached } from "./cache";
+import { allSearchFilters, selectMarketSearchResults, type SearchFilters } from "@/lib/market-search";
 import { marketIndexes } from "@/lib/market-indexes";
 import { COIN_NAMES, COINGECKO_IDS, COINGECKO_SOURCE, coinGeckoQuote } from "./coingecko";
 import { decodeSearch, researchSearch } from "@/server/research/search";
@@ -234,14 +235,22 @@ function rank(query: string, r: SearchResult): number {
   return 4;
 }
 
-export async function search(query: string, { allowLicensedIdentifiers = true, includeIndexes = false } = {}): Promise<SearchResponse> {
+export async function search(query: string, { allowLicensedIdentifiers = true, includeIndexes = false, filters = allSearchFilters }: {
+  allowLicensedIdentifiers?: boolean; includeIndexes?: boolean; filters?: SearchFilters;
+} = {}): Promise<SearchResponse> {
   const q = query.trim();
   if (q === "") return { query: q, results: [] };
   const decoded = decodeSearch(q);
-  const upper = decoded.term.toUpperCase();
+  if (!decoded.term || (decoded.venue && filters.market && decoded.venue !== filters.market) ||
+      (filters.assetType === "crypto" && decoded.venue && decoded.venue !== "crypto")) return { query: q, results: [] };
+  const suffix = decoded.cik || decoded.identifier ? undefined : parseYahooSymbol(decoded.term.toUpperCase());
+  const venue = decoded.venue ?? (filters.market || undefined) ?? suffix?.venue;
+  if (suffix && venue !== suffix.venue) return { query: q, results: [] };
+  const term = suffix?.symbol ?? decoded.term;
+  const upper = term.toUpperCase();
   const results = new Map<string, SearchResult>();
   const add = (r: SearchResult, preferred = false) => {
-    if (decoded.venue && decoded.venue !== r.venue) return;
+    if (venue && venue !== r.venue) return;
     if (preferred || !results.has(r.id)) results.set(r.id, r);
   };
 
@@ -257,9 +266,12 @@ export async function search(query: string, { allowLicensedIdentifiers = true, i
     }
   }
 
+  const indexOnly = filters.assetType === "indexes";
+  const researchBlocked = indexOnly || filters.assetType === "crypto" || (decoded.identifier && !allowLicensedIdentifiers) ||
+    (!decoded.identifier && venue && venue !== "us");
   const [sec, yahoo] = await Promise.allSettled([
-    decoded.identifier && !allowLicensedIdentifiers ? Promise.resolve([]) : researchSearch(decoded),
-    exactIdentifier ? Promise.resolve([]) : cached(`search:${upper}`, 60_000, () => yahooSearch(decoded.term)),
+    researchBlocked ? Promise.resolve([]) : researchSearch(decoded),
+    exactIdentifier || indexOnly ? Promise.resolve([]) : cached(`search:${upper}`, 60_000, () => yahooSearch(decoded.term)),
   ]);
   if (yahoo.status === "fulfilled") {
     for (const hit of yahoo.value) {
@@ -273,8 +285,8 @@ export async function search(query: string, { allowLicensedIdentifiers = true, i
       add(existing ? { ...row, assetClass: existing.assetClass === "etf" ? "etf" : row.assetClass } : row, true);
     }
   }
+  const sorted = selectMarketSearchResults(results.values(), filters, includeIndexes, (a, b) => rank(term, a) - rank(term, b));
   const warning = yahoo.status === "rejected" ? `Market search is temporarily limited (${reason(yahoo.reason)}).`
-    : exactIdentifier && !results.size ? "No matching identifier was returned by the connected directories." : undefined;
-  const sorted = [...results.values()].sort((a, b) => rank(decoded.term, a) - rank(decoded.term, b));
-  return { query: q, results: sorted.slice(0, 20), warning };
+    : exactIdentifier && !sorted.length ? "No matching identifier was returned by the connected directories." : undefined;
+  return { query: q, results: sorted, warning };
 }

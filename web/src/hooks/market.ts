@@ -3,17 +3,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { getJSON } from "@/lib/api";
 import type { CandlesView, ChartRange, InstrumentResponse, QuoteResponse, SearchResponse } from "@/lib/market-types";
+import { allSearchFilters, marketSearchParams, type SearchFilters } from "@/lib/market-search";
 import { useDebounced } from "./useDebounced";
 
-export function useSearch(query: string, options: { includeIndexes?: boolean } = {}) {
-  const q = useDebounced(query.trim(), 220);
-  return useQuery({
-    queryKey: ["search", q, options.includeIndexes === true],
-    queryFn: ({ signal }) => getJSON<SearchResponse>(`/api/markets/search?q=${encodeURIComponent(q)}${options.includeIndexes ? "&indexes=1" : ""}`, signal),
-    enabled: q.length > 0,
+export function useSearch(query: string, options: { includeIndexes?: boolean; filters?: SearchFilters; useCurrentResults?: boolean } = {}) {
+  const term = query.trim();
+  const q = useDebounced(term, 220);
+  const filters = options.filters ?? allSearchFilters;
+  const params = marketSearchParams(q, filters);
+  if (options.includeIndexes) params.set("indexes", "1");
+  const search = useQuery({
+    queryKey: ["search", q, options.includeIndexes === true, filters.assetType, filters.market],
+    queryFn: ({ signal }) => getJSON<SearchResponse>(`/api/markets/search?${params}`, signal),
+    enabled: q.length > 0 && (!options.useCurrentResults || q === term),
     staleTime: 60_000,
-    placeholderData: (previous) => previous,
+    placeholderData: options.useCurrentResults ? undefined : (previous) => previous,
   });
+  return options.useCurrentResults ? { ...search, data: q === term ? search.data : undefined,
+    isError: q === term && search.isError, isFetching: Boolean(term) && (q !== term || search.isFetching) } : search;
 }
 
 export function useQuote(id: string | undefined, options: { refetchMs?: number } = {}) {
