@@ -8,8 +8,7 @@ import { type Bar, type BarSeries, type Instrument, instrumentID, makeBarSeries,
 import { ALPACA_CRYPTO_SOURCE, ALPACA_IEX_SOURCE, alpacaSupports } from "./alpaca";
 import { cached } from "./cache";
 import { getJSON, UpstreamError } from "./http";
-import { yahooTicker } from "./instruments";
-import { normaliseCurrency, YAHOO_SOURCE } from "./yahoo";
+import { normaliseCurrency, YAHOO_SOURCE, yahooTicker } from "./yahoo";
 
 export type HistoryWindow = "1y" | "2y" | "5y" | "10y";
 export const HISTORY_WINDOWS: HistoryWindow[] = ["1y", "2y", "5y", "10y"];

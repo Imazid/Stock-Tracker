@@ -1,7 +1,7 @@
 import { instrumentID, type Instrument } from "@engine/market.ts";
 import type { DatasetCoverage, FinancialFact, ResearchEvent, ResearchResponse, ResearchSection, Statement } from "@/lib/research-types";
 import { cached } from "@/server/market/cache";
-import { yahooTicker } from "@/server/market/instruments";
+import { yahooTicker } from "@/server/market/yahoo";
 import { annualMetrics, annualRevenue, dayOf, latestVersions, reportedOn, trailingFacts } from "@/lib/research-financials";
 import { FMP, MASSIVE, fmpConfigured, fmpFacts, fmpNews, fmpProfile, fmpRecords, massiveConfigured, optionsSnapshot } from "./licensed";
 import { SEC, SEC_DIRECTORY, findSecListing, secArchive, secConfigured, secDirectory, secFacts, secSubmissions, type SecListing } from "./sec";
