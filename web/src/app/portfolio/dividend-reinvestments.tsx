@@ -5,8 +5,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { amountUnits, cashAmount, incomeDay, incomeMinDay, incomeMoney } from "@/lib/portfolio-income";
-import { reinvestmentFields, reinvestmentShares, type Reinvestment } from "@/lib/portfolio-reinvestments";
+import { reinvestmentFields, reinvestmentShares, type BrokerReinvestment, type Reinvestment } from "@/lib/portfolio-reinvestments";
 import { browserSupabase } from "@/lib/supabase/client";
+import { BrokerActivity } from "./broker-activity";
 
 type Holding = { id: string; asset_symbol: string; asset_exchange: string | null; deleted_at: string | null };
 type Draft = {
@@ -17,6 +18,7 @@ const blank: Draft = {
   holding_id: "", paid_on: "", acquired_on: "", currency: "AUD", dividend_amount: "",
   reinvested_amount: "", shares: "", basis_usd: "", franking_credit_aud: "", statement_reference: "",
 };
+const utcDay = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 const moneyFields = [
   ["dividend_amount", "Dividend amount"], ["reinvested_amount", "Amount applied to shares"],
   ["basis_usd", "Acquisition basis in USD (optional)"], ["franking_credit_aud", "Franking credit in AUD (optional)"],
@@ -44,6 +46,10 @@ async function loadRecords(userId: string, signal: AbortSignal) {
 export function DividendReinvestments({ userId }: { userId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState(blank);
+  const [activity, setActivity] = useState<BrokerReinvestment>();
+  const [showBroker, setShowBroker] = useState(false);
+  const [brokerStart, setBrokerStart] = useState(() => utcDay(89));
+  const [brokerEnd, setBrokerEnd] = useState(() => utcDay(0));
   const [editing, setEditing] = useState<Reinvestment>();
   const [removing, setRemoving] = useState<Reinvestment>();
   const [feedback, setFeedback] = useState("");
@@ -72,18 +78,31 @@ export function DividendReinvestments({ userId }: { userId: string }) {
       }
       const values = { ...draft, basis_usd: currency === "USD" ? null : basis_usd || null,
         franking_credit_aud: franking_credit_aud || null, statement_reference: draft.statement_reference.trim() };
+      const source = activity && {
+        snaptrade_activity_id: activity.id, snaptrade_reported_on: activity.date,
+        snaptrade_reported_symbol: activity.symbol, snaptrade_reported_currency: activity.currency,
+        snaptrade_reported_amount: activity.amount === null ? null : String(activity.amount),
+        snaptrade_reported_units: activity.units === null ? null : String(activity.units),
+      };
       const table = db().from("portfolio_dividend_reinvestments");
       const write = editing
-        ? table.update(values).eq("id", editing.id).eq("user_id", userId).eq("updated_at", editing.updated_at)
-        : table.insert({ ...values, user_id: userId });
+        ? table.update({ ...values, ...source }).eq("id", editing.id).eq("user_id", userId).eq("updated_at", editing.updated_at)
+        : table.insert({ ...values, ...source, user_id: userId });
       const { data, error } = await write.select("id").maybeSingle();
-      if (error?.code === "23505") throw new Error("This reinvestment is already recorded. Edit the existing record to correct it.");
+      if (error?.code === "23505") {
+        if (error.message.includes("portfolio_reinvestment_snaptrade_activity_key")) {
+          throw new Error("This SnapTrade event is already recorded. Edit its existing reinvestment to correct it.");
+        }
+        throw new Error("This reinvestment is already recorded. Edit the existing record to correct it.");
+      }
       if (error) throw new Error("Couldn’t save the reinvestment. Try again.");
       if (!data) throw new Error("This reinvestment changed elsewhere. Refresh the list and try again.");
     },
     onSuccess: async () => {
       setEditing(undefined);
       setDraft(blank);
+      setActivity(undefined);
+      setShowBroker(false);
       setFeedback("Reinvestment saved.");
       await cache.invalidateQueries({ queryKey });
     },
@@ -102,6 +121,8 @@ export function DividendReinvestments({ userId }: { userId: string }) {
       if (editing?.id === entry.id) {
         setEditing(undefined);
         setDraft(blank);
+        setActivity(undefined);
+        setShowBroker(false);
       }
       setFeedback("Reinvestment removed.");
       await cache.invalidateQueries({ queryKey });
@@ -114,11 +135,20 @@ export function DividendReinvestments({ userId }: { userId: string }) {
     clearMessages();
     setEditing(entry);
     setRemoving(undefined);
+    setActivity(undefined);
+    setShowBroker(false);
     setDraft({
       holding_id: entry.holding_id, paid_on: entry.paid_on, acquired_on: entry.acquired_on, currency: entry.currency,
       dividend_amount: entry.dividend_amount, reinvested_amount: entry.reinvested_amount, shares: entry.shares,
       basis_usd: entry.basis_usd ?? "", franking_credit_aud: entry.franking_credit_aud ?? "", statement_reference: entry.statement_reference,
     });
+    document.getElementById("drp-holding")?.focus();
+  }
+
+  function reviewReinvestment(source: BrokerReinvestment) {
+    setActivity(source);
+    setShowBroker(false);
+    clearMessages();
     document.getElementById("drp-holding")?.focus();
   }
 
@@ -146,6 +176,9 @@ export function DividendReinvestments({ userId }: { userId: string }) {
           <div className="min-w-0 [overflow-wrap:anywhere] text-sm">
             <p className="font-medium">{entry.portfolio_holdings?.asset_symbol ?? "Holding"} · {entry.shares} shares</p>
             <p className="text-xs text-text-2">{entry.acquired_on} · {incomeMoney(entry.reinvested_amount, entry.currency)} applied</p>
+            {entry.snaptrade_activity_id && <p className="text-xs text-text-2">
+              {["SnapTrade reference", entry.snaptrade_reported_symbol, entry.snaptrade_reported_on].filter(Boolean).join(" · ")}
+            </p>}
           </div>
           {removing?.id === entry.id ? <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={busy} onClick={() => setRemoving(undefined)}>Cancel</Button>
@@ -157,6 +190,33 @@ export function DividendReinvestments({ userId }: { userId: string }) {
         </li>)}
       </ul>}
       {records.data?.holdings.length === 0 && <p className="text-sm text-text-2">Sync a stock holding to record a reinvestment.</p>}
+      {records.data && records.data.holdings.length > 0 && !editing?.snaptrade_activity_id && !activity && <div className="space-y-3">
+        <Button size="sm" disabled={busy} aria-expanded={showBroker} onClick={() => setShowBroker(!showBroker)}>
+          {showBroker ? "Hide brokerage lookup" : "Find reinvestments in linked accounts"}
+        </Button>
+        {showBroker && <>
+          <div className="flex flex-wrap gap-3">
+            <Field label="First broker reinvestment date" htmlFor="drp-broker-from">
+              <Input id="drp-broker-from" type="date" min={incomeMinDay} max={brokerEnd || today} value={brokerStart}
+                onChange={(event) => setBrokerStart(event.target.value)} />
+            </Field>
+            <Field label="Last broker reinvestment date" htmlFor="drp-broker-through">
+              <Input id="drp-broker-through" type="date" min={brokerStart || incomeMinDay} max={today} value={brokerEnd}
+                onChange={(event) => setBrokerEnd(event.target.value)} />
+            </Field>
+          </div>
+          {incomeDay(brokerStart) && incomeDay(brokerEnd) && brokerStart <= brokerEnd && brokerEnd <= today
+            ? <BrokerActivity key={`${brokerStart}/${brokerEnd}`} mode="reinvestments" start={brokerStart} end={brokerEnd}
+              imported={new Set(records.data.entries.flatMap((entry) => entry.snaptrade_activity_id ? [entry.snaptrade_activity_id] : []))}
+              canInclude={!busy} onReview={reviewReinvestment} />
+            : <p className="text-xs text-text-2">Choose valid broker dates in chronological order.</p>}
+        </>}
+      </div>}
+      {(activity || editing?.snaptrade_activity_id) && <div className="space-y-1 text-sm text-text-2">
+        <p>{["SnapTrade reference", activity?.symbol ?? editing?.snaptrade_reported_symbol,
+          activity?.date ?? editing?.snaptrade_reported_on].filter(Boolean).join(" · ")}</p>
+        {activity && <Button size="sm" disabled={busy} onClick={() => setActivity(undefined)}>Clear broker reference</Button>}
+      </div>}
       {records.data && records.data.holdings.length > 0 && <form aria-label="Record dividend reinvestment" onSubmit={submit}>
         <fieldset disabled={busy} className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -198,7 +258,7 @@ export function DividendReinvestments({ userId }: { userId: string }) {
           <p className="text-xs text-text-2">Use the total amount applied to shares, including any balance carried forward. If you also received cash, record that cash separately and enter the statement’s gross dividend and credits here once.</p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" type="submit">{editing ? "Save changes" : "Add dividend reinvestment"}</Button>
-            {editing && <Button size="sm" onClick={() => { setEditing(undefined); setDraft(blank); clearMessages(); }}>Cancel edit</Button>}
+            {editing && <Button size="sm" onClick={() => { setEditing(undefined); setDraft(blank); setActivity(undefined); setShowBroker(false); clearMessages(); }}>Cancel edit</Button>}
           </div>
         </fieldset>
       </form>}

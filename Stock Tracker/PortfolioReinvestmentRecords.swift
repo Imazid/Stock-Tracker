@@ -14,6 +14,29 @@ struct ReinvestmentHolding: Decodable, Identifiable {
     }
 }
 
+struct BrokerReinvestment {
+    static let label = "Dividend reinvestment"
+
+    let id: String
+    let date: String
+    let symbol: String?
+    let currency: String?
+    let amount: String?
+    let units: String?
+
+    var details: String {
+        ["SnapTrade reference", symbol, date].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    var values: [String: String?] {
+        [
+            "snaptrade_activity_id": id, "snaptrade_reported_on": date,
+            "snaptrade_reported_symbol": symbol, "snaptrade_reported_currency": currency,
+            "snaptrade_reported_amount": amount, "snaptrade_reported_units": units,
+        ]
+    }
+}
+
 struct DividendReinvestment: Decodable, Identifiable {
     let id: UUID
     let holding_id: UUID
@@ -28,6 +51,19 @@ struct DividendReinvestment: Decodable, Identifiable {
     let statement_reference: String
     let updated_at: String
     let portfolio_holdings: ReinvestmentHolding?
+    let snaptrade_activity_id: String?
+    let snaptrade_reported_on: String?
+    let snaptrade_reported_symbol: String?
+    let snaptrade_reported_currency: String?
+    let snaptrade_reported_amount: String?
+    let snaptrade_reported_units: String?
+
+    var brokerReference: BrokerReinvestment? {
+        guard let id = snaptrade_activity_id, let date = snaptrade_reported_on else { return nil }
+        return BrokerReinvestment(id: id, date: date, symbol: snaptrade_reported_symbol,
+                                  currency: snaptrade_reported_currency, amount: snaptrade_reported_amount,
+                                  units: snaptrade_reported_units)
+    }
 
     var usdBasis: String? { currency == "USD" ? reinvested_amount : basis_usd }
 }
@@ -94,13 +130,14 @@ struct ReinvestmentDraft {
 }
 
 enum ReinvestmentError: LocalizedError {
-    case invalid(String), changed, duplicate
+    case invalid(String), changed, duplicate, duplicateBrokerActivity
 
     var errorDescription: String? {
         switch self {
         case .invalid(let message): message
         case .changed: "This reinvestment changed elsewhere. Refresh the list and try again."
         case .duplicate: "This reinvestment is already recorded. Edit the existing record to correct it."
+        case .duplicateBrokerActivity: "This SnapTrade event is already recorded. Edit its existing reinvestment to correct it."
         }
     }
 }
@@ -116,7 +153,7 @@ struct ReinvestmentRecords {
               limit: Int) async throws -> [DividendReinvestment] {
         try await requireIncomeOwner(userId)
         let fields = """
-        id,holding_id,paid_on,acquired_on,currency,dividend_amount::text,reinvested_amount::text,shares::text,basis_usd::text,franking_credit_aud::text,statement_reference,updated_at,portfolio_holdings(\(holdingFields))
+        id,holding_id,paid_on,acquired_on,currency,dividend_amount::text,reinvested_amount::text,shares::text,basis_usd::text,franking_credit_aud::text,statement_reference,updated_at,snaptrade_activity_id,snaptrade_reported_on,snaptrade_reported_symbol,snaptrade_reported_currency,snaptrade_reported_amount::text,snaptrade_reported_units::text,portfolio_holdings(\(holdingFields))
         """
         let query = SupabaseManager.client.from(table).select(fields).eq("user_id", value: userId.uuidString)
         if let from { query.gte("paid_on", value: from) }
@@ -142,8 +179,9 @@ struct ReinvestmentRecords {
         return all.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
-    func save(_ draft: ReinvestmentDraft, editing: DividendReinvestment?) async throws {
+    func save(_ draft: ReinvestmentDraft, editing: DividendReinvestment?, source: BrokerReinvestment?) async throws {
         var values = try draft.values()
+        if let source { values.merge(source.values) { _, reviewed in reviewed } }
         try await requireIncomeOwner(userId)
         do {
             if let editing {
@@ -156,6 +194,9 @@ struct ReinvestmentRecords {
                 try await SupabaseManager.client.from(table).insert(values).execute()
             }
         } catch let error as PostgrestError where error.code == "23505" {
+            if error.message.contains("portfolio_reinvestment_snaptrade_activity_key") {
+                throw ReinvestmentError.duplicateBrokerActivity
+            }
             throw ReinvestmentError.duplicate
         }
     }

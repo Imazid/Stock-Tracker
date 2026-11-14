@@ -17,6 +17,10 @@ const noteColumn = columns.indexOf("Report note");
 const splitColumns = ["Split ID", "Split effective date (Sydney)", "Split new shares", "Split old shares", "Split statement reference"];
 const brokerSplitColumns = ["SnapTrade activity reference", "SnapTrade reported date", "SnapTrade reported activity", "SnapTrade reported symbol"];
 const reinvestmentColumns = ["Reinvestment ID", "Reinvestment acquisition date (Sydney)", "Reinvested amount", "Reinvestment currency", "Reinvestment statement reference"];
+const brokerReinvestmentColumns = [
+  "Reinvestment SnapTrade reference", "Reinvestment SnapTrade reported date", "Reinvestment SnapTrade reported symbol",
+  "Reinvestment SnapTrade reported currency", "Reinvestment SnapTrade reported amount", "Reinvestment SnapTrade reported units",
+];
 const audColumns = [
   "Purchase cost (AUD)", "Purchase fees (AUD)", "Sale proceeds (AUD)", "Sale fees (AUD)", "Estimated FIFO result (AUD)",
   "Purchase input currency", "Purchase FX (AUD per input currency unit)", "Purchase FX observation date", "Purchase FX source",
@@ -114,7 +118,9 @@ export async function GET(request: Request) {
   const actionColumns = [...(splits.length ? splitColumns : []),
     ...(splits.some((split) => split.snaptrade_activity_id) ? brokerSplitColumns : [])];
   const hasReinvestments = acquisitions.length > 0;
-  const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...actionColumns, ...(hasReinvestments ? reinvestmentColumns : [])];
+  const hasBrokerReinvestments = acquisitions.some((acquisition) => acquisition.reinvestment?.snaptrade_activity_id);
+  const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...actionColumns,
+    ...(hasReinvestments ? reinvestmentColumns : []), ...(hasBrokerReinvestments ? brokerReinvestmentColumns : [])];
   const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
   const ordering = hasReinvestments ? " Date-only reinvestment acquisitions follow timestamped trades on the same Sydney day. Check same-day sales against the actual allotment records." : "";
   const information = `${disclaimer}${ordering} ${includesAud ? audDisclosure + " " : ""}${period}`;
@@ -175,6 +181,11 @@ export async function GET(request: Request) {
       const reinvestment = row.purchase?.reinvestment ?? transaction.reinvestment;
       cells.push(...[reinvestment?.id, reinvestment?.acquired_on, reinvestment?.reinvested_amount, reinvestment?.currency,
         reinvestment?.statement_reference].map((value) => csvField(value || null)));
+      if (hasBrokerReinvestments) {
+        cells.push(...[reinvestment?.snaptrade_activity_id, reinvestment?.snaptrade_reported_on, reinvestment?.snaptrade_reported_symbol,
+          reinvestment?.snaptrade_reported_currency, reinvestment?.snaptrade_reported_amount,
+          reinvestment?.snaptrade_reported_units].map((value) => csvField(value ?? null)));
+      }
     }
     records.push(cells.join(","));
   }
