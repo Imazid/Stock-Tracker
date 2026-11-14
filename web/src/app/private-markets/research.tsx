@@ -85,7 +85,7 @@ function ReportView({ report }: { report: Report }) {
   );
 }
 
-export function Research({ owner, aiEnabled, selected }: { owner: string; aiEnabled: boolean; selected: PrivateDeal[] }) {
+export function Research({ owner, aiEnabled, selected, asOf }: { owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number }) {
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState<Mode>("question");
   const [consent, setConsent] = useState(false);
@@ -154,7 +154,7 @@ export function Research({ owner, aiEnabled, selected }: { owner: string; aiEnab
             setRunID(null);
             submit.mutate({ prompt: question.trim(), kind: mode, sourceIDs: selected.map(({ id }) => id) });
           }}>
-            {selected.length ? <CompareRounds deals={selected} />
+            {selected.length ? <CompareRounds deals={selected} asOf={asOf} />
               : <p className="text-sm text-text-2">Select up to three rounds in Discover to start a report.</p>}
             {!aiEnabled && <Notice>New AI research is unavailable in this deployment. Saved reports are still available.</Notice>}
             <Field label="Research question" htmlFor="private-question">

@@ -104,7 +104,7 @@ export const availabilityLabels = {
   expired: "Deadline passed", unverified: "Status unverified",
 };
 
-export function availability(deal: PrivateDeal, now = Date.now()): keyof typeof availabilityLabels {
+export function availability(deal: PrivateDeal, now: number): keyof typeof availabilityLabels {
   if (deal.status === "closed") return "closed";
   const end = deal.round.closes_at ? Date.parse(deal.round.closes_at) : null;
   if (end !== null && end <= now) return "expired";
@@ -129,8 +129,8 @@ export function providerName(id: string) {
 
 const sydneyDay = new Intl.DateTimeFormat("en-CA", { dateStyle: "short", timeZone: "Australia/Sydney" });
 
-export function todayInSydney() {
-  return sydneyDay.format(new Date());
+export function dayInSydney(timestamp: number) {
+  return sydneyDay.format(timestamp);
 }
 
 const dateFormat = new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeZone: "Australia/Sydney" });

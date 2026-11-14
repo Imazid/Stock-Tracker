@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import {
-  amount, availability, availabilityLabels, countryName, dateLabel, providerName, sourceHref, todayInSydney,
+  amount, availability, availabilityLabels, countryName, dateLabel, providerName, sourceHref, dayInSydney,
   type Criteria, type FinancialPeriod, type PrivateDeal,
 } from "./private-data";
 
@@ -52,9 +52,9 @@ function FinancialDisclosure({ period }: { period: FinancialPeriod }) {
   );
 }
 
-function listingStatus(listing: NonNullable<PrivateDeal["round"]["listing"]>) {
+function listingStatus(listing: NonNullable<PrivateDeal["round"]["listing"]>, asOf: number) {
   const awaiting = listing.quotation_status === "proposed" || listing.quotation_status === "anticipated";
-  return awaiting && (!listing.quotation_on || listing.quotation_on < todayInSydney())
+  return awaiting && (!listing.quotation_on || listing.quotation_on < dayInSydney(asOf))
     ? "Quotation confirmation pending" : quotationLabels[listing.quotation_status];
 }
 
@@ -65,11 +65,11 @@ function roundFigures(deal: PrivateDeal): [string, number | null][] {
   ];
 }
 
-export function CompareRounds({ deals }: { deals: PrivateDeal[] }) {
+export function CompareRounds({ deals, asOf }: { deals: PrivateDeal[]; asOf: number }) {
   return <div className="grid gap-2 md:grid-cols-3">
     {deals.map((deal) => <div key={deal.id} className="rounded-lg border border-border bg-surface-2 p-3 text-sm">
       <p className="font-medium text-text">{deal.round.company.name}</p>
-      <p className="text-xs text-text-3">{deal.round.stage} · {availabilityLabels[availability(deal)]}</p>
+      <p className="text-xs text-text-3">{deal.round.stage} · {availabilityLabels[availability(deal, asOf)]}</p>
       <dl className="my-2 space-y-1">
         {roundFigures(deal).map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-x-2">
           <dt className="text-xs text-text-2">{label}</dt><dd className="text-xs font-medium text-text">{amount(value, deal.round.currency)}</dd>
@@ -81,12 +81,12 @@ export function CompareRounds({ deals }: { deals: PrivateDeal[] }) {
   </div>;
 }
 
-export function DealCard({ deal, selected, selectionFull, onSelect }: {
-  deal: PrivateDeal; selected: boolean; selectionFull: boolean; onSelect: () => void;
+export function DealCard({ deal, asOf, selected, selectionFull, onSelect }: {
+  deal: PrivateDeal; asOf: number; selected: boolean; selectionFull: boolean; onSelect: () => void;
 }) {
   const { round } = deal;
   const { company, listing } = round;
-  const status = availability(deal);
+  const status = availability(deal, asOf);
   const eligibility = eligibilityLabels[deal.eligibility] ?? deal.eligibility;
   const hasTeam = !!company.founders?.length || !!company.investors?.length;
   return (
@@ -140,7 +140,7 @@ export function DealCard({ deal, selected, selectionFull, onSelect }: {
             ))}</ul>
           </div>}
           {listing && <div>
-            <h3 className="font-medium text-text">{listingStatus(listing)}</h3>
+            <h3 className="font-medium text-text">{listingStatus(listing, asOf)}</h3>
             <p>{listing.exchange} {listing.symbol}{listing.quotation_on ? ` · ${dateLabel(listing.quotation_on)}` : ""}</p>
             {listing.expected_offer_close_on && <p>Expected offer close {dateLabel(listing.expected_offer_close_on)}</p>}
             <SourceLink url={listing.source_url}>Listing disclosure</SourceLink>

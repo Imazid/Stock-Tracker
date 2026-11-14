@@ -9,11 +9,10 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { SourceLink } from "./catalog";
 import {
-  amount, dateLabel, privateMarkets, providerName, todayInSydney, type Application, type PortfolioHolding, type PortfolioPage,
+  amount, dateLabel, privateMarkets, providerName, dayInSydney, type Application, type PortfolioHolding, type PortfolioPage,
 } from "./private-data";
 
-function currentValuation(holding: PortfolioHolding) {
-  const asOf = Date.now();
+function currentValuation(holding: PortfolioHolding, asOf: number) {
   const dispositionOn = Date.parse(holding.last_disposition_on ?? "");
   const revisionAt = Date.parse(holding.disposition_revision_at ?? "");
   return holding.marks.find((mark) => {
@@ -31,12 +30,12 @@ function LedgerSection({ title, children }: { title: string; children: ReactNode
   </section>;
 }
 
-function HoldingCard({ holding }: { holding: PortfolioHolding }) {
+function HoldingCard({ holding, asOf }: { holding: PortfolioHolding; asOf: number }) {
   const { currency } = holding;
   const exited = holding.remaining_units === 0 && Boolean(holding.exit_source) &&
-    holding.last_disposition_on !== null && holding.last_disposition_on <= todayInSydney();
-  const mark = exited ? undefined : currentValuation(holding);
-  const stale = mark && Date.now() - Date.parse(mark.valued_on) > 90 * 86_400_000;
+    holding.last_disposition_on !== null && holding.last_disposition_on <= dayInSydney(asOf);
+  const mark = exited ? undefined : currentValuation(holding, asOf);
+  const stale = mark && asOf - Date.parse(mark.valued_on) > 90 * 86_400_000;
   const acquisition = holding.settled_on
     ? `Settled ${dateLabel(holding.settled_on)} · ${holding.settlement_source ?? "Provider confirmation"}`
     : "Provider confirmation";
@@ -139,7 +138,7 @@ export function Positions({ owner }: { owner: string }) {
       {holdings.isPending && <p className="text-sm text-text-2" role="status">Loading holdings…</p>}
       {holdings.error && <Notice tone="down">{holdings.error.message} <Button size="sm" onClick={() => void holdings.refetch()}>Retry holdings</Button></Notice>}
       {holdings.data && !positions.length && <Card><EmptyState title="No provider-confirmed holdings" /></Card>}
-      {positions.map((item) => <HoldingCard key={item.id} holding={item} />)}
+      {positions.map((item) => <HoldingCard key={item.id} holding={item} asOf={holdings.dataUpdatedAt} />)}
       {holdings.hasNextPage && <Button size="sm" disabled={holdings.isFetchingNextPage} onClick={() => void holdings.fetchNextPage()}>
         {holdings.isFetchingNextPage ? "Loading…" : "Load more holdings"}
       </Button>}

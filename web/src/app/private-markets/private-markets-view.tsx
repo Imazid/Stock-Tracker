@@ -23,8 +23,8 @@ function SignIn({ view }: { view?: "portfolio" }) {
   return <ButtonLink variant="primary" size="sm" href={`/login?next=${encodeURIComponent(destination)}`}>Sign in</ButtonLink>;
 }
 
-function Discover({ owner, aiEnabled, deals, selected, toggle, onResearch }: {
-  owner?: string; aiEnabled: boolean; deals: PrivateDeal[]; selected: PrivateDeal[];
+function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch }: {
+  owner?: string; aiEnabled: boolean; deals: PrivateDeal[]; asOf: number; selected: PrivateDeal[];
   toggle: (deal: PrivateDeal) => void; onResearch: () => void;
 }) {
   const [name, setName] = useState("");
@@ -45,6 +45,7 @@ function Discover({ owner, aiEnabled, deals, selected, toggle, onResearch }: {
     mutationFn: (question: string) => privateMarkets<Discovery>("discover", { owner, question, model_consent: true }),
   });
 
+  const currentAt = Math.max(asOf, search.submittedAt);
   const query = name.trim().normalize("NFKC").toLowerCase();
   const within = (value: number | null, ceiling: string) => !ceiling || (value !== null && value <= Number(ceiling));
   const visible = (search.data?.deals ?? deals).filter((deal) => {
@@ -52,7 +53,7 @@ function Discover({ owner, aiEnabled, deals, selected, toggle, onResearch }: {
     return (!query || [company.name, deal.round.stage, company.sector].some((value) => value.normalize("NFKC").toLowerCase().includes(query))) &&
       (!category || deal.category === category) && (!sector || company.sector === sector) &&
       (!country || company.country === country) && (!jurisdiction || deal.jurisdictions.includes(jurisdiction)) &&
-      (!status || availability(deal) === status) && (!eligibility || deal.eligibility === eligibility) &&
+      (!status || availability(deal, currentAt) === status) && (!eligibility || deal.eligibility === eligibility) &&
       (!stage || deal.round.stage === stage) && (!traction || Boolean(deal.round.traction || company.financials.length)) &&
       (!currency || (deal.round.currency === currency && within(deal.minimum, maxMinimum) && within(deal.round.valuation, maxValuation)));
   });
@@ -151,10 +152,10 @@ function Discover({ owner, aiEnabled, deals, selected, toggle, onResearch }: {
       </div>
       {selected.length > 1 && <Card>
         <CardHeader title="Compare funding rounds" />
-        <div className="border-t border-border p-4"><CompareRounds deals={selected} /></div>
+        <div className="border-t border-border p-4"><CompareRounds deals={selected} asOf={currentAt} /></div>
       </Card>}
       {visible.length ? <div className="grid items-start gap-4 2xl:grid-cols-2">
-        {visible.map((deal) => <DealCard key={deal.id} deal={deal} selected={selected.some(({ id }) => id === deal.id)}
+        {visible.map((deal) => <DealCard key={deal.id} deal={deal} asOf={currentAt} selected={selected.some(({ id }) => id === deal.id)}
           selectionFull={selected.length >= 3} onSelect={() => toggle(deal)} />)}
       </div> : <Card><EmptyState icon={<Building2 className="h-5 w-5" aria-hidden />} title="No matching rounds" body="Change the filters to see more published records." /></Card>}
     </div>
@@ -187,10 +188,10 @@ export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boole
       {tab === "catalogue" && (!supabaseConfigured ? <Notice>Private Markets is unavailable in this deployment.</Notice>
         : catalogue.error ? <Notice tone="down">{catalogue.error.message} <Button size="sm" onClick={() => void catalogue.refetch()}>Retry</Button></Notice>
         : !catalogue.data ? <p className="text-sm text-text-2" role="status">Loading published rounds…</p>
-        : <Discover key={owner ?? "public"} owner={owner} aiEnabled={aiEnabled} deals={catalogue.data.deals}
+        : <Discover key={owner ?? "public"} owner={owner} aiEnabled={aiEnabled} deals={catalogue.data.deals} asOf={catalogue.dataUpdatedAt}
           selected={selected} toggle={toggle} onResearch={() => setTab("research")} />)}
       {tab !== "catalogue" && (owner ? tab === "research"
-        ? <Research key={owner} owner={owner} selected={selected} aiEnabled={aiEnabled} />
+        ? <Research key={owner} owner={owner} selected={selected} aiEnabled={aiEnabled} asOf={catalogue.dataUpdatedAt} />
         : <Positions key={owner} owner={owner} />
         : session.status === "loading" ? <p className="text-sm text-text-2" role="status">Checking account…</p>
         : <Card><EmptyState title={tab === "research" ? "Sign in for AI research and saved reports" : "Sign in to see your private portfolio"}
