@@ -440,8 +440,8 @@ final class AccountSyncTests: XCTestCase {
                 let frame = element.exists ? element.frame : .zero
                 if !frame.isEmpty, app.frame.insetBy(dx: 0, dy: 65).contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
                 let movingDown = !frame.isEmpty && frame.midY < app.frame.midY
-                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.37 : 0.66))
-                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.63 : 0.40))
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: movingDown ? 0.37 : 0.66))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: movingDown ? 0.63 : 0.40))
                 start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
             }
             XCTAssertTrue(element.isHittable, "Expected \(element)")

@@ -230,7 +230,7 @@ struct PortfolioView: View {
                     .portfolioRow(bottom: DS.Space.xxl)
             }
             .listStyle(.plain)
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(segment == .holdings ? .interactively : .automatic)
             .scrollContentBackground(.hidden)
             .dsScreenBackground(style: .portfolio)
             .task(id: cloudAuth.userId) { await refreshPrivatePositions() }
