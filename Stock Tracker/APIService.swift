@@ -443,9 +443,12 @@ extension APIService {
     /// Recent news for one US-listed symbol (`/company-news`, free tier; ASX symbols → 403).
     /// General news (`/news`) never fills `related`, so this is what makes the
     /// Watchlist/Portfolio news filters return anything.
-    func fetchCompanyNews(symbol: String, days: Int = 7, limit: Int = 10) async throws -> [NewsArticle] {
+    func fetchCompanyNews(symbol: String, days: Int = 7, limit: Int = 10, requiresCoverage: Bool = false) async throws -> [NewsArticle] {
         let sanitized = InputSanitizer.sanitizeSymbol(symbol)
-        guard MarketDataProxy.available(debugKey: finnhubAPIKey), !isPlanGated("Finnhub company-news") else { return [] }
+        guard MarketDataProxy.available(debugKey: finnhubAPIKey), !isPlanGated("Finnhub company-news") else {
+            if requiresCoverage { throw APIError.noData }
+            return []
+        }
 
         let dateFmt = DateFormatter()
         dateFmt.dateFormat = "yyyy-MM-dd"

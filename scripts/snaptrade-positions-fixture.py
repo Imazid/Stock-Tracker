@@ -108,6 +108,23 @@ def stock_snapshot(symbol):
 def market_data_response(path):
     query = parse_qs(urlsplit(path).query)
     upstream = query.get("path", [""])[0]
+    symbol = query.get("symbol", [""])[0]
+    if upstream == "/api/v1/calendar/earnings":
+        reports = []
+        if symbol == "AAPL":
+            day = datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=7)
+            reports.append({"symbol": symbol, "date": day.isoformat(), "hour": "amc", "epsEstimate": 1.35})
+        return 200, {"earningsCalendar": reports}
+    if upstream == "/api/v1/company-news":
+        if symbol == "AMZN":
+            return 503, {}
+        if symbol == "AAPL":
+            return 200, [{
+                "id": 1, "datetime": int(datetime.now().timestamp()), "headline": "Apple announces a company update",
+                "summary": "Test headline", "source": "Example Publisher",
+                "url": "https://example.com/apple-update", "image": "", "related": symbol, "category": "company",
+            }]
+        return 200, []
     if upstream == "/v2/stocks/snapshots":
         symbols = query.get("symbols", [""])[0].split(",")
         return 200, {symbol: stock_snapshot(symbol) for symbol in symbols}
