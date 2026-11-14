@@ -65,6 +65,8 @@ select case when count(*)=1 and bool_and(provider_connection_id = (select id fro
     and bool_and(retail_csf_cooling_off_required)
   then 'ok   handoff binds the verified account and records the retail protection' else 'FAIL unbound application' end
   from public.investment_commitments where id=(select commitment_id from application);
+select * from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
+  'ea000000-0000-4000-8000-000000000032',251,'https://example.test/offer');
 select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
   (select commitment_id from application),'receipt','application_received',now()-interval '1 hour')$q$,
   '22023','provider event cannot predate the handoff');
@@ -82,7 +84,12 @@ select case when status='application_received' and cooling_off_ends_at is null
   else 'FAIL missing withdrawal evidence affected ownership' end
 from public.investment_commitments c where id=(select commitment_id from application);
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
-  'receipt','application_received',now()-interval '3 minutes 30 seconds',now()+interval '5 days');
+  'receipt','application_received',now()-interval '3 minutes 30 seconds',now()+interval '5 days',
+  p_application_amount => 9750, p_application_currency => 'AUD');
+select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
+  (select commitment_id from application),'receipt','application_received',now()-interval '3 minutes',
+  p_application_amount => 1, p_application_currency => 'USD')$q$,
+  '22023','the provider amount must use the application currency');
 select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
   (select commitment_id from application),'receipt','confirmed',now(),null,25,9500)$q$,
   '22023','settlement is refused while a reported withdrawal window is open');
@@ -92,11 +99,17 @@ select pg_temp.expect_application_error($q$select public.record_private_provider
   (select commitment_id from application),'receipt','confirmed',now(),null,25,9500)$q$,
   '22023','pending withdrawal cannot settle');
 select pg_temp.expect_application_error($q$select * from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
-  'ea000000-0000-4000-8000-000000000031',501,'https://example.test/offer')$q$,
-  '22023','a pending withdrawal still counts toward the retail cap');
+  'ea000000-0000-4000-8000-000000000031',251,'https://example.test/offer')$q$,
+  '22023','the larger provider application amount still counts while withdrawal is pending');
+select pg_temp.expect_application_error($q$select * from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
+  'ea000000-0000-4000-8000-000000000032',251,'https://example.test/offer')$q$,
+  '22023','reopening an earlier handoff rechecks the provider-reported cap balance');
+update public.investment_commitments set status='rejected',provider_reference='disposable-prior-handoff'
+where opportunity_id='ea000000-0000-4000-8000-000000000032';
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
   'receipt','withdrawal_declined',now()-interval '2 minutes');
 select case when status='application_received' and withdrawal_declined_at is not null and provider_received_at is not null
+    and requested_amount=9500 and provider_application_amount=9750
   then 'ok   provider denial resumes the original application with its timeline' else 'FAIL lost provider denial' end
   from public.investment_commitments where id=(select commitment_id from application);
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
@@ -168,13 +181,22 @@ create temporary table wholesale_application as
   select commitment_id from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
     'ea000000-0000-4000-8000-000000000032',501,'https://example.test/offer');
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
-  'wholesale-receipt','application_received',now()-interval '1 minute');
+  'wholesale-receipt','application_received',now()-interval '1 minute',
+  p_application_amount => 450,p_application_currency => 'AUD');
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
-  'wholesale-receipt','confirmed',now(),null,5,501);
-select case when status='confirmed' and retail_csf_cooling_off_required is false and cooling_off_ends_at is null
-  then 'ok   a verified wholesale application can settle when a retail deadline does not apply'
-  else 'FAIL wholesale tender incorrectly required retail evidence' end
-from public.investment_commitments where id=(select commitment_id from wholesale_application);
+  'wholesale-receipt','application_received',now()-interval '1 minute',
+  p_application_amount => 600,p_application_currency => 'AUD');
+select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
+  (select commitment_id from wholesale_application),'wholesale-receipt','confirmed',now(),null,5,451)$q$,
+  '22023','settled capital cannot exceed the recorded provider application amount');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
+  'wholesale-receipt','confirmed',now(),null,5,400);
+select case when c.status='confirmed' and c.retail_csf_cooling_off_required is false and c.cooling_off_ends_at is null
+    and c.requested_amount=501 and c.provider_application_amount=450 and h.settled_amount=400
+  then 'ok   request, provider application and partial settlement amounts stay distinct'
+  else 'FAIL incorrect wholesale application or settlement amounts' end
+from public.investment_commitments c join public.private_holdings h on h.commitment_id=c.id
+where c.id=(select commitment_id from wholesale_application);
 select case when count(*) = 3 then 'ok   each accepted verification change creates one audit event'
   else 'FAIL missing or duplicated verification audit' end
 from public.investment_audit_logs

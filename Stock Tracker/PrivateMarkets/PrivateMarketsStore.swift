@@ -292,6 +292,7 @@ struct PrivateApplication: Decodable, Identifiable {
     let id: UUID
     let status: String
     let requestedAmount: Decimal
+    let providerApplicationAmount: Decimal?
     let currency: String
     let provider: String
     let providerReference: String?

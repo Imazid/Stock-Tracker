@@ -184,6 +184,9 @@ private struct PrivateApplicationDetail: View {
                     Text(record.displayStatus).font(.headline).accessibilityIdentifier("private.application.status")
                     if let stage = record.offer?.round?.stage { LabeledContent("Funding round", value: stage) }
                     LabeledContent("Requested amount", value: PrivateInput.money(record.requestedAmount, currency: record.currency))
+                    if let amount = record.providerApplicationAmount {
+                        LabeledContent("Provider application amount", value: PrivateInput.money(amount, currency: record.currency))
+                    }
                     if let reference = record.providerReference { LabeledContent("Provider reference", value: reference) }
                     if let date = record.providerEventAt { dated("Latest provider update", date) }
                 }

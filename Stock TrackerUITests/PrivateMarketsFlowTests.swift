@@ -551,6 +551,10 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let status = app.staticTexts["private.application.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertEqual(status.label, "Provider recorded a withdrawal request")
+        if ProcessInfo.processInfo.environment["PRIVATE_LIFECYCLE_CHECK_PROVIDER_AMOUNT"] == "1" {
+            XCTAssertTrue(app.staticTexts["Requested amount"].exists)
+            XCTAssertTrue(app.staticTexts["Provider application amount"].exists)
+        }
         let timeline = app.staticTexts["Withdrawal requested"]
         if !timeline.isHittable { app.swipeUp() }
         XCTAssertTrue(timeline.waitForExistence(timeout: 8))

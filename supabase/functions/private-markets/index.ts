@@ -600,7 +600,7 @@ Deno.serve(async (req) => {
       }
       case "applications": {
         const { data, error } = await admin.from("investment_commitments")
-          .select("id,status,requested_amount,currency,provider,provider_reference,confirmed_at,cooling_off_ends_at,acknowledged_at," +
+          .select("id,status,requested_amount,provider_application_amount,currency,provider,provider_reference,confirmed_at,cooling_off_ends_at,acknowledged_at," +
             "provider_received_at,withdrawal_requested_at,withdrawal_declined_at,withdrawn_at,provider_event_at," +
             "offer:investment_opportunities(round:funding_rounds(stage,company:private_companies(name)))")
           .eq("user_id", userId).order("acknowledged_at", { ascending: false }).limit(100);
