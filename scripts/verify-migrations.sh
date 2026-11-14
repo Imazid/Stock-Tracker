@@ -9,11 +9,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE="${SUPABASE_PG_IMAGE:-public.ecr.aws/supabase/postgres:17.6.1.165}"
+IMAGE_DIGEST="sha256:28f0e16a019e648089fc1a6d333549a55548f6019c15ae4bd7cd58b989027518"
+IMAGE="${SUPABASE_PG_IMAGE:-public.ecr.aws/supabase/postgres@$IMAGE_DIGEST}"
 NAME="st-migration-check-$$"
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1 && ! docker pull "$IMAGE"; then
+  if [[ -n "${SUPABASE_PG_IMAGE:-}" ]]; then exit 1; fi
+  IMAGE="docker.io/supabase/postgres@$IMAGE_DIGEST"
+  echo "Trying the matching Supabase image on Docker Hub."
+  docker pull "$IMAGE"
+fi
 
 echo "Starting throwaway database ($IMAGE)…"
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres "$IMAGE" >/dev/null
