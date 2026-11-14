@@ -11,10 +11,12 @@ import { type AssistantTurn, toolLabel, useAssistant } from "@/hooks/assistant";
 import { getJSON } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/session";
+import { AGENT_ACTIVITY_QUESTION, agentActivityQuestion } from "@/lib/agent-activity-question";
 
 export const SUGGESTIONS = [
   "How has BHP done over the last year compared with the ASX 200?",
   "Compare BTC and ETH volatility over the last 3 months.",
+  AGENT_ACTIVITY_QUESTION,
   "What's in my watchlist today, and what moved the most?",
   "Backtest buying BTC when the 20-day average crosses above the 50-day, exiting on the reverse.",
   "Prepare a ticket to buy 5 AAPL with a limit at today's bid.",
@@ -45,7 +47,8 @@ function Turn({ turn }: { turn: AssistantTurn }) {
         </ul>
       ) : null}
       {turn.text ? <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-text">{turn.text}</div> : null}
-      {!turn.done && !turn.text ? <p className="text-[13px] text-text-3">Working…</p> : null}
+      {turn.activity && <ActivityAnswer activity={turn.activity} />}
+      {!turn.done && !turn.text && !turn.activity ? <p className="text-[13px] text-text-3">Working…</p> : null}
       {turn.cards.map((card, i) => (
         <Link key={i} href={card.href} className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] hover:border-primary/50">
           <CardIcon kind={card.kind} />
@@ -72,6 +75,31 @@ function Turn({ turn }: { turn: AssistantTurn }) {
       ) : null}
     </div>
   );
+}
+
+function ActivityAnswer({ activity }: { activity: NonNullable<AssistantTurn["activity"]> }) {
+  const { summary, title } = activity;
+  const format = (t: number) => new Intl.DateTimeFormat("en-AU", { timeZone: summary.timeZone,
+    day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(t);
+  const counts = [
+    ["Checks", summary.runs], ["Failed checks", summary.failedRuns], ["Skipped checks", summary.skippedRuns],
+    ["Proposals", summary.proposals], ["Blocked by risk", summary.blocked], ["Approvals", summary.approvals],
+    ["Declines", summary.declines], ["Practice fills", summary.fills],
+  ] as const;
+  return <section aria-label={title} className="space-y-3 rounded-lg border border-border bg-surface-2 p-3 text-[13px]">
+    <h3 className="font-medium">{title}</h3>
+    <p className="text-xs text-text-2">{format(summary.from)} to {format(summary.through)}</p>
+    <dl className="grid grid-cols-2 gap-2">{counts.map(([label, count]) => <div key={label}>
+      <dt className="text-text-2">{label}</dt><dd className="font-medium tabular-nums">{count.toLocaleString()}</dd>
+    </div>)}</dl>
+    {summary.recent.length > 0 && <ul className="space-y-2 border-t border-border pt-2">
+      {summary.recent.map((run) => <li key={run.id}>
+        <Link href={`/agents?run=${run.id}#agent-activity`} className="font-medium text-primary-fg underline">{run.agentName} · {format(run.startedAt)}</Link>
+        <p className="text-text-2">{run.summary}</p>
+      </li>)}
+    </ul>}
+    <Link href="/agents#agent-activity" className="text-primary-fg underline">Open agent activity timeline</Link>
+  </section>;
 }
 
 interface Status { assistant: boolean; accounts: boolean }
@@ -117,33 +145,36 @@ function Conversation({ compact = false, company, reportRequest = 0, initialQues
   }, [busy, reportPrompt, reportRequest, send, session.status, status.data]);
 
   const submit = (text: string) => {
-    if (!text.trim()) return;
+    if (!text.trim() || (unavailable && (company || !agentActivityQuestion(text.trim())))) return;
     setDraft("");
     void send(text, shareAccountContext);
   };
 
   const unavailable = status.data && !status.data.assistant;
+  const activityDraft = initialQuestion && agentActivityQuestion(initialQuestion);
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col", compact ? "" : "rounded-xl border border-border bg-surface")}>
       <div className={cn("min-h-0 flex-1 space-y-4 overflow-y-auto", compact ? "p-4" : "p-5")} aria-live="polite">
         {unavailable ? (
-          <Notice tone="warn" title="The assistant isn't switched on for this site">
-            This site needs a configured AI provider{status.data?.accounts ? "" : " and sign-in"} before you can send messages.
+          <Notice tone="warn" title="AI research is unavailable">
+            {company ? "This site needs a configured AI provider to answer research questions." : "You can still ask about your recorded agent activity."}
           </Notice>
         ) : null}
         {turns.length === 0 ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-text"><BrainCircuit aria-hidden className="h-4 w-4 text-primary-fg" />{company ? `Ask about ${company.symbol}` : initialQuestion ? "Ask about your portfolio" : "Ask about markets, your watchlist or a strategy"}</div>
+            <div className="flex items-center gap-2 text-sm font-medium text-text"><BrainCircuit aria-hidden className="h-4 w-4 text-primary-fg" />{company ? `Ask about ${company.symbol}` : activityDraft ? "Ask about your agents" : initialQuestion ? "Ask about your portfolio" : "Ask about markets, your watchlist or a strategy"}</div>
             <p className="text-[13px] leading-relaxed text-text-2">
-              {company ? "Research uses the selected listing, company datasets and source documents available to this app." : initialQuestion
+              {company ? "Research uses the selected listing, company datasets and source documents available to this app." : activityDraft
+                ? "Send the question to see recorded checks, proposals and practice fills. This summary uses your Stock Tracker account."
+                : initialQuestion
                 ? "Enable account sharing to include your synced holdings, then send the question. The response links to the quotes used in the calculation."
                 : <>Answers come from the app&apos;s market data and your own lists, with sources and times. It can draft a strategy, run a backtest or fill in an order ticket for you to review — it never places, approves or sends an order. General information only, not personal advice.</>}
             </p>
             {!initialQuestion && <ul className="space-y-1.5">
               {suggestions.slice(0, compact ? 3 : suggestions.length).map((s, i) => (
                 <li key={s}>
-                  <button type="button" disabled={busy || unavailable} onClick={() => submit(s)} className="w-full rounded-lg border border-border px-3 py-2 text-left text-[13px] text-text-2 hover:border-primary/50 hover:text-text disabled:opacity-50">{company && i === 0 ? "Generate AI research report" : s}</button>
+                  <button type="button" disabled={busy || (unavailable && !agentActivityQuestion(s))} onClick={() => submit(s)} className="w-full rounded-lg border border-border px-3 py-2 text-left text-[13px] text-text-2 hover:border-primary/50 hover:text-text disabled:opacity-50">{company && i === 0 ? "Generate AI research report" : s}</button>
                 </li>
               ))}
             </ul>}
@@ -164,7 +195,7 @@ function Conversation({ compact = false, company, reportRequest = 0, initialQues
         <label className="mb-2 flex items-start gap-2 text-xs text-text-2">
           <input type="checkbox" className="mt-0.5 accent-primary" checked={shareAccountContext} disabled={busy || unavailable}
             onChange={(event) => { setShareAccountContext(event.target.checked); reset(); }} />
-          <span>Share holdings and watchlist with the AI provider for this conversation</span>
+          <span>Share holdings, watchlist, and agent activity with the AI provider for this conversation</span>
         </label>
         )}
         <label htmlFor={company ? "company-assistant-input" : compact ? "assistant-input-panel" : "assistant-input"} className="sr-only">Message the assistant</label>
@@ -181,14 +212,14 @@ function Conversation({ compact = false, company, reportRequest = 0, initialQues
             }}
             rows={compact ? 2 : 3}
             maxLength={8000}
-            disabled={unavailable}
-            placeholder={unavailable ? "Not available on this site" : "Ask a question…"}
+            disabled={!!company && unavailable}
+            placeholder={unavailable && !company ? "Ask about agent activity…" : "Ask a question…"}
             className="min-h-0 flex-1 resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text placeholder:text-text-3 focus:border-primary focus:outline-none disabled:opacity-50"
           />
           {busy ? (
             <Button type="button" variant="secondary" size="sm" onClick={stop} aria-label="Stop"><Square className="h-4 w-4" /></Button>
           ) : (
-            <Button type="submit" variant="primary" size="sm" disabled={!draft.trim() || unavailable} aria-label="Send"><ArrowUp className="h-4 w-4" /></Button>
+            <Button type="submit" variant="primary" size="sm" disabled={!draft.trim() || (unavailable && !agentActivityQuestion(draft.trim()))} aria-label="Send"><ArrowUp className="h-4 w-4" /></Button>
           )}
         </div>
         {turns.length > 0 ? (

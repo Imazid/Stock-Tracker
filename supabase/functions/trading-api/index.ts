@@ -25,12 +25,13 @@ import { providerFromEnv } from "../_shared/market/index.ts";
 import { authenticate, type Caller, requireStepUp } from "../_shared/server/auth.ts";
 import { errorResponse, Field, HttpError, logEvent, ok, readJSONObject, refusal, tradingErrorStatus } from "../_shared/server/http.ts";
 import {
-  database, type EngineSession, instrumentsNeedingQuotes, type LoadScope, readAgentActivity, readAgentActivityDetail, readStateSnapshot,
+  database, type EngineSession, instrumentsNeedingQuotes, type LoadScope, readAgentActivity, readAgentActivityDetail, readAgentActivitySummary, readStateSnapshot,
   type Sql, withEngine,
 } from "../_shared/server/persistence.ts";
 import { isLoosening } from "../_shared/server/policy.ts";
 import { assertPriced, latestQuotes, marketForOrder, type MarketSource, marketSnapshot } from "../_shared/server/runner.ts";
 import { postgresVolumeStore } from "../_shared/server/upkeep.ts";
+import { ACTIVITY_PERIODS, agentActivityWindow } from "../_shared/trading/activity.ts";
 import { AGENT_MODES, type AgentMode, agentSpec, CHANGE_AUTHORS, modeIsLive } from "../_shared/trading/agent.ts";
 import { appendAudit } from "../_shared/trading/audit.ts";
 import { LiveVenues, PaperBroker } from "../_shared/trading/broker.ts";
@@ -437,6 +438,18 @@ const actions: Record<string, (ctx: Context) => Promise<Response>> = {
     const detail = await readAgentActivityDetail(ctx.sql, ctx.caller.userID, runID);
     if (!detail) return errorResponse(TradingError.notFound("That run"));
     return ok({ detail });
+  },
+
+  agentActivitySummary: async (ctx) => {
+    const period = Field.oneOf(ctx.body.period, ACTIVITY_PERIODS, "period");
+    const zone = Field.string(ctx.body.timeZone, "timeZone", 80);
+    let timeZone: string;
+    try {
+      timeZone = new Intl.DateTimeFormat("en", { timeZone: zone }).resolvedOptions().timeZone;
+    } catch {
+      throw new HttpError(400, "bad_request", "Choose a valid time zone for the activity summary.");
+    }
+    return ok({ summary: await readAgentActivitySummary(ctx.sql, ctx.caller.userID, { ...agentActivityWindow(period, timeZone, ctx.now), timeZone }) });
   },
 
   auditStatus: (ctx) => act(ctx, {}, async ({ tx, userID }) => {

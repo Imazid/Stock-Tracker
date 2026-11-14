@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentEvent } from "@/server/agent/run";
+import { agentActivityQuestion } from "@/lib/agent-activity-question";
 
 export interface AssistantTool {
   id: string;
@@ -18,6 +19,8 @@ export interface AssistantTurn {
   tools: AssistantTool[];
   sources: Extract<AgentEvent, { type: "sources" }>["items"];
   cards: Extract<AgentEvent, { type: "card" }>["card"][];
+  activity?: Extract<AgentEvent, { type: "activity" }>;
+  privateReply?: boolean;
   error?: { code: string; message: string };
   done: boolean;
 }
@@ -32,6 +35,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_watchlist: "Reading your watchlist",
   get_portfolio: "Reading your portfolio",
   explain_portfolio_movement: "Calculating portfolio movement",
+  get_agent_activity: "Reading your agent activity",
   draft_strategy: "Drafting a strategy",
   run_backtest: "Running a backtest",
   prepare_order_ticket: "Preparing an order ticket",
@@ -55,12 +59,13 @@ export function useAssistant(instrumentId?: string, section?: string) {
   const send = useCallback(async (text: string, shareAccountContext: boolean) => {
     const message = text.trim();
     if (!message || busy) return;
-    const history = [...turns.filter((t) => t.text.trim() !== "" && !t.error), { role: "user" as const, text: message }]
+    const privateReply = !instrumentId && Boolean(agentActivityQuestion(message));
+    const history = [...turns.filter((t) => t.text.trim() !== "" && !t.error && !t.privateReply), { role: "user" as const, text: message }]
       .map((t) => ({ role: t.role, content: t.text }));
     setTurns((all) => [
       ...all,
-      { role: "user", text: message, tools: [], sources: [], cards: [], done: true },
-      { role: "assistant", text: "", tools: [], sources: [], cards: [], done: false },
+      { role: "user", text: message, tools: [], sources: [], cards: [], done: true, privateReply },
+      { role: "assistant", text: "", tools: [], sources: [], cards: [], done: false, privateReply },
     ]);
     setBusy(true);
     const abort = new AbortController();
@@ -69,7 +74,8 @@ export function useAssistant(instrumentId?: string, section?: string) {
       const response = await fetch("/api/agents/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history.slice(-39).filter((turn, index) => index !== 0 || turn.role === "user"), shareAccountContext, company: instrumentId && section ? { instrumentId, section } : undefined }),
+        body: JSON.stringify({ messages: history.slice(-39).filter((turn, index) => index !== 0 || turn.role === "user"), shareAccountContext,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, company: instrumentId && section ? { instrumentId, section } : undefined }),
         signal: abort.signal,
       });
       if (!response.ok || !response.body) {
@@ -104,6 +110,7 @@ export function useAssistant(instrumentId?: string, section?: string) {
               }
               case "sources": return { ...t, sources: [...t.sources, ...event.items] };
               case "card": return { ...t, cards: [...t.cards, event.card] };
+              case "activity": return { ...t, activity: event, privateReply: true };
               case "error": return { ...t, error: { code: event.code, message: event.message } };
               case "done": return { ...t, done: true };
             }

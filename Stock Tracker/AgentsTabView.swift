@@ -654,7 +654,7 @@ struct AgentDetailView: View {
 
     private var timeline: some View {
         let saved = trading.runs(for: agentID)
-        let runs = accountRuns ?? saved.prefix(localRunLimit).map(AgentActivityRow.init)
+        let runs = accountRuns ?? saved.prefix(localRunLimit).map { AgentActivityRow(run: $0) }
         return TradingSection(title: "Agent activity timeline") {
             if runsLoading && runs.isEmpty {
                 ProgressView("Loading activity…")
@@ -713,6 +713,59 @@ struct AgentDetailView: View {
 
     @ViewBuilder private func expandedActivity(_ id: UUID) -> some View {
         if let detail = runDetail, detail.run.id == id {
+            AgentRunEvidence(detail: detail)
+        } else if let detailProblem {
+            Text(detailProblem).font(.footnote).foregroundStyle(theme.warningColor)
+            Button("Retry run details") { detailRetry += 1 }
+        } else {
+            ProgressView("Loading decision evidence…")
+        }
+    }
+
+    private func runGlyph(_ run: AgentActivityRow) -> String {
+        if run.status == .failed { return "exclamationmark.triangle" }
+        if run.status == .skipped { return "forward.end" }
+        return "checkmark.circle"
+    }
+
+    private func actionRow(_ title: String, _ systemImage: String, id: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Label(title, systemImage: systemImage).font(.subheadline)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(theme.secondaryText)
+            }
+            .foregroundStyle(destructive ? theme.negativeColor : theme.primaryText)
+            .padding(.horizontal, DS.Space.s)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .accessibilityIdentifier("agent.action.\(id)")
+    }
+
+    private func runBacktest(_ agent: TradingAgent) {
+        isBacktesting = true
+        let draft = AgentDraft(name: agent.name, mode: agent.mode, spec: agent.spec,
+                               budget: trading.ledger(agent.ledgerID)?.startingCash ?? agent.budget,
+                               maxPositionPct: agent.riskPolicy.maxPositionPct, riskPolicy: agent.riskPolicy)
+        Task {
+            do {
+                backtest = BacktestBox(result: try await trading.backtest(draft, years: 2, agentID: agent.id), title: agent.name,
+                                       currency: draft.currency, testedRuleLines: draft.spec.ruleLines)
+            } catch {
+                problem = "The backtest couldn't run: \(error.localizedDescription)"
+            }
+            isBacktesting = false
+        }
+    }
+}
+
+struct AgentRunEvidence: View {
+    let detail: AgentActivityDetail
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             Text("Run ID \(detail.run.id.uuidString.lowercased())").font(.caption).foregroundStyle(theme.secondaryText)
                 .textSelection(.enabled)
             ForEach(detail.run.steps) { stepRow($0) }
@@ -753,18 +806,7 @@ struct AgentDetailView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("agent.timeline.order")
             }
-        } else if let detailProblem {
-            Text(detailProblem).font(.footnote).foregroundStyle(theme.warningColor)
-            Button("Retry run details") { detailRetry += 1 }
-        } else {
-            ProgressView("Loading decision evidence…")
         }
-    }
-
-    private func runGlyph(_ run: AgentActivityRow) -> String {
-        if run.status == .failed { return "exclamationmark.triangle" }
-        if run.status == .skipped { return "forward.end" }
-        return "checkmark.circle"
     }
 
     private func stepRow(_ step: RunStep) -> some View {
@@ -793,36 +835,6 @@ struct AgentDetailView: View {
         .accessibilityIdentifier("agent.step.\(step.kind.rawValue).\(step.outcome.rawValue)")
     }
 
-    private func actionRow(_ title: String, _ systemImage: String, id: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Label(title, systemImage: systemImage).font(.subheadline)
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(theme.secondaryText)
-            }
-            .foregroundStyle(destructive ? theme.negativeColor : theme.primaryText)
-            .padding(.horizontal, DS.Space.s)
-            .frame(minHeight: 48)
-            .contentShape(Rectangle())
-        }
-        .accessibilityIdentifier("agent.action.\(id)")
-    }
-
-    private func runBacktest(_ agent: TradingAgent) {
-        isBacktesting = true
-        let draft = AgentDraft(name: agent.name, mode: agent.mode, spec: agent.spec,
-                               budget: trading.ledger(agent.ledgerID)?.startingCash ?? agent.budget,
-                               maxPositionPct: agent.riskPolicy.maxPositionPct, riskPolicy: agent.riskPolicy)
-        Task {
-            do {
-                backtest = BacktestBox(result: try await trading.backtest(draft, years: 2, agentID: agent.id), title: agent.name,
-                                       currency: draft.currency, testedRuleLines: draft.spec.ruleLines)
-            } catch {
-                problem = "The backtest couldn't run: \(error.localizedDescription)"
-            }
-            isBacktesting = false
-        }
-    }
 }
 
 // MARK: - Proposal review
