@@ -82,10 +82,20 @@ final class BrokerPaperOrderTests: XCTestCase {
         let emailField = app.textFields["auth.email"]
         tap(emailField, in: app)
         emailField.typeText(email)
-        let passwordField = app.secureTextFields["auth.password"]
+        let passwordField = app.descendants(matching: .any)["auth.password"].firstMatch
         XCTAssertTrue(passwordField.waitForExistence(timeout: 5))
-        passwordField.tap()
-        passwordField.typeText(password)
+        for _ in 0..<3 {
+            passwordField.tap()
+            for label in ["Choose My Own Password", "Other Options…"] where app.buttons[label].waitForExistence(timeout: 1) {
+                app.buttons[label].tap()
+            }
+            let current = (passwordField.value as? String) ?? ""
+            if !current.isEmpty && current.allSatisfy({ $0 == "•" }) {
+                passwordField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+            }
+            passwordField.typeText(password)
+            if (passwordField.value as? String)?.count == password.count { break }
+        }
         XCTAssertEqual((passwordField.value as? String)?.count, password.count)
         passwordField.typeText("\n")
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
