@@ -13,7 +13,7 @@ type ManualCapitalRecord = {
   amount: string; date: string; source: string; dueOn?: string; resolutionSource?: string;
 };
 
-type ManualHolding = {
+export type ManualHolding = {
   id: string; name: string; assetClass: string; currency: string; units?: string; ownership?: string;
   shareClass?: string; lockupUntil?: string; commitment?: string; paid: string; returned: string;
   pendingCalls: string; exitedOn?: string;
@@ -67,14 +67,16 @@ function OwnershipExcerptContent({ owner, evidence }: { owner: string; evidence:
   </div>;
 }
 
-function ManualHoldingCard({ owner, holding, now }: { owner: string; holding: ManualHolding; now: number }) {
+export function ManualHoldingCard({ owner, holding, now, controls, published = true }: {
+  owner: string; holding: ManualHolding; now: number; controls?: React.ReactNode; published?: boolean;
+}) {
   const { currency, valuation } = holding;
   const money = (value?: string) => value === undefined ? "Unavailable" : currency + " " + groupedDecimal(value);
   const values = [
     ["Remaining units", holding.units === undefined ? "Undisclosed" : groupedDecimal(holding.units)],
     ["Carrying value", money(valuation?.value)], ["Committed", money(holding.commitment)],
-    ["Capital deployed", money(holding.paid)], ["Returned capital and proceeds", money(holding.returned)],
-    ["Pending calls at publication", money(holding.pendingCalls)],
+    ...(published ? [["Capital deployed", money(holding.paid)], ["Returned capital and proceeds", money(holding.returned)],
+      ["Pending calls at publication", money(holding.pendingCalls)]] : []),
   ];
   const fund = ["Venture fund", "Private equity", "Syndicate or SPV"].includes(holding.assetClass);
   const performance = [
@@ -105,14 +107,15 @@ function ManualHoldingCard({ owner, holding, now }: { owner: string; holding: Ma
       </>}
     </div>
     {holding.ownershipEvidence && <OwnershipExcerpt key={holding.ownershipEvidence.excerptID} owner={owner} evidence={holding.ownershipEvidence} />}
-    <details className="border-t border-border px-4 py-3 text-sm">
+    {controls}
+    {published && <details className="border-t border-border px-4 py-3 text-sm">
       <summary className="cursor-pointer font-medium">Performance at publication</summary>
       <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
         {performance.map(([label, value]) => <div key={label}>
           <dt className="text-xs text-text-3">{label}</dt><dd className="font-medium tabular-nums">{value}</dd>
         </div>)}
       </dl>
-    </details>
+    </details>}
   </Card>;
 }
 

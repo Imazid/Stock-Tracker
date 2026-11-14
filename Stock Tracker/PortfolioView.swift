@@ -338,7 +338,7 @@ struct PortfolioView: View {
     }
 
     private func refreshPrivatePositions() async {
-        if let owner = cloudAuth.userId { await privateMarkets.refreshProviderHoldings(for: owner) }
+        if let owner = cloudAuth.userId { await privateMarkets.refreshInvestmentHoldings(for: owner) }
     }
 
     private var deleteTitle: String {

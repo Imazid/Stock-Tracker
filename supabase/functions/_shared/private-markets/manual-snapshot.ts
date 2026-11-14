@@ -40,7 +40,7 @@ function validCapitalActivity(value: unknown): boolean {
 type OwnershipEvidence = { excerptID: string; reviewedOn: string };
 type SnapshotHolding = Record<string, unknown> & { ownershipEvidence?: OwnershipEvidence };
 
-export function validManualSnapshot(value: unknown): value is SnapshotHolding[] {
+export function validManualSnapshot(value: unknown, latestValuation = Date.now()): value is SnapshotHolding[] {
   if (!Array.isArray(value) || !value.length || value.length > 150) return false;
   const seen = new Set<string>();
   for (const item of value) {
@@ -65,7 +65,7 @@ export function validManualSnapshot(value: unknown): value is SnapshotHolding[] 
     if (item.valuation !== undefined) {
       const mark = item.valuation;
       if (!fields(mark, ["value", "date", "source", "method"]) || !reading(mark.value) || !date(mark.date) ||
-        !text(mark.source, 400) || !text(mark.method, 400) || Date.parse(mark.date) > Date.now()) return false;
+        !text(mark.source, 400) || !text(mark.method, 400) || Date.parse(mark.date) > latestValuation) return false;
     }
     seen.add(item.id.toLowerCase());
   }

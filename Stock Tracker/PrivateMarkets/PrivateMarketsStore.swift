@@ -388,6 +388,44 @@ enum PrivateMarketsAPI {
         let holdings: [ProviderPrivateHolding]
         let nextOffset: Int?
     }
+    struct DocumentExcerpt: Decodable { let excerpt: String }
+    struct AccountHoldings: Decodable { let holdings: [AccountHolding] }
+    struct AccountHolding: Decodable, Identifiable {
+        struct Mark: Decodable {
+            let value: String
+            let date: Date
+            let source: String
+            let method: String
+        }
+        struct OwnershipEvidence: Decodable { let excerptID: UUID; let reviewedOn: Date }
+
+        let id: UUID
+        let name: String
+        let assetClass: PrivateAssetClass
+        let currency: String
+        let units: String?
+        let ownership: String?
+        let commitment: String?
+        let shareClass: String?
+        let lockupUntil: Date?
+        let valuation: Mark?
+        let ownershipEvidence: OwnershipEvidence?
+
+        var holding: PrivateHolding {
+            let locale = Locale(identifier: "en_US_POSIX")
+            func decimal(_ value: String?) -> Decimal? { value.flatMap { Decimal(string: $0, locale: locale) } }
+            let mark = valuation.flatMap { value in
+                decimal(value.value).map {
+                    PrivateValuation(value: $0, date: CashIncomeDay.calendar.startOfDay(for: value.date),
+                                     source: value.source, method: value.method)
+                }
+            }
+            return PrivateHolding(id: id, name: name, assetClass: assetClass, currency: currency,
+                                  commitment: decimal(commitment), units: decimal(units), ownershipPercent: decimal(ownership),
+                                  shareClass: shareClass ?? "", lockupUntil: lockupUntil, valuations: mark.map { [$0] } ?? [],
+                                  ownershipEvidenceID: ownershipEvidence?.excerptID, ownershipReviewedOn: ownershipEvidence?.reviewedOn)
+        }
+    }
     struct Handoff: Decodable { let commitmentId: UUID; let handoffUrl: URL }
     struct HandoffReadiness: Decodable { let ready: Bool }
     struct HandoffReview: Decodable {
@@ -455,6 +493,9 @@ final class PrivateMarketsStore: ObservableObject {
     @Published private(set) var state = State()
     @Published private(set) var storageError: String?
     @Published private(set) var providerHoldings: [ProviderPrivateHolding] = []
+    @Published private(set) var accountHoldings: [PrivateMarketsAPI.AccountHolding] = []
+    @Published private(set) var accountHoldingsError: String?
+    private var accountHoldingsTask: Task<Void, Never>?
     @Published private(set) var providerError: String?
     @Published private(set) var loadingProviderHoldings = false
     @Published private(set) var monitorAlerts: [PrivateMarketAlert] = []
@@ -484,7 +525,7 @@ final class PrivateMarketsStore: ObservableObject {
 
     var allocationHoldings: [PrivateHolding] {
         PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.filter { !$0.hasExited }.map(\.holding),
-                                       snapshots: angelListSnapshots)
+                                       snapshots: angelListSnapshots) + accountHoldings.map(\.holding)
     }
 
     func linkedFundValuation(for holding: PrivateHolding) -> (statement: PrivateFundSnapshot, holding: PrivateHolding)? {
@@ -503,6 +544,10 @@ final class PrivateMarketsStore: ObservableObject {
         state = State()
         storageError = nil
         providerHoldings = []
+        accountHoldings = []
+        accountHoldingsError = nil
+        accountHoldingsTask?.cancel()
+        accountHoldingsTask = nil
         providerError = nil
         loadingProviderHoldings = false
         monitorSettingsTask?.cancel()
@@ -525,6 +570,35 @@ final class PrivateMarketsStore: ObservableObject {
         } catch {
             storageError = "Private records could not be opened. Try again after unlocking your device."
         }
+    }
+
+    func refreshAccountHoldings(for userID: UUID) async {
+        guard scope == userID, SecureBackend.isConfigured else { return }
+        if let accountHoldingsTask {
+            await accountHoldingsTask.value
+            return
+        }
+        let task = Task {
+            defer { if !Task.isCancelled, scope == userID { accountHoldingsTask = nil } }
+            do {
+                let response: PrivateMarketsAPI.AccountHoldings = try await PrivateMarketsAPI.request("account_holdings", expectedUserID: userID)
+                try Task.checkCancellation()
+                guard scope == userID else { return }
+                accountHoldings = response.holdings
+                accountHoldingsError = nil
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled, scope == userID { accountHoldingsError = error.localizedDescription }
+            }
+        }
+        accountHoldingsTask = task
+        await task.value
+    }
+
+    func refreshInvestmentHoldings(for userID: UUID) async {
+        async let provider: Void = refreshProviderHoldings(for: userID)
+        async let account: Void = refreshAccountHoldings(for: userID)
+        _ = await (provider, account)
     }
 
     func refreshProviderHoldings(for userID: UUID) async {

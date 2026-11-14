@@ -1,3 +1,4 @@
+import { accountHolding } from "../_shared/private-markets/account-holdings.ts";
 import { validManualSnapshot } from "../_shared/private-markets/manual-snapshot.ts";
 import { exportOffset, exportSection, privateExportPage } from "../_shared/private-markets/export.ts";
 import { AI_LIMITS, type AiProxyDeps } from "../_shared/ai/proxy.ts";
@@ -23,6 +24,7 @@ const activeSessionActions = new Set([
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
+  "account_holdings", "save_account_holding", "remove_account_holding",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -514,7 +516,7 @@ Deno.serve(async (req) => {
         const page = await privateExportPage(admin, userId, section, offset, async (kind, id, sealed) => {
           const plaintext = await open(await keys(), sealed, context(kind, userId, id));
           return kind === "report" ? publicReport(JSON.parse(plaintext) as StoredReport)
-            : kind === "manual_portfolio" ? JSON.parse(plaintext) : plaintext;
+            : kind === "manual_portfolio" || kind === "account_holdings" ? JSON.parse(plaintext) : plaintext;
         });
         return jsonResponse(200, page);
       }
@@ -707,6 +709,61 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.rpc("private_portfolio_allocation", { p_user: userId });
         if (error) throw error;
         return jsonResponse(200, { buckets: data });
+      }
+      case "account_holdings":
+      case "save_account_holding":
+      case "remove_account_holding": {
+        const reading = body.action === "account_holdings";
+        const saving = body.action === "save_account_holding";
+        const expected = body.expected_revision;
+        const allowed = reading ? ["action"] : ["action", "expected_revision", saving ? "holding" : "id"];
+        if (Object.keys(body).some((key) => !allowed.includes(key)) ||
+          (!reading && expected !== null && (typeof expected !== "string" || !uuid.test(expected)))) {
+          return errorResponse(400, "INVALID_HOLDING", "Review the holding and try again.");
+        }
+        const { data: current, error } = await admin.from("private_account_holdings")
+          .select("revision,updated_at,sealed").eq("user_id", userId).maybeSingle();
+        if (error) throw error;
+        const conflict = () => errorResponse(409, "HOLDINGS_CHANGED", "Your account holdings changed. Refresh and review before saving.");
+        if (!reading && (current?.revision ?? null) !== expected) return conflict();
+        const holdings: Record<string, unknown>[] = current?.sealed
+          ? JSON.parse(await open(await keys(), current.sealed, context("account_holdings", userId, current.revision))) : [];
+        if (reading) return jsonResponse(200, { revision: current?.revision ?? null, updated_at: current?.updated_at ?? null, holdings });
+        if (saving) {
+          const holding = accountHolding(body.holding, new Date());
+          if (!holding) return errorResponse(400, "INVALID_HOLDING", "Enter a valid name, amount and valuation source.");
+          const id = String((body.holding as Record<string, unknown>).id).toLowerCase();
+          const evidence = holding.ownershipEvidence;
+          if (evidence) {
+            const verified = await admin.from("deal_documents").select("id").eq("user_id", userId)
+              .eq("id", String(evidence.excerptID).toLowerCase()).maybeSingle();
+            if (verified.error) throw verified.error;
+            if (!verified.data) return errorResponse(404, "NOT_FOUND", "The ownership excerpt is unavailable.");
+            evidence.excerptID = verified.data.id;
+          }
+          const existing = holdings.findIndex((item) => item.id === id);
+          const saved = { ...holding, id };
+          if (existing < 0) {
+            if (holdings.length >= 100) return errorResponse(422, "HOLDING_LIMIT", "This account already has 100 web holdings.");
+            holdings.push(saved);
+          } else {
+            holdings[existing] = saved;
+          }
+        } else {
+          const index = typeof body.id === "string" && uuid.test(body.id) ? holdings.findIndex((item) => item.id === body.id) : -1;
+          if (index < 0) return errorResponse(404, "NOT_FOUND", "Holding unavailable.");
+          holdings.splice(index, 1);
+        }
+        const payload = JSON.stringify(holdings);
+        if (utf8(payload).byteLength > 110_000) return errorResponse(413, "PORTFOLIO_TOO_LARGE", "Your account holdings are too large to save.");
+        const revision = crypto.randomUUID();
+        const sealed = holdings.length ? await seal(await keys(), payload, context("account_holdings", userId, revision)) : null;
+        const result = await admin.rpc("write_private_account_holdings", {
+          p_user: userId, p_expected: expected, p_revision: revision, p_sealed: sealed,
+        }).maybeSingle();
+        if (result.error) throw result.error;
+        if (!result.data) return conflict();
+        return jsonResponse(200, { ...result.data, holdings });
       }
       case "manual_portfolio": {
         if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_REQUEST", "Send only the portfolio action.");

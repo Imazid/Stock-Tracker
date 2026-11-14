@@ -15,7 +15,7 @@ const services = {
 const privateMarketActions = new Set([
   "catalog", "discover", "research", "research_status", "research_runs", "reports", "report", "delete_report", "research_refresh",
   "confirmed_holdings", "capital_activity", "valuation_history", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
-  "manual_portfolio", "remove_manual_portfolio",
+  "manual_portfolio", "remove_manual_portfolio", "account_holdings", "save_account_holding", "remove_account_holding",
   "profile", "save_profile", "issue_provider_link", "disconnect_provider", "handoff_check", "handoff",
   "handoff_review", "handoff_resume_check", "handoff_resume",
   "documents", "document", "save_document", "delete_document", "research_capabilities",

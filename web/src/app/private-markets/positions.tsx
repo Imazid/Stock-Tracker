@@ -8,6 +8,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { CompareRounds, SourceLink } from "./catalog";
+import { AccountHoldingsPanel } from "./account-holdings";
 import { ManualPortfolioPanel } from "./manual-portfolio";
 import { InvestorProfileCard } from "./investor-profile";
 import {
@@ -214,6 +215,7 @@ export function Positions({ owner }: { owner: string }) {
       {holdings.hasNextPage && <Button size="sm" disabled={holdings.isFetchingNextPage} onClick={() => void holdings.fetchNextPage()}>
         {holdings.isFetchingNextPage ? "Loading…" : "Load more holdings"}
       </Button>}
+      <AccountHoldingsPanel owner={owner} />
       <ManualPortfolioPanel owner={owner} />
     </section>
     <section className="min-w-0 space-y-3">

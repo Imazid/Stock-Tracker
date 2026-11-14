@@ -338,7 +338,7 @@ private struct CopilotScreen: View {
             }
             .privatePanel()
             .task(id: cloudAuth.userId) {
-                if let owner = cloudAuth.userId { await privateMarkets.refreshProviderHoldings(for: owner) }
+                if let owner = cloudAuth.userId { await privateMarkets.refreshInvestmentHoldings(for: owner) }
             }
 
         case .privateScenario(_, let question):

@@ -60,6 +60,28 @@ struct PrivateHoldingsView: View {
                 Button { add = true } label: { Label("Add private holding", systemImage: "plus") }
                     .accessibilityIdentifier("private.holding.add")
             }
+            if !store.accountHoldings.isEmpty || store.accountHoldingsError != nil {
+                Section("Holdings added on web") {
+                    ForEach(store.accountHoldings) { record in
+                        NavigationLink {
+                            AccountPrivateHoldingDetail(record: record)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(record.name).font(.headline)
+                                Text(record.assetClass.rawValue + " · Self-reported")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                if let mark = record.holding.valuation() {
+                                    Text(PrivateInput.money(mark.value, currency: record.currency) +
+                                         (mark.isStale() ? " · Stale valuation" : " · Dated valuation"))
+                                        .font(.subheadline.monospacedDigit())
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("private.holding.accountRow")
+                    }
+                    if let error = store.accountHoldingsError { Text(error).foregroundStyle(.secondary) }
+                }
+            }
             if !store.providerHoldings.isEmpty || store.providerError != nil || store.loadingProviderHoldings {
                 Section("Provider-confirmed ownership") {
                     ForEach(store.providerHoldings) { position in
@@ -132,7 +154,68 @@ struct PrivateHoldingsView: View {
     }
 
     private func refresh() async {
-        if let owner = auth.userId { await store.refreshProviderHoldings(for: owner) }
+        if let owner = auth.userId { await store.refreshInvestmentHoldings(for: owner) }
+    }
+}
+
+private struct AccountPrivateHoldingDetail: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    let record: PrivateMarketsAPI.AccountHolding
+    @State private var opened: (owner: UUID, excerptID: UUID, text: String)?
+    @State private var excerptError: String?
+
+    var body: some View {
+        if let owner = auth.userId, let current = store.accountHoldings.first(where: { $0.id == record.id }) {
+            List {
+                Section("Ownership") {
+                    Text(current.assetClass.rawValue + " · Self-reported")
+                    LabeledContent("Currency", value: current.currency)
+                    if let units = current.units { LabeledContent("Shares or units", value: units) }
+                    if let ownership = current.ownership { LabeledContent("Ownership", value: ownership + "%") }
+                    if let commitment = current.commitment { LabeledContent("Committed capital", value: current.currency + " " + commitment) }
+                    if let shareClass = current.shareClass { LabeledContent("Share class", value: shareClass) }
+                    if let lockup = current.lockupUntil {
+                        LabeledContent("Lock-up ends", value: PrivateDeal.Round.Listing.formattedDay(CashIncomeDay.string(lockup)))
+                    }
+                    Text("Edit this holding on the web.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if let mark = current.valuation {
+                    Section("Recorded valuation") {
+                        LabeledContent("Carrying value", value: current.currency + " " + mark.value)
+                        LabeledContent("Valuation date", value: PrivateDeal.Round.Listing.formattedDay(CashIncomeDay.string(mark.date)))
+                        LabeledContent("Source", value: mark.source)
+                        LabeledContent("Method", value: mark.method)
+                    }
+                }
+                if let evidence = current.ownershipEvidence {
+                    let excerpt = opened?.owner == owner && opened?.excerptID == evidence.excerptID ? opened?.text : nil
+                    Section("Reviewed ownership excerpt") {
+                        Button(excerpt == nil ? "Open ownership excerpt" : "Close ownership excerpt") {
+                            if excerpt != nil { opened = nil; return }
+                            excerptError = nil
+                            Task {
+                                do {
+                                    let response: PrivateMarketsAPI.DocumentExcerpt = try await PrivateMarketsAPI.request(
+                                        "document", ["id": evidence.excerptID.uuidString], expectedUserID: owner)
+                                    if auth.userId == owner { opened = (owner, evidence.excerptID, response.excerpt) }
+                                } catch {
+                                    if auth.userId == owner { excerptError = error.localizedDescription }
+                                }
+                            }
+                        }
+                        if let excerpt { Text(excerpt) }
+                        if let excerptError { Text(excerptError).foregroundStyle(.secondary) }
+                    }
+                    .id(evidence.excerptID)
+                }
+            }
+            .navigationTitle(current.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: current.ownershipEvidence?.excerptID) { _, _ in opened = nil; excerptError = nil }
+        } else {
+            ContentUnavailableView("Holding unavailable", systemImage: "briefcase")
+        }
     }
 }
 
@@ -544,6 +627,10 @@ struct UnifiedPrivateAllocation: View {
             if snapshot.privateExcluded > 0 {
                 Text("Private positions excluded for a missing valuation or verified FX rate: \(snapshot.privateExcluded)")
                     .font(.footnote).foregroundStyle(.secondary)
+            }
+            if store.accountHoldingsError != nil {
+                Text("Holdings added on web could not be refreshed. Showing the last available values.")
+                    .font(.footnote).foregroundStyle(.orange)
             }
             if store.unavailableLinkedProviderCount > 0 {
                 Text("Some linked provider positions are unavailable and excluded from allocation.")

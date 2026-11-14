@@ -494,6 +494,29 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testWebHoldingAppearsInPrivatePortfolio() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_HOLDINGS_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let row = app.buttons["private.holding.accountRow"].firstMatch
+        for _ in 0..<4 where !row.isHittable {
+            _ = row.waitForExistence(timeout: 4)
+            if !row.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(row.isHittable, app.debugDescription)
+        XCTAssertTrue(row.label.contains("Browser QA venture fund"))
+        row.tap()
+        XCTAssertTrue(app.staticTexts["AUD 1250.4567"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Fund-reported NAV"].exists)
+        XCTAssertTrue(app.staticTexts["0.12345678"].exists)
+        let evidence = app.buttons["Open ownership excerpt"]
+        for _ in 0..<3 where !evidence.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(evidence.isHittable)
+        evidence.tap()
+        XCTAssertTrue(app.staticTexts["Owner-reviewed private fund excerpt for the cross-platform test."].waitForExistence(timeout: 12))
+    }
+
+    @MainActor
     func testManualHoldingCanPublishToWeb() throws {
         try launchWithLocalSession("PRIVATE_MANUAL_PUBLICATION_TEST_SESSION")
         openPrivateMarkets()
