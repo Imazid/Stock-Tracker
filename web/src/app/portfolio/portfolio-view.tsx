@@ -10,10 +10,12 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { getJSON } from "@/lib/api";
 import { money, plainNumber } from "@/lib/format";
-import { rowToInstrument, toView } from "@/lib/instrument-view";
+import { toView } from "@/lib/instrument-view";
 import type { QuoteResponse } from "@/lib/market-types";
 import type { HoldingBrokerAccount } from "@/lib/portfolio-transfers";
 import { portfolioMovement } from "@/lib/portfolio-movement";
+import { portfolioInstrument } from "@/lib/portfolio-exposure";
+import { ExposureCard } from "./exposure-card";
 import { MovementCard } from "./movement-card";
 import { LotReport } from "./lot-report";
 import { IncomeLedger } from "./income-ledger";
@@ -48,12 +50,12 @@ async function readPortfolio(userId: string) {
   ]);
   if (holdings.error || snapshots.error) throw new Error("Couldn’t load your synced portfolio.");
   return {
-    holdings: (holdings.data as HoldingRow[]).slice(0, 200).map((row) => ({
-      ...row,
-      instrument: toView(rowToInstrument({
+    holdings: (holdings.data as HoldingRow[]).slice(0, 200).map((row) => {
+      const listing = portfolioInstrument({
         symbol: row.asset_symbol, name: row.asset_name, kind: row.asset_kind, exchange: row.asset_exchange,
-      })),
-    })),
+      });
+      return { ...row, instrument: listing ? toView(listing) : null };
+    }),
     truncated: holdings.data.length > 200,
     snapshots: snapshots.data as Snapshot[],
   };
@@ -69,7 +71,8 @@ export function PortfolioView() {
     staleTime: 30_000,
   });
   const holdings = portfolio.data?.holdings ?? [];
-  const ids = [...new Set(holdings.map((holding) => holding.instrument.id))];
+  const pricedListings = holdings.flatMap((holding) => holding.instrument ? [{ ...holding, instrument: holding.instrument }] : []);
+  const ids = [...new Set(pricedListings.map((holding) => holding.instrument.id))];
   const prices = useQueries({
     queries: ids.map((id) => ({
       queryKey: ["quote", id],
@@ -81,7 +84,7 @@ export function PortfolioView() {
   });
   const quotes = new Map(ids.map((id, index) => [id, prices[index]]));
   const snapshots = portfolio.data?.snapshots ?? [];
-  const movement = portfolioMovement(holdings, (id) => quotes.get(id)?.data?.quote);
+  const movement = portfolioMovement(pricedListings, (id) => quotes.get(id)?.data?.quote);
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -100,6 +103,8 @@ export function PortfolioView() {
       ) : (
         <>
           {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={prices.some((price) => price.isPending)} />}
+          {holdings.length > 0 && <ExposureCard key={userId} holdings={holdings} quoteFor={(id) => quotes.get(id)?.data}
+            loading={prices.some((price) => price.isPending)} truncated={portfolio.data?.truncated ?? false} />}
           {userId && <>
             <PerformanceLedger key={userId} userId={userId} />
             <IncomeLedger key={userId + "-income"} userId={userId} />
@@ -111,15 +116,16 @@ export function PortfolioView() {
             {holdings.length ? (
               <ul className="divide-y divide-border border-t border-border">
                 {holdings.map((holding) => {
-                  const price = quotes.get(holding.instrument.id);
+                  const instrument = holding.instrument;
+                  const price = instrument ? quotes.get(instrument.id) : undefined;
                   const quote = price?.data?.quote;
-                  const value = quote && quote.instrumentId === holding.instrument.id && quote.last > 0 ? quote.last * holding.shares : undefined;
+                  const value = quote && quote.instrumentId === instrument?.id && quote.last > 0 ? quote.last * holding.shares : undefined;
                   return (
                     <li key={holding.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[1fr_1fr_auto] sm:items-start">
                       <div className="min-w-0">
-                        <Link href={`/markets/${encodeURIComponent(holding.instrument.id)}`} className="font-semibold text-text hover:underline">
-                          {holding.instrument.symbol} <span className="text-xs font-normal text-text-3">{holding.instrument.venueShort}</span>
-                        </Link>
+                        {instrument ? <Link href={`/markets/${encodeURIComponent(instrument.id)}`} className="font-semibold text-text hover:underline">
+                          {instrument.symbol} <span className="text-xs font-normal text-text-3">{instrument.venueShort}</span>
+                        </Link> : <p className="font-semibold">{holding.asset_symbol} <span className="text-xs font-normal text-text-3">{holding.asset_exchange}</span></p>}
                         <p className="truncate text-xs text-text-2">{holding.asset_name}</p>
                         {holding.broker_account && <p className="break-words text-xs text-text-3">
                           {holding.broker_account.label}
@@ -127,7 +133,7 @@ export function PortfolioView() {
                         </p>}
                       </div>
                       <div className="tabular text-sm">
-                        <p>{plainNumber(holding.shares, 8)} {holding.asset_kind === "Crypto" ? holding.instrument.symbol : "shares"}</p>
+                        <p>{plainNumber(holding.shares, 8)} {holding.asset_kind === "Crypto" ? holding.asset_symbol : "shares"}</p>
                         <p className="text-xs text-text-3">Average cost {holding.avg_cost > 0 ? money(holding.avg_cost, "USD") : "unavailable"}</p>
                       </div>
                       <div className="min-w-0 sm:text-right">
@@ -139,7 +145,7 @@ export function PortfolioView() {
                             </div>
                             <div className="mt-1 flex sm:justify-end"><SourceLine {...quote} /></div>
                           </>
-                        ) : <p className="text-sm text-text-3">{price?.isPending ? "Loading quote" : "Quote unavailable"}</p>}
+                        ) : <p className="text-sm text-text-3">{!instrument ? "Listing unavailable" : price?.isPending ? "Loading quote" : "Quote unavailable"}</p>}
                       </div>
                     </li>
                   );
