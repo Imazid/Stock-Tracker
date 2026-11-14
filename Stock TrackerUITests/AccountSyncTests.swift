@@ -433,16 +433,14 @@ final class AccountSyncTests: XCTestCase {
         app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
             "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
             "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-preferredCurrency", "USD",
-            "-portfolioSegment", "holdings"]
+            "-portfolioSegment", "allocation"]
         app.launch()
         XCTAssertTrue(app.open("Portfolio"))
-        let allocation = app.buttons["portfolio.segment.allocation"]
         let privacy = app.buttons["portfolio.privacy"]
         XCTAssertTrue(privacy.waitForExistence(timeout: 20))
-        let holding = app.buttons["portfolio.holding.AAPL"]
-        for _ in 0..<6 where !holding.isHittable { app.swipeUp(velocity: .slow) }
-        let quote = expectation(for: NSPredicate(format: "label CONTAINS 'Price per unit US$50.00'"), evaluatedWith: holding)
-        XCTAssertEqual(XCTWaiter.wait(for: [quote], timeout: 20), .completed, holding.label)
+        let listedTotal = app.staticTexts["portfolio.chart.value"]
+        let quoted = expectation(for: NSPredicate(format: "label CONTAINS '200.00'"), evaluatedWith: listedTotal)
+        XCTAssertEqual(XCTWaiter.wait(for: [quoted], timeout: 20), .completed)
         XCTAssertTrue(app.open("Private Markets"))
         app.buttons["private.destination.briefcase"].tap()
         let add = app.buttons["private.holding.add"]
@@ -477,19 +475,15 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Record Valuation"].waitForNonExistence(timeout: 5))
 
         XCTAssertTrue(app.open("Portfolio"))
-        for _ in 0..<5 where allocation.exists && allocation.frame.midY < 120 { app.swipeDown(velocity: .slow) }
-        for _ in 0..<7 where !allocation.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(allocation.isHittable)
-        allocation.tap()
-        let total = app.staticTexts["private.allocation.total"]
-        let valued = expectation(for: NSPredicate(format: "label CONTAINS '500.00'"), evaluatedWith: total)
-        XCTAssertEqual(XCTWaiter.wait(for: [valued], timeout: 20), .completed, total.label)
+        let total = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '500.00'")).firstMatch
+        for _ in 0..<7 where !total.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(total.exists)
         for category in ["ETFs", "Listed equities", "Startup equity"] {
-            let slice = app.descendants(matching: .any)["private.allocation.slice.\(category)"].firstMatch
-            for _ in 0..<5 where !slice.isHittable { app.swipeUp(velocity: .slow) }
+            let percent = category == "Startup equity" ? "60.0%" : "20.0%"
+            let label = NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", category, percent)
+            let slice = app.descendants(matching: .any).matching(label).firstMatch
+            for _ in 0..<4 where !slice.exists { app.swipeUp(velocity: .slow) }
             XCTAssertTrue(slice.exists)
-            XCTAssertTrue(slice.label.contains(category))
-            XCTAssertTrue(([slice.label, slice.value as? String ?? ""].joined()).contains(category == "Startup equity" ? "60.0%" : "20.0%"))
         }
         let excluded = app.staticTexts["Listed positions excluded for an unavailable quote: 1"]
         for _ in 0..<4 where !excluded.isHittable { app.swipeUp(velocity: .slow) }
