@@ -2,8 +2,7 @@ import { jsonError, rateLimited } from "@/server/http/respond";
 import { BacktestRequestError, decodeInputs, runBacktest } from "@/server/strategy/backtest";
 
 // POST { spec, config?, window?, benchmark?, asOf? } → a full backtest on real history.
-// Stateless: results aren't stored server-side yet (there is no strategies table in the
-// committed schema), so the response echoes every input needed to reproduce it.
+// Running a simulation is separate from saving the completed report to an account.
 export async function POST(request: Request) {
   const limited = rateLimited(request, 20);
   if (limited) return limited;

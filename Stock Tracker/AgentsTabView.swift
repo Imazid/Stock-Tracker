@@ -16,7 +16,9 @@ import TradingCore
 struct AgentsTabView: View {
     @EnvironmentObject private var trading: TradingStore
     @EnvironmentObject private var router: TradingRouter
+    @EnvironmentObject private var cloudAuth: SupabaseAuthManager
     @Environment(\.theme) private var theme
+    @State private var showSavedBacktests = false
 
     private var attention: [TradingAgent] { trading.agents.filter(\.needsAttention) }
     private var running: [TradingAgent] { trading.agents.filter { $0.status == .active } }
@@ -28,6 +30,12 @@ struct AgentsTabView: View {
                 LazyVStack(alignment: .leading, spacing: DS.Space.l) {
                     TradingHomeBadge()
                     copilotEntry
+                    if cloudAuth.authState == .signedIn, cloudAuth.userId != nil {
+                        Button("Saved backtests", systemImage: "clock.arrow.circlepath") { showSavedBacktests = true }
+                            .font(.subheadline.weight(.medium))
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("agents.savedBacktests")
+                    }
                     PausedAllBanner { router.showPauseAll = true }
 
                     if !trading.pendingProposals.isEmpty {
@@ -84,6 +92,9 @@ struct AgentsTabView: View {
             .navigationDestination(for: UUID.self) { AgentDetailView(agentID: $0) }
         }
         .accessibilityIdentifier("agents.screen")
+        .sheet(isPresented: $showSavedBacktests) {
+            if let owner = cloudAuth.userId { SavedBacktestsView(owner: owner).id(owner) }
+        }
     }
 
     private var copilotEntry: some View {
@@ -293,8 +304,7 @@ struct AgentDetailView: View {
         .sheet(isPresented: $showLimits) { AgentLimitsEditor(agentID: agentID) }
         .sheet(item: $backtest) { box in
             NavigationStack {
-                BacktestReportView(result: box.result, title: box.title,
-                                   currency: box.currency, testedRuleLines: box.testedRuleLines)
+                BacktestReportView(box: box)
             }
         }
         .sheet(item: $openedProposal) { ProposalReviewSheet(proposalID: $0.id) }
@@ -750,8 +760,7 @@ struct AgentDetailView: View {
                                maxPositionPct: agent.riskPolicy.maxPositionPct, riskPolicy: agent.riskPolicy)
         Task {
             do {
-                backtest = BacktestBox(result: try await trading.backtest(draft, years: 2, agentID: agent.id), title: agent.name,
-                                       currency: draft.currency, testedRuleLines: draft.spec.ruleLines)
+                backtest = try await trading.backtest(draft, years: 2, agentID: agent.id)
             } catch {
                 problem = "The backtest couldn't run: \(error.localizedDescription)"
             }

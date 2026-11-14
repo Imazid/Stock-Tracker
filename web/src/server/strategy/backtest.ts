@@ -5,8 +5,9 @@
 
 import { type BarSeries, decodeInstrument, instrumentID, type Instrument } from "@engine/market.ts";
 import { decodeStrategySpec, type StrategySpec } from "@engine/strategy.ts";
+import { completedBars } from "@engine/calendar.ts";
 import { BacktestError, type BacktestConfig, type BacktestResult, Backtester, makeBacktestConfig } from "@studio/backtester.ts";
-import { type DatasetReference, history, HISTORY_WINDOWS, HistoryError, type HistoryWindow } from "@/server/market/history";
+import { datasetReference, type DatasetReference, history, HISTORY_WINDOWS, HistoryError, type HistoryWindow } from "@/server/market/history";
 
 export const ENGINE_VERSION = "studio/backtester.ts — TradingCore Backtester.swift parity port (2026-11-13)";
 
@@ -82,15 +83,20 @@ async function inBatches<T, R>(items: T[], size: number, fn: (item: T) => Promis
 export async function runBacktest(inputs: BacktestInputs, now: number): Promise<BacktestResponse> {
   const { spec, config, window, asOf } = inputs;
   const universe: Instrument[] = spec.universe;
-  const settled = await inBatches(universe, 4, (instrument) => history(instrument, spec.timeframe, window, now));
+  const settled = await inBatches(universe, 4, (instrument) => history(instrument, spec.timeframe, window, asOf, now));
   const series: Record<string, BarSeries> = {};
   const datasets: DatasetReference[] = [];
   const failures: BacktestResponse["failures"] = [];
   settled.forEach((s, i) => {
     const id = instrumentID(universe[i]);
     if (s.status === "fulfilled") {
-      series[id] = s.value.series;
-      datasets.push(s.value.reference);
+      const completed = completedBars(s.value, asOf);
+      if (completed.length) {
+        series[id] = { ...s.value, bars: completed };
+        datasets.push(datasetReference(series[id], window));
+      } else {
+        failures.push({ instrumentId: id, reasons: ["No completed bars by the selected time"] });
+      }
     } else {
       failures.push({ instrumentId: id, reasons: s.reason instanceof HistoryError ? s.reason.reasons : ["The history request failed"] });
     }
@@ -102,9 +108,11 @@ export async function runBacktest(inputs: BacktestInputs, now: number): Promise<
     const [venue, symbol] = inputs.benchmark.split(":");
     try {
       const instrument = decodeInstrument({ symbol, venue });
-      const h = await history(instrument, spec.timeframe, window, now);
-      benchmarkSeries = h.series;
-      benchmarkDataset = h.reference;
+      const h = await history(instrument, spec.timeframe, window, asOf, now);
+      const bars = completedBars(h, asOf);
+      if (!bars.length) throw new HistoryError(inputs.benchmark, ["No completed benchmark bars by the selected time"]);
+      benchmarkSeries = { ...h, bars };
+      benchmarkDataset = datasetReference(benchmarkSeries, window);
     } catch (error) {
       failures.push({ instrumentId: inputs.benchmark, reasons: error instanceof HistoryError ? error.reasons : ["The benchmark couldn't be loaded"] });
     }
@@ -122,6 +130,6 @@ export async function runBacktest(inputs: BacktestInputs, now: number): Promise<
   const first = universe.map(instrumentID).find((id) => series[id]);
   return {
     result, inputs, datasets, benchmarkDataset, failures, engine: ENGINE_VERSION, ranAt: new Date(now).toISOString(),
-    chart: first ? { instrumentId: first, bars: series[first].bars.filter((b) => b.time <= asOf) } : undefined,
+    chart: first ? { instrumentId: first, bars: series[first].bars } : undefined,
   };
 }

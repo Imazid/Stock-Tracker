@@ -501,7 +501,8 @@ final class CopilotEngine: ObservableObject {
                                budget: trading.ledger(agent.ledgerID)?.startingCash ?? agent.budget,
                                maxPositionPct: agent.riskPolicy.maxPositionPct, riskPolicy: agent.riskPolicy)
         do {
-            let result = try await trading.backtest(draft, years: years, agentID: agent.id)
+            let box = try await trading.backtest(draft, years: years, agentID: agent.id)
+            let result = box.result
             let m = result.overall
             var text = String(format: "Simulated over about %d year%@ of %@ prices, %@'s rules returned %@ with a worst fall of %.1f%% and %d completed trade%@.",
                               years, years == 1 ? "" : "s", result.usedRealMarketData ? "real" : "test", agent.name,
@@ -510,8 +511,6 @@ final class CopilotEngine: ObservableObject {
                 text += " \(name) returned \(TradingFormat.percent(benchmark)) over the same dates."
             }
             text += " A backtest is a simulation of the past; it does not predict what happens next."
-            let box = BacktestBox(result: result, title: result.strategyTitle,
-                                  currency: draft.currency, testedRuleLines: draft.spec.ruleLines)
             return CopilotMessage(isUser: false, text: text, cards: [.backtest(id: UUID(), box: box)])
         } catch {
             return CopilotMessage(isUser: false, text: "The backtest couldn't run: \(error.localizedDescription) Nothing was estimated in its place.")

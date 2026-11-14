@@ -1156,6 +1156,10 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["backtest.testData"].exists)
         let provider = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Prices: Alpaca")).firstMatch
         XCTAssertTrue(provider.exists, app.debugDescription)
+        let saveReport = app.buttons["backtest.save"]
+        XCTAssertTrue(saveReport.waitForExistence(timeout: 8), app.debugDescription)
+        saveReport.tap()
+        XCTAssertTrue(saveReport.wait(for: \.label, toEqual: "Report saved", timeout: 15), app.debugDescription)
         let assumptions = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "at the next bar's open")).firstMatch
         for _ in 0..<8 where !assumptions.isHittable { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(assumptions.isHittable)
@@ -1187,6 +1191,19 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(entry["op"] as? String, "below")
         let exit = try XCTUnwrap(spec["exit"] as? [String: Any])
         XCTAssertEqual(exit["op"] as? String, "crossesAbove")
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.open("Agents", timeout: 25))
+        let library = app.buttons["agents.savedBacktests"]
+        XCTAssertTrue(library.waitForExistence(timeout: 15), app.debugDescription)
+        for _ in 0..<6 where !library.isHittable { app.swipeDown(velocity: .slow) }
+        library.tap()
+        let report = app.buttons["backtest.saved.row"].firstMatch
+        XCTAssertTrue(report.waitForExistence(timeout: 15), app.debugDescription)
+        report.tap()
+        XCTAssertTrue(app.navigationBars["Backtest"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Buy when RSI (9) is below 30."].exists)
     }
 
     func testHostedAgentTimelineShowsApprovedFill() throws {

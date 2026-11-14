@@ -18,6 +18,7 @@ import { useSearch } from "@/hooks/market";
 import { dateTime } from "@/lib/format";
 import { BacktestPanel } from "./backtest-panel";
 import { StartAgent } from "./start-agent";
+import { SavedBacktests } from "./saved-backtests";
 import { asGroup, ConditionEditor, simplify } from "./condition-editor";
 import { deleteVersion, readVersions, type SavedVersion, saveVersion } from "./versions";
 
@@ -238,6 +239,7 @@ export function StrategiesView() {
           </Card>}
 
           <BacktestPanel key={draftGeneration} spec={spec} valid={errors.length === 0} capital={parsed?.draft.budget} positionLimit={parsed?.draft.maxPositionPct} />
+          <SavedBacktests />
         </div>
 
         <div className="flex flex-col gap-5">

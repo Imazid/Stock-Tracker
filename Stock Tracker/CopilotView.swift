@@ -125,8 +125,7 @@ private struct CopilotScreen: View {
         }
         .sheet(item: $report) { box in
             NavigationStack {
-                BacktestReportView(result: box.result, title: box.title,
-                                   currency: box.currency, testedRuleLines: box.testedRuleLines)
+                BacktestReportView(box: box)
             }
         }
         .sheet(item: $openedProposal) { ProposalReviewSheet(proposalID: $0.id) }
