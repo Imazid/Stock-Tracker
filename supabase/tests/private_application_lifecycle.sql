@@ -32,17 +32,34 @@ insert into public.private_provider_approvals (provider,jurisdiction,rule_versio
   select 'birchal','AU',version,'Disposable contract fixture',now()+interval '1 day',true
   from public.private_market_rules where jurisdiction='AU';
 insert into public.investor_profiles values ('ea000000-0000-4000-8000-000000000001','AU','retail');
-insert into public.provider_connections (id,user_id,provider,external_subject) values
-  ('ea000000-0000-4000-8000-000000000040','ea000000-0000-4000-8000-000000000001','birchal','application-owner');
-insert into public.investor_eligibility (user_id,provider,connection_id,jurisdiction,verified_class,verified_at,expires_at,evidence_reference)
-  values ('ea000000-0000-4000-8000-000000000001','birchal','ea000000-0000-4000-8000-000000000040','AU','retail',
-    now()-interval '1 day',now()+interval '1 day','disposable-eligibility');
-
 set role service_role;
+select pg_temp.expect_application_error($q$select public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','onmarket','application-owner','AU','retail',
+  now()-interval '1 day','provider-evidence',now()+interval '1 day')$q$,
+  '42501','verification requires an active provider agreement');
+select pg_temp.expect_application_error($q$select public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','birchal','application-owner','AU','retail',
+  now()-interval '1 day','provider-evidence',now()+interval '1 day',now()-interval '2 days')$q$,
+  '22023','retail verification cannot claim an accountant certificate');
+select case when public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','birchal','application-owner','AU','retail',
+  now()-interval '1 day','disposable-eligibility',now()+interval '1 day')
+  then 'ok   a trusted provider record establishes the eligible account'
+  else 'FAIL verification could not be saved' end;
+select case when not public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','birchal','application-owner','AU','wholesale',
+  now()-interval '1 day','conflicting replay',now()+interval '1 day')
+  then 'ok   same-time replay cannot override the recorded class'
+  else 'FAIL conflicting verification replay' end;
+select pg_temp.expect_application_error($q$select public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000002','birchal','application-owner','AU','retail',
+  now()-interval '1 hour','wrong owner',now()+interval '1 day')$q$,
+  '42501','an external account cannot be rebound to another investor');
+
 create temporary table application as
   select commitment_id from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
   'ea000000-0000-4000-8000-000000000030',9500,'https://example.test/offer');
-select case when count(*)=1 and bool_and(provider_connection_id='ea000000-0000-4000-8000-000000000040')
+select case when count(*)=1 and bool_and(provider_connection_id = (select id from public.provider_connections where external_subject = 'application-owner'))
   then 'ok   handoff binds the verified provider account' else 'FAIL unbound application' end
   from public.investment_commitments where id=(select commitment_id from application);
 select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
@@ -92,5 +109,50 @@ select case when count(*)=0 then 'ok   another account cannot read the applicati
   from public.investment_commitments;
 select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
   null,'receipt','withdrawn',now())$q$,'42501','mobile users cannot mark a withdrawal');
+reset role;
+set role service_role;
+update public.private_provider_approvals set enabled = false where provider = 'birchal' and jurisdiction = 'AU';
+select case when public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','birchal','application-owner','AU',null,
+  now()-interval '4 minutes','provider-revocation')
+  then 'ok   revocation succeeds after the provider approval ends' else 'FAIL revocation unavailable' end;
+select case when revoked_at is not null and revocation_evidence_reference = 'provider-revocation'
+  then 'ok   the provider revocation is dated and linked to evidence'
+  else 'FAIL revocation evidence' end
+from public.provider_connections where external_subject = 'application-owner';
+update public.private_provider_approvals set enabled = true where provider = 'birchal' and jurisdiction = 'AU';
+select pg_temp.expect_application_error($q$select * from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
+  'ea000000-0000-4000-8000-000000000030',500,'https://example.test/offer')$q$,
+  '42501','revoked verification blocks the ordinary handoff path');
+select case when not public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','birchal','application-owner','AU','retail',
+  now()-interval '5 minutes','late verification',now()+interval '1 day')
+  then 'ok   an older verification cannot restore a revoked account' else 'FAIL stale reactivation' end;
+select case when public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','birchal','application-owner','AU','wholesale',
+  now()-interval '3 minutes','fresh review',now()+interval '1 day',now()-interval '4 minutes')
+  then 'ok   newer provider review restores verification' else 'FAIL fresh review blocked' end;
+select case when e.verified_class='wholesale' and e.accountant_certificate_reviewed_at is not null
+    and c.revoked_at is null and c.revocation_evidence_reference='provider-revocation'
+  then 'ok   re-verification retains the prior revocation reference and adds the certificate review date'
+  else 'FAIL renewed verification evidence' end
+from public.investor_eligibility e join public.provider_connections c on c.id = e.connection_id
+where c.external_subject='application-owner';
+select case when count(*) = 3 then 'ok   each accepted verification change creates one audit event'
+  else 'FAIL missing or duplicated verification audit' end
+from public.investment_audit_logs
+where user_id='ea000000-0000-4000-8000-000000000001'
+  and action in ('provider_verification_recorded','provider_verification_revoked');
+reset role;
+
+set role authenticated;
+select pg_temp.expect_application_error('select external_subject from public.provider_connections',
+  '42501','authenticated clients cannot read external subjects directly');
+select pg_temp.expect_application_error('select evidence_reference from public.investor_eligibility',
+  '42501','authenticated clients cannot read underlying verification evidence');
+select pg_temp.expect_application_error($q$select public.record_private_provider_verification(
+  'ea000000-0000-4000-8000-000000000001','birchal','application-owner','AU','wholesale',
+  now(),'client-claim',now()+interval '1 day')$q$,
+  '42501','authenticated clients cannot record provider verification');
 reset role;
 rollback;
