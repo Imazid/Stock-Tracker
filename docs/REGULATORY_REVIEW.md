@@ -76,7 +76,7 @@ Questions: APP 8 cross-border disclosure, the consents and privacy-notice wordin
 
 - Does the **Privacy Act 1988** and the APPs apply? The small-business exemption has conditions; don't assume it applies.
 - Notifiable Data Breaches scheme readiness: an incident runbook and a contact path. See `THREAT_MODEL.md`.
-- Needed before public release: a privacy notice (the `Constants.URLs.privacyPolicy` placeholder is still `yoursite.com`), terms, in-app data export, and account deletion that removes server rows. FK cascades already delete user rows, including the append-only credential log.
+- Before public release, approve and publish the drafted privacy notice and terms, configure the public URLs and verify the full account-data request process. The app and widget include privacy manifests. See [Privacy policy and App Store details](DEPLOYMENT.md#privacy-policy-and-app-store-details). The iOS account export includes identity, synced and private portfolios, watchlists, alerts, research, brokerage, and trading records. Use release review to verify the monitored access and correction request process, including records outside the self-service export. The deployed account deletion endpoint removes the Supabase user and dependent data. Sign in with Apple deletion requires server configuration and a device acceptance run. See [Account deletion](DEPLOYMENT.md#account-deletion).
 - Financial-services record-keeping obligations if licensed.
 
 ### Tax record-keeping

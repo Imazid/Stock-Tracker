@@ -22,10 +22,11 @@ struct CopilotView: View {
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var insightService: AIInsightService
     @EnvironmentObject private var cloudAuth: SupabaseAuthManager
+    @EnvironmentObject private var privateMarkets: PrivateMarketsStore
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        CopilotScreen(engine: CopilotEngine(trading: trading, marketData: marketData),
+        CopilotScreen(engine: CopilotEngine(trading: trading, marketData: marketData, privateMarkets: privateMarkets, auth: cloudAuth),
                       initialPrompt: initialPrompt,
                       canUseModel: { insightService.canQuery(tier: subscriptionManager.currentTier) },
                       didUseModel: { insightService.incrementQueryCount() },
@@ -340,6 +341,81 @@ private struct CopilotScreen: View {
                 if let owner = cloudAuth.userId { await privateMarkets.refreshProviderHoldings(for: owner) }
             }
 
+        case .privateScenario(_, let question):
+            TradingSection(title: "Ownership scenario") {
+                if let investment = question.investment {
+                    TradingRow(label: "Assumed investment", value: scenarioAmount(investment, currency: question.currency))
+                }
+                if let newCapital = question.newCapital {
+                    TradingRow(label: "Assumed new capital", value: scenarioAmount(newCapital, currency: question.currency))
+                }
+                if let postMoney = question.postMoney {
+                    TradingRow(label: "Assumed post-money valuation", value: scenarioAmount(postMoney, currency: question.currency))
+                }
+                if let initial = question.initialOwnership {
+                    TradingRow(label: "Initial ownership", value: PrivateScenarioCalculator.percent(initial))
+                }
+                if let revised = question.ownershipAfterRound {
+                    TradingRow(label: "Ownership after round", value: PrivateScenarioCalculator.percent(revised))
+                } else if question.calculatesDilution {
+                    Text("Enter your starting ownership, the new capital and the round’s post-money valuation.")
+                } else if question.initialOwnership == nil {
+                    Text("Enter an investment amount and a post-money valuation in the same currency.")
+                }
+                Text("Assumes shares are issued at the round price with no option pool changes or conversions.")
+                    .font(.caption).foregroundStyle(theme.secondaryText)
+                NavigationLink("Open scenario calculator") { PrivateScenarioCalculator(question: question) }
+            }
+            .accessibilityIdentifier("copilot.card.privateScenario")
+
+        case .privateUpdates(let id, let response):
+            if cloudAuth.userId == response.owner {
+                TradingSection(title: LocalizedStringKey(response.scope.title)) {
+                    if let report = response.report, let finding = report.findings.first {
+                        Text("AI-generated summary").font(.footnote)
+                            .accessibilityIdentifier("copilot.privateUpdates.ai")
+                        Text(finding.analysis).font(.subheadline)
+                        NavigationLink("Open saved report") {
+                            PrivateSavedReportView(id: report.id, owner: response.owner, cachedReport: report)
+                        }
+                        .accessibilityIdentifier("copilot.privateUpdates.report")
+                    } else if response.offerSummary && !response.updates.isEmpty {
+                        Text("A summary sends these published updates to OpenAI or Google Gemini.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("Send sources and summarise") {
+                            Task { await engine.summarisePrivateUpdates(card: id) }
+                        }
+                        .disabled(engine.isWorking)
+                        .accessibilityIdentifier("copilot.privateUpdates.send")
+                        if let error = response.summaryError {
+                            Text(error).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    ForEach(response.updates) { item in
+                        VStack(alignment: .leading, spacing: DS.Space.xs) {
+                            Text("\(item.company.name) · \(item.title)").font(.subheadline.weight(.semibold))
+                            Text((item.roundAnnouncedOn ?? item.publishedAt).formatted(date: .abbreviated, time: .omitted))
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Text(item.significance).font(.footnote)
+                            if item.sourceUrl.privateSourceIsSafe { Link("Read source", destination: item.sourceUrl) }
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("copilot.privateUpdates.source")
+                    }
+                    if let notice = response.notice { Text(notice).font(.footnote).foregroundStyle(.secondary) }
+                    if !response.updates.isEmpty {
+                        NavigationLink("Review sources in AI Investment Research") {
+                            PrivateResearchWorkspace(deals: [], announcements: response.updates, refreshOwner: response.owner)
+                        }
+                    }
+                }
+            }
+
+        case .privateComparison(_, let question):
+            NavigationLink("Choose funding rounds") { PrivateRoundComparison(deals: nil, question: question) }
+                .buttonStyle(SecondaryPillButtonStyle())
+                .accessibilityIdentifier("copilot.privateComparison.open")
+
         case .pauseAll:
             Button(trading.isKillSwitchOn ? "Review pause-all" : "Open Pause all") { showPauseAll = true }
                 .buttonStyle(SecondaryPillButtonStyle())
@@ -348,6 +424,11 @@ private struct CopilotScreen: View {
     }
 
     // MARK: Input
+
+    private func scenarioAmount(_ value: Decimal, currency: String?) -> String {
+        let amount = value.formatted(.number.precision(.fractionLength(0...8)))
+        return currency.map { "\($0) \(amount)" } ?? amount
+    }
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: DS.Space.s) {

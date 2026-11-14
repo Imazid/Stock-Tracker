@@ -112,7 +112,8 @@ function Account() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  return pathname === "/" ? children : <ToolsShell>{children}</ToolsShell>;
+  return pathname === "/" || pathname === "/privacy" || pathname === "/terms"
+    ? children : <ToolsShell>{children}</ToolsShell>;
 }
 
 function ToolsShell({ children }: { children: ReactNode }) {

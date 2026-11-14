@@ -411,6 +411,16 @@ verify_jwt = false
 [functions.private-markets]
 verify_jwt = false
 
+[functions.private-provider-events]
+# Adapter requests authenticate through their provider-scoped HMAC signature.
+verify_jwt = false
+
+[functions.account-deletion]
+verify_jwt = false
+
+[functions.account-export]
+verify_jwt = false
+
 [functions.market-data-proxy]
 verify_jwt = false
 

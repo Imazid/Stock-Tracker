@@ -14,6 +14,7 @@ The provisioning steps below apply when setting up a separate environment.
 | `provider-maintenance` | Supabase Edge Functions and Cron | provider order reconciliation and fill imports |
 | `market-data-proxy`, `snaptrade-proxy`, `ai-proxy` | Supabase Edge Functions | signed-in iOS data, broker aggregation and model access |
 | `market-workspace` | Supabase Edge Functions | workspace market data, fundamentals and shared backtesting |
+| `account-deletion`, `account-export` | Supabase Edge Functions | account deletion, provider token revocation and account data export |
 | Web app | Vercel (Sydney functions) | `web/` |
 
 ## 1. Create the backend (one time)
@@ -80,6 +81,8 @@ watchlist addition times and the signed-in Most watched ranking. Set `FINNHUB_AP
 Functions. Allowlist the production workspace URL in Supabase Auth. Standard Supabase hosted
 email limits apply until a custom SMTP sender is configured.
 
+The web workspace serves Private Markets at `/private-markets`. The catalogue uses published records from the deployed `private-markets` Edge Function. Set `ENABLE_AI=true` to enable new web searches and research. Account-scoped reports, positions, and applications require sign-in. The workbench opens no provider applications and can display saved reports when AI is disabled. The browser smoke test is `node --test tests/private-markets.browser.test.mjs` from `web`, with `PRIVATE_MARKETS_TEST_ORIGIN` and `PRIVATE_MARKETS_TEST_CHROME` set. Use disposable `PRIVATE_MARKETS_TEST_EMAIL` and `PRIVATE_MARKETS_TEST_PASSWORD` for the live model and sign-in flow. The second account check uses `PRIVATE_MARKETS_OTHER_EMAIL` and `PRIVATE_MARKETS_OTHER_PASSWORD`. The same setup runs `node --test tests/private-monitoring.browser.test.mjs` against the web Updates page. It uses the published Capability X notice for the source link check. The existing 15-minute monitoring and digest jobs process web subscriptions.
+
 ## 4. Local development
 
 - Database + functions: `supabase start` in the repo root (API on port 58321), then
@@ -120,6 +123,18 @@ Copy `Stock Tracker/SecretsConfig.swift.template` to `Stock Tracker/SecretsConfi
 
 Set the SnapTrade partner credentials, AI credentials and optional market provider keys in Supabase. The complete names are in `supabase/functions/.env.example`. Use distinct encryption key rings for the SnapTrade and provider-order vaults. The hosted project has Keychain recovery copies in `stock-tracker-credential-kek` and `stock-tracker-broker-credential-kek`.
 
+### Account data export
+
+On iPhone, open Settings → Account → Export Account Data. Save the JSON file to Files. The export covers account identity, synced portfolios, watchlists with their names and members, price alerts, brokerage and trading records, and Private Markets records in the account and on the current iPhone. It omits authentication credentials, provider secrets and other users’ identities. Unlinked files and records held only by an external provider are outside the export. The file contains readable personal and financial information.
+
+The `account-export` function returns an allowlisted section manifest and reads pages for the verified account. Every page checks the signed-in identity and active session. Accounts with a verified authenticator require the verification step. Cloud sections are read while the export runs. For other personal information, corrections, or an export in another format, use the release privacy contact. [OAIC access guidance](https://www.oaic.gov.au/privacy/australian-privacy-principles/australian-privacy-principles-guidelines/chapter-12-app-12-access-to-personal-information)
+
+### Privacy policy and App Store details
+
+The iPhone Settings screen includes the privacy notice and service terms. The web routes `/privacy` and `/terms` render the review copy without a Stock Tracker account. Deployment-level Vercel authentication still applies on the private workspace. Use a public host for the approved copies and check both URLs in a signed-out browser before submitting. Set `STOCK_TRACKER_PRIVACY_EMAIL` on the legal-page build to the monitored privacy contact. Set the iOS build variable `STOCK_TRACKER_PRIVACY_POLICY_URL` to the same approved HTTPS privacy URL used in App Store Connect. The app also keeps the notice readable offline.
+
+The app’s privacy manifest declares its use of app-local and App Group preferences. The widget has its own App Group declaration. iPhone account identity, synced financial information, research content, push tokens and subscriptions are covered by the app’s first-party manifest. Review the bundled Google Mobile Ads and User Messaging Platform manifests alongside the first-party declaration before completing App Store privacy labels. Confirm the public legal entity name, monitored contact, recipients and processing locations, retention and backup policy, and account-data request procedure during release review. [Apple App Store privacy details](https://developer.apple.com/app-store/app-privacy-details/) · [OAIC APP 1 guidance](https://www.oaic.gov.au/privacy/australian-privacy-principles/australian-privacy-principles-guidelines/chapter-1-app-1-open-and-transparent-management-of-personal-information)
+
 ## 8. Provider maintenance
 
 Enable `pg_cron` and `pg_net` before applying the provider maintenance migration. If the extensions are enabled later, register the job using `select cron.schedule('provider-maintenance', '* * * * *', 'select public.invoke_provider_maintenance()');`. The job checks up to four due order intents and syncs fills for up to two connections on each run. The worker has no execution or cancellation path.
@@ -131,6 +146,12 @@ Verify that the unauthenticated endpoint returns 401. Confirm scheduled requests
 ## 9. Scheduled SnapTrade activity
 
 Deploy `snaptrade-activity-sync` and `snaptrade-proxy`. Set a dedicated secret of at least 32 characters as `SNAPTRADE_ACTIVITY_SYNC_SECRET` on the Edge Function and `snaptrade_activity_secret` in Supabase Vault. Set `snaptrade_activity_url` in Vault to the full HTTPS sync endpoint. Use `pg_cron` and `pg_net` as for provider maintenance. If the extensions are enabled after applying the migration, register `select cron.schedule('snaptrade-activity-sync', '* * * * *', 'select public.invoke_snaptrade_activity_sync()');`.
+
+## Account deletion
+
+Apply the database migrations before deploying `account-deletion`. The function verifies the Supabase user and active session, and requires password confirmation or a fresh Sign in with Apple authorization code. An account with verified MFA must use an elevated session. The server removes an active SnapTrade connection before deleting the Supabase user and its dependent data.
+
+For Sign in with Apple, enable the capability for the iOS app identifier `Cubeplay.Stock-Tracker` and add it to the Stock Tracker target in Xcode. Regenerate the signing profiles and verify that the signed iOS app includes the Sign in with Apple entitlement. Configure the server secrets `ACCOUNT_DELETION_APPLE_TEAM_ID`, `ACCOUNT_DELETION_APPLE_KEY_ID` and `ACCOUNT_DELETION_APPLE_PRIVATE_KEY` using a Sign in with Apple key for the app. Test from Account settings with a disposable Apple sign-in and verify Apple token revocation and Supabase account deletion. [Apple’s signing configuration](https://developer.apple.com/documentation/xcode/configuring-sign-in-with-apple) · [Apple’s account deletion requirements](https://developer.apple.com/support/offering-account-deletion-in-your-app/)
 
 Each tick leases up to three SnapTrade identities and processes one provider request per identity. It publishes a 90-calendar-day snapshot once all accounts and pages are read, then schedules the next refresh 24 hours later. The portfolio editor prefers a complete snapshot synced in the past 36 hours. It offers a live broker read for other dates and on request. A revoked identity deletes its staged and published activity. Scheduler logs contain counts and error codes.
 

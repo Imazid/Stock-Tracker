@@ -35,6 +35,16 @@ run_sql -tAc "select to_regclass('auth.users') is not null" | grep -qx t || {
   echo "database did not finish initialising"; exit 1;
 }
 
+# Mirror the columns GoTrue creates in a complete Supabase stack.
+docker exec -i "$NAME" psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q <<'SQL'
+create table if not exists auth.sessions (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  not_after timestamptz
+);
+grant select, insert, delete on auth.sessions to postgres;
+SQL
+
 for migration in supabase/migrations/*.sql; do
   echo "apply  $migration"
   run_sql < "$migration" >/dev/null

@@ -2,6 +2,7 @@ import Auth
 import Combine
 import Foundation
 import TradingCore
+import UIKit
 import UserNotifications
 
 struct PrivateProvider: Identifiable {
@@ -22,13 +23,40 @@ struct PrivateProvider: Identifiable {
               access: "Provider accreditation and deal-room permissions apply.",
               url: URL(string: "https://help.angellist.com/hc/en-us/articles/38089333472269-What-is-Meridian")!),
         .init(id: "syndex", name: "Syndex", categories: "Private funds, registries and secondary markets",
-              access: "New Zealand provider. Registration and cross-border eligibility apply.",
-              url: URL(string: "https://www.syndex.exchange/investors")!)
+              access: "Registry services in Australia and New Zealand. Liquidity depends on the issuer and jurisdiction.",
+              url: URL(string: "https://www.syndex.com.au/")!)
     ]
 }
 
 struct PrivateDeal: Codable, Identifiable {
     struct Company: Codable, Identifiable {
+        struct Financials: Codable, Identifiable {
+            enum PeriodKind: String, Codable { case financialYear = "financial_year", monthSnapshot = "month_snapshot" }
+            enum Assurance: String, Codable { case audited, issuerReported = "issuer_reported" }
+
+            let id: UUID
+            let periodEndOn: String
+            let periodKind: PeriodKind
+            let assurance: Assurance
+            let currency: String
+            let revenue: Decimal?
+            let annualRecurringRevenue: Decimal?
+            let netProfitLoss: Decimal?
+            let operatingCashFlow: Decimal?
+            let cashAndEquivalents: Decimal?
+            let publishedOn: String
+            let sourceUrl: URL
+            let verifiedAt: Date
+
+            var reportingPeriod: String {
+                if periodKind == .financialYear { return "Year ended \(Round.Listing.formattedDay(periodEndOn))" }
+                guard let date = CashIncomeDay.date(periodEndOn) else { return periodEndOn }
+                var style = Date.FormatStyle.dateTime.month(.wide).year()
+                style.timeZone = CashIncomeDay.timeZone
+                return date.formatted(style)
+            }
+        }
+
         let id: UUID
         let name: String
         let sector: String
@@ -40,8 +68,54 @@ struct PrivateDeal: Codable, Identifiable {
         let investors: [String]?
         let sourceUrl: URL
         let verifiedAt: Date
+        let financials: [Financials]?
     }
     struct Round: Codable {
+        struct Listing: Codable {
+            enum QuotationStatus: String, Codable {
+                case proposed, anticipated, listed, withdrawn
+
+                var label: String {
+                    switch self {
+                    case .proposed: "Proposed first quotation"
+                    case .anticipated: "Anticipated first quotation"
+                    case .listed: "First quotation confirmed"
+                    case .withdrawn: "Listing application withdrawn"
+                    }
+                }
+            }
+
+            let exchange: String
+            let symbol: String
+            let quotationStatus: QuotationStatus
+            let expectedOfferCloseOn: String?
+            let quotationOn: String?
+            let sourceUrl: URL
+            let verifiedAt: Date
+
+            var hasUpcomingQuotation: Bool {
+                guard quotationStatus == .proposed || quotationStatus == .anticipated, let quotationOn else { return false }
+                return quotationOn >= CashIncomeDay.string(.now)
+            }
+
+            static func formattedDay(_ day: String) -> String {
+                guard let date = CashIncomeDay.date(day) else { return day }
+                var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
+                style.timeZone = CashIncomeDay.timeZone
+                return date.formatted(style)
+            }
+
+            var displayStatus: String {
+                switch quotationStatus {
+                case .proposed, .anticipated:
+                    guard hasUpcomingQuotation else { return "Quotation confirmation pending" }
+                    return quotationStatus.label
+                case .listed, .withdrawn:
+                    return quotationStatus.label
+                }
+            }
+        }
+
         struct ShareClass: Codable {
             let name: String
             let rights: String
@@ -54,12 +128,14 @@ struct PrivateDeal: Codable, Identifiable {
         let valuation: Decimal?
         let valuationMethod: String?
         let currency: String
+        let announcedOn: Date?
         let closesAt: Date?
         let sourceUrl: URL
         let verifiedAt: Date
         let traction: String?
         let company: Company
         let shareClasses: [ShareClass]
+        let listing: Listing?
     }
     let id: UUID
     let provider: String
@@ -79,10 +155,11 @@ struct PrivateDeal: Codable, Identifiable {
         return PrivateProvider.directory.first { $0.id == provider }?.name ?? provider
     }
 
-    var displayedStatus: String {
+    var displayedStatus: String { displayedStatus(at: .now) }
+
+    func displayedStatus(at now: Date) -> String {
         if status == "closed" { return "Closed" }
-        if let deadline = round.closesAt, deadline <= .now { return "Deadline passed" }
-        let now = Date.now
+        if let deadline = round.closesAt, deadline <= now { return "Deadline passed" }
         if status == "unverified" || [verifiedAt, round.verifiedAt].contains(where: { $0 > now || now.timeIntervalSince($0) > 86_400 }) {
             return "Status unverified"
         }
@@ -96,6 +173,13 @@ struct PrivateSavedItem: Decodable, Identifiable {
     let id: UUID
     let title: String
     let createdAt: Date
+}
+
+struct PrivateResearchRun: Decodable, Identifiable {
+    let id: UUID
+    let status: String
+    let createdAt: Date
+    let failureMessage: String?
 }
 
 struct PrivateResearchReport: Decodable {
@@ -120,13 +204,51 @@ struct PrivateResearchReport: Decodable {
         let base: String?
         let bear: String?
     }
+    struct ReportedFacts: Decodable, Identifiable {
+        struct Entry: Decodable {
+            let label: String
+            let value: String
+        }
+        var id: String { source }
+        let source: String
+        let title: String
+        let entries: [Entry]
+    }
     let id: UUID
     let createdAt: Date
     let question: String
     let sources: [Source]
+    let reportedFacts: [ReportedFacts]?
+    let refreshAvailable: Bool?
+    let previousReportId: UUID?
     let findings: [Finding]
     let committee: Finding?
     let models: [String]
+}
+
+struct PrivateResearchRefresh: Decodable {
+    struct SourceChange: Decodable, Identifiable {
+        struct Field: Decodable, Identifiable {
+            var id: String { field }
+            let field: String
+            let previous: String?
+            let current: String?
+        }
+        var id: UUID { sourceId }
+        let sourceId: UUID
+        let title: String
+        let fields: [Field]
+    }
+    let question: String
+    let unavailableSources: Int
+    let documents: [PrivateSavedItem]
+    let deals: [PrivateDeal]
+    let announcements: [PrivateCompanyUpdate]
+    let newerAnnouncements: [PrivateCompanyUpdate]
+    let changedDealIds: [UUID]?
+    let changedAnnouncementIds: [UUID]?
+    let revisionTrackingAvailable: Bool?
+    let sourceChanges: [SourceChange]?
 }
 
 struct PrivateCompanyUpdate: Decodable, Identifiable {
@@ -136,20 +258,70 @@ struct PrivateCompanyUpdate: Decodable, Identifiable {
     let significance: String
     let kind: String?
     let sourceUrl: URL
+    let sourceLabel: String?
     let publishedAt: Date
+    let roundAnnouncedOn: Date?
+    let financialPublishedOn: Date?
+    let revisedAt: Date?
     let company: Company
+
+    var activityAt: Date { max(publishedAt, revisedAt ?? publishedAt) }
+    var isResearchSource: Bool { kind == "announcement" || kind == "closed_round" || kind == "financial_disclosure" }
+}
+
+enum PrivateUpdateScope {
+    case tracked, owned, followed
+
+    var title: String {
+        switch self {
+        case .tracked: "Tracked private companies"
+        case .owned: "Private companies you own"
+        case .followed: "Private companies you follow"
+        }
+    }
+}
+
+struct PrivateMarketAlert: Decodable, Identifiable {
+    let id: UUID
+    let subjectId: UUID
+    let kind: String
+    let companyName: String
+    let title: String
+    let significance: String
+    let sourceUrl: URL?
+    let sourceLabel: String?
+    let occurredAt: Date
+    let revisedAt: Date?
 }
 
 struct PrivateApplication: Decodable, Identifiable {
+    struct Offer: Decodable {
+        struct Round: Decodable {
+            struct Company: Decodable { let name: String }
+            let stage: String
+            let company: Company?
+        }
+        let round: Round?
+    }
     let id: UUID
     let status: String
     let requestedAmount: Decimal
+    let providerApplicationAmount: Decimal?
     let currency: String
     let provider: String
     let providerReference: String?
     let confirmedAt: Date?
     let coolingOffEndsAt: Date?
+    let supplementaryNoticeAt: Date?
+    let supplementaryWithdrawalEndsAt: Date?
+    let supplementaryDocumentUrl: URL?
     let acknowledgedAt: Date
+    let providerReceivedAt: Date?
+    let withdrawalRequestedAt: Date?
+    let withdrawalDeclinedAt: Date?
+    let withdrawnAt: Date?
+    let providerEventAt: Date?
+    let offer: Offer?
 }
 
 
@@ -158,16 +330,46 @@ struct PrivateInvestorProfile: Codable {
     var declaredClass: String
 }
 
+struct PrivateProviderEligibility: Decodable, Identifiable {
+    struct Connection: Decodable { let revokedAt: Date? }
+
+    let provider: String
+    let jurisdiction: String
+    let verifiedClass: String
+    let verifiedAt: Date
+    let expiresAt: Date
+    let accountantCertificateReviewedAt: Date?
+    let connection: Connection
+
+    var id: String { provider + ":" + jurisdiction }
+    var providerName: String { PrivateProvider.directory.first { $0.id == provider }?.name ?? provider }
+
+    func status(asOf now: Date) -> String {
+        if connection.revokedAt != nil { return "Connection revoked" }
+        if expiresAt <= now { return "Verification expired" }
+        if verifiedAt > now { return "Verification pending" }
+        return "Verification current"
+    }
+}
+
 enum PrivateMarketsAPI {
     struct Catalog: Decodable { let deals: [PrivateDeal] }
     struct Items: Decodable { let items: [PrivateSavedItem] }
+    struct ResearchRuns: Decodable { let runs: [PrivateResearchRun] }
     struct Updates: Decodable { let updates: [PrivateCompanyUpdate] }
+    struct MonitorInbox: Decodable { let alerts: [PrivateMarketAlert] }
+    struct PushRegistration: Decodable { let registered: Bool }
     struct Applications: Decodable { let applications: [PrivateApplication] }
+    struct InvestorProfile: Decodable {
+        let profile: PrivateInvestorProfile?
+        let eligibility: [PrivateProviderEligibility]?
+    }
     struct ConfirmedHoldings: Decodable {
         let holdings: [ProviderPrivateHolding]
         let nextOffset: Int?
     }
     struct Handoff: Decodable { let commitmentId: UUID; let handoffUrl: URL }
+    struct HandoffReadiness: Decodable { let ready: Bool }
 
     static func request<Response: Decodable>(_ action: String, _ fields: [String: Any] = [:],
                                               expectedUserID: UUID? = nil) async throws -> Response {
@@ -213,10 +415,16 @@ final class PrivateMarketsStore: ObservableObject {
 
     struct State: Codable {
         var holdings: [PrivateHolding] = []
+        var angelListSnapshots: [PrivateFundSnapshot]?
         var follows: [Follow] = []
         var notify = false
         var seenUpdates: [UUID] = []
         var capitalReminders: Bool?
+        var monitorEnabled: Bool?
+        var monitorEligible: Bool?
+        var monitorDigest: Bool?
+        var seenMonitorAlerts: [UUID]?
+        var seenMonitorRevisions: [String]?
     }
 
     @Published private(set) var state = State()
@@ -224,12 +432,39 @@ final class PrivateMarketsStore: ObservableObject {
     @Published private(set) var providerHoldings: [ProviderPrivateHolding] = []
     @Published private(set) var providerError: String?
     @Published private(set) var loadingProviderHoldings = false
+    @Published private(set) var monitorAlerts: [PrivateMarketAlert] = []
+    @Published private(set) var monitorError: String?
+    @Published private(set) var remotePushActive = false
+    private var pushToken: String?
+    private var pushPermissionDenied = false
+    private var monitorSettingsTask: Task<Void, Error>?
+    private var monitorSettingsRevision = UUID()
+    private var monitorLastSync: Date?
     private var providerLoadTask: Task<Void, Never>?
     private var providerRefreshID = UUID()
     private var hasLoadedProviderHoldings = false
     private var scope: UUID?
     private var didLoad = false
     private var deliveringUpdates = false
+
+    var angelListSnapshots: [PrivateFundSnapshot] { state.angelListSnapshots ?? [] }
+
+    var independentManualHoldings: [PrivateHolding] { state.holdings.filter { $0.matchingProviderHoldingID == nil } }
+    var activeManualHoldings: [PrivateHolding] { independentManualHoldings.filter { $0.closedOn() == nil } }
+
+    var unavailableLinkedProviderCount: Int {
+        let available = Set(providerHoldings.map(\.id))
+        return state.holdings.compactMap(\.matchingProviderHoldingID).filter { !available.contains($0) }.count
+    }
+
+    var allocationHoldings: [PrivateHolding] {
+        PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.filter { !$0.hasExited }.map(\.holding),
+                                       snapshots: angelListSnapshots)
+    }
+
+    func linkedFundValuation(for holding: PrivateHolding) -> (statement: PrivateFundSnapshot, holding: PrivateHolding)? {
+        PrivateFundSnapshot.linkedValuation(for: holding, snapshots: angelListSnapshots)
+    }
 
     func selectAccount(_ id: UUID?) {
         guard !didLoad || scope != id else { return }
@@ -245,6 +480,13 @@ final class PrivateMarketsStore: ObservableObject {
         providerHoldings = []
         providerError = nil
         loadingProviderHoldings = false
+        monitorSettingsTask?.cancel()
+        monitorSettingsTask = nil
+        monitorSettingsRevision = UUID()
+        monitorLastSync = nil
+        monitorAlerts = []
+        monitorError = nil
+        remotePushActive = false
         providerLoadTask?.cancel()
         providerLoadTask = nil
         providerRefreshID = UUID()
@@ -314,14 +556,22 @@ final class PrivateMarketsStore: ObservableObject {
         selectAccount(scope)
     }
 
-    func change(_ edit: (inout State) -> Void) throws {
+    func exportDeviceRecords(for owner: UUID?) throws -> State {
+        guard didLoad, scope == owner else { throw CancellationError() }
+        guard storageError == nil else { throw CocoaError(.fileReadNoPermission) }
+        return state
+    }
+
+    func change(_ edit: (inout State) throws -> Void) throws {
         guard storageError == nil else { throw CocoaError(.fileReadNoPermission) }
         var next = state
-        edit(&next)
+        try edit(&next)
         let data = try JSONEncoder().encode(next)
         try data.write(to: Self.file(for: scope), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        let monitorScopeChanged = monitoredCompanies(in: next) != monitoredCompanies(in: state)
         state = next
         syncCapitalReminders()
+        if monitorScopeChanged, state.monitorEnabled == true, let scope { queueMonitorSettings(for: scope) }
     }
 
     func save(_ holding: PrivateHolding) throws {
@@ -330,6 +580,97 @@ final class PrivateMarketsStore: ObservableObject {
                 next.holdings[index] = holding
             } else {
                 next.holdings.append(holding)
+            }
+        }
+    }
+
+    func availableProviderMatches(for holding: PrivateHolding) -> [ProviderPrivateHolding] {
+        guard holding.closedOn() == nil, !loadingProviderHoldings, providerError == nil,
+              !angelListSnapshots.contains(where: { $0.replacesManualHoldingID == holding.id }) else { return [] }
+        let linkedIDs = Set(state.holdings.filter { $0.id != holding.id }.compactMap(\.matchingProviderHoldingID))
+        return providerHoldings.filter { !linkedIDs.contains($0.id) && holding.canLinkProviderHolding($0.holding) }
+    }
+
+    func setProviderMatch(_ providerID: UUID?, for holdingID: UUID, owner: UUID) throws {
+        guard scope == owner, var holding = state.holdings.first(where: { $0.id == holdingID }) else {
+            throw CancellationError()
+        }
+        if let providerID {
+            guard let position = availableProviderMatches(for: holding).first(where: { $0.id == providerID }),
+                  holding.linkProviderHolding(position.holding) else {
+                throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_HOLDING_MATCH",
+                    message: "Choose an available provider record for the same position.")
+            }
+        } else {
+            holding.unlinkProviderHolding()
+        }
+        try save(holding)
+    }
+
+    func saveAngelListSnapshot(_ snapshot: PrivateFundSnapshot, owner: UUID, connectionID: String) throws {
+        guard scope == owner else { throw CancellationError() }
+        guard AngelListLink.shared.isCurrentConnection(connectionID, owner: owner) else {
+            throw AngelListLink.Failure.disconnected
+        }
+        let existing = angelListSnapshots.contains { $0.reference == snapshot.reference }
+        if !existing, case .linked(let id) = snapshot.placement,
+           !eligibleFundHoldings(currency: snapshot.currency, excludingReference: snapshot.reference).contains(where: { $0.id == id }) {
+            throw invalidFundPlacement()
+        }
+        guard angelListSnapshots.count < 100 || existing,
+              let updated = snapshot.replacing(in: angelListSnapshots) else {
+            throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_FUND_SNAPSHOT",
+                message: "Check the reference, date and currency against the saved statement. You can keep up to 100 statements.")
+        }
+        try change { $0.angelListSnapshots = updated }
+    }
+
+    func eligibleFundHoldings(currency: String, excludingReference reference: String) -> [PrivateHolding] {
+        let taken = Set(angelListSnapshots.filter { $0.reference != reference }.compactMap(\.replacesManualHoldingID))
+        return activeManualHoldings.filter { $0.currency == currency && !taken.contains($0.id) }
+    }
+
+    func setAngelListPlacement(_ placement: PrivateFundSnapshot.Placement, for id: UUID, owner: UUID) throws {
+        guard scope == owner, let statement = angelListSnapshots.first(where: { $0.id == id }) else { throw CancellationError() }
+        if case .linked(let holdingID) = placement,
+           !eligibleFundHoldings(currency: statement.currency, excludingReference: statement.reference).contains(where: { $0.id == holdingID }) {
+            throw invalidFundPlacement()
+        }
+        try change { state in
+            state.angelListSnapshots = state.angelListSnapshots?.map { $0.id == id ? $0.placed(placement) : $0 }
+        }
+    }
+
+    private func invalidFundPlacement() -> SecureBackend.FunctionError {
+        .init(status: 422, code: "PRIVATE_FUND_ALLOCATION", message: "Choose an available manual holding in the same currency.")
+    }
+
+    func removeAngelListSnapshot(_ id: UUID, owner: UUID) throws {
+        guard scope == owner else { throw CancellationError() }
+        try change { $0.angelListSnapshots?.removeAll { $0.id == id } }
+    }
+
+    func removeAngelListSnapshots(owner: UUID) throws {
+        guard scope == owner else { throw CancellationError() }
+        try change { $0.angelListSnapshots = nil }
+    }
+
+    func updateOwnershipEvidence(for holdingID: UUID, owner: UUID, documentID: UUID?) throws {
+        guard scope == owner, state.holdings.contains(where: { $0.id == holdingID }) else { throw CancellationError() }
+        try change { next in
+            guard let index = next.holdings.firstIndex(where: { $0.id == holdingID }) else { return }
+            next.holdings[index].ownershipEvidenceID = documentID
+            next.holdings[index].ownershipReviewedOn = documentID == nil ? nil : .now
+        }
+    }
+
+    func removeOwnershipEvidence(_ documentID: UUID, owner: UUID) throws {
+        guard scope == owner else { throw CancellationError() }
+        guard state.holdings.contains(where: { $0.ownershipEvidenceID == documentID }) else { return }
+        try change { next in
+            for index in next.holdings.indices where next.holdings[index].ownershipEvidenceID == documentID {
+                next.holdings[index].ownershipEvidenceID = nil
+                next.holdings[index].ownershipReviewedOn = nil
             }
         }
     }
@@ -347,21 +688,38 @@ final class PrivateMarketsStore: ObservableObject {
         }
     }
 
-    func checkUpdates(for userID: UUID) async throws -> [PrivateCompanyUpdate] {
-        guard scope == userID, storageError == nil else { return [] }
-        let companyIDs = state.follows.map(\.id) + providerHoldings.compactMap(\.companyId)
-        var seen = Set<UUID>()
-        let ids = companyIDs.filter { seen.insert($0).inserted }.prefix(100).map(\.uuidString)
-        guard !ids.isEmpty else { return [] }
-        let response: PrivateMarketsAPI.Updates = try await PrivateMarketsAPI.request(
-            "updates", ["company_ids": ids], expectedUserID: userID)
+    func checkUpdates(for userID: UUID, companyScope: PrivateUpdateScope = .tracked,
+                      deliverNotifications: Bool = true) async throws -> [PrivateCompanyUpdate] {
+        guard scope == userID else { throw CancellationError() }
+        if let storageError {
+            throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [NSLocalizedDescriptionKey: storageError])
+        }
+        let followed = state.follows.map(\.id)
+        let companyIDs: [UUID]
+        switch companyScope {
+        case .tracked:
+            companyIDs = followed + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId)
+        case .owned:
+            companyIDs = activeManualHoldings.compactMap(\.catalogueCompanyID) +
+                providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId)
+        case .followed:
+            companyIDs = followed
+        }
+        let ids = Set(companyIDs).map(\.uuidString).sorted()
+        var updates: [PrivateCompanyUpdate] = []
+        for start in stride(from: 0, to: ids.count, by: 100) {
+            let response: PrivateMarketsAPI.Updates = try await PrivateMarketsAPI.request(
+                "updates", ["company_ids": Array(ids[start..<min(start + 100, ids.count)])], expectedUserID: userID)
+            updates.append(contentsOf: response.updates)
+        }
         try Task.checkCancellation()
-        guard scope == userID else { return [] }
-        if state.notify, !deliveringUpdates {
+        guard scope == userID else { throw CancellationError() }
+        updates.sort { ($0.activityAt, $0.id.uuidString) > ($1.activityAt, $1.id.uuidString) }
+        if deliverNotifications, state.notify, state.monitorEnabled != true, !deliveringUpdates {
             deliveringUpdates = true
             defer { deliveringUpdates = false }
             let now = Date.now
-            let fresh = response.updates.filter {
+            let fresh = updates.filter {
                 now.timeIntervalSince($0.publishedAt) < 7 * 86_400 && !state.seenUpdates.contains($0.id)
             }
             var delivered: [UUID] = []
@@ -369,8 +727,10 @@ final class PrivateMarketsStore: ObservableObject {
                 guard scope == userID, state.notify, !Task.isCancelled else { break }
                 let content = UNMutableNotificationContent()
                 content.title = "Private Markets update"
-                content.body = update.kind == "open_round" || update.kind == "interest" ?
-                    "A company you track has a funding update." : "A company you track has published an update."
+                content.body = switch update.kind {
+                case "open_round", "interest", "closed_round": "A company you track has a funding update."
+                default: "A company you track has published an update."
+                }
                 content.userInfo = ["privateMarkets": true]
                 do {
                     try await UNUserNotificationCenter.current().add(.init(
@@ -384,15 +744,220 @@ final class PrivateMarketsStore: ObservableObject {
                 try change { $0.seenUpdates = Array(($0.seenUpdates + delivered).suffix(300)) }
             }
         }
-        return response.updates
+        return updates
     }
 
     func checkUpdatesInBackground() async {
-        guard let id = scope, state.capitalReminders == true || state.notify else { return }
-        // Session restoration can lag a cold background launch. Never load or notify another account.
-        guard let sessionID = try? await SupabaseManager.auth.session.user.id, sessionID == id else { return }
+        // Session restoration can lag a cold background launch.
+        guard let id = try? await SupabaseManager.auth.session.user.id else { return }
+        if scope == nil { selectAccount(id) }
+        guard scope == id, state.capitalReminders == true || state.notify || state.monitorEnabled != nil else { return }
         await refreshProviderHoldings(for: id)
-        if state.notify { _ = try? await checkUpdates(for: id) }
+        if state.notify && state.monitorEnabled != true { _ = try? await checkUpdates(for: id) }
+        await refreshMonitor(for: id)
+    }
+
+    func setMonitor(enabled: Bool, eligible: Bool, digest: Bool, owner: UUID) async throws {
+        guard scope == owner else { throw CancellationError() }
+        try change {
+            $0.monitorEnabled = enabled
+            $0.monitorEligible = enabled && eligible
+            $0.monitorDigest = enabled && digest
+        }
+        if !enabled {
+            monitorAlerts = []
+            remotePushActive = false
+        }
+        try await queueMonitorSettings(for: owner)?.value
+    }
+
+    private static var pushEnvironment: String? {
+        switch Bundle.main.object(forInfoDictionaryKey: "PrivateMarketAPSEnvironment") as? String {
+        case "development": return "sandbox"
+        case "production": return "production"
+        default: return nil
+        }
+    }
+
+    func setUpdateNotifications(_ enabled: Bool, owner: UUID) async throws {
+        guard scope == owner else { throw CancellationError() }
+        try change { $0.notify = enabled }
+        if !enabled { remotePushActive = false }
+        if state.monitorEnabled == true {
+            await refreshPushPermission(for: owner)
+            guard scope == owner else { throw CancellationError() }
+            try await queueMonitorSettings(for: owner)?.value
+        }
+    }
+
+    func receivedPushToken(_ value: Data) {
+        guard !pushPermissionDenied else { return }
+        let token = value.map { String(format: "%02x", $0) }.joined()
+        if token != pushToken || !remotePushActive {
+            pushToken = token
+            if let scope, state.monitorEnabled == true, state.notify {
+                remotePushActive = false
+                queueMonitorSettings(for: scope)
+            }
+        }
+    }
+
+    func pushRegistrationFailed() {
+        guard pushToken != nil || remotePushActive else { return }
+        pushToken = nil
+        remotePushActive = false
+        if let scope, state.monitorEnabled == true { queueMonitorSettings(for: scope) }
+    }
+
+    private func refreshPushPermission(for owner: UUID) async {
+        guard Self.pushEnvironment != nil, state.monitorEnabled == true, state.notify else { return }
+        let authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        guard scope == owner, state.monitorEnabled == true, state.notify else { return }
+        switch authorization {
+        case .authorized, .provisional, .ephemeral:
+            pushPermissionDenied = false
+            if UIApplication.shared.applicationState == .active,
+               !UIApplication.shared.isRegisteredForRemoteNotifications || pushToken == nil {
+                UIApplication.shared.registerForRemoteNotifications()
+            }
+        default:
+            if !pushPermissionDenied {
+                pushPermissionDenied = true
+                pushToken = nil
+                remotePushActive = false
+                queueMonitorSettings(for: owner)
+            }
+        }
+    }
+
+    func refreshMonitor(for owner: UUID) async {
+        guard scope == owner, let enabled = state.monitorEnabled else { return }
+        await refreshPushPermission(for: owner)
+        guard scope == owner, state.monitorEnabled == enabled else { return }
+        if monitorSettingsTask == nil && (monitorLastSync == nil ||
+            (enabled && Date.now.timeIntervalSince(monitorLastSync ?? .distantPast) >= 86_400)) {
+            queueMonitorSettings(for: owner)
+        }
+        let revision = monitorSettingsRevision
+        do {
+            try await monitorSettingsTask?.value
+            try Task.checkCancellation()
+            guard scope == owner, revision == monitorSettingsRevision else { return }
+            guard enabled else {
+                monitorAlerts = []
+                return
+            }
+            let inbox: PrivateMarketsAPI.MonitorInbox = try await PrivateMarketsAPI.request("monitor_inbox", expectedUserID: owner)
+            try Task.checkCancellation()
+            guard scope == owner, state.monitorEnabled == true, revision == monitorSettingsRevision else { return }
+            monitorAlerts = inbox.alerts
+            await deliverMonitorNotifications(inbox.alerts, owner: owner)
+        } catch is CancellationError {
+        } catch {
+            if scope == owner, revision == monitorSettingsRevision { monitorError = error.localizedDescription }
+        }
+    }
+
+    @discardableResult
+    private func queueMonitorSettings(for owner: UUID) -> Task<Void, Error>? {
+        guard scope == owner, let enabled = state.monitorEnabled else { return nil }
+        let previous = monitorSettingsTask
+        let revision = UUID()
+        monitorSettingsRevision = revision
+        monitorLastSync = nil
+        let fields: [String: Any] = [
+            "enabled": enabled,
+            "device_id": Self.monitorDeviceID.uuidString,
+            "eligible_opportunities": state.monitorEligible == true,
+            "digest": state.monitorDigest == true,
+            "company_ids": enabled ? monitoredCompanies(in: state).map(\.uuidString) : [],
+        ]
+        let environment = Self.pushEnvironment
+        let token = state.notify ? pushToken : nil
+        let updatePush = !state.notify || pushPermissionDenied || token != nil
+        monitorError = nil
+        let task = Task {
+            _ = await previous?.result
+            defer {
+                if monitorSettingsRevision == revision { monitorSettingsTask = nil }
+            }
+            guard scope == owner, monitorSettingsRevision == revision else { return }
+            try Task.checkCancellation()
+            do {
+                try await PrivateMarketsAPI.send("monitor_settings", fields, expectedUserID: owner)
+                guard scope == owner, monitorSettingsRevision == revision else { return }
+                if enabled, updatePush, let environment {
+                    let push: PrivateMarketsAPI.PushRegistration = try await PrivateMarketsAPI.request("monitor_push", [
+                        "device_id": Self.monitorDeviceID.uuidString,
+                        "environment": environment,
+                        "token": token as Any? ?? NSNull(),
+                    ], expectedUserID: owner)
+                    guard scope == owner, monitorSettingsRevision == revision else { return }
+                    remotePushActive = push.registered
+                }
+                monitorLastSync = .now
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if scope == owner, monitorSettingsRevision == revision { monitorError = error.localizedDescription }
+                throw error
+            }
+        }
+        monitorSettingsTask = task
+        return task
+    }
+
+    private func monitoredCompanies(in records: State) -> [UUID] {
+        var seen = Set<UUID>()
+        return Array((records.follows.map(\.id) + records.holdings.compactMap(\.catalogueCompanyID))
+            .filter { seen.insert($0).inserted }.prefix(250))
+    }
+
+    private static var monitorDeviceID: UUID {
+        let key = "privateMarketMonitorDeviceID"
+        if let value = UserDefaults.standard.string(forKey: key).flatMap(UUID.init(uuidString:)) { return value }
+        let value = UUID()
+        UserDefaults.standard.set(value.uuidString, forKey: key)
+        return value
+    }
+
+    private func deliverMonitorNotifications(_ alerts: [PrivateMarketAlert], owner: UUID) async {
+        guard state.notify, !remotePushActive, !deliveringUpdates else { return }
+        deliveringUpdates = true
+        defer { deliveringUpdates = false }
+        let seen = Set(state.seenMonitorAlerts ?? [])
+        let seenRevisions = Set(state.seenMonitorRevisions ?? [])
+        let now = Date.now
+        let recent = alerts.compactMap { alert -> (PrivateMarketAlert, String?)? in
+            if let revised = alert.revisedAt {
+                let key = "\(alert.id.uuidString).\(revised.timeIntervalSince1970)"
+                return !seenRevisions.contains(key) && now.timeIntervalSince(revised) < 7 * 86_400 ? (alert, key) : nil
+            }
+            guard !seen.contains(alert.id), !state.seenUpdates.contains(alert.subjectId), alert.kind != "capital_call",
+                  now.timeIntervalSince(alert.occurredAt) < 7 * 86_400 else { return nil }
+            return (alert, nil)
+        }
+        var delivered: [UUID] = []
+        var deliveredRevisions: [String] = []
+        for (alert, revision) in recent.prefix(10) {
+            guard scope == owner, state.notify, state.monitorEnabled == true, !Task.isCancelled else { break }
+            let content = UNMutableNotificationContent()
+            content.title = "Private Markets update"
+            content.body = "There is a new update in your Private Markets inbox."
+            content.userInfo = ["privateMarkets": true]
+            do {
+                try await UNUserNotificationCenter.current().add(.init(identifier: "private-markets.monitor.\(revision ?? alert.id.uuidString)",
+                                                                        content: content, trigger: nil))
+                delivered.append(alert.id)
+                if let revision { deliveredRevisions.append(revision) }
+            } catch { }
+        }
+        if !delivered.isEmpty, scope == owner {
+            try? change {
+                $0.seenMonitorAlerts = Array((($0.seenMonitorAlerts ?? []) + delivered).suffix(300))
+                $0.seenMonitorRevisions = Array((($0.seenMonitorRevisions ?? []) + deliveredRevisions).suffix(300))
+            }
+        }
     }
 
     func setCapitalReminders(_ enabled: Bool) async throws {
@@ -418,7 +983,7 @@ final class PrivateMarketsStore: ObservableObject {
             cancelCapitalReminders(scope: owner)
             return
         }
-        let positions = state.holdings + providerHoldings.map(\.holding)
+        let positions = independentManualHoldings + providerHoldings.map(\.holding)
         let reminders = PrivateMath.capitalCallReminders(in: positions)
         reminderTask = Task {
             await previousTask?.value
@@ -470,6 +1035,14 @@ final class PrivateMarketsStore: ObservableObject {
                 $0.identifier.hasPrefix(prefix)
             }.map(\.identifier))
         }
+    }
+
+    func removeAccountRecords(_ owner: UUID) throws {
+        if scope == owner { selectAccount(nil) }
+        let file = try Self.file(for: owner)
+        do {
+            try FileManager.default.removeItem(at: file)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {}
     }
 
     static func clearTestRecords() {

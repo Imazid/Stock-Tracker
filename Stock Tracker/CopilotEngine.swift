@@ -36,13 +36,17 @@ enum CopilotCard: Identifiable {
     case agentChoice(id: UUID, request: String, agentIDs: [UUID])
     case portfolioMovement(id: UUID, report: PortfolioMovementReport)
     case unifiedAllocation(id: UUID)
+    case privateUpdates(id: UUID, response: PrivateUpdatesAnswer)
+    case privateComparison(id: UUID, question: String)
+    case privateScenario(id: UUID, question: PrivateScenarioQuestion)
     case pauseAll(id: UUID)
 
     var id: UUID {
         switch self {
         case .facts(let id, _, _, _), .orders(let id, _, _), .run(let id, _, _), .activity(let id, _, _, _), .draft(let id, _),
              .limitChange(let id, _, _, _, _), .backtest(let id, _), .agentChoice(let id, _, _),
-             .portfolioMovement(let id, _), .unifiedAllocation(let id), .pauseAll(let id):
+             .portfolioMovement(let id, _), .unifiedAllocation(let id), .privateUpdates(let id, _),
+             .privateComparison(let id, _), .privateScenario(let id, _), .pauseAll(let id):
             return id
         }
     }
@@ -57,6 +61,16 @@ struct CopilotMessage: Identifiable {
     var aiGenerated = false
 }
 
+struct PrivateUpdatesAnswer {
+    let owner: UUID
+    let scope: PrivateUpdateScope
+    let updates: [PrivateCompanyUpdate]
+    let offerSummary: Bool
+    var report: PrivateResearchReport?
+    var notice: String?
+    var summaryError: String?
+}
+
 @MainActor
 final class CopilotEngine: ObservableObject {
     @Published private(set) var messages: [CopilotMessage] = []
@@ -66,6 +80,8 @@ final class CopilotEngine: ObservableObject {
 
     private let trading: TradingStore
     private weak var marketData: MarketData?
+    private let privateMarkets: PrivateMarketsStore
+    private let auth: SupabaseAuthManager
     private let ai = AIAgentService()
     /// Whether free-form questions may be sent to a language model (plan and daily limit).
     var canUseModel: () -> Bool = { false }
@@ -81,15 +97,19 @@ final class CopilotEngine: ObservableObject {
         activityPrompt,
         concentrationPrompt,
         "Show my private investment exposure alongside my listed stocks",
+        "Summarise recent updates from the startups I own",
+        "Compare startup valuations and explain their assumptions",
         "Why did my agent stop trading?",
         "Create a paper-trading strategy for BTC and ETH",
         "Backtest my strategy over the last two years",
         "Reduce my agent's maximum allocation to 5%"
     ]
 
-    init(trading: TradingStore, marketData: MarketData?) {
+    init(trading: TradingStore, marketData: MarketData?, privateMarkets: PrivateMarketsStore, auth: SupabaseAuthManager) {
         self.trading = trading
         self.marketData = marketData
+        self.privateMarkets = privateMarkets
+        self.auth = auth
     }
 
     // MARK: - Entry
@@ -132,6 +152,36 @@ final class CopilotEngine: ObservableObject {
 
     func dismiss(card: UUID) { resolvedCards[card] = "Cancelled" }
 
+    func summarisePrivateUpdates(card: UUID) async {
+        guard !isWorking,
+              let message = messages.firstIndex(where: { $0.cards.contains(where: { $0.id == card }) }),
+              let cardIndex = messages[message].cards.firstIndex(where: { $0.id == card }),
+              case .privateUpdates(_, var response) = messages[message].cards[cardIndex],
+              auth.userId == response.owner, response.offerSummary, response.report == nil, !response.updates.isEmpty else { return }
+
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let summary: PrivateResearchReport = try await PrivateMarketsAPI.request("research", [
+                "mode": "question", "question": "Summarise these public company disclosures. Explain what changed and identify uncertainties in the sources.",
+                "model_consent": true, "document_ids": [], "opportunity_ids": [],
+                "announcement_ids": response.updates.map { $0.id.uuidString }
+            ], expectedUserID: response.owner)
+            if summary.findings.first?.evidence.isEmpty == false {
+                response.report = summary
+                response.summaryError = nil
+            } else {
+                response.summaryError = "The AI summary returned no citations. You can still read the published sources."
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            response.summaryError = "The AI summary is unavailable. You can still read the published sources."
+        }
+        guard auth.userId == response.owner, !Task.isCancelled else { return }
+        messages[message].cards[cardIndex] = .privateUpdates(id: card, response: response)
+    }
+
     // MARK: - Rules
 
     private func routeByRules(_ text: String, forcedAgent: UUID? = nil) async -> CopilotMessage? {
@@ -151,6 +201,30 @@ final class CopilotEngine: ObservableObject {
                                   ? "Pause-all is already on. No agent can place orders."
                                   : "I can't pause agents for you, but this opens the control. It shows exactly what stops before you confirm.",
                                   cards: [.pauseAll(id: UUID())])
+        }
+        if has("compare", " vs ", " versus ") &&
+            (has("funding round", "financing round") || has("valuation", "raised") && has("startup", "private", "seed", "series ")) {
+            return .init(isUser: false, text: "Select the published rounds you want to compare.",
+                         cards: [.privateComparison(id: UUID(), question: String(text.prefix(700)))])
+        }
+        if let question = PrivateScenarioQuestion(text) {
+            let reply: String
+            if question.calculatesDilution {
+                reply = "In a priced round, new investors take the fraction raised divided by the post-money valuation. Existing holders keep the remaining fraction of their previous stake when they don’t participate."
+            } else {
+                reply = "Ownership in a priced round is the investment amount divided by the post-money valuation."
+            }
+            return CopilotMessage(isUser: false, text: reply, cards: [.privateScenario(id: UUID(), question: question)])
+        }
+        if has("update", "announcement", "news", "funding round", "what changed") &&
+            has("startup", "private compan", "portfolio compan", "private market", "private investment") &&
+            has("my ", "i own", "i hold", "i invested in", "i follow", "portfolio compan", "watchlist", "companies i") &&
+            !has("draft ", "email ", "write ", "send ", "turn off", "turn on") {
+            let scope: PrivateUpdateScope
+            if has("i own", "i hold", "i invested in", "my holding", "my startup", "portfolio compan") { scope = .owned }
+            else if has("i follow", "watchlist", "followed compan") { scope = .followed }
+            else { scope = .tracked }
+            return await privateUpdates(scope: scope, summarise: has("summaris", "summariz", "summary", "recap", "what changed"))
         }
         if has("pending", "waiting for", "open order", "awaiting", "need my approval", "needs approval") {
             return pendingTrades()
@@ -192,6 +266,31 @@ final class CopilotEngine: ObservableObject {
         }
         if has("why", "explain") { return explainDecision(agent) }
         return nil
+    }
+
+    private func privateUpdates(scope: PrivateUpdateScope, summarise: Bool) async -> CopilotMessage {
+        guard let owner = auth.userId else {
+            return .init(isUser: false, text: "Sign in from Account to see published updates for your private companies.")
+        }
+        do {
+            if scope != .followed { await privateMarkets.refreshProviderHoldings(for: owner) }
+            let now = Date.now
+            let recent = now.addingTimeInterval(-30 * 86_400)
+            let updates = try await privateMarkets.checkUpdates(for: owner, companyScope: scope, deliverNotifications: false)
+                .filter { $0.isResearchSource && $0.activityAt >= recent && $0.activityAt <= now }
+            let selected = Array(updates.prefix(3))
+            guard auth.userId == owner, !Task.isCancelled else { throw CancellationError() }
+            let notice = scope != .followed && privateMarkets.providerError != nil
+                ? "Some provider holdings could not be refreshed." : nil
+            return .init(isUser: false, text: selected.isEmpty ? "I found no published updates in the last 30 days." :
+                "Here are the latest published updates from the last 30 days.",
+                cards: [.privateUpdates(id: UUID(), response: .init(owner: owner, scope: scope, updates: selected,
+                                                                  offerSummary: summarise, notice: notice))])
+        } catch is CancellationError {
+            return .init(isUser: false, text: "The company update request ended.")
+        } catch {
+            return .init(isUser: false, text: "Company updates could not be loaded. \(error.localizedDescription)")
+        }
     }
 
     private func resolveAgent(_ lower: String) -> TradingAgent? {

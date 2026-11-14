@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { holdingComparison } from "@/lib/portfolio-holdings";
 import { unrealisedGains } from "@/lib/portfolio-gains";
 import { portfolioMovement } from "@/lib/portfolio-movement";
+import { AllocationCard } from "./allocation-card";
 import { BrokerCash } from "./broker-cash";
 import { ExposureCard } from "./exposure-card";
 import { GainsCard } from "./gains-card";
@@ -55,7 +56,10 @@ function AccountPortfolio({ recordTransfer, logosEnabled, aiEnabled, userId, sta
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader title="Portfolio" description="View holdings and daily values across your portfolios."
-        actions={userId && <a className="text-sm text-primary-fg underline" href="/api/portfolio/transactions">Export transactions CSV</a>} />
+        actions={<>
+          <ButtonLink href="/private-markets?view=portfolio" size="sm">Private portfolio</ButtonLink>
+          {userId && <a className="text-sm text-primary-fg underline" href="/api/portfolio/transactions">Export transactions CSV</a>}
+        </>} />
       {userId && <Card className="space-y-3 px-4 py-3">
         {groups.isError ? <Notice tone="warn">The portfolio list couldn’t be loaded. <Button size="sm" onClick={() => void groups.refetch()}>Retry</Button></Notice>
           : <div className="flex flex-wrap items-end gap-2">
@@ -103,6 +107,8 @@ function AccountPortfolio({ recordTransfer, logosEnabled, aiEnabled, userId, sta
           actions={<Button onClick={() => void portfolio.refetch()}>Retry</Button>} /></Card>
       ) : (
         <>
+          {userId && !selected && <AllocationCard owner={userId} holdings={holdings} quoteFor={quoteFor}
+            loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} />}
           {userId && <div className="workspace portfolio-history-embed"><PortfolioHistory key={selected?.id ?? "all"} userId={userId}
             group={selected?.id === mainPortfolioId ? undefined : selected?.id} groupName={selected?.name} /></div>}
           <HoldingsCard key={selected?.id ?? "all"} comparison={comparison} pendingQuotes={pendingQuotes} truncated={portfolio.data?.truncated ?? false}

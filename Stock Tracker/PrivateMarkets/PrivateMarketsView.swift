@@ -99,6 +99,7 @@ struct PrivateMarketsView: View {
                         .accessibilityIdentifier("trading.copilot")
                     NavigationLink(value: PrivateDestination.updates) { Image(systemName: "bell") }
                         .accessibilityLabel("Company updates")
+                        .accessibilityIdentifier("private.companyUpdates")
                 }
             }
             .navigationDestination(for: PrivateDestination.self) { destination in
@@ -106,7 +107,7 @@ struct PrivateMarketsView: View {
                 case .discovery, .explorer, .rounds:
                     PrivateDiscoveryView(title: destination.rawValue, deals: deals, loading: loading,
                                          error: catalogError, refresh: load, groupCompanies: destination == .explorer,
-                                         sortByDeadline: destination == .rounds)
+                                         showFundingHistory: destination == .rounds)
                 case .research:
                     PrivateResearchWorkspace(deals: deals)
                 case .room:
@@ -181,13 +182,15 @@ private struct PrivateDiscoveryView: View {
     let error: String?
     let refresh: () async -> Void
     let groupCompanies: Bool
-    let sortByDeadline: Bool
+    let showFundingHistory: Bool
 
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
     @State private var watchlistError: String?
     @State private var search = ""
     @State private var category = ""
     @State private var country = ""
+    @State private var investorJurisdiction = ""
     @State private var sector = ""
     @State private var stage = ""
     @State private var status = ""
@@ -195,32 +198,46 @@ private struct PrivateDiscoveryView: View {
     @State private var currency = ""
     @State private var maxMinimum = ""
     @State private var maxValuation = ""
+    @State private var minTarget = ""
+    @State private var maxTarget = ""
     @State private var hasTraction = false
     @State private var following = false
     @State private var showFilters = false
 
     private var filtered: [PrivateDeal] {
-        let results = deals.filter { deal in
+        let now = Date.now
+        return deals.filter { deal in
             let matchesSearch = search.isEmpty || [
                 deal.company.name, deal.company.sector, deal.company.country, deal.company.location ?? "",
-                deal.company.description ?? "", deal.round.stage, deal.sourceName
+                deal.company.description ?? "", deal.round.stage, deal.sourceName, deal.round.listing?.symbol ?? ""
             ].contains { $0.localizedCaseInsensitiveContains(search) }
             return matchesSearch && (category.isEmpty || deal.category == category) &&
                 (country.isEmpty || deal.company.country == country) && (sector.isEmpty || deal.company.sector == sector) &&
-                (stage.isEmpty || deal.round.stage == stage) && (status.isEmpty || deal.displayedStatus == status) &&
+                (investorJurisdiction.isEmpty || deal.jurisdictions.contains(investorJurisdiction)) &&
+                (stage.isEmpty || deal.round.stage == stage) && (status.isEmpty || deal.displayedStatus(at: now) == status) &&
                 (eligibility.isEmpty || deal.eligibility == eligibility) && (currency.isEmpty || deal.round.currency == currency) &&
-                matches(deal.minimum, maximum: maxMinimum) && matches(deal.round.valuation, maximum: maxValuation) &&
-                (!hasTraction || deal.round.traction?.isEmpty == false) &&
+                matches(deal.minimum, upper: maxMinimum) && matches(deal.round.valuation, upper: maxValuation) &&
+                matches(deal.round.target, lower: minTarget, upper: maxTarget) &&
+                (!hasTraction || deal.round.traction?.isEmpty == false || deal.company.financials?.isEmpty == false) &&
                 (!following || store.state.follows.contains { $0.id == deal.company.id })
         }
-        if sortByDeadline { return results.sorted { ($0.round.closesAt ?? .distantFuture) < ($1.round.closesAt ?? .distantFuture) } }
-        return results
     }
 
-    private func matches(_ value: Decimal?, maximum: String) -> Bool {
-        guard !maximum.isEmpty else { return true }
-        guard let value, let limit = PrivateInput.amount(maximum), !currency.isEmpty else { return false }
-        return value <= limit
+    private func matches(_ value: Decimal?, lower: String = "", upper: String) -> Bool {
+        guard !lower.isEmpty || !upper.isEmpty else { return true }
+        guard let value, !currency.isEmpty else { return false }
+        let minimum = lower.isEmpty ? true : PrivateInput.amount(lower).map { value >= $0 } ?? false
+        let maximum = upper.isEmpty ? true : PrivateInput.amount(upper).map { value <= $0 } ?? false
+        return minimum && maximum
+    }
+
+    private var amountIssue: String? {
+        let entries = [maxMinimum, maxValuation, minTarget, maxTarget].filter { !$0.isEmpty }
+        if entries.contains(where: { PrivateInput.amount($0) == nil }) { return "Enter valid amounts in the selected currency." }
+        if let low = PrivateInput.amount(minTarget), let high = PrivateInput.amount(maxTarget), low > high {
+            return "The minimum raise target exceeds the maximum."
+        }
+        return nil
     }
 
     var body: some View {
@@ -228,8 +245,34 @@ private struct PrivateDiscoveryView: View {
             Section {
                 Toggle("Following", isOn: $following)
                 Button { showFilters = true } label: { Label("Filters", systemImage: "line.3.horizontal.decrease") }
+                    .accessibilityIdentifier("private.discover.filters")
+                if !investorJurisdiction.isEmpty {
+                    LabeledContent("Investor jurisdiction", value: countryName(investorJurisdiction))
+                }
+                if auth.userId != nil {
+                    NavigationLink { PrivateDiscoverySearchView() } label: {
+                        Label("Search the catalogue with AI", systemImage: "sparkle.magnifyingglass")
+                    }
+                }
+                if !groupCompanies, !loading, Set(filtered.map(\.round.id)).count > 1 {
+                    NavigationLink("Compare funding rounds") {
+                        PrivateRoundComparison(deals: filtered)
+                    }
+                    .accessibilityIdentifier("private.funding.compare")
+                }
             }
-            Section(groupCompanies ? "Companies" : "Opportunities") {
+            if showFundingHistory, !loading, error == nil {
+                let listings = filtered.filter { $0.round.listing != nil }.sorted(by: listingOrder)
+                if !listings.isEmpty {
+                    Section("IPO milestones") {
+                        ForEach(listings) { deal in
+                            NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateFundingRoundRow(deal: deal) }
+                                .accessibilityIdentifier("private.funding.listing.\(deal.round.listing?.symbol ?? "")")
+                        }
+                    }
+                }
+            }
+            Section(groupCompanies ? "Companies" : showFundingHistory ? "Published rounds" : "Opportunities") {
                 if loading {
                     VStack(spacing: DS.Space.l) {
                         ForEach(0..<3) { _ in
@@ -253,12 +296,16 @@ private struct PrivateDiscoveryView: View {
                     ForEach(sorted, id: \.self) { id in
                         if let rounds = companies[id], let company = rounds.first?.company {
                             NavigationLink(company.name) {
-                                List(rounds) { deal in
-                                    NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateDealRow(deal: deal) }
-                                }
-                                .navigationTitle(company.name)
+                                PrivateCompanyFundingHistory(company: company,
+                                                             rounds: deals.filter { $0.company.id == id })
                             }
+                            .accessibilityIdentifier("private.explorer.company.\(id.uuidString)")
                         }
+                    }
+                } else if showFundingHistory {
+                    let rounds = filtered.filter { $0.round.listing == nil }.sorted(by: fundingRoundOrder)
+                    ForEach(rounds) { deal in
+                        NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateFundingRoundRow(deal: deal) }
                     }
                 } else {
                     ForEach(filtered) { deal in
@@ -297,9 +344,9 @@ private struct PrivateDiscoveryView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $search, prompt: "Company, sector or provider")
+        .searchable(text: $search, prompt: "Company, symbol, sector or provider")
         .refreshable { await refresh() }
-        .onChange(of: currency) { _, value in if value.isEmpty { maxMinimum = ""; maxValuation = "" } }
+        .onChange(of: currency) { _, _ in clearAmounts() }
         .sheet(isPresented: $showFilters) {
             NavigationStack {
                 Form {
@@ -307,31 +354,179 @@ private struct PrivateDiscoveryView: View {
                         picker("Category", selection: $category, values: deals.map(\.category))
                         picker("Stage", selection: $stage, values: deals.map(\.round.stage))
                         picker("Sector", selection: $sector, values: deals.map(\.company.sector))
-                        picker("Country", selection: $country, values: deals.map(\.company.country))
+                        picker("Company country", selection: $country, values: deals.map(\.company.country), valueLabel: countryName)
+                        picker("Investor jurisdiction", selection: $investorJurisdiction,
+                               values: deals.flatMap(\.jurisdictions), valueLabel: countryName)
+                            .accessibilityIdentifier("private.discover.investorJurisdiction")
                         picker("Status", selection: $status, values: deals.map(\.displayedStatus))
                         picker("Eligibility", selection: $eligibility, values: deals.map(\.eligibility))
                         Toggle("Disclosed traction", isOn: $hasTraction)
                     }
                     Section("Amounts") {
-                        picker("Currency", selection: $currency, values: deals.map(\.round.currency))
-                        TextField("Maximum minimum investment", text: $maxMinimum).keyboardType(.decimalPad).disabled(currency.isEmpty)
-                        TextField("Maximum valuation", text: $maxValuation).keyboardType(.decimalPad).disabled(currency.isEmpty)
+                        picker("Currency", selection: $currency, values: deals.map(\.round.currency), valueLabel: { $0 })
+                            .accessibilityIdentifier("private.discover.currency")
+                        Group {
+                            TextField("Maximum minimum investment", text: $maxMinimum)
+                            TextField("Minimum raise target", text: $minTarget)
+                                .accessibilityIdentifier("private.discover.targetMin")
+                            TextField("Maximum raise target", text: $maxTarget)
+                                .accessibilityIdentifier("private.discover.targetMax")
+                            TextField("Maximum valuation", text: $maxValuation)
+                        }
+                        .keyboardType(.decimalPad)
+                        .disabled(currency.isEmpty)
+                        if let amountIssue { Text(amountIssue).foregroundStyle(.red) }
                     }
                     Button("Clear filters") {
                         category = ""; stage = ""; sector = ""; country = ""; status = ""; eligibility = ""
-                        currency = ""; maxMinimum = ""; maxValuation = ""; hasTraction = false
+                        currency = ""; investorJurisdiction = ""; clearAmounts(); hasTraction = false
                     }
                 }
                 .navigationTitle("Filters")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showFilters = false } } }
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showFilters = false }.disabled(amountIssue != nil)
+                    }
+                }
             }
         }
     }
 
-    private func picker(_ label: String, selection: Binding<String>, values: [String]) -> some View {
+    private func clearAmounts() {
+        maxMinimum = ""; maxValuation = ""; minTarget = ""; maxTarget = ""
+    }
+
+    private func countryName(_ code: String) -> String {
+        Locale.current.localizedString(forRegionCode: code) ?? code
+    }
+
+    private func picker(_ label: String, selection: Binding<String>, values: [String],
+                        valueLabel: @escaping (String) -> String = { $0.capitalized }) -> some View {
         Picker(label, selection: selection) {
             Text("Any").tag("")
-            ForEach(Set(values).sorted(), id: \.self) { Text($0.capitalized).tag($0) }
+            ForEach(Set(values).sorted(), id: \.self) { Text(valueLabel($0)).tag($0) }
+        }
+    }
+}
+
+private struct PrivateDiscoverySearchView: View {
+    private struct Results: Decodable {
+        struct Criteria: Decodable {
+            let countries, sectors, categories, statuses, eligibility, providers, unsupported: [String]
+            let investorJurisdictions: [String]?
+            let stages: [String]?
+            let company, currency: String
+            let maxMinimum, maxValuation: Decimal
+            let minRaiseTarget, maxRaiseTarget: Decimal?
+            let disclosedTraction: Bool
+        }
+        let criteria: Criteria
+        let deals: [PrivateDeal]
+        let matchedCount: Int
+        let scannedAll: Bool
+    }
+
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var question = ""
+    @State private var modelConsent = false
+    @State private var answer: Results?
+    @State private var submitted: String?
+    @State private var error: String?
+    @State private var searchTask: Task<Void, Never>?
+
+    var body: some View {
+        List {
+            Section("Catalogue search") {
+                TextField("Ask about a company, stage or sector", text: $question,
+                          prompt: Text("Find closed Australian healthcare rounds"), axis: .vertical)
+                    .lineLimit(2...4)
+                    .accessibilityIdentifier("private.discover.question")
+                Toggle("Send my search to OpenAI or Google Gemini", isOn: $modelConsent)
+                    .disabled(searchTask != nil)
+                    .accessibilityIdentifier("private.discover.modelConsent")
+                Button("Search published opportunities", action: search)
+                    .disabled(!canSearch)
+                if searchTask != nil { ProgressView("Checking published opportunities") }
+                if let error { Text(error).foregroundStyle(.secondary) }
+            }
+            if let answer {
+                Section("Interpreted filters") {
+                    if let submitted { Text(submitted).font(.footnote).foregroundStyle(.secondary) }
+                    filters(answer.criteria)
+                }
+                Section("Published results") {
+                    if !answer.criteria.unsupported.isEmpty {
+                        Text("Refine the highlighted filters to search the catalogue.")
+                    } else if answer.deals.isEmpty {
+                        Text("No published opportunities match these filters.")
+                    }
+                    if !answer.scannedAll { Text("This search checked the 500 most recently verified records.").font(.footnote) }
+                    if answer.matchedCount > answer.deals.count {
+                        Text("Showing \(answer.deals.count) of \(answer.matchedCount) matches.").font(.footnote)
+                    }
+                    ForEach(answer.deals) { deal in
+                        NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateDealRow(deal: deal) }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Catalogue Search")
+        .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { searchTask?.cancel() }
+        .onChange(of: auth.userId) { _, _ in
+            searchTask?.cancel()
+            question = ""
+            modelConsent = false
+            answer = nil
+            submitted = nil
+            error = nil
+        }
+    }
+
+    private var canSearch: Bool {
+        modelConsent && !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            question.utf16.count <= 600 && searchTask == nil
+    }
+
+    @ViewBuilder
+    private func filters(_ criteria: Results.Criteria) -> some View {
+        let lists = [
+            ("Company country", criteria.countries), ("Investor jurisdiction", criteria.investorJurisdictions ?? []),
+            ("Sector", criteria.sectors), ("Category", criteria.categories), ("Stage", criteria.stages ?? []),
+            ("Status", criteria.statuses), ("Eligibility", criteria.eligibility), ("Source", criteria.providers),
+        ]
+        ForEach(lists.filter { !$0.1.isEmpty }, id: \.0) { label, values in
+            LabeledContent(label, value: values.joined(separator: ", "))
+        }
+        if !criteria.company.isEmpty { LabeledContent("Company", value: criteria.company) }
+        if !criteria.currency.isEmpty { LabeledContent("Currency", value: criteria.currency) }
+        if criteria.maxMinimum > 0 { LabeledContent("Maximum minimum investment", value: criteria.maxMinimum.formatted()) }
+        if criteria.maxValuation > 0 { LabeledContent("Maximum valuation", value: criteria.maxValuation.formatted()) }
+        if let low = criteria.minRaiseTarget, low > 0 { LabeledContent("Minimum raise target", value: low.formatted()) }
+        if let high = criteria.maxRaiseTarget, high > 0 { LabeledContent("Maximum raise target", value: high.formatted()) }
+        if criteria.disclosedTraction { Text("Disclosed traction required") }
+        ForEach(criteria.unsupported, id: \.self) { Label($0, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
+    }
+
+    private func search() {
+        guard let owner = auth.userId, canSearch else { return }
+        let query = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fields: [String: Any] = ["question": query, "model_consent": modelConsent]
+        modelConsent = false
+        answer = nil
+        error = nil
+        searchTask = Task {
+            defer { searchTask = nil }
+            do {
+                let result: Results = try await PrivateMarketsAPI.request("discover", fields, expectedUserID: owner)
+                try Task.checkCancellation()
+                guard auth.userId == owner else { return }
+                submitted = query
+                answer = result
+            } catch is CancellationError {
+            } catch {
+                if auth.userId == owner { self.error = error.localizedDescription }
+            }
         }
     }
 }
@@ -340,8 +535,16 @@ private struct PrivateDealRow: View {
     let deal: PrivateDeal
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "building.2")
-                .foregroundStyle(Color.cyan)
+            Group {
+                if let url = deal.company.logoUrl, url.privateSourceIsSafe {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image { image.resizable().scaledToFit().padding(4) }
+                        else { logoPlaceholder }
+                    }
+                } else {
+                    logoPlaceholder
+                }
+            }
                 .frame(width: 36, height: 36)
                 .background(.cyan.opacity(0.1), in: RoundedRectangle(cornerRadius: 11))
                 .accessibilityHidden(true)
@@ -357,10 +560,294 @@ private struct PrivateDealRow: View {
         }
         .padding(.vertical, 4)
     }
+
+    private var logoPlaceholder: some View {
+        Image(systemName: "building.2").foregroundStyle(Color.cyan)
+    }
 }
 
-private struct PrivateDealDetail: View {
+private func fundingRoundOrder(_ lhs: PrivateDeal, _ rhs: PrivateDeal) -> Bool {
+    let leftStatus = lhs.displayedStatus
+    let rightStatus = rhs.displayedStatus
+    let leftActive = leftStatus == "Open at verification" || leftStatus == "Expression of interest"
+    let rightActive = rightStatus == "Open at verification" || rightStatus == "Expression of interest"
+    if leftActive != rightActive { return leftActive }
+    if leftActive, lhs.round.closesAt != rhs.round.closesAt {
+        return (lhs.round.closesAt ?? .distantFuture) < (rhs.round.closesAt ?? .distantFuture)
+    }
+    if lhs.round.announcedOn != rhs.round.announcedOn {
+        return (lhs.round.announcedOn ?? .distantPast) > (rhs.round.announcedOn ?? .distantPast)
+    }
+    return lhs.id.uuidString < rhs.id.uuidString
+}
+
+private func listingOrder(_ lhs: PrivateDeal, _ rhs: PrivateDeal) -> Bool {
+    guard let left = lhs.round.listing, let right = rhs.round.listing else { return fundingRoundOrder(lhs, rhs) }
+    if left.hasUpcomingQuotation != right.hasUpcomingQuotation { return left.hasUpcomingQuotation }
+    let leftDay = left.quotationOn ?? ""
+    let rightDay = right.quotationOn ?? ""
+    if leftDay != rightDay { return left.hasUpcomingQuotation ? leftDay < rightDay : leftDay > rightDay }
+    return lhs.id.uuidString < rhs.id.uuidString
+}
+
+private struct PrivateFundingRoundRow: View {
     let deal: PrivateDeal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            Text(deal.round.stage).font(.headline)
+            Text(deal.company.name).font(.subheadline)
+            Text(deal.displayedStatus).font(.footnote).foregroundStyle(.secondary)
+            if let listing = deal.round.listing {
+                Text("\(listing.exchange) \(listing.symbol) · \(listing.displayStatus)")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                if let date = listing.quotationOn { Text(PrivateDeal.Round.Listing.formattedDay(date)).font(.footnote) }
+            }
+            if let date = deal.round.announcedOn {
+                LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let raised = deal.round.raised {
+                LabeledContent("Capital raised", value: PrivateInput.money(raised, currency: deal.round.currency))
+                    .font(.footnote.monospacedDigit())
+            }
+            if let valuation = deal.round.valuation {
+                LabeledContent("Reported valuation", value: PrivateInput.money(valuation, currency: deal.round.currency))
+                    .font(.footnote.monospacedDigit())
+            }
+        }
+        .padding(.vertical, DS.Space.xs)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct PrivateCompanyFundingHistory: View {
+    let company: PrivateDeal.Company
+    let rounds: [PrivateDeal]
+    @EnvironmentObject private var auth: SupabaseAuthManager
+
+    var body: some View {
+        let history = rounds.sorted(by: fundingRoundOrder)
+        List {
+            Section {
+                if let description = company.description { Text(description) }
+                if company.sourceUrl.privateSourceIsSafe { Link("Company source", destination: company.sourceUrl) }
+            }
+            Section("Funding history") {
+                ForEach(history) { deal in
+                    NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateFundingRoundRow(deal: deal) }
+                            .accessibilityIdentifier("private.funding.round.\(deal.round.stage)")
+                }
+            }
+            PrivateCompanyFinancialsSections(company: company)
+            if Set(history.map(\.round.id)).count > 1 {
+                Section {
+                    NavigationLink("Compare funding rounds") {
+                        PrivateRoundComparison(deals: history, preselectRecentRounds: true)
+                    }
+                    .accessibilityIdentifier("private.funding.compare")
+                }
+            }
+        }
+        .navigationTitle(company.name)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct PrivateRoundComparison: View {
+    let deals: [PrivateDeal]?
+    static let defaultQuestion = "Compare the selected funding rounds qualitatively. Explain the reported valuation basis and any gaps in the financing, dilution and investor rights. Keep amounts in the source citations. Use the word reported or undisclosed for each company. Keep dates and amounts out of the text."
+    var question = PrivateRoundComparison.defaultQuestion
+    var preselectRecentRounds = false
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var catalog: [PrivateDeal] = []
+    @State private var selection: [UUID] = []
+    @State private var configuredSelection = false
+    @State private var showPicker = false
+    @State private var search = ""
+    @State private var loading = false
+    @State private var error: String?
+
+    private var rounds: [PrivateDeal] {
+        var seen: Set<UUID> = []
+        return (deals ?? catalog).sorted(by: fundingRoundOrder).filter { seen.insert($0.round.id).inserted }
+    }
+
+    var body: some View {
+        let available = rounds
+        let selected = selection.compactMap { id in available.first { $0.round.id == id } }
+        List {
+            Section("Selected rounds") {
+                if loading { ProgressView("Loading rounds") }
+                if let error {
+                    Text(error).foregroundStyle(.secondary)
+                    Button("Retry") { Task { await load() } }
+                }
+                if selected.count < 2 { Text("Select two or three published rounds to compare.").foregroundStyle(.secondary) }
+                Button("Choose rounds") { showPicker = true }
+                    .disabled(available.isEmpty)
+                    .accessibilityIdentifier("private.comparison.choose")
+                if selected.count > 1 {
+                    if auth.userId != nil {
+                        NavigationLink("Research selected rounds") {
+                            PrivateResearchWorkspace(deals: selected, comparisonQuestion: question)
+                        }
+                        .accessibilityIdentifier("private.comparison.research")
+                    } else {
+                        Text("Sign in from Account to ask AI about these rounds.").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(selected) { deal in
+                    comparisonRow(deal)
+                }
+                if selected.count > 1, Set(selected.map(\.round.currency)).count > 1 {
+                    Text("Figures use their original currencies.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Compare Funding Rounds")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showPicker) { roundPicker(available) }
+        .task {
+            if deals == nil, catalog.isEmpty, error == nil { await load() }
+            if preselectRecentRounds, !configuredSelection {
+                selection = rounds.prefix(3).map(\.round.id)
+                configuredSelection = true
+            }
+        }
+    }
+
+    private func roundPicker(_ available: [PrivateDeal]) -> some View {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches = available.filter { deal in
+            query.isEmpty || "\(deal.company.name) \(deal.round.stage) \(deal.round.listing?.symbol ?? "")".localizedCaseInsensitiveContains(query)
+        }
+        return NavigationStack {
+            List {
+                Section("\(selection.count) of 3 selected") {
+                    if matches.isEmpty { Text("No published rounds match this search.").foregroundStyle(.secondary) }
+                    ForEach(matches) { deal in
+                        let isSelected = selection.contains(deal.round.id)
+                        Button {
+                            if isSelected { selection.removeAll { $0 == deal.round.id } }
+                            else if selection.count < 3 { selection.append(deal.round.id) }
+                        } label: {
+                            Label("\(deal.company.name) · \(deal.round.stage)", systemImage: isSelected ? "checkmark.circle.fill" : "circle")
+                        }
+                        .disabled(!isSelected && selection.count == 3)
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                        .accessibilityIdentifier("private.comparison.round.\(deal.round.id.uuidString)")
+                    }
+                }
+            }
+            .navigationTitle("Choose Rounds")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $search, prompt: "Company or round")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showPicker = false }
+                        .accessibilityIdentifier("private.comparison.done")
+                }
+            }
+        }
+    }
+
+    private func comparisonRow(_ deal: PrivateDeal) -> some View {
+        let round = deal.round
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            Text("\(deal.company.name) · \(round.stage)").font(.headline)
+            if let date = round.announcedOn {
+                LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+            }
+            LabeledContent("Round status", value: deal.displayedStatus)
+            LabeledContent("Capital raised", value: round.raised.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
+            LabeledContent("Reported valuation", value: round.valuation.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
+            LabeledContent("Valuation basis", value: round.valuationMethod ?? "Undisclosed")
+            if round.shareClasses.isEmpty { LabeledContent("Share class and rights", value: "Undisclosed") }
+            else {
+                ForEach(Array(round.shareClasses.enumerated()), id: \.offset) { _, share in
+                    Text(share.name).font(.subheadline.weight(.semibold))
+                    Text(share.rights).font(.footnote)
+                    if share.sourceUrl.privateSourceIsSafe { Link("Read share-class source", destination: share.sourceUrl) }
+                }
+            }
+            if round.sourceUrl.privateSourceIsSafe { Link("Read round source", destination: round.sourceUrl) }
+            Button("Remove \(deal.company.name) \(round.stage) from comparison", role: .destructive) {
+                selection.removeAll { $0 == round.id }
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, DS.Space.xs)
+    }
+
+    private static func amount(_ amount: Decimal, currency: String) -> String {
+        "\(currency) \(amount.formatted(.number.precision(.fractionLength(0...4))))"
+    }
+
+    private func load() async {
+        loading = true
+        error = nil
+        defer { loading = false }
+        do {
+            let published: PrivateMarketsAPI.Catalog = try await PrivateMarketsAPI.request("catalog")
+            try Task.checkCancellation()
+            catalog = published.deals
+        } catch is CancellationError {
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct PrivateCompanyFinancialsSections: View {
+    let company: PrivateDeal.Company
+
+    var body: some View {
+        let records = company.financials ?? []
+        if !records.isEmpty {
+            Section("Disclosed financials") {
+                ForEach(records) { record in
+                    VStack(alignment: .leading, spacing: DS.Space.s) {
+                        Text(record.reportingPeriod).font(.headline)
+                        Text(record.assurance == .audited ? "Audited financial statements" : "Issuer-reported figures")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        financialAmount("Revenue", record.revenue, record.currency)
+                        financialAmount("Annual recurring revenue", record.annualRecurringRevenue, record.currency)
+                        if let growth = annualRevenueGrowth(record, records: records) {
+                            LabeledContent("Year-over-year revenue change", value: growth.formatted(.percent.precision(.fractionLength(1))))
+                        }
+                        financialAmount("Net profit or loss", record.netProfitLoss, record.currency)
+                        financialAmount("Net operating cash flow", record.operatingCashFlow, record.currency)
+                        financialAmount("Cash and cash equivalents", record.cashAndEquivalents, record.currency)
+                        LabeledContent("Disclosure published", value: PrivateDeal.Round.Listing.formattedDay(record.publishedOn))
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if record.sourceUrl.privateSourceIsSafe { Link("Read financial disclosure", destination: record.sourceUrl) }
+                    }
+                    .padding(.vertical, DS.Space.xs)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func financialAmount(_ label: String, _ amount: Decimal?, _ currency: String) -> some View {
+        if let amount { LabeledContent(label, value: PrivateInput.money(amount, currency: currency)) }
+    }
+
+    private func annualRevenueGrowth(_ current: PrivateDeal.Company.Financials, records: [PrivateDeal.Company.Financials]) -> Decimal? {
+        guard current.periodKind == .financialYear, current.assurance == .audited, let revenue = current.revenue,
+              let year = Int(current.periodEndOn.prefix(4)) else { return nil }
+        let priorDate = String(year - 1) + current.periodEndOn.dropFirst(4)
+        guard let prior = records.first(where: {
+            $0.periodEndOn == priorDate && $0.periodKind == .financialYear && $0.assurance == .audited && $0.currency == current.currency
+        })?.revenue, prior > 0 else { return nil }
+        return revenue / prior - 1
+    }
+}
+
+struct PrivateDealDetail: View {
+    let deal: PrivateDeal
+    var reviewedFromReport = false
     @EnvironmentObject private var store: PrivateMarketsStore
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var error: String?
@@ -380,9 +867,15 @@ private struct PrivateDealDetail: View {
             }
             Section("Funding terms") {
                 LabeledContent("Stage", value: deal.round.stage)
-                LabeledContent("Eligibility", value: deal.eligibility.capitalized)
-                LabeledContent("Jurisdictions", value: deal.jurisdictions.joined(separator: ", "))
-                LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
+                if let date = deal.round.announcedOn {
+                    LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+                }
+                if deal.provider != "issuer" {
+                    LabeledContent("Eligibility", value: deal.eligibility.capitalized)
+                    LabeledContent("Investor jurisdictions", value: deal.jurisdictions.isEmpty
+                        ? "Undisclosed" : deal.jurisdictions.map { Locale.current.localizedString(forRegionCode: $0) ?? $0 }.joined(separator: ", "))
+                    LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
+                }
                 LabeledContent("Raise target", value: PrivateInput.money(deal.round.target, currency: deal.round.currency))
                 LabeledContent("Capital raised", value: PrivateInput.money(deal.round.raised, currency: deal.round.currency))
                 LabeledContent("Valuation", value: PrivateInput.money(deal.round.valuation, currency: deal.round.currency))
@@ -397,6 +890,24 @@ private struct PrivateDealDetail: View {
                     }
                 }
             }
+            if let listing = deal.round.listing {
+                Section("IPO milestones") {
+                    LabeledContent(listing.quotationStatus == .listed ? "Listed symbol" : "Proposed symbol",
+                                   value: "\(listing.exchange) \(listing.symbol)")
+                    if let expectedClose = listing.expectedOfferCloseOn {
+                        LabeledContent("Expected offer close", value: PrivateDeal.Round.Listing.formattedDay(expectedClose))
+                    }
+                    if let date = listing.quotationOn {
+                        LabeledContent(listing.quotationStatus.label, value: PrivateDeal.Round.Listing.formattedDay(date))
+                    }
+                    if listing.displayStatus != listing.quotationStatus.label || listing.quotationOn == nil {
+                        Text(listing.displayStatus).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Listing source verified", value: listing.verifiedAt.formatted(date: .abbreviated, time: .shortened))
+                    if listing.sourceUrl.privateSourceIsSafe { Link("Read listing source", destination: listing.sourceUrl) }
+                }
+            }
+            PrivateCompanyFinancialsSections(company: deal.company)
             Section("Sources") {
                 LabeledContent("Verified", value: deal.verifiedAt.formatted(date: .abbreviated, time: .shortened))
                 if deal.sourceUrl.privateSourceIsSafe { Link("Read source", destination: deal.sourceUrl) }
@@ -406,8 +917,18 @@ private struct PrivateDealDetail: View {
             }
             Section("Research & applications") {
                 NavigationLink("Research this opportunity") { PrivateResearchWorkspace(deals: [deal], selectedDealID: deal.id) }
-                if deal.displayedStatus == "Open at verification", auth.userId != nil, deal.offerDocumentUrl?.privateSourceIsSafe == true {
-                    NavigationLink("Provider application readiness") { PrivateProviderHandoff(deal: deal) }
+                NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
+                    .accessibilityIdentifier("private.deal.scenarios")
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    if deal.displayedStatus(at: context.date) == "Open at verification", auth.userId != nil,
+                       deal.offerDocumentUrl?.privateSourceIsSafe == true {
+                        NavigationLink("Provider application readiness") { PrivateProviderHandoff(deal: deal) }
+                            .accessibilityIdentifier("private.deal.applicationReadiness")
+                    } else if reviewedFromReport {
+                        Text("Provider application readiness is unavailable for this round.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("private.deal.applicationUnavailable")
+                    }
                 }
                 Text("Private investments can be illiquid and may lose their full value.")
                     .font(.footnote).foregroundStyle(.secondary)

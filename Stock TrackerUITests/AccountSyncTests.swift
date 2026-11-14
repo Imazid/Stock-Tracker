@@ -790,6 +790,144 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "positions priced")).firstMatch.exists)
     }
 
+    func testAccountDeletionRequiresPasswordAndClearsTheAccount() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ACCOUNT_DELETION"] == "1",
+                          "Set up a disposable account-deletion backend")
+        let email = "account-deletion-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)"]
+        app.launch()
+        XCTAssertTrue(app.open("Home"))
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 12))
+        settings.tap()
+        let account = app.buttons["settings.account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 15))
+        account.tap()
+        let open = app.buttons["account.delete.open"]
+        for _ in 0..<4 where !open.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(open.isHittable)
+        open.tap()
+        let currentPassword = app.secureTextFields["account.delete.password"]
+        XCTAssertTrue(currentPassword.waitForExistence(timeout: 6))
+
+        func submit(_ value: String) {
+            currentPassword.tap()
+            currentPassword.typeText(value)
+            let proceed = app.buttons["account.delete.confirm"]
+            for _ in 0..<4 where !proceed.isHittable { app.swipeUp(velocity: .slow) }
+            proceed.tap()
+            let confirm = app.buttons.matching(identifier: "account.delete.permanent").firstMatch
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+            confirm.tap()
+        }
+
+        let wrong = "incorrect"
+        submit(wrong)
+        let failure = app.staticTexts["account.delete.error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertTrue(failure.label.contains("password did not match"))
+        XCTAssertEqual(try request("GET", "/auth/v1/user", token: token).status, 200)
+        currentPassword.tap()
+        currentPassword.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: wrong.count))
+        submit(password)
+        XCTAssertTrue(app.alerts["Account deleted"].waitForExistence(timeout: 25))
+        XCTAssertTrue([401, 403, 404].contains(try request("GET", "/auth/v1/user", token: token).status))
+    }
+
+    func testUnifiedAllocationUsesOnlyPricedPositionsAndSeparatesETFs() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_UNIFIED_ALLOCATION"] == "1",
+                          "Start the unified allocation quote relay")
+        let email = "unified-allocation-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userID = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let date = ISO8601DateFormatter().string(from: .now)
+        let positions: [(String, String, Double)] = [
+            ("AAPL", "NASDAQ", 2), ("QQQ", "NASDAQ", 1), ("UNPRICED", "NASDAQ", 1),
+        ]
+        let rows = positions.map { symbol, exchange, units in
+            ["id": UUID().uuidString.lowercased(), "user_id": userID, "asset_symbol": symbol,
+             "asset_name": symbol, "asset_kind": "Stock", "asset_exchange": exchange,
+             "shares": units, "avg_cost": 40, "date_added": date] as [String: Any]
+        }
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: rows), token: token).status, 201)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-preferredCurrency", "USD",
+            "-portfolioSegment", "allocation"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        let privacy = app.buttons["portfolio.privacy"]
+        XCTAssertTrue(privacy.waitForExistence(timeout: 20))
+        let listedTotal = app.staticTexts["portfolio.chart.value"]
+        let quoted = expectation(for: NSPredicate(format: "label CONTAINS '200.00'"), evaluatedWith: listedTotal)
+        XCTAssertEqual(XCTWaiter.wait(for: [quoted], timeout: 20), .completed)
+        XCTAssertTrue(app.open("Private Markets"))
+        app.buttons["private.destination.briefcase"].tap()
+        let add = app.buttons["private.holding.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 15))
+        add.tap()
+        let name = app.textFields["private.holding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        app.buttons["private.holding.currency"].tap()
+        let usd = app.buttons["USD"]
+        for _ in 0..<4 where !usd.isHittable { app.swipeUp() }
+        usd.tap()
+        name.tap()
+        name.typeText("Allocation fixture")
+        app.buttons["private.holding.save"].tap()
+        let position = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(position.waitForExistence(timeout: 8))
+        position.tap()
+        let valuation = app.buttons["private.valuation.add"]
+        for _ in 0..<4 where !valuation.isHittable { app.swipeUp() }
+        valuation.tap()
+        let amount = app.textFields["private.ledger.amount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText("300")
+        let source = app.textFields["private.ledger.source"]
+        source.tap()
+        source.typeText("Test statement")
+        let method = app.textFields["private.ledger.method"]
+        method.tap()
+        method.typeText("Statement NAV")
+        app.buttons["private.ledger.save"].tap()
+        XCTAssertTrue(app.navigationBars["Record Valuation"].waitForNonExistence(timeout: 5))
+
+        XCTAssertTrue(app.open("Portfolio"))
+        let total = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '500.00'")).firstMatch
+        for _ in 0..<7 where !total.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(total.exists)
+        for category in ["ETFs", "Listed equities", "Startup equity"] {
+            let percent = category == "Startup equity" ? "60.0%" : "20.0%"
+            let label = NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", category, percent)
+            let slice = app.descendants(matching: .any).matching(label).firstMatch
+            for _ in 0..<4 where !slice.exists { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(slice.exists)
+        }
+        let excluded = app.staticTexts["Listed positions excluded for an unavailable quote: 1"]
+        for _ in 0..<4 where !excluded.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(excluded.exists)
+        privacy.tap()
+        XCTAssertTrue(total.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Portfolio values are hidden."].exists)
+    }
+
     func testPortfolioVisitShowsSyncedPositionChangesAndHidesValues() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_HOLDINGS_COMPARISON"] == "1",
                           "Start the holdings comparison fixture relay")

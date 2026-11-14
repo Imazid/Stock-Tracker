@@ -369,6 +369,14 @@ final class ListsFlowTests: XCTestCase {
         app.buttons["settings.done"].tap()
     }
 
+    func testPrivateMarketsDisclosuresOpenFromSettings() {
+        launchAndOnboard(picks: ["AAPL"])
+        openSettings()
+
+        open("settings.terms", expect: "the licensed provider manages the application")
+        open("settings.privacyPolicy", expect: "saved AngelList statements stay on this iPhone")
+    }
+
     func testSettingsRowsAllDoSomething() {
         launchAndOnboard(picks: ["AAPL"])
         openSettings()

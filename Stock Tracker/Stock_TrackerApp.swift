@@ -92,6 +92,16 @@ struct StockCryptoTrackerApp: App {
     private func restoreOrSignIn() {
         #if DEBUG
         if Self.isUITestFreshInstall,
+           let session = ProcessInfo.processInfo.environment["UITEST_LOCAL_SUPABASE_SESSION"],
+           let url = URL(string: SecretsConfig.supabaseURL),
+           url.scheme == "http", ["localhost", "127.0.0.1"].contains(url.host ?? ""),
+           let separator = session.firstIndex(of: ":") {
+            let access = String(session[..<separator])
+            let refresh = String(session[session.index(after: separator)...])
+            Task { await supabaseAuthManager.restoreTestSession(accessToken: access, refreshToken: refresh) }
+            return
+        }
+        if Self.isUITestFreshInstall,
            let pair = UserDefaults.standard.string(forKey: "UITestSignIn"),
            let split = pair.firstIndex(of: ":") {
             let email = String(pair[..<split])
@@ -245,6 +255,9 @@ struct StockCryptoTrackerApp: App {
                 authManager.reset()
                 // Pull latest cloud data when app comes to foreground (throttled internally)
                 if supabaseAuthManager.isSignedIn && networkMonitor.isConnected {
+                    if let owner = supabaseAuthManager.userId {
+                        Task { await PrivateMarketsStore.shared.refreshMonitor(for: owner) }
+                    }
                     Task {
                         await syncManager.pullAndRefresh(
                             marketData: marketData,

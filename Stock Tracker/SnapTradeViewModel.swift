@@ -260,6 +260,12 @@ final class SnapTradeViewModel: ObservableObject {
         clearConnection(keepPositions: false)
     }
 
+    func forgetDeletedAccount() {
+        repository.disconnect()
+        importedIDs = []
+        accountChanged()
+    }
+
     private func clearConnection(keepPositions: Bool) {
         if keepPositions, let marketData {
             for holding in marketData.allPortfolioHoldings where isImported(holding) {
