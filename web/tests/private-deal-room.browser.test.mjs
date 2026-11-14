@@ -176,7 +176,11 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     assert.match(await draft.inputValue(), /The sample portfolio contains three positions\./);
     assert.ok(scanRequests.some(([method, url]) => method === "GET" && url.href === languagePath));
     assert.ok(scanRequests.some(([method, url]) => method === "GET" && url.pathname.includes("tesseract-core")));
-    assert.ok(scanRequests.every(([method, url]) => method === "GET" && url.origin === origin));
+    // Vercel's protection toolbar can poll SSO during a protected preview run.
+    const requestsOutsideOCR = scanRequests.filter(([method, url]) =>
+      method !== "GET" || (url.origin !== origin &&
+        !(previewToken && url.origin === "https://vercel.com" && url.pathname === "/sso-api")));
+    assert.deepEqual(requestsOutsideOCR.map(([method, url]) => [method, url.origin + url.pathname]), []);
     assert.deepEqual(browserErrors, []);
     assert.ok(await save.isDisabled());
     assert.equal(submissions.length, 0);
