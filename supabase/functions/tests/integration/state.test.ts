@@ -148,6 +148,41 @@ stateTest("contract: a realistic account's state, as the app will decode it", as
 
 // MARK: - includeState
 
+stateTest("agent activity pages tied runs and follows later approval to the actual fill", async (sql) => {
+  const [person, other] = await Promise.all([signUp("activity"), signUp("activity-other")]);
+  const call = async (body: Record<string, unknown>) => {
+    const answer = await api(person.token, body);
+    assertEquals(answer.status, 200, `${body.action}: ${JSON.stringify(answer.error)}`);
+    return answer.data;
+  };
+  const agentID = (await call({ action: "createAgent", draft: trendDraft([BTC]), fixture: prices() })).agent.id;
+  const { run } = await call({ action: "runAgent", agentID, fixture: prices() });
+  const proposalID = run.proposalIDs[0];
+  const { detail: pending } = await call({ action: "agentActivityDetail", runID: run.id });
+  assertEquals(pending.proposals[0].status, "pending");
+  assertEquals([pending.signals.length, pending.reviews.length, pending.orders.length], [1, 0, 0]);
+  const approved = await call({ action: "approveProposal", proposalID, fixture: prices() });
+  const { detail: executed } = await call({ action: "agentActivityDetail", runID: run.id });
+  assertEquals(executed.run.orderIDs, [], "the original run recorded only the proposal");
+  assertEquals(executed.reviews.map((e: AuditEvent) => e.kind), ["proposalApproved"]);
+  assertEquals(executed.orders.map((o: State) => [o.id, o.status]), [[approved.order.id, "filled"]]);
+  assertEquals(executed.fills.map((f: State) => f.orderID), [approved.order.id]);
+
+  await sql`insert into public.agent_runs (id, user_id, agent_id, strategy_version, trigger, started_at, finished_at, status)
+    select gen_random_uuid(), ${person.id}, ${agentID}, 1, 'schedule', now(), now(), 'completed' from generate_series(1,22)`;
+  const { page: first } = await call({ action: "agentActivity", agentID });
+  assertEquals(first.runs.length, 20);
+  assert(first.nextCursor);
+  const { page: second } = await call({ action: "agentActivity", agentID, before: first.nextCursor });
+  assertEquals(second.runs.length, 3);
+  assertEquals(second.runs.at(-1).id, run.id);
+  assertEquals(new Set([...first.runs, ...second.runs].map((r: State) => r.id)).size, 23);
+  assertEquals(second.nextCursor, undefined);
+  assertEquals((await api(other.token, { action: "agentActivity", agentID })).data.page.runs, []);
+  assertEquals((await api(other.token, { action: "agentActivityDetail", runID: run.id })).status, 404);
+  assertEquals((await api(person.token, { action: "agentActivity", before: "9223372036854775808" })).status, 400);
+});
+
 stateTest("includeState: every change can return the saved state; replays get a fresh one; the stored answer never holds it", async (sql) => {
   const person = await signUp("include");
   const created = await api(person.token, { action: "createPortfolio", name: "Practice", startingCash: 10_000, includeState: true });

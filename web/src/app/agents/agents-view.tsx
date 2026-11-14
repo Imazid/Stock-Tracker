@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -9,6 +10,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { practiceCall, usePractice } from "@/hooks/practice";
 import { dateTime, money } from "@/lib/format";
 import { uuid } from "@/lib/uuid";
+import { AgentTimeline } from "./activity-timeline";
 
 const time = (ms: number) => dateTime(new Date(ms).toISOString());
 
@@ -18,7 +20,7 @@ export function AgentsView() {
   const [feedback, setFeedback] = useState("");
   const agents = query.data?.agents ?? [];
   const proposals = query.data?.proposals.filter((proposal) => proposal.status === "pending") ?? [];
-  const runs = query.data?.runs.slice().reverse().slice(0, 12) ?? [];
+  const queryClient = useQueryClient();
 
   async function act(action: string, id: string, proposal = false) {
     setBusy(id);
@@ -26,7 +28,8 @@ export function AgentsView() {
     try {
       const reply = await practiceCall<{ accepted?: boolean; summary?: string }>(action, { [proposal ? "proposalID" : "agentID"]: id }, uuid());
       if (reply.accepted === false) setFeedback(reply.summary ?? "The proposal was blocked.");
-      await query.refetch();
+      await Promise.all([query.refetch(), queryClient.invalidateQueries({ queryKey: ["agentActivity"] }),
+        queryClient.invalidateQueries({ queryKey: ["agentActivityDetail"] })]);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "The agent action failed.");
     } finally {
@@ -77,21 +80,7 @@ export function AgentsView() {
             </ul> : <EmptyState title="No proposals awaiting review" />}
           </Card>
           {feedback && <p role="status" className="rounded-lg border border-border bg-surface p-3 text-sm">{feedback}</p>}
-          <Card>
-            <CardHeader title="Recent runs" />
-            {runs.length ? <ul className="divide-y divide-border border-t border-border">
-              {runs.map((run) => <li key={run.id} className="px-4 py-3">
-                <details>
-                  <summary className="cursor-pointer text-sm">
-                    {agents.find((agent) => agent.id === run.agentID)?.name ?? "Agent"} · {run.status} · {time(run.startedAt)}
-                  </summary>
-                  <ul className="mt-2 space-y-1 pl-4 text-xs text-text-2">
-                    {run.steps.map((step, index) => <li key={index}>{step.title} · {step.detail}</li>)}
-                  </ul>
-                </details>
-              </li>)}
-            </ul> : <EmptyState title="No recorded runs yet" />}
-          </Card>
+          {session.status === "signedIn" && <AgentTimeline key={session.user.id} userID={session.user.id} agents={agents} />}
         </>}
     </div>
   );

@@ -266,6 +266,15 @@ struct AgentDetailView: View {
     @State private var isBacktesting = false
     @State private var backtest: BacktestBox?
     @State private var expandedRun: UUID?
+    @State private var accountRuns: [AgentActivityRow]?
+    @State private var nextRunCursor: String?
+    @State private var localRunLimit = 20
+    @State private var runsLoading = false
+    @State private var runsProblem: String?
+    @State private var failedRunCursor: String?
+    @State private var runDetail: AgentActivityDetail?
+    @State private var detailProblem: String?
+    @State private var detailRetry = 0
     @State private var openedProposal: TradingRouter.Ref?
     @State private var openedOrder: TradingRouter.Ref?
     @State private var renaming = false
@@ -333,7 +342,7 @@ struct AgentDetailView: View {
 
                 if let ledger, agent.mode == .paper { portfolioCard(agent, ledger: ledger) }
 
-                timeline(agent)
+                timeline
 
                 VStack(alignment: .leading, spacing: 0) {
                     if agent.spec.kind != .research, !agent.spec.followsLedgerPositions {
@@ -364,7 +373,31 @@ struct AgentDetailView: View {
             .padding(.horizontal, DS.Space.gutter)
             .padding(.vertical, DS.Space.l)
         }
-        .refreshable { await trading.run(agentID: agentID, trigger: .manual) }
+        .refreshable {
+            await trading.refreshPrices()
+            if trading.isAccount { await loadActivity() }
+        }
+        .task(id: trading.home) {
+            accountRuns = nil
+            nextRunCursor = nil
+            runsProblem = nil
+            runDetail = nil
+            expandedRun = nil
+            if trading.isAccount { await loadActivity() }
+        }
+        .onChange(of: trading.runs(for: agentID).first?.id) {
+            if trading.isAccount { Task { await loadActivity() } }
+        }
+        .task(id: RunEvidenceSelection(run: expandedRun, lastSync: trading.lastSyncAt, auditSequence: trading.auditNewestFirst.first?.sequence, retry: detailRetry)) {
+            guard let id = expandedRun else { return }
+            detailProblem = nil
+            do {
+                let detail = try await trading.agentActivityDetail(runID: id)
+                if !Task.isCancelled { runDetail = detail }
+            } catch {
+                if !Task.isCancelled { detailProblem = error.localizedDescription }
+            }
+        }
         .navigationTitle(agent.name)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { if agent.mode == .paper { PracticeChip() } }
@@ -581,17 +614,58 @@ struct AgentDetailView: View {
 
     // MARK: Timeline
 
-    private func timeline(_ agent: TradingAgent) -> some View {
-        let runs = trading.runs(for: agentID)
-        return TradingSection(title: "What it did and why", trailing: runs.isEmpty ? nil : "\(runs.count) checks") {
-            if runs.isEmpty {
+    private struct RunEvidenceSelection: Equatable {
+        var run: UUID?
+        var lastSync: Date?
+        var auditSequence: Int?
+        var retry: Int
+    }
+
+    private func loadActivity(before: String? = nil) async {
+        guard !runsLoading else { return }
+        runsLoading = true
+        runsProblem = nil
+        defer { runsLoading = false }
+        do {
+            let page = try await trading.agentActivity(for: agentID, before: before)
+            guard !Task.isCancelled, trading.isAccount else { return }
+            if let current = accountRuns {
+                let seen = Set(current.map(\.id))
+                if before != nil {
+                    accountRuns = current + page.runs.filter { !seen.contains($0.id) }
+                    nextRunCursor = page.nextCursor
+                } else if current.count > 20, page.runs.contains(where: { seen.contains($0.id) }) {
+                    accountRuns = page.runs.filter { !seen.contains($0.id) } + current
+                } else {
+                    accountRuns = page.runs
+                    nextRunCursor = page.nextCursor
+                }
+            } else {
+                accountRuns = page.runs
+                nextRunCursor = page.nextCursor
+            }
+        } catch {
+            if !Task.isCancelled {
+                failedRunCursor = before
+                runsProblem = error.localizedDescription
+            }
+        }
+    }
+
+    private var timeline: some View {
+        let saved = trading.runs(for: agentID)
+        let runs = accountRuns ?? saved.prefix(localRunLimit).map(AgentActivityRow.init)
+        return TradingSection(title: "Agent activity timeline") {
+            if runsLoading && runs.isEmpty {
+                ProgressView("Loading activity…")
+            } else if runs.isEmpty && runsProblem == nil {
                 Text(trading.runningAgentIDs.contains(agentID) ? "Looking at the market for the first time…"
                      : "Nothing yet. Tap Check now and its first look at the market appears here.")
                     .font(.subheadline)
                     .foregroundStyle(theme.secondaryText)
                     .accessibilityIdentifier("agent.timeline.empty")
             }
-            ForEach(runs.prefix(40)) { run in
+            ForEach(runs) { run in
                 VStack(alignment: .leading, spacing: DS.Space.s) {
                     Button {
                         dsAnimate { expandedRun = expandedRun == run.id ? nil : run.id }
@@ -617,22 +691,76 @@ struct AgentDetailView: View {
                     }
                     .accessibilityHint("Shows what it looked at and which checks passed")
                     .accessibilityIdentifier("agent.run.\(run.status.rawValue)")
-                    if expandedRun == run.id {
-                        ForEach(run.steps) { step in stepRow(step) }
-                    }
+                    if expandedRun == run.id { expandedActivity(run.id) }
                 }
-                if run.id != runs.prefix(40).last?.id { Divider() }
+                if run.id != runs.last?.id { Divider() }
+            }
+            if let runsProblem {
+                Text(runsProblem).font(.footnote).foregroundStyle(theme.warningColor)
+                Button("Retry activity") { Task { await loadActivity(before: failedRunCursor) } }
+            } else if trading.isAccount ? nextRunCursor != nil : saved.count > localRunLimit {
+                Button("Load older runs") {
+                    if trading.isAccount { Task { await loadActivity(before: nextRunCursor) } }
+                    else { localRunLimit += 20 }
+                }
+                .disabled(runsLoading)
+                .accessibilityIdentifier("agent.timeline.older")
             }
         }
         .accessibilityIdentifier("agent.timeline")
     }
 
-    private func runGlyph(_ run: AgentRun) -> String {
+    @ViewBuilder private func expandedActivity(_ id: UUID) -> some View {
+        if let detail = runDetail, detail.run.id == id {
+            Text("Run ID \(detail.run.id.uuidString.lowercased())").font(.caption).foregroundStyle(theme.secondaryText)
+                .textSelection(.enabled)
+            ForEach(detail.run.steps) { stepRow($0) }
+            ForEach(detail.signals) { signal in
+                Text("\(signal.instrument.symbol) · \(signal.provenance.source) · Bar dated \(TradingFormat.time(signal.barTime)) · Close \(TradingFormat.money(signal.close, signal.instrument.currency))")
+                    .font(.footnote).foregroundStyle(theme.secondaryText)
+            }
+            ForEach(detail.proposals) { proposal in
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text("\(proposal.side.rawValue.capitalized) \(NumberText.number(proposal.quantity)) \(proposal.instrument.symbol) · \(proposal.status.displayName)")
+                        .font(.footnote.weight(.semibold))
+                    if let review = detail.reviews.first(where: { $0.proposalID == proposal.id }) {
+                        Text("\(review.kind == .proposalApproved ? "You approved" : "You declined") · \(TradingFormat.time(review.time))")
+                    } else if proposal.orderID != nil {
+                        Text("Submitted under the agent’s practice permissions")
+                    }
+                    if let note = proposal.resolutionNote { Text(note) }
+                    Text("Proposal ID \(proposal.id.uuidString.lowercased())").textSelection(.enabled)
+                    DisclosureGroup("Risk checks · \(TradingFormat.time(proposal.risk.evaluatedAt))") {
+                        RiskReportView(report: proposal.risk)
+                    }
+                }
+                .font(.caption)
+                .accessibilityIdentifier("agent.timeline.proposal")
+            }
+            ForEach(detail.orders) { order in
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text("Practice order · \(order.instrument.symbol) · \(order.status.displayName)").font(.footnote.weight(.semibold))
+                    Text("Order ID \(order.id.uuidString.lowercased())").textSelection(.enabled)
+                    if let note = order.statusNote { Text(note) }
+                    ForEach(detail.fills.filter { $0.orderID == order.id }) { fill in
+                        Text("\(NumberText.number(fill.quantity)) filled at \(TradingFormat.money(fill.price, fill.instrument.currency)) · Fee \(TradingFormat.money(fill.fee, fill.instrument.currency)) · \(TradingFormat.time(fill.time))")
+                        Text("Fill ID \(fill.id.uuidString.lowercased())").textSelection(.enabled)
+                    }
+                }
+                .font(.caption)
+                .accessibilityIdentifier("agent.timeline.order")
+            }
+        } else if let detailProblem {
+            Text(detailProblem).font(.footnote).foregroundStyle(theme.warningColor)
+            Button("Retry run details") { detailRetry += 1 }
+        } else {
+            ProgressView("Loading decision evidence…")
+        }
+    }
+
+    private func runGlyph(_ run: AgentActivityRow) -> String {
         if run.status == .failed { return "exclamationmark.triangle" }
         if run.status == .skipped { return "forward.end" }
-        if !run.orderIDs.isEmpty { return "arrow.left.arrow.right.circle.fill" }
-        if run.steps.contains(where: { $0.outcome == .blocked }) { return "shield.slash" }
-        if !run.signalIDs.isEmpty { return "dot.radiowaves.left.and.right" }
         return "checkmark.circle"
     }
 

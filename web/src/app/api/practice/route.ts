@@ -5,6 +5,7 @@ import { jsonError } from "@/server/http/respond";
 const allowed = new Set([
   "state", "createPortfolio", "previewOrder", "placeOrder", "cancelOrder",
   "createAgent", "runAgent", "pauseAgent", "resumeAgent", "approveProposal", "rejectProposal",
+  "agentActivity", "agentActivityDetail",
 ]);
 
 export async function POST(request: Request) {

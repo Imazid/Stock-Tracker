@@ -165,6 +165,15 @@ final class TradingFlowTests: XCTestCase {
         attach("proposal-approved")
         tap("proposal.done")
 
+        let agent = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'agents.card.'")).firstMatch
+        XCTAssertTrue(agent.waitForExistence(timeout: 10))
+        agent.tap()
+        XCTAssertTrue(element("agent.timeline").waitForExistence(timeout: 10))
+        tap("agent.run.completed")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'You approved' ")).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'Fill ID ' ")).firstMatch.exists)
+        attach("agent-activity-fill")
+
         XCTAssertTrue(app.open("Activity"))
         let filled = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'order.row.' AND identifier ENDSWITH '.filled'")).firstMatch
         XCTAssertTrue(filled.waitForExistence(timeout: 10), "The approved order filled")
