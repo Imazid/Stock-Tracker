@@ -76,6 +76,33 @@ final class PrivateFundSnapshotTests: XCTestCase {
         XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [manual], confirmed: [], snapshots: []), [manual])
     }
 
+    func testLinkedProviderRecordReplacesOnlyThatPositionAndKeepsManualHistory() throws {
+        let company = UUID()
+        let mark = PrivateValuation(value: 100, date: retrieved, source: "Manual statement", method: "NAV")
+        let call = PrivateCashFlow(kind: .capitalCall, amount: 10, date: retrieved, settled: false, source: "Manual notice")
+        var manual = PrivateHolding(name: "Tracked fund", assetClass: .ventureFund, currency: "AUD",
+                                    valuations: [mark], cashFlows: [call], catalogueCompanyID: company)
+        let providerMark = PrivateValuation(value: 125, date: retrieved, source: "Provider statement", method: "NAV")
+        let provider = PrivateHolding(name: "Fund statement", assetClass: .ventureFund, currency: "AUD",
+                                      valuations: [providerMark], catalogueCompanyID: company)
+        let other = PrivateHolding(name: "Another investment in the same fund", assetClass: .ventureFund,
+                                   currency: "AUD", valuations: [mark], catalogueCompanyID: company)
+        XCTAssertFalse(manual.linkProviderHolding(PrivateHolding(name: "Unrelated", assetClass: .ventureFund,
+                                                                currency: "AUD", catalogueCompanyID: UUID())))
+        XCTAssertFalse(manual.linkProviderHolding(PrivateHolding(name: "Foreign", assetClass: .ventureFund, currency: "USD")))
+        XCTAssertTrue(manual.linkProviderHolding(provider))
+        let restored = try JSONDecoder().decode(PrivateHolding.self, from: JSONEncoder().encode(manual))
+        XCTAssertEqual(restored.matchingProviderHoldingID, provider.id)
+        XCTAssertEqual(restored.valuations, [mark])
+        XCTAssertEqual(restored.cashFlows, [call])
+        let allocation = PrivateFundSnapshot.allocation(manual: [restored, other], confirmed: [provider], snapshots: [])
+        XCTAssertEqual(allocation, [other, provider])
+        XCTAssertEqual(allocation.compactMap { $0.valuation(asOf: retrieved)?.value }.reduce(0, +), 225)
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [restored, other], confirmed: [], snapshots: []), [other])
+        manual.unlinkProviderHolding()
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [manual], confirmed: [provider], snapshots: []), [manual, provider])
+    }
+
     private func make(date: String = "2026-11-01", currency: String = "USD",
                       netAssetValue: String? = "22000", paidIn: String? = nil, distributions: String? = nil) -> PrivateFundSnapshot? {
         PrivateFundSnapshot.make(reference: "capital-account-a", name: "Venture fund", assetClass: .ventureFund,

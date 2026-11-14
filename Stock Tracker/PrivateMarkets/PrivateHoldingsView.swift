@@ -37,7 +37,9 @@ struct PrivateHoldingsView: View {
                             Text(holding.name).font(.headline)
                             Text(holding.assetClass.rawValue + " · Self-reported")
                                 .font(.footnote).foregroundStyle(.secondary)
-                            if let mark = holding.valuation() {
+                            if holding.matchingProviderHoldingID != nil {
+                                Text("Linked to provider ownership").font(.footnote).foregroundStyle(.secondary)
+                            } else if let mark = holding.valuation() {
                                 Text(PrivateInput.money(mark.value, currency: holding.currency) + (mark.isStale() ? " · Stale valuation" : " · Dated valuation"))
                                     .font(.subheadline.monospacedDigit())
                                     .foregroundStyle(mark.isStale() ? Color.orange : Color.primary)
@@ -239,6 +241,10 @@ struct UnifiedPrivateAllocation: View {
                 Text("\(excluded) private holdings excluded because a valuation or verified FX rate is unavailable.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            if store.unavailableLinkedProviderCount > 0 {
+                Text("Some linked provider positions are unavailable and excluded from allocation.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             if privateHoldings.contains(where: { $0.valuation()?.isStale() == true && market.verifiedFXRates[$0.currency] != nil }) {
                 Label("Includes stale valuations where a conversion is available.", systemImage: "clock.badge.exclamationmark")
                     .font(.footnote).foregroundStyle(Color.orange)
@@ -313,6 +319,10 @@ private struct PrivateHoldingEditor: View {
                     }
                 }
                 if let catalogueError { Text(catalogueError).font(.footnote).foregroundStyle(.secondary) }
+                if holding?.matchingProviderHoldingID != nil, !keepsProviderMatch {
+                    Text("Changing the currency or monitored company removes the provider link.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 if let error { Text(error).foregroundStyle(Color.orange) }
             }
             .task {
@@ -336,6 +346,10 @@ private struct PrivateHoldingEditor: View {
         }
     }
 
+    private var keepsProviderMatch: Bool {
+        holding?.catalogueCompanyID == catalogueCompanyID && holding?.currency == currency
+    }
+
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let committed = PrivateInput.amount(commitment)
@@ -357,7 +371,8 @@ private struct PrivateHoldingEditor: View {
                                      valuations: holding?.valuations ?? [], cashFlows: holding?.cashFlows ?? [],
                                      catalogueCompanyID: catalogueCompanyID,
                                      ownershipEvidenceID: evidenceStillApplies ? holding?.ownershipEvidenceID : nil,
-                                     ownershipReviewedOn: evidenceStillApplies ? holding?.ownershipReviewedOn : nil)
+                                     ownershipReviewedOn: evidenceStillApplies ? holding?.ownershipReviewedOn : nil,
+                                     matchingProviderHoldingID: keepsProviderMatch ? holding?.matchingProviderHoldingID : nil)
         do {
             try store.save(updated)
             dismiss()
@@ -373,6 +388,7 @@ struct PrivateHoldingDetail: View {
     var providerRecord = false
     @State private var editor: Editor?
     @State private var showDelete = false
+    @State private var showProviderMatch = false
     @State private var error: String?
 
     private enum Editor: String, Identifiable {
@@ -390,6 +406,24 @@ struct PrivateHoldingDetail: View {
             List {
                 overview(holding)
                 if !providerRecord, let owner = auth.userId {
+                    let match = holding.matchingProviderHoldingID
+                    if match != nil || !store.availableProviderMatches(for: holding).isEmpty {
+                        Section("Portfolio allocation") {
+                            if let match {
+                                if let provider = store.providerHoldings.first(where: { $0.id == match }) {
+                                    NavigationLink {
+                                        PrivateHoldingDetail(id: provider.id, providerRecord: true)
+                                    } label: { Text("Open linked provider record") }
+                                } else {
+                                    Text("The linked provider record is currently unavailable.")
+                                }
+                                Text("Allocation, capital activity and reminders use the provider record. Your manual ledger remains available here.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                            Button(match == nil ? "Link matching provider record" : "Manage provider link") { showProviderMatch = true }
+                                .accessibilityIdentifier("private.holding.matchProvider")
+                        }
+                    }
                     Section("Ownership evidence") {
                         NavigationLink(holding.ownershipEvidenceID == nil ? "Link a Deal Room excerpt" : "Review linked ownership evidence") {
                             PrivateOwnershipEvidenceView(holding: holding, owner: owner)
@@ -447,6 +481,9 @@ struct PrivateHoldingDetail: View {
                 case .valuation: PrivateLedgerEditor(holding: holding, isValuation: true)
                 case .cashFlow: PrivateLedgerEditor(holding: holding, isValuation: false)
                 }
+            }
+            .sheet(isPresented: $showProviderMatch) {
+                if let owner = auth.userId { PrivateProviderMatchEditor(holdingID: id, owner: owner) }
             }
             .confirmationDialog("Remove this holding and its records?", isPresented: $showDelete, titleVisibility: .visible) {
                 Button("Remove holding", role: .destructive) {
@@ -532,6 +569,69 @@ struct PrivateHoldingDetail: View {
 
     private func multiple(_ value: Decimal?) -> String {
         value.map { $0.formatted(.number.precision(.fractionLength(2))) + "×" } ?? "Unavailable"
+    }
+}
+
+private struct PrivateProviderMatchEditor: View {
+    let holdingID: UUID
+    let owner: UUID
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: UUID?
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            if auth.userId == owner, let holding = store.state.holdings.first(where: { $0.id == holdingID }) {
+                Form {
+                    Section("Same investment") {
+                        ForEach(store.availableProviderMatches(for: holding)) { position in
+                            Button {
+                                selected = position.id
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(position.name)
+                                        Text("\(position.commitment.provider.capitalized) · \(position.commitment.providerReference)")
+                                            .font(.footnote).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if selected == position.id { Image(systemName: "checkmark").accessibilityHidden(true) }
+                                }
+                            }
+                            .accessibilityAddTraits(selected == position.id ? .isSelected : [])
+                            .accessibilityIdentifier("private.holding.providerMatch.option")
+                        }
+                        Text("Match the provider reference against your records. Linking counts this investment once in your portfolio.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if holding.matchingProviderHoldingID != nil {
+                        Button("Remove link", role: .destructive) { save(nil) }
+                            .accessibilityIdentifier("private.holding.providerMatch.remove")
+                    }
+                    if let error { Text(error).foregroundStyle(Color.orange) }
+                }
+                .onAppear { selected = holding.matchingProviderHoldingID }
+                .navigationTitle("Link Provider Record")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Link") { save(selected) }.disabled(selected == nil || selected == holding.matchingProviderHoldingID)
+                            .accessibilityIdentifier("private.holding.providerMatch.save")
+                    }
+                }
+            }
+        }
+    }
+
+    private func save(_ providerID: UUID?) {
+        do {
+            try store.setProviderMatch(providerID, for: holdingID, owner: owner)
+            dismiss()
+        } catch is CancellationError {
+        } catch { self.error = error.localizedDescription }
     }
 }
 
@@ -629,7 +729,7 @@ struct PrivateCapitalView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 if let reminderError { Text(reminderError).foregroundStyle(.secondary) }
             }
-            ForEach(store.state.holdings) { holding in
+            ForEach(store.independentManualHoldings) { holding in
                 let flows = holding.cashFlows.filter { $0.kind == .capitalCall || $0.kind == .distribution }
                 if !flows.isEmpty {
                     Section(holding.name) {
@@ -656,7 +756,7 @@ struct PrivateCapitalView: View {
             }
             if let error = store.providerError { Text(error).foregroundStyle(.secondary) }
             if store.loadingProviderHoldings { ProgressView("Checking provider records") }
-            let hasManualActivity = store.state.holdings.contains { holding in
+            let hasManualActivity = store.independentManualHoldings.contains { holding in
                 holding.cashFlows.contains { $0.kind == .capitalCall || $0.kind == .distribution }
             }
             let hasProviderActivity = store.providerHoldings.contains { position in

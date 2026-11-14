@@ -446,6 +446,47 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testManualHoldingCanLinkAndUnlinkProviderOwnership() async throws {
+        try launchWithLocalSession("PRIVATE_MATCH_PROVIDER_TEST_SESSION")
+        openPrivateMarkets()
+        let portfolio = app.buttons["private.destination.briefcase"]
+        let provider = app.descendants(matching: .any)["private.holding.providerRow"].firstMatch
+        for _ in 0..<3 where !provider.exists {
+            if portfolio.exists && portfolio.isHittable { portfolio.tap() }
+            if provider.waitForExistence(timeout: 6) { break }
+            if app.navigationBars["My Private Portfolio"].exists { app.swipeUp() }
+        }
+        XCTAssertTrue(provider.exists, app.debugDescription)
+        let add = app.buttons["private.holding.add"]
+        if !add.isHittable { app.swipeDown() }
+        XCTAssertTrue(add.isHittable)
+        add.tap()
+        let name = app.textFields["private.holding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("My recorded position")
+        app.buttons["private.holding.save"].tap()
+        let manual = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(manual.waitForExistence(timeout: 6))
+        manual.tap()
+        let match = app.buttons["private.holding.matchProvider"]
+        for _ in 0..<2 where !match.isHittable { app.swipeUp() }
+        XCTAssertTrue(match.isHittable, app.debugDescription)
+        match.tap()
+        let option = app.buttons["private.holding.providerMatch.option"].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 6), app.debugDescription)
+        option.tap()
+        app.buttons["private.holding.providerMatch.save"].tap()
+        XCTAssertTrue(app.buttons["Open linked provider record"].waitForExistence(timeout: 6), app.debugDescription)
+        match.tap()
+        let remove = app.buttons["private.holding.providerMatch.remove"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 6))
+        remove.tap()
+        XCTAssertTrue(app.buttons["Link matching provider record"].waitForExistence(timeout: 6))
+        XCTAssertFalse(app.buttons["Open linked provider record"].exists)
+    }
+
+    @MainActor
     func testCancelledCapitalCallShowsProviderEvidence() async throws {
         try launchWithLocalSession("PRIVATE_CAPITAL_CANCELLATION_TEST_SESSION")
         openPrivateMarkets()

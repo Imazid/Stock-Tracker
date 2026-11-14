@@ -239,11 +239,11 @@ private struct AngelListSnapshotEditor: View {
                     Text("Choose amounts in whole currency units, such as dollars. A dated NAV can appear in your unified allocation.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if !store.state.holdings.isEmpty {
+                if !store.independentManualHoldings.isEmpty {
                     Section("Portfolio allocation") {
                         Picker("Same position already tracked", selection: $replacesManualHoldingID) {
                             Text("None").tag(nil as UUID?)
-                            ForEach(store.state.holdings) { holding in
+                            ForEach(store.independentManualHoldings) { holding in
                                 Text("\(holding.name) · \(holding.currency)").tag(Optional(holding.id))
                             }
                         }

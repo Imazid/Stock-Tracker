@@ -12,12 +12,15 @@ final class PrivateMarketsTests: XCTestCase {
         let data = try JSONEncoder().encode(holding)
         XCTAssertEqual(try JSONDecoder().decode(PrivateHolding.self, from: data), holding)
         var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        for field in ["catalogueCompanyID", "ownershipEvidenceID", "ownershipReviewedOn"] { legacy.removeValue(forKey: field) }
+        for field in ["catalogueCompanyID", "ownershipEvidenceID", "ownershipReviewedOn", "matchingProviderHoldingID"] {
+            legacy.removeValue(forKey: field)
+        }
         let decoded = try JSONDecoder().decode(PrivateHolding.self, from: JSONSerialization.data(withJSONObject: legacy))
         XCTAssertEqual(decoded.id, holding.id)
         XCTAssertNil(decoded.catalogueCompanyID)
         XCTAssertNil(decoded.ownershipEvidenceID)
         XCTAssertNil(decoded.ownershipReviewedOn)
+        XCTAssertNil(decoded.matchingProviderHoldingID)
     }
 
     func testDilutionAndInvalidRoundTerms() {

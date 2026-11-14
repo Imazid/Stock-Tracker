@@ -76,6 +76,7 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
     public var catalogueCompanyID: UUID?
     public var ownershipEvidenceID: UUID?
     public var ownershipReviewedOn: Date?
+    public private(set) var matchingProviderHoldingID: UUID?
     public var valuations: [PrivateValuation]
     public var cashFlows: [PrivateCashFlow]
     public var latestDispositionOn: Date?
@@ -87,7 +88,8 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
         units: Decimal? = nil, ownershipPercent: Decimal? = nil, shareClass: String = "", lockupUntil: Date? = nil,
         valuations: [PrivateValuation] = [], cashFlows: [PrivateCashFlow] = [], catalogueCompanyID: UUID? = nil,
         ownershipEvidenceID: UUID? = nil, ownershipReviewedOn: Date? = nil,
-        latestDispositionOn: Date? = nil, dispositionRevisionAt: Date? = nil, exitSource: String? = nil
+        latestDispositionOn: Date? = nil, dispositionRevisionAt: Date? = nil, exitSource: String? = nil,
+        matchingProviderHoldingID: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -101,12 +103,29 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
         self.catalogueCompanyID = catalogueCompanyID
         self.ownershipEvidenceID = ownershipEvidenceID
         self.ownershipReviewedOn = ownershipReviewedOn
+        self.matchingProviderHoldingID = matchingProviderHoldingID
         self.valuations = valuations
         self.cashFlows = cashFlows
         self.latestDispositionOn = latestDispositionOn
         self.dispositionRevisionAt = dispositionRevisionAt
         self.exitSource = exitSource
     }
+
+    public mutating func linkProviderHolding(_ providerHolding: PrivateHolding) -> Bool {
+        guard canLinkProviderHolding(providerHolding) else { return false }
+        matchingProviderHoldingID = providerHolding.id
+        return true
+    }
+
+    public func canLinkProviderHolding(_ providerHolding: PrivateHolding) -> Bool {
+        guard providerHolding.id != id, providerHolding.currency == currency else { return false }
+        if let company = catalogueCompanyID, let providerCompany = providerHolding.catalogueCompanyID {
+            return company == providerCompany
+        }
+        return true
+    }
+
+    public mutating func unlinkProviderHolding() { matchingProviderHoldingID = nil }
 
     public func valuation(asOf: Date = .now) -> PrivateValuation? {
         if let disposition = latestDispositionOn, disposition <= asOf, units == 0, let exitSource {
@@ -327,7 +346,7 @@ public struct ProviderPrivateHolding: Decodable, Identifiable, Sendable {
         }
         return .init(id: id, name: name, assetClass: assetClass, currency: currency, commitment: committedAmount,
                      units: remainingUnits ?? units, ownershipPercent: lastDispositionOn == nil ? ownershipPercent : nil,
-                     valuations: valuations, cashFlows: flows, latestDispositionOn: lastDispositionOn,
+                     valuations: valuations, cashFlows: flows, catalogueCompanyID: companyId, latestDispositionOn: lastDispositionOn,
                      dispositionRevisionAt: dispositionRevisionAt, exitSource: exitSource)
     }
 }

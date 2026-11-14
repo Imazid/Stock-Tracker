@@ -325,6 +325,13 @@ final class PrivateMarketsStore: ObservableObject {
 
     var angelListSnapshots: [PrivateFundSnapshot] { state.angelListSnapshots ?? [] }
 
+    var independentManualHoldings: [PrivateHolding] { state.holdings.filter { $0.matchingProviderHoldingID == nil } }
+
+    var unavailableLinkedProviderCount: Int {
+        let available = Set(providerHoldings.map(\.id))
+        return state.holdings.compactMap(\.matchingProviderHoldingID).filter { !available.contains($0) }.count
+    }
+
     var allocationHoldings: [PrivateHolding] {
         PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.filter { !$0.hasExited }.map(\.holding),
                                        snapshots: angelListSnapshots)
@@ -442,13 +449,36 @@ final class PrivateMarketsStore: ObservableObject {
         }
     }
 
+    func availableProviderMatches(for holding: PrivateHolding) -> [ProviderPrivateHolding] {
+        guard !loadingProviderHoldings, providerError == nil,
+              !angelListSnapshots.contains(where: { $0.replacesManualHoldingID == holding.id }) else { return [] }
+        let linkedIDs = Set(state.holdings.filter { $0.id != holding.id }.compactMap(\.matchingProviderHoldingID))
+        return providerHoldings.filter { !linkedIDs.contains($0.id) && holding.canLinkProviderHolding($0.holding) }
+    }
+
+    func setProviderMatch(_ providerID: UUID?, for holdingID: UUID, owner: UUID) throws {
+        guard scope == owner, var holding = state.holdings.first(where: { $0.id == holdingID }) else {
+            throw CancellationError()
+        }
+        if let providerID {
+            guard let position = availableProviderMatches(for: holding).first(where: { $0.id == providerID }),
+                  holding.linkProviderHolding(position.holding) else {
+                throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_HOLDING_MATCH",
+                    message: "Choose an available provider record for the same position.")
+            }
+        } else {
+            holding.unlinkProviderHolding()
+        }
+        try save(holding)
+    }
+
     func saveAngelListSnapshot(_ snapshot: PrivateFundSnapshot, owner: UUID, connectionID: String) throws {
         guard scope == owner else { throw CancellationError() }
         guard AngelListLink.shared.isCurrentConnection(connectionID, owner: owner) else {
             throw AngelListLink.Failure.disconnected
         }
         if let manual = snapshot.replacesManualHoldingID {
-            guard state.holdings.contains(where: { $0.id == manual && $0.currency == snapshot.currency }),
+            guard independentManualHoldings.contains(where: { $0.id == manual && $0.currency == snapshot.currency }),
                   !angelListSnapshots.contains(where: { $0.reference != snapshot.reference && $0.replacesManualHoldingID == manual }) else {
                 throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_FUND_ALLOCATION",
                     message: "Choose an unlinked manual holding in the same currency.")
@@ -775,7 +805,7 @@ final class PrivateMarketsStore: ObservableObject {
             cancelCapitalReminders(scope: owner)
             return
         }
-        let positions = state.holdings + providerHoldings.map(\.holding)
+        let positions = independentManualHoldings + providerHoldings.map(\.holding)
         let reminders = PrivateMath.capitalCallReminders(in: positions)
         reminderTask = Task {
             await previousTask?.value

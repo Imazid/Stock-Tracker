@@ -166,7 +166,7 @@ struct PortfolioView: View {
                     case .income:      PortfolioIncomeTab().portfolioRow(bottom: DS.Space.xxl)
                     }
                 }
-                if !privateMarkets.allocationHoldings.isEmpty {
+                if !privateMarkets.allocationHoldings.isEmpty || privateMarkets.unavailableLinkedProviderCount > 0 {
                     UnifiedPrivateAllocation()
                         .portfolioRow(bottom: DS.Space.m)
                     Button("Open Private Markets") { selectTab(.privateMarkets) }
