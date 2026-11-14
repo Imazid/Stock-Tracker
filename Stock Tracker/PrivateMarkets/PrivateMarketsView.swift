@@ -762,8 +762,9 @@ private struct PrivateCompanyFinancialsSections: View {
     }
 }
 
-private struct PrivateDealDetail: View {
+struct PrivateDealDetail: View {
     let deal: PrivateDeal
+    var reviewedFromReport = false
     @EnvironmentObject private var store: PrivateMarketsStore
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var error: String?
@@ -834,8 +835,16 @@ private struct PrivateDealDetail: View {
                 NavigationLink("Research this opportunity") { PrivateResearchWorkspace(deals: [deal], selectedDealID: deal.id) }
                 NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
                     .accessibilityIdentifier("private.deal.scenarios")
-                if deal.displayedStatus == "Open at verification", auth.userId != nil, deal.offerDocumentUrl?.privateSourceIsSafe == true {
-                    NavigationLink("Provider application readiness") { PrivateProviderHandoff(deal: deal) }
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    if deal.displayedStatus(at: context.date) == "Open at verification", auth.userId != nil,
+                       deal.offerDocumentUrl?.privateSourceIsSafe == true {
+                        NavigationLink("Provider application readiness") { PrivateProviderHandoff(deal: deal) }
+                            .accessibilityIdentifier("private.deal.applicationReadiness")
+                    } else if reviewedFromReport {
+                        Text("Provider application readiness is unavailable for this round.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("private.deal.applicationUnavailable")
+                    }
                 }
                 Text("Private investments can be illiquid and may lose their full value.")
                     .font(.footnote).foregroundStyle(.secondary)

@@ -269,10 +269,22 @@ struct PrivateProviderHandoff: View {
                 TextField("Amount (\(deal.round.currency))", text: $amount).keyboardType(.decimalPad)
                 Text("Your provider verifies eligibility, accepts applications and confirms ownership.")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("Check readiness", action: prepare)
-                    .disabled(busy || !reviewed || !acknowledged || (PrivateInput.amount(amount) ?? 0) <= 0)
-                if busy { ProgressView("Checking requirements") }
-                if let ready { Button("Open \(deal.sourceName) application") { openURL(ready) } }
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    if deal.displayedStatus(at: context.date) == "Open at verification" {
+                        Button("Check readiness", action: prepare)
+                            .disabled(busy || !reviewed || !acknowledged || (PrivateInput.amount(amount) ?? 0) <= 0)
+                        if busy { ProgressView("Checking requirements") }
+                        if let ready {
+                            Button("Open \(deal.sourceName) application") {
+                                guard deal.displayedStatus == "Open at verification" else { return }
+                                openURL(ready)
+                            }
+                        }
+                    } else {
+                        Text("The round’s application availability needs to be verified again.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 if let error { Text(error).foregroundStyle(Color.orange) }
             }
         }
@@ -288,7 +300,8 @@ struct PrivateProviderHandoff: View {
     }
 
     private func prepare() {
-        guard let owner = auth.userId, let value = PrivateInput.amount(amount), let document = deal.offerDocumentUrl else { return }
+        guard deal.displayedStatus == "Open at verification", let owner = auth.userId,
+              let value = PrivateInput.amount(amount), let document = deal.offerDocumentUrl else { return }
         busy = true
         error = nil
         ready = nil

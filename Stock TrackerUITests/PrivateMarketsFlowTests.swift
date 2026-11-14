@@ -792,6 +792,22 @@ final class PrivateMarketsFlowTests: XCTestCase {
         }
         XCTAssertTrue(saved.isHittable, app.debugDescription)
         saved.tap()
+        let terms = app.buttons["private.research.reviewRounds"]
+        XCTAssertTrue(terms.waitForExistence(timeout: 8), app.debugDescription)
+        terms.tap()
+        XCTAssertTrue(app.navigationBars["Reported Funding Rounds"].waitForExistence(timeout: 5))
+        let round = app.buttons["private.research.round"].firstMatch
+        XCTAssertTrue(round.waitForExistence(timeout: 8))
+        XCTAssertTrue(round.label.contains("Series B"))
+        XCTAssertTrue(round.label.contains("Closed"))
+        round.tap()
+        XCTAssertTrue(app.navigationBars["Heidi"].waitForExistence(timeout: 5))
+        let unavailable = app.staticTexts["private.deal.applicationUnavailable"]
+        for _ in 0..<5 where !unavailable.isHittable { app.swipeUp() }
+        XCTAssertTrue(unavailable.isHittable)
+        XCTAssertFalse(app.buttons["private.deal.applicationReadiness"].exists)
+        app.navigationBars["Heidi"].buttons["BackButton"].tap()
+        app.navigationBars["Reported Funding Rounds"].buttons["BackButton"].tap()
         let refresh = app.buttons["private.research.refresh"]
         XCTAssertTrue(refresh.waitForExistence(timeout: 8), app.debugDescription)
         refresh.tap()

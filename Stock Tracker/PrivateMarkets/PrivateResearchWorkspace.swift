@@ -363,6 +363,10 @@ private struct PrivateReportView: View {
             }
             if report.refreshAvailable == true {
                 Section {
+                    NavigationLink("Review current funding terms") {
+                        PrivateResearchRoundReview(reportID: report.id, owner: owner)
+                    }
+                    .accessibilityIdentifier("private.research.reviewRounds")
                     NavigationLink("Review sources for an updated report") {
                         PrivateResearchRefreshView(reportId: report.id, owner: owner)
                     }
@@ -414,6 +418,75 @@ private struct PrivateReportView: View {
                 Label(question, systemImage: "questionmark.bubble")
             }
         }
+    }
+}
+
+private struct PrivateResearchRoundReview: View {
+    let reportID: UUID
+    let owner: UUID
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var deals: [PrivateDeal]?
+    @State private var error: String?
+    @State private var loading = false
+
+    var body: some View {
+        List {
+            if auth.userId != owner {
+                ContentUnavailableView("Report unavailable", systemImage: "doc.text")
+            } else if let error {
+                ContentUnavailableView {
+                    Label("Funding terms unavailable", systemImage: "exclamationmark.circle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Retry") { Task { await load() } }
+                }
+            } else if let deals {
+                if deals.isEmpty {
+                    ContentUnavailableView("No published rounds in this report", systemImage: "doc.text.magnifyingglass")
+                        .accessibilityIdentifier("private.research.noRounds")
+                } else {
+                    ForEach(deals) { deal in
+                        NavigationLink {
+                            PrivateDealDetail(deal: deal, reviewedFromReport: true)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(deal.company.name).font(.headline)
+                                Text(deal.round.stage).font(.subheadline)
+                                Text(deal.displayedStatus).font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityIdentifier("private.research.round")
+                    }
+                }
+            } else {
+                ProgressView("Checking published funding terms")
+            }
+        }
+        .navigationTitle("Reported Funding Rounds")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: auth.userId) {
+            await load()
+        }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        guard auth.userId == owner, !loading else { return }
+        loading = true
+        defer { loading = false }
+        error = nil
+        do {
+            let response: PrivateResearchRefresh = try await PrivateMarketsAPI.request(
+                "research_refresh", ["id": reportID.uuidString], expectedUserID: owner)
+            try Task.checkCancellation()
+            guard auth.userId == owner else { return }
+            let order = response.deals.sorted {
+                ($0.company.name, $0.round.stage, $0.id.uuidString) < ($1.company.name, $1.round.stage, $1.id.uuidString)
+            }
+            deals = order
+        } catch is CancellationError {
+        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
     }
 }
 

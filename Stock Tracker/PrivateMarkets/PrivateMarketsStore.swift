@@ -155,10 +155,11 @@ struct PrivateDeal: Codable, Identifiable {
         return PrivateProvider.directory.first { $0.id == provider }?.name ?? provider
     }
 
-    var displayedStatus: String {
+    var displayedStatus: String { displayedStatus(at: .now) }
+
+    func displayedStatus(at now: Date) -> String {
         if status == "closed" { return "Closed" }
-        if let deadline = round.closesAt, deadline <= .now { return "Deadline passed" }
-        let now = Date.now
+        if let deadline = round.closesAt, deadline <= now { return "Deadline passed" }
         if status == "unverified" || [verifiedAt, round.verifiedAt].contains(where: { $0 > now || now.timeIntervalSince($0) > 86_400 }) {
             return "Status unverified"
         }
