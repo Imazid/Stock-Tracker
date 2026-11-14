@@ -129,12 +129,19 @@ enum AlertCondition: String, Codable, CaseIterable {
 class PriceAlertManager: ObservableObject {
     @Published var alerts: [PriceAlert] = []
 
-    private let alertsKey = "price_alerts"
+    private(set) var owner: UUID?
 
     init() {
         // Permission is asked for in context (onboarding, or the first alert a user
         // sets) — never on cold launch, before the user has seen anything.
         loadAlerts()
+    }
+
+    func useAccount(_ newOwner: UUID?) {
+        guard owner != newOwner else { return }
+        owner = newOwner
+        loadAlerts()
+        syncAlertsToWidgetData()
     }
 
     func addAlert(_ alert: PriceAlert) {
@@ -147,8 +154,8 @@ class PriceAlertManager: ObservableObject {
     func removeAlert(_ alert: PriceAlert) {
         alerts.removeAll { $0.id == alert.id }
         saveAlerts()
-        if SyncManager.shared.isSignedIn {
-            Task { await SyncManager.shared.softDeleteAlert(id: alert.id) }
+        if let owner {
+            Task { await SyncManager.shared.softDeleteAlert(id: alert.id, owner: owner) }
         }
     }
 
@@ -269,11 +276,11 @@ class PriceAlertManager: ObservableObject {
     }
 
     private func saveAlerts() {
-        DataPersistenceManager.shared.savePriceAlerts(alerts)
+        DataPersistenceManager.shared.savePriceAlerts(alerts, owner: owner)
         syncAlertsToWidgetData()
     }
 
-    private func loadAlerts() { alerts = DataPersistenceManager.shared.loadPriceAlerts() }
+    private func loadAlerts() { alerts = DataPersistenceManager.shared.loadPriceAlerts(owner: owner) }
 
     /// Writes current active alerts into App Group UserDefaults so the PriceAlert
     /// widget reads fresh data immediately, then tells WidgetKit to reload.

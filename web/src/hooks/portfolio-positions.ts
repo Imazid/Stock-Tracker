@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { mainPortfolioId } from "@/hooks/portfolio-groups";
 import { getJSON } from "@/lib/api";
 import { toView } from "@/lib/instrument-view";
 import type { QuoteResponse } from "@/lib/market-types";
@@ -10,11 +11,14 @@ import type { PortfolioHolding } from "@/lib/portfolio-holdings";
 
 type HoldingRow = Omit<PortfolioHolding, "instrument">;
 
-async function readPortfolio(userId: string, signal: AbortSignal) {
+async function readPortfolio(userId: string, signal: AbortSignal, groupId?: string) {
   const db = browserSupabase();
   if (!db) throw new Error("Accounts are unavailable.");
-  const holdings = await db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account,updated_at")
-    .eq("user_id", userId).is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(201).abortSignal(signal);
+  let query = db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account,updated_at")
+    .eq("user_id", userId).is("deleted_at", null).gt("shares", 0);
+  if (groupId === mainPortfolioId) query = query.is("portfolio_group_id", null);
+  else if (groupId) query = query.eq("portfolio_group_id", groupId);
+  const holdings = await query.order("asset_symbol").order("id").limit(201).abortSignal(signal);
   if (holdings.error) throw new Error("Couldn’t load your synced portfolio.");
   return {
     holdings: (holdings.data as HoldingRow[]).slice(0, 200).map((row) => {
@@ -27,11 +31,11 @@ async function readPortfolio(userId: string, signal: AbortSignal) {
   };
 }
 
-export function usePortfolioPositions(userId?: string) {
+export function usePortfolioPositions(userId?: string, groupId?: string) {
   const portfolio = useQuery({
-    queryKey: ["portfolio", userId],
+    queryKey: ["portfolio", userId, groupId],
     enabled: Boolean(userId),
-    queryFn: ({ signal }) => readPortfolio(userId!, signal),
+    queryFn: ({ signal }) => readPortfolio(userId!, signal, groupId),
     staleTime: 30_000,
   });
   const holdings = portfolio.data?.holdings ?? [];

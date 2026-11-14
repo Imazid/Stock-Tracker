@@ -105,9 +105,9 @@ struct PortfolioView: View {
     @State private var sheet: PortfolioSheet?
     @State private var holdingToRemove: PortfolioHolding?
     @State private var closedSheet: ClosedPosition?
-    @State private var renameIndex: Int?
+    @State private var renameTarget: UUID?
     @State private var renameText = ""
-    @State private var deleteIndex: Int?
+    @State private var deleteTarget: UUID?
     @State private var toast: String?
 
     @State private var healthText: String?
@@ -307,23 +307,23 @@ struct PortfolioView: View {
                 Text("\(h.asset.unitsText(h.shares)) of \(h.asset.symbol) and its transactions will be removed from \(activeName).")
             }
         }
-        .alert("Rename portfolio", isPresented: Binding(get: { renameIndex != nil }, set: { if !$0 { renameIndex = nil } })) {
+        .alert("Rename portfolio", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $renameText)
             Button("Save") {
                 let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let i = renameIndex, !trimmed.isEmpty { marketData.renamePortfolio(at: i, to: trimmed) }
-                renameIndex = nil
+                if let i = renameTarget, !trimmed.isEmpty { marketData.renamePortfolio(id: i, to: trimmed) }
+                renameTarget = nil
             }
-            Button("Cancel", role: .cancel) { renameIndex = nil }
+            Button("Cancel", role: .cancel) { renameTarget = nil }
         }
-        .confirmationDialog(deleteTitle, isPresented: Binding(get: { deleteIndex != nil }, set: { if !$0 { deleteIndex = nil } }), titleVisibility: .visible) {
+        .confirmationDialog(deleteTitle, isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }), titleVisibility: .visible) {
             Button("Delete portfolio", role: .destructive) {
-                if let i = deleteIndex { dsAnimate { marketData.deletePortfolio(at: i) } }
-                deleteIndex = nil
+                if let i = deleteTarget { dsAnimate { marketData.deletePortfolio(id: i) } }
+                deleteTarget = nil
             }
-            Button("Cancel", role: .cancel) { deleteIndex = nil }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
         } message: {
-            Text("Its holdings and transactions are deleted from this iPhone. This can't be undone.")
+            Text("This portfolio will be removed from your list. Its transaction records are kept for reports.")
         }
     }
 
@@ -332,8 +332,8 @@ struct PortfolioView: View {
     }
 
     private var deleteTitle: String {
-        guard let i = deleteIndex, marketData.portfolioGroups.indices.contains(i) else { return "Delete portfolio?" }
-        return "Delete “\(marketData.portfolioGroups[i].name)”?"
+        guard let id = deleteTarget, let group = marketData.portfolioGroups.first(where: { $0.id == id }) else { return "Delete portfolio?" }
+        return "Delete “\(group.name)”?"
     }
 
     // MARK: Toolbar
@@ -390,13 +390,13 @@ struct PortfolioView: View {
         }
         Button {
             renameText = activeName
-            renameIndex = marketData.activePortfolioIndex
+            renameTarget = marketData.activePortfolio.id
         } label: {
             Label("Rename…", systemImage: "pencil")
         }
-        if marketData.portfolioGroups.count > 1 {
+        if marketData.canDeleteActivePortfolio {
             Button(role: .destructive) {
-                deleteIndex = marketData.activePortfolioIndex
+                deleteTarget = marketData.activePortfolio.id
             } label: {
                 Label("Delete…", systemImage: "trash")
             }

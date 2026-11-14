@@ -51,6 +51,7 @@ struct RemoteHolding: Codable {
     let deletedAt: String?
     let closedAt: String?
     let brokerAccount: HoldingBrokerAccount?
+    let groupID: UUID?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -66,6 +67,7 @@ struct RemoteHolding: Codable {
         case deletedAt     = "deleted_at"
         case closedAt      = "closed_at"
         case brokerAccount = "broker_account"
+        case groupID       = "portfolio_group_id"
     }
 
     var isDeleted: Bool { deletedAt != nil }
@@ -100,7 +102,7 @@ struct RemoteHolding: Codable {
                               closedAt: parseDate(closedAt))
     }
 
-    static func from(_ holding: PortfolioHolding, userId: UUID) -> HoldingUpsert {
+    static func from(_ holding: PortfolioHolding, userId: UUID, groupID: UUID?) -> HoldingUpsert {
         HoldingUpsert(
             id:             holding.id.uuidString,
             user_id:        userId.uuidString,
@@ -111,7 +113,8 @@ struct RemoteHolding: Codable {
             shares:         holding.shares,
             avg_cost:       holding.avgCost,
             date_added:     iso8601Basic.string(from: holding.dateAdded),
-            broker_account: holding.brokerAccount
+            broker_account: holding.brokerAccount,
+            portfolio_group_id: groupID
         )
     }
 }
@@ -127,6 +130,7 @@ nonisolated struct HoldingUpsert: Encodable, Sendable {
     let avg_cost: Double
     let date_added: String
     let broker_account: HoldingBrokerAccount?
+    let portfolio_group_id: UUID?
 }
 
 // MARK: - RemoteTransaction
@@ -215,6 +219,7 @@ struct PortfolioLedgerChange: Codable {
     let deleted: [Transaction]
     let archivedAt: Date?
     let closedAt: Date?
+    var groupID: UUID? = nil
 
     nonisolated struct Parameters: Encodable, Sendable {
         let p_user_id: UUID
@@ -244,7 +249,7 @@ struct PortfolioLedgerChange: Codable {
     func parameters(userId: UUID, existingArchive: String? = nil) -> Parameters {
         let rows = Dictionary((holding.transactions + deleted).map { ($0.id, $0) },
                               uniquingKeysWith: { _, latest in latest })
-        return Parameters(p_user_id: userId, p_holding: RemoteHolding.from(holding, userId: userId),
+        return Parameters(p_user_id: userId, p_holding: RemoteHolding.from(holding, userId: userId, groupID: groupID == PortfolioGroup.defaultID ? nil : groupID),
                    p_transactions: rows.values.map {
                        RemoteTransaction.from($0, holdingId: holding.id, userId: userId)
                    }, p_changed_ids: changed, p_deleted_ids: deleted.map(\.id),
@@ -346,51 +351,4 @@ struct AlertUpsert: Encodable {
     let asset_kind: String?
     let asset_exchange: String?
     let created_at: String
-}
-
-// MARK: - RemotePortfolioSnapshot
-// Maps to: public.portfolio_snapshots
-// Uniqueness: (user_id, snapshot_date) — upserted by date, not by id
-// Sync tier: All signed-in users
-
-struct RemotePortfolioSnapshot: Codable {
-    let id: String
-    let userId: String
-    let snapshotDate: String    // "YYYY-MM-DD"
-    let totalValue: Double
-    let updatedAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case userId       = "user_id"
-        case snapshotDate = "snapshot_date"
-        case totalValue   = "total_value"
-        case updatedAt    = "updated_at"
-    }
-
-    func toDomain() -> PortfolioSnapshot {
-        // Parse date-only string "YYYY-MM-DD"
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
-        let date = df.date(from: snapshotDate) ?? Date()
-        return PortfolioSnapshot(date: date, totalValue: totalValue)
-    }
-
-    static func from(_ snapshot: PortfolioSnapshot, userId: UUID) -> SnapshotUpsert {
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
-        return SnapshotUpsert(
-            user_id:       userId.uuidString,
-            snapshot_date: df.string(from: snapshot.date),
-            total_value:   snapshot.totalValue
-        )
-    }
-}
-
-struct SnapshotUpsert: Encodable {
-    let user_id: String
-    let snapshot_date: String
-    let total_value: Double
 }

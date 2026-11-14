@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowUpRight, Bell, PieChart, Plus, Star, Trash2, Wallet } from "lucide-react";
+import { mainPortfolioId, usePortfolioGroups } from "@/hooks/portfolio-groups";
 import { backend, service } from "../lib/backend";
 import { dateText, fromHolding, fromWatch, instrumentID, message, money, qty, storedExchange, storedKind, storedTicker, type Holding, type Instrument, type Journal, type Quotes } from "../lib/models";
 import { AssetText, Change, Empty } from "./ui";
@@ -96,9 +97,12 @@ export function PersonalList({ journal, onAsset, onWatch, onAlert, onAlertChange
 export function JournalForm({ kind, asset, holding, userID, onDone }: { kind: "holding" | "alert"; asset: Instrument; holding?: Holding; userID: string; onDone: (text: string) => void }) {
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState("");
+  const canSelectPortfolio = kind === "holding" && !holding;
+  const portfolioFieldId = useId();
+  const { groups } = usePortfolioGroups(canSelectPortfolio ? userID : undefined);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !backend) return;
+    if (busy || !backend || (canSelectPortfolio && !groups.data)) return;
     const form = new FormData(event.currentTarget);
     setBusy(true); setError("");
     try {
@@ -108,20 +112,32 @@ export function JournalForm({ kind, asset, holding, userID, onDone }: { kind: "h
         onDone("Price alert saved.");
       } else {
         const values = { shares: Number(form.get("shares")), avg_cost: Number(form.get("price")) };
+        const destination = form.get("portfolio");
+        const group = groups.data?.find(item => item.id === destination);
+        if (canSelectPortfolio && !group) throw new Error("Choose a portfolio for this holding.");
         const result = holding
           ? await backend.from("portfolio_holdings").update(values).eq("id", holding.id).eq("user_id", userID).is("deleted_at",null).select("id").single()
-          : await backend.from("portfolio_holdings").insert({ ...values, id: crypto.randomUUID(), user_id: userID, asset_symbol: storedTicker(asset), asset_name: asset.name, asset_kind: storedKind(asset), asset_exchange: storedExchange(asset) });
+          : await backend.from("portfolio_holdings").insert({ ...values, id: crypto.randomUUID(), user_id: userID, asset_symbol: storedTicker(asset), asset_name: asset.name, asset_kind: storedKind(asset), asset_exchange: storedExchange(asset),
+              portfolio_group_id: group?.id === mainPortfolioId ? null : group?.id });
         if (result.error) throw result.error;
         onDone("Holding saved.");
       }
     } catch (failure) { setError(message(failure)); } finally { setBusy(false); }
   }
   return <form className="form" onSubmit={submit}><AssetText asset={asset}/>
+    {canSelectPortfolio && <div>
+      <label htmlFor={portfolioFieldId}>Portfolio</label>
+      <select id={portfolioFieldId} name="portfolio" disabled={!groups.data} required defaultValue={mainPortfolioId}>
+        {groups.data ? groups.data.map(group => <option key={group.id} value={group.id}>{group.name}</option>)
+          : <option>{groups.isError ? "Portfolios unavailable" : "Loading portfolios…"}</option>}
+      </select>
+      {groups.isError && <button type="button" className="button secondary small" onClick={() => void groups.refetch()}>Retry</button>}
+    </div>}
     {kind === "holding" && <label>Units<input type="number" name="shares" min={holding ? 0 : 0.00000001} max="1000000000000" step="any" required defaultValue={holding?.shares}/></label>}
     {kind === "alert" && <label>Condition<select name="condition"><option>Above</option><option>Below</option></select></label>}
     <label>{kind === "holding" ? "Average cost per unit (USD)" : "Target price (USD)"}<input type="number" name="price" min={kind === "alert" ? 0.00000001 : 0} max="1000000000000" step="any" required defaultValue={holding?.avg_cost}/></label>
     {kind === "alert" && <label className="checkbox"><input type="checkbox" name="repeat"/> Repeat after re-arming</label>}
     {error && <p className="error" role="alert">{error}</p>}
-    <button disabled={busy} className="button primary">{busy ? "Saving…" : "Save"}</button>
+    <button disabled={busy || (canSelectPortfolio && !groups.data)} className="button primary">{busy ? "Saving…" : "Save"}</button>
   </form>;
 }

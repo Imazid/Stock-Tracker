@@ -7,22 +7,13 @@
 //
 
 import Foundation
-import OSLog
 
 // MARK: - Protocol
 
 @MainActor
 protocol PortfolioServiceProtocol: AnyObject {
-    func save(
-        portfolio: [PortfolioHolding],
-        history: [PortfolioSnapshot],
-        currency: String
-    )
-    func load() -> (
-        portfolio: [PortfolioHolding],
-        history: [PortfolioSnapshot],
-        currency: String
-    )
+    func saveCurrency(_ currency: String)
+    func loadCurrency() -> String
     func appendCurrentSnapshot(to history: [PortfolioSnapshot], currentValue: Double) -> [PortfolioSnapshot]
     func starterAssets() -> (stocks: [Asset], crypto: [Asset])
 }
@@ -40,41 +31,18 @@ final class PortfolioService: PortfolioServiceProtocol {
 
     // MARK: - Persistence
 
-    func save(
-        portfolio: [PortfolioHolding],
-        history: [PortfolioSnapshot],
-        currency: String
-    ) {
-        persistence.savePortfolio(portfolio)
-        persistence.savePortfolioHistory(history)
-        persistence.savePreferredCurrency(currency)
-        AppLogger.persist.debug("Saved portfolio (\(portfolio.count) holdings)")
-    }
+    func saveCurrency(_ currency: String) { persistence.savePreferredCurrency(currency) }
 
-    func load() -> (
-        portfolio: [PortfolioHolding],
-        history: [PortfolioSnapshot],
-        currency: String
-    ) {
-        (
-            portfolio: persistence.loadPortfolio(),
-            history: persistence.loadPortfolioHistory(),
-            currency: persistence.loadPreferredCurrency()
-        )
-    }
+    func loadCurrency() -> String { persistence.loadPreferredCurrency() }
 
     // MARK: - Portfolio History (real snapshots)
 
     /// Appends today's portfolio value as a snapshot. If a snapshot for today already exists,
     /// it is replaced with the new value. Returns the updated history sorted by date.
     func appendCurrentSnapshot(to history: [PortfolioSnapshot], currentValue: Double) -> [PortfolioSnapshot] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
         let newSnapshot = PortfolioSnapshot(date: Date(), totalValue: currentValue)
-
-        var updated = history.filter {
-            calendar.startOfDay(for: $0.date) != today
-        }
+        let day = newSnapshot.utcDay
+        var updated = history.filter { $0.utcDay != day }
         updated.append(newSnapshot)
         return updated.sorted { $0.date < $1.date }
     }

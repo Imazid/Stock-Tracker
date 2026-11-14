@@ -62,6 +62,7 @@ final class MarketData: ObservableObject {
     @Published var isRefreshingQuotes: Bool = false
     @Published var portfolioGroups: [PortfolioGroup] = []
     @Published var activePortfolioIndex: Int = 0
+    private(set) var portfolioOwner: UUID?
     @Published var watchlistGroups: [WatchlistGroup] = []
     @Published var activeWatchlistIndex: Int = 0
     private(set) var watchlistOwner: UUID?
@@ -231,44 +232,14 @@ final class MarketData: ObservableObject {
 
     private func loadInitialData() {
         FXRates.shared.update(exchangeRates)
-        let saved = portfolioService.load()
-        preferredCurrency = saved.currency
+        preferredCurrency = portfolioService.loadCurrency()
 
         // Seed base asset lists (used for quote refreshes even when restoring from disk)
         (stocks, crypto) = portfolioService.starterAssets()
 
-        portfolio = saved.portfolio
-        portfolioHistory = saved.history
-
+        showPortfolios(PortfolioAccountStore.shared.open(owner: nil))
         mergeTrackedAssetsIntoCanonicalCollections()
-
         migrateASXValuesToUSDIfNeeded()
-
-        // No seeded history and no placeholder headlines: charts are rebuilt from
-        // real prices (PriceHistoryService) and News shows a loading state until
-        // real articles arrive.
-        newsArticles = []
-
-        // Restore every portfolio (only the active one used to survive a relaunch).
-        let savedGroups = DataPersistenceManager.shared.loadPortfolioGroups()
-        if !savedGroups.groups.isEmpty {
-            portfolioGroups = savedGroups.groups
-            activePortfolioIndex = min(max(savedGroups.activeIndex, 0), portfolioGroups.count - 1)
-            // The active portfolio's own store is authoritative for its holdings.
-            portfolioGroups[activePortfolioIndex].holdings = portfolio
-            portfolioGroups[activePortfolioIndex].history = portfolioHistory
-        }
-
-        // Initialize portfolio groups if empty
-        if portfolioGroups.isEmpty {
-            portfolioGroups = [PortfolioGroup(
-                name: "Main Portfolio",
-                emoji: "💼",
-                holdings: portfolio,
-                history: portfolioHistory
-            )]
-            activePortfolioIndex = 0
-        }
 
         showWatchlists(WatchlistSync.shared.open(owner: nil))
 
@@ -332,9 +303,10 @@ final class MarketData: ObservableObject {
         async let history: Void = fetchSP500History()
         async let news: Void = refreshNewsFromAPI()
         _ = await (index, history, news)
-        portfolioHistory = portfolioService.appendCurrentSnapshot(
-            to: portfolioHistory, currentValue: totalPortfolioValue
-        )
+        if !portfolio.isEmpty, !portfolio.contains(where: { $0.shares > 0 && hasNoLivePrice($0.asset) }) {
+            // The snapshot represents a complete set of priced holdings.
+            capturePortfolioValuation(totalPortfolioValue)
+        }
         fetchMarketSentiment()
         saveToDisk()
         updateWidgetData()
@@ -356,80 +328,105 @@ final class MarketData: ObservableObject {
     // MARK: - Persistence
 
     func saveToDisk() {
-        // Sync current holdings/history into the active portfolio group
+        captureActivePortfolio()
         if portfolioGroups.indices.contains(activePortfolioIndex) {
-            portfolioGroups[activePortfolioIndex].holdings = portfolio
-            portfolioGroups[activePortfolioIndex].history = portfolioHistory
+            let groups = portfolioGroups
+            let selected = activePortfolio.id
+            PortfolioAccountStore.shared.update(owner: portfolioOwner) {
+                $0.groups = groups
+                $0.selected = selected
+            }
         }
-        DataPersistenceManager.shared.savePortfolioGroups(portfolioGroups, activeIndex: activePortfolioIndex)
-        portfolioService.save(portfolio: portfolio, history: portfolioHistory, currency: preferredCurrency)
+        portfolioService.saveCurrency(preferredCurrency)
         saveWatchlist()
     }
 
-    /// Reload device data after sign-out.
-    func reloadFromDisk() {
-        let saved = portfolioService.load()
-        preferredCurrency = saved.currency
-        if !saved.portfolio.isEmpty { portfolio = saved.portfolio }
-        if !saved.history.isEmpty { portfolioHistory = saved.history }
+    func usePortfolioAccount(_ owner: UUID?) {
+        guard portfolioOwner != owner else { return }
+        portfolioOwner = owner
+        showPortfolios(PortfolioAccountStore.shared.open(owner: owner))
+    }
 
+    /// Restore the device-only portfolios and lists after sign-out.
+    func reloadFromDisk() {
+        preferredCurrency = portfolioService.loadCurrency()
+        usePortfolioAccount(nil)
         useWatchlistAccount(nil)
-        AppLogger.persist.info("Reloaded local data from disk after sign-out")
     }
 
     // MARK: - Multi-Portfolio
 
+    var activePortfolio: PortfolioGroup { portfolioGroups[activePortfolioIndex] }
+    var canDeleteActivePortfolio: Bool {
+        activePortfolio.id != PortfolioGroup.defaultID && !portfolio.contains { $0.brokerAccount?.tracking == true }
+    }
+
+    private func captureActivePortfolio() {
+        guard portfolioGroups.indices.contains(activePortfolioIndex) else { return }
+        portfolioGroups[activePortfolioIndex].holdings = portfolio
+        portfolioGroups[activePortfolioIndex].history = Array(portfolioHistory.suffix(Constants.Refresh.maxPortfolioHistoryDays))
+    }
+
+    func showPortfolios(_ account: StoredPortfolios.Account) {
+        portfolioGroups = account.groups
+        activePortfolioIndex = account.groups.firstIndex { $0.id == account.selected } ?? 0
+        portfolio = activePortfolio.holdings
+        portfolioHistory = activePortfolio.history
+        mergeTrackedAssetsIntoCanonicalCollections()
+        updateWidgetData()
+    }
+
     func switchToPortfolio(index: Int) {
         guard portfolioGroups.indices.contains(index) else { return }
-        // Save current holdings/history back to active group
-        if portfolioGroups.indices.contains(activePortfolioIndex) {
-            portfolioGroups[activePortfolioIndex].holdings = portfolio
-            portfolioGroups[activePortfolioIndex].history = portfolioHistory
-        }
+        captureActivePortfolio()
         activePortfolioIndex = index
-        portfolio = portfolioGroups[index].holdings
-        portfolioHistory = portfolioGroups[index].history
+        portfolio = activePortfolio.holdings
+        portfolioHistory = activePortfolio.history
         saveToDisk()
-        // Inactive portfolios aren't priced in the background; price this one now.
+        updateWidgetData()
         Task { await refreshFromAPI() }
     }
 
-    /// Creates and switches to a new portfolio. Returns false when the plan's limit is reached.
+    private func changePortfolio(_ change: PortfolioGroupChange, selected preferred: UUID) -> Bool {
+        captureActivePortfolio()
+        var groups = portfolioGroups
+        change.apply(to: &groups)
+        let selected = groups.contains { $0.id == preferred } ? preferred : PortfolioGroup.defaultID
+        let signedIn = portfolioOwner != nil
+        guard PortfolioAccountStore.shared.update(owner: portfolioOwner, {
+            $0.groups = groups
+            $0.selected = selected
+            if signedIn { $0.pendingGroups.append(change) }
+        }) else { return false }
+        showPortfolios(.init(groups: groups, selected: selected))
+        if signedIn { SyncManager.shared.scheduleUpload() }
+        return true
+    }
+
     @discardableResult
     func createPortfolio(name: String, emoji: String = "💼") -> Bool {
         guard SubscriptionManager.shared.canAddPortfolio(currentCount: portfolioGroups.count) else { return false }
-        // Save current holdings/history back to active group before switching
-        if portfolioGroups.indices.contains(activePortfolioIndex) {
-            portfolioGroups[activePortfolioIndex].holdings = portfolio
-            portfolioGroups[activePortfolioIndex].history = portfolioHistory
-        }
-        let newGroup = PortfolioGroup(name: name, emoji: emoji, holdings: [], history: [])
-        portfolioGroups.append(newGroup)
-        activePortfolioIndex = portfolioGroups.count - 1
-        portfolio = []
-        portfolioHistory = []
-        saveToDisk()
-
-        // Referral qualification: portfolio created
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.prefix(80))
+        guard !name.isEmpty else { return false }
+        let group = PortfolioGroup(name: name, emoji: emoji)
+        guard changePortfolio(PortfolioGroupChange(.create, group: group), selected: group.id) else { return false }
         Task { await ReferralManager.shared.reportQualificationEvent(.portfolioCreated) }
         return true
     }
 
-    func deletePortfolio(at index: Int) {
-        guard portfolioGroups.count > 1 else { return }
-        let removed = portfolioGroups.remove(at: index)
-        DataPersistenceManager.shared.removePortfolioVisits(for: removed.id)
-        let newIndex = min(activePortfolioIndex, portfolioGroups.count - 1)
-        activePortfolioIndex = newIndex
-        portfolio = portfolioGroups[newIndex].holdings
-        portfolioHistory = portfolioGroups[newIndex].history
-        saveToDisk()
+    func deletePortfolio(id: UUID) {
+        captureActivePortfolio()
+        guard id != PortfolioGroup.defaultID, let group = portfolioGroups.first(where: { $0.id == id }),
+              !group.holdings.contains(where: { $0.brokerAccount?.tracking == true }) else { return }
+        guard changePortfolio(PortfolioGroupChange(.delete, group: group), selected: activePortfolio.id) else { return }
+        DataPersistenceManager.shared.removePortfolioVisits(for: id)
     }
 
-    func renamePortfolio(at index: Int, to name: String) {
-        guard portfolioGroups.indices.contains(index) else { return }
-        portfolioGroups[index].name = name
-        saveToDisk()
+    func renamePortfolio(id: UUID, to name: String) {
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.prefix(80))
+        guard !name.isEmpty, var group = portfolioGroups.first(where: { $0.id == id }) else { return }
+        group.name = name
+        _ = changePortfolio(PortfolioGroupChange(.rename, group: group), selected: activePortfolio.id)
     }
 
     // MARK: - Quotes
@@ -918,7 +915,7 @@ final class MarketData: ObservableObject {
                 transactions: [transaction]
             )
         }
-        guard SyncManager.shared.queuePortfolioChange(holding, changed: [transaction.id]) else {
+        guard SyncManager.shared.queuePortfolioChange(holding, groupID: activePortfolio.id, owner: portfolioOwner, changed: [transaction.id]) else {
             return .invalid("Couldn’t save the portfolio change on this device.")
         }
         upsertTrackedAsset(asset)
@@ -1034,7 +1031,7 @@ final class MarketData: ObservableObject {
         holding.transactions.append(tx)
         let closes = type == .sell && holding.shares <= 1e-9
         if closes { holding.shares = 0 }
-        guard SyncManager.shared.queuePortfolioChange(holding, changed: [tx.id], archived: closes,
+        guard SyncManager.shared.queuePortfolioChange(holding, groupID: activePortfolio.id, owner: portfolioOwner, changed: [tx.id], archived: closes,
                                                     closedAt: closes ? date : nil) else {
             return .invalid("Couldn’t save the portfolio change on this device.")
         }
@@ -1063,7 +1060,7 @@ final class MarketData: ObservableObject {
         holding.transactions = remaining
         holding.shares = rebuilt.shares
         holding.avgCost = rebuilt.avgCost
-        guard SyncManager.shared.queuePortfolioChange(holding, deleted: [deleted]) else {
+        guard SyncManager.shared.queuePortfolioChange(holding, groupID: activePortfolio.id, owner: portfolioOwner, deleted: [deleted]) else {
             return .invalid("Couldn’t save the portfolio change on this device.")
         }
         portfolio[i] = holding
@@ -1095,25 +1092,11 @@ final class MarketData: ObservableObject {
         removeLocalHolding(holding)
     }
 
-    /// Forgets a closed position — its realised profit leaves the totals.
+    /// Hides a closed position locally while retaining its ledger for account statements.
     func removeClosedPosition(id: UUID) {
         guard portfolioGroups.indices.contains(activePortfolioIndex) else { return }
-        DataPersistenceManager.shared.hideSyncedClosedPosition(id)
+        PortfolioAccountStore.shared.update(owner: portfolioOwner) { $0.hiddenClosed.insert(id) }
         portfolioGroups[activePortfolioIndex].closedPositions.removeAll { $0.id == id }
-        saveToDisk()
-    }
-
-    func applySyncedClosedPositions(_ positions: [ClosedPosition], reset: Bool = false) {
-        guard portfolioGroups.indices.contains(activePortfolioIndex) else { return }
-        if reset {
-            for index in portfolioGroups.indices { portfolioGroups[index].closedPositions.removeAll() }
-        }
-        let known = Set(portfolioGroups.flatMap { $0.closedPositions.map(\.id) })
-        let hidden = DataPersistenceManager.shared.hiddenSyncedClosedPositions()
-        let incoming = positions.filter { !known.contains($0.id) && !hidden.contains($0.id) }
-        guard reset || !incoming.isEmpty else { return }
-        portfolioGroups[activePortfolioIndex].closedPositions.append(contentsOf: incoming)
-        portfolioGroups[activePortfolioIndex].closedPositions.sort { $0.closedAt > $1.closedAt }
         saveToDisk()
     }
 
@@ -1165,32 +1148,51 @@ final class MarketData: ObservableObject {
         return perShare
     }
 
+    var allPortfolioHoldings: [PortfolioHolding] {
+        portfolioGroups.enumerated().flatMap { index, group in index == activePortfolioIndex ? portfolio : group.holdings }
+    }
+
     @discardableResult
     func removeFromPortfolio(_ holding: PortfolioHolding) -> Bool {
-        var archived = holding
+        captureActivePortfolio()
+        guard let index = portfolioGroups.firstIndex(where: { $0.holdings.contains { $0.id == holding.id } }),
+              var archived = portfolioGroups[index].holdings.first(where: { $0.id == holding.id }) else { return false }
         if archived.brokerAccount?.tracking == true {
             archived.brokerAccount?.observed_at = Date().ISO8601Format(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
         }
-        guard SyncManager.shared.queuePortfolioChange(archived, archived: true) else { return false }
-        removeLocalHolding(holding)
+        let group = portfolioGroups[index].id
+        guard SyncManager.shared.queuePortfolioChange(archived, groupID: group, owner: portfolioOwner, archived: true) else { return false }
+        if index == activePortfolioIndex {
+            removeLocalHolding(holding)
+        } else {
+            portfolioGroups[index].holdings.removeAll { $0.id == holding.id }
+            saveToDisk()
+        }
         return true
     }
 
     func saveBrokerHoldings(_ holdings: [PortfolioHolding]) -> Bool {
-        let current = Set(portfolio.map(\.id))
+        captureActivePortfolio()
+        var groups = portfolioGroups
+        let existing = Dictionary(groups.enumerated().flatMap { index, group in group.holdings.map { ($0.id, index) } },
+                                  uniquingKeysWith: { first, _ in first })
         let changes = holdings.map { holding in
-            PortfolioLedgerChange(revision: UUID(), holding: holding,
-                changed: [],
-                deleted: [], archivedAt: nil, closedAt: nil)
+            // Brokerage sync is account-wide. A new provider position goes into
+            // Main Portfolio, and an existing position stays where it was assigned.
+            let index = existing[holding.id] ?? 0
+            var rows = groups[index].holdings
+            if let i = rows.firstIndex(where: { $0.id == holding.id }) { rows[i] = holding } else { rows.append(holding) }
+            groups[index].holdings = rows
+            return PortfolioLedgerChange(revision: UUID(), holding: holding, changed: [], deleted: [],
+                                         archivedAt: nil, closedAt: nil, groupID: groups[index].id)
         }
-        guard SyncManager.shared.queuePortfolioChanges(changes) else { return false }
-        let replacements = Dictionary(uniqueKeysWithValues: holdings.map { ($0.id, $0) })
-        portfolio = portfolio.map { replacements[$0.id] ?? $0 } + holdings.filter { !current.contains($0.id) }
-        for holding in holdings where holding.shares > 0 { upsertTrackedAsset(holding.asset) }
+        guard SyncManager.shared.queuePortfolioChanges(changes, owner: portfolioOwner) else { return false }
+        portfolioGroups = groups
+        portfolio = activePortfolio.holdings
         saveToDisk()
         updateWidgetData()
         Task {
-            for holding in holdings where holding.shares > 0 && !current.contains(holding.id) {
+            for holding in holdings where holding.shares > 0 && existing[holding.id] == nil {
                 await refreshQuote(for: holding.asset)
             }
         }
@@ -1199,17 +1201,23 @@ final class MarketData: ObservableObject {
 
     private func removeLocalHolding(_ holding: PortfolioHolding) {
         portfolio.removeAll { $0.id == holding.id }
-        if portfolio.isEmpty {
-            // Reset chart and history when all holdings removed
-            portfolioHistory = []
-        } else {
-            // Record the new (lower) total so the chart reflects the deletion
-            portfolioHistory = portfolioService.appendCurrentSnapshot(
-                to: portfolioHistory, currentValue: totalPortfolioValue
-            )
+        if !portfolio.contains(where: { $0.shares > 0 && hasNoLivePrice($0.asset) }) {
+            capturePortfolioValuation(totalPortfolioValue)
         }
         saveToDisk()
         updateWidgetData()
+    }
+
+    private func capturePortfolioValuation(_ value: Double) {
+        guard value.isFinite, value >= 0 else { return }
+        portfolioHistory = portfolioService.appendCurrentSnapshot(to: portfolioHistory, currentValue: value)
+        guard let portfolioOwner, let latest = portfolioHistory.last else { return }
+        let group = activePortfolio.id.uuidString
+        if PortfolioAccountStore.shared.update(owner: portfolioOwner, {
+            $0.pendingValuations[group, default: [:]][latest.utcDay] = latest
+        }) {
+            SyncManager.shared.scheduleUpload()
+        }
     }
 
     func updateHolding(_ holding: PortfolioHolding, shares: Double, avgCost: Double) {
@@ -1217,7 +1225,7 @@ final class MarketData: ObservableObject {
         var updated = portfolio[index]
         updated.shares = shares
         updated.avgCost = avgCost
-        guard SyncManager.shared.queuePortfolioChange(updated) else { return }
+        guard SyncManager.shared.queuePortfolioChange(updated, groupID: activePortfolio.id, owner: portfolioOwner) else { return }
         portfolio[index] = updated
         saveToDisk()
         updateWidgetData()
@@ -1303,26 +1311,21 @@ final class MarketData: ObservableObject {
         }
     }
 
-    func applyRemoteSync(portfolio remotePortfolio: [PortfolioHolding], history remoteHistory: [PortfolioSnapshot]) {
-        let localAssets = Dictionary((watchlist + stocks + crypto).map { ($0.quoteIdentity, $0) }, uniquingKeysWith: { first, _ in first })
-        let listedTypes = Dictionary((portfolio.map(\.asset) + stocks + watchlist).compactMap { asset in
-            asset.isETF.map { (asset.quoteIdentity, $0) }
-        }, uniquingKeysWith: { first, _ in first })
-        // Preserve live market data for portfolio assets
-        portfolio = remotePortfolio.map { holding in
-            var h = holding
-            h.asset.isETF = h.asset.isETF ?? listedTypes[h.asset.quoteIdentity]
-            guard let live = localAssets[h.asset.quoteIdentity], live.price > 0 else { return h }
-            h.asset.price = live.price
-            h.asset.change = live.change
-            h.asset.changePercent = live.changePercent
-            h.asset.volume = live.volume
-            h.asset.priceMove = live.priceMove
-            return h
+    func portfolioGroupsWithQuotes(_ groups: [PortfolioGroup]) -> [PortfolioGroup] {
+        let known = portfolio.map(\.asset) + portfolioGroups.flatMap { $0.holdings.map(\.asset) } + stocks + crypto
+        let assets = Dictionary(known.map { ($0.quoteIdentity, $0) }, uniquingKeysWith: { first, second in
+            first.price > 0 ? first : second
+        })
+        return groups.map { group in
+            var result = group
+            result.holdings = group.holdings.map { holding in
+                guard let quote = assets[holding.asset.quoteIdentity] else { return holding }
+                var result = holding
+                result.asset = quoteService.mergedAsset(old: holding.asset, api: quote)
+                return result
+            }
+            return result
         }
-        if !remoteHistory.isEmpty { portfolioHistory = remoteHistory }
-        saveToDisk()
-        updateWidgetData()
     }
 
     func refreshSyncedQuotesIfNeeded() async {
@@ -1424,7 +1427,7 @@ final class MarketData: ObservableObject {
         }
 
         // --- Alerts data ---
-        let savedAlerts = DataPersistenceManager.shared.loadPriceAlerts()
+        let savedAlerts = DataPersistenceManager.shared.loadPriceAlerts(owner: portfolioOwner)
         let alertDicts: [[String: Any]] = savedAlerts.filter { $0.isActive }.map { alert in
             let currentPrice = watchlist.first(where: { $0.symbol == alert.symbol })?.price
                 ?? portfolio.first(where: { $0.asset.symbol == alert.symbol })?.asset.price

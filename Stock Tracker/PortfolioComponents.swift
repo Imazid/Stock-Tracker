@@ -122,7 +122,7 @@ extension MarketData {
         holding.transactions = transactions
         holding.shares = rebuilt.shares
         holding.avgCost = rebuilt.avgCost
-        guard SyncManager.shared.queuePortfolioChange(holding, changed: changed, deleted: deleted) else {
+        guard SyncManager.shared.queuePortfolioChange(holding, groupID: activePortfolio.id, owner: portfolioOwner, changed: changed, deleted: deleted) else {
             return .invalid("Couldn’t save the portfolio change on this device.")
         }
         portfolio[index] = holding
