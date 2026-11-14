@@ -121,7 +121,12 @@ private struct CopilotScreen: View {
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { draft = nil } } }
             }
         }
-        .sheet(item: $report) { box in NavigationStack { BacktestReportView(result: box.result, title: box.result.strategyTitle) } }
+        .sheet(item: $report) { box in
+            NavigationStack {
+                BacktestReportView(result: box.result, title: box.title,
+                                   currency: box.currency, testedRuleLines: box.testedRuleLines)
+            }
+        }
         .sheet(item: $openedProposal) { ProposalReviewSheet(proposalID: $0.id) }
         .sheet(item: $openedOrder) { ref in NavigationStack { OrderDetailView(orderID: ref.id) } }
         .sheet(item: $openedAgent) { ref in NavigationStack { AgentDetailView(agentID: ref.id) } }
