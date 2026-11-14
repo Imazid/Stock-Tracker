@@ -33,6 +33,7 @@ enum CopilotCard: Identifiable {
     case limitChange(id: UUID, agentID: UUID, lines: [String], policy: RiskPolicy, loosens: Bool)
     case backtest(id: UUID, box: BacktestBox)
     case agentChoice(id: UUID, request: String, agentIDs: [UUID])
+    case portfolioMovement(id: UUID, report: PortfolioMovementReport)
     case unifiedAllocation(id: UUID)
     case privateUpdates(id: UUID, response: PrivateUpdatesAnswer)
     case privateComparison(id: UUID, question: String)
@@ -43,7 +44,8 @@ enum CopilotCard: Identifiable {
         switch self {
         case .facts(let id, _, _, _), .orders(let id, _, _), .run(let id, _, _), .draft(let id, _),
              .limitChange(let id, _, _, _, _), .backtest(let id, _), .agentChoice(let id, _, _),
-             .unifiedAllocation(let id), .privateUpdates(let id, _), .privateComparison(let id, _), .privateScenario(let id, _), .pauseAll(let id):
+             .portfolioMovement(let id, _), .unifiedAllocation(let id), .privateUpdates(let id, _),
+             .privateComparison(let id, _), .privateScenario(let id, _), .pauseAll(let id):
             return id
         }
     }
@@ -82,7 +84,10 @@ final class CopilotEngine: ObservableObject {
     var canUseModel: () -> Bool = { false }
     var didUseModel: () -> Void = {}
 
+    static let portfolioMovementPrompt = "Why did my portfolio move?"
+
     static let suggestions = [
+        portfolioMovementPrompt,
         "Show me all my pending trades",
         "Analyse my portfolio concentration",
         "Show my private investment exposure alongside my listed stocks",
@@ -185,6 +190,10 @@ final class CopilotEngine: ObservableObject {
         }
         if has("pending", "waiting for", "open order", "awaiting", "need my approval", "needs approval") {
             return pendingTrades()
+        }
+        if has("portfolio", "my holdings", "my investments") &&
+            has("moved", " move", "went up", "went down", "price change", "price contribution", "what drove") {
+            return portfolioMovement()
         }
         if has("concentration", "allocation", "diversif", "exposure", "how concentrated") && !has("reduce", "set ", "change", "lower", "raise", "increase") {
             return concentration()
@@ -296,6 +305,16 @@ final class CopilotEngine: ObservableObject {
         if !orders.isEmpty { parts.append("\(orders.count) order\(orders.count == 1 ? " is" : "s are") open and not yet filled") }
         return CopilotMessage(isUser: false, text: parts.joined(separator: " and ").capitalizedFirst + ". A proposal is only a suggestion until you approve it.",
                               cards: [.orders(id: UUID(), proposals: proposals.map(\.id), orders: orders.map(\.id))])
+    }
+
+    private func portfolioMovement() -> CopilotMessage {
+        guard let report = marketData?.portfolioMovement(), report.positionCount > 0 else {
+            return CopilotMessage(isUser: false, text: "Add holdings to this portfolio to see how their prices contributed.")
+        }
+        let text = report.coveredCount == 0
+            ? "Recent prices and reference prices are unavailable for these holdings. Refresh the Portfolio tab to check for new quotes."
+            : "Here’s how recent price changes affected the holdings in your active portfolio."
+        return CopilotMessage(isUser: false, text: text, cards: [.portfolioMovement(id: UUID(), report: report)])
     }
 
     private func concentration() -> CopilotMessage {
@@ -512,7 +531,7 @@ final class CopilotEngine: ObservableObject {
         You cannot place, change or cancel orders, and you must never claim that you did. \
         The user's agents: \(agents.isEmpty ? "none" : agents). Watchlist: \(watch.isEmpty ? "none" : watch).
         If the request matches one of these tools, reply with JSON only and nothing else: \
-        {"tool":"pending_trades"} | {"tool":"concentration"} | {"tool":"explain_decision","agent":"<name>"} | \
+        {"tool":"pending_trades"} | {"tool":"portfolio_movement"} | {"tool":"concentration"} | {"tool":"explain_decision","agent":"<name>"} | \
         {"tool":"why_stopped","agent":"<name>"} | {"tool":"backtest","agent":"<name>","request":"<the user's words>"} | \
         {"tool":"change_limit","agent":"<name>","request":"<the user's words>"} | {"tool":"create_agent","request":"<the user's words>"}.
         Otherwise answer in plain text, in under 120 words. Give general information only: no personal financial advice, \
@@ -539,6 +558,7 @@ final class CopilotEngine: ObservableObject {
         func agent() -> TradingAgent? { named ?? resolveAgent(original.lowercased()) }
         switch choice.tool {
         case "pending_trades": return pendingTrades()
+        case "portfolio_movement": return portfolioMovement()
         case "concentration": return concentration()
         case "explain_decision": return agent().map(explainDecision)
         case "why_stopped": return agent().map(whyStopped)

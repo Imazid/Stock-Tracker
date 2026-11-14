@@ -30,6 +30,7 @@ struct HomeView: View {
                             HStack(alignment: .top, spacing: DS.Space.xl) {
                                 VStack(alignment: .leading, spacing: DS.Space.xl) {
                                     portfolio
+                                    portfolioIntelligence
                                     watchlist
                                     HomeComingUpSection()
                                 }
@@ -45,6 +46,7 @@ struct HomeView: View {
                             }
                         } else {
                             portfolio
+                            portfolioIntelligence
                             watchlist
                             HomeTradingSection()
                             HomeComingUpSection()
@@ -78,6 +80,13 @@ struct HomeView: View {
     private var portfolio: some View {
         PortfolioSummaryHero()
             .staggeredAppear(1).scrollCardMotion()
+    }
+
+    @ViewBuilder
+    private var portfolioIntelligence: some View {
+        if !marketData.portfolio.isEmpty {
+            PortfolioIntelligenceEntry()
+        }
     }
 
     private var watchlist: some View {

@@ -235,11 +235,16 @@ struct HoldingDetailView: View {
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) {
+                if let account = h.brokerAccount {
+                    LedgerLine(label: "Brokerage account", value: account.label)
+                        .accessibilityIdentifier("holding.brokerAccount")
+                }
                 LedgerLine(label: "Market value", value: hide ? "••••" : marketData.formatPrice(h.currentValue))
-                LedgerLine(label: h.asset.kind == .crypto ? "Quantity" : "Shares", value: formatQuantity(h.shares))
+                LedgerLine(label: h.asset.kind == .crypto ? "Quantity" : "Shares", value: hide ? "••••" : formatQuantity(h.shares))
+                    .accessibilityIdentifier("holding.units")
                 LedgerLine(label: "Average cost",
-                           value: hasCost ? marketData.formatPrice(h.avgCost) : "Not set",
-                           detail: hasCost && h.asset.tradingCurrency != marketData.preferredCurrency
+                           value: hide ? "••••" : (hasCost ? marketData.formatPrice(h.avgCost) : "Not set"),
+                           detail: !hide && hasCost && h.asset.tradingCurrency != marketData.preferredCurrency
                                 ? h.asset.formatTrading(h.asset.toTradingCurrency(h.avgCost)) : nil)
                     .accessibilityIdentifier("holding.avgCost")
                 LedgerLine(label: "Total cost", value: hasCost ? (hide ? "••••" : marketData.formatPrice(h.costBasis)) : "—")
