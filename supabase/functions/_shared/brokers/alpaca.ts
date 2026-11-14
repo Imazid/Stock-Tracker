@@ -98,10 +98,10 @@ function capabilities(environment: TradingEnvironment): ProviderCapabilities {
     "Stop and stop-limit stock orders are day or GTC. IOC/FOK/opening/closing-auction orders need Alpaca to enable them, so they aren't offered.",
     "Notional orders can't be modified — cancel and place a new one.",
     "Real-time stock prices on Alpaca's free market-data plan come from IEX only, a small share of US volume; consolidated (SIP) data needs the paid plan.",
-    "Alpaca also offers websocket order updates; this adapter reconciles by polling instead.",
   ];
   if (environment === "paper") {
     notes.unshift(
+      "Stock Tracker can confirm updates from Alpaca’s paper order stream and scheduled REST reconciliation.",
       "Paper account: Alpaca simulates fills against live NBBO quotes (about 10% of eligible orders get a random partial fill). No regulatory fees or dividends are simulated, and order size isn't checked against displayed liquidity.",
     );
   } else {
@@ -139,7 +139,7 @@ function capabilities(environment: TradingEnvironment): ProviderCapabilities {
         margin: false,
       },
     ],
-    streaming: { orders: false, marketData: false },
+    streaming: { orders: environment === "paper", marketData: false },
     notes,
   };
 }
