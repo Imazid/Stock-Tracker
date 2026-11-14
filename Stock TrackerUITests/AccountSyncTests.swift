@@ -125,8 +125,6 @@ final class AccountSyncTests: XCTestCase {
                 "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
             app.launch()
             XCTAssertTrue(app.open("Portfolio"))
-            XCTAssertTrue(app.staticTexts["Dividends and distributions"].waitForExistence(timeout: 15) ||
-                app.buttons["portfolio.account.CommSec"].waitForExistence(timeout: 10))
         }
         func brokerRows() throws -> [[String: Any]] {
             try rows("portfolio_holdings", select: "id,asset_symbol,shares,broker_account,deleted_at", token: token)
@@ -151,6 +149,7 @@ final class AccountSyncTests: XCTestCase {
         }
 
         launch()
+        XCTAssertTrue(app.staticTexts["Dividends and distributions"].waitForExistence(timeout: 15))
         let connect = app.buttons["Connect a broker"].firstMatch
         XCTAssertTrue(connect.waitForExistence(timeout: 8))
         connect.tap()
