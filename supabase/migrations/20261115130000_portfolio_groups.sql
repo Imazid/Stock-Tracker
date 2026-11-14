@@ -273,4 +273,3 @@ begin
     and (t.id = any(p_changed_ids) or t.id = any(p_deleted_ids));
 end;
 $$;
-
