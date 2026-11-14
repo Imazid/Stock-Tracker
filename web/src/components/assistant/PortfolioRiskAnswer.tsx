@@ -56,7 +56,7 @@ export function PortfolioRiskAnswer({ risk }: { risk: PortfolioRiskSummary }) {
           <ul className="space-y-1">
             {risk.sectorSources.map(row => <li key={row.id}>
               <a className="text-primary-fg underline" href={row.url} target="_blank" rel="noreferrer">{row.issuer} · SEC</a>
-              {" · "}{row.observedAt.slice(0, 10)}
+              {row.observedAt && ` · ${row.observedAt.slice(0, 10)}`}
             </li>)}
           </ul>
         </details>}
