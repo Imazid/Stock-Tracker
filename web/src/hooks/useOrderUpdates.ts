@@ -20,6 +20,7 @@ export function useOrderUpdates(userId: string | undefined, query: OrdersQuery, 
         timer = undefined;
         const queryKey = intentId ? [query, userId, intentId] : [query, userId];
         void cache.invalidateQueries({ queryKey, exact: true });
+        if (intentId) void cache.invalidateQueries({ queryKey: ["order-executions", userId, intentId], exact: true });
       }, 200);
     };
     const filter = { schema: "public", table: "broker_order_updates", filter: `user_id=eq.${userId}` };

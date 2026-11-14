@@ -33,6 +33,7 @@ begin
 end $$;
 reset role;
 
+update provider_operations.workers set monitored_since = now();
 update provider_operations.workers set monitored_since = now() - interval '6 minutes' where name = 'snaptrade-activity-sync';
 insert into auth.users(id) values ('752bd777-4761-424f-8ed7-ab51d0750041');
 insert into public.broker_connections(id,user_id,adapter_id,name,environment,permissions,provider_account_id)
