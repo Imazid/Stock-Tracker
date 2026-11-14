@@ -401,6 +401,21 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(source.isHittable, app.debugDescription)
         XCTAssertFalse(app.staticTexts["Heidi · Company restructuring"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["copilot.privateUpdates.ai"].firstMatch.exists)
+
+        app.buttons["copilot.close"].tap()
+        let updates = app.buttons["private.companyUpdates"]
+        XCTAssertTrue(updates.waitForExistence(timeout: 8), app.debugDescription)
+        updates.tap()
+        let monitor = app.switches["private.monitor.enable"]
+        XCTAssertTrue(monitor.waitForExistence(timeout: 8), app.debugDescription)
+        if monitor.value as? String == "0" {
+            let control = monitor.switches.firstMatch
+            (control.exists ? control : monitor).tap()
+        }
+        let alert = app.descendants(matching: .any).matching(identifier: "private.monitor.alert.announcement")
+            .containing(.staticText, identifier: "Capability X began trading on ASX").firstMatch
+        for _ in 0..<4 where !alert.exists { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(alert.exists, app.debugDescription)
     }
 
     @MainActor
