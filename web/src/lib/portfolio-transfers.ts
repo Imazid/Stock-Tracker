@@ -42,12 +42,25 @@ export type StockTransfer = {
   source: TransferHolding | null;
   destination: TransferHolding | null;
   receiving_snapshot: ReceivingSnapshot | null;
+  snaptrade_reference?: BrokerStockTransferReference | null;
+};
+
+export type BrokerStockTransferReference = {
+  sentId: string;
+  receivedId: string;
+  sentOn: string;
+  receivedOn: string;
+  fromAccountId: string;
+  toAccountId: string;
+  symbol: string;
+  exchange: string;
+  shares: string;
 };
 
 export const transferHoldingFields = "id,asset_symbol,asset_exchange,asset_kind,date_added,deleted_at,broker_account";
 export const receivingSnapshotFields = "id,holding_id,transaction_date,type,shares,trade_provenance,deleted_at";
 export const stockTransferFields = [
-  "id,from_holding_id,to_holding_id,sent_on,received_on,shares::text,same_day_order,from_account,to_account,statement_reference,receiving_snapshot_id,updated_at",
+  "id,from_holding_id,to_holding_id,sent_on,received_on,shares::text,same_day_order,from_account,to_account,statement_reference,receiving_snapshot_id,updated_at,snaptrade_reference",
   `source:portfolio_holdings!from_holding_id(${transferHoldingFields})`,
   `destination:portfolio_holdings!to_holding_id(${transferHoldingFields})`,
   `receiving_snapshot:transactions!receiving_snapshot_id(${receivingSnapshotFields})`,
