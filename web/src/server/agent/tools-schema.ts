@@ -6,6 +6,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ASSET_RISK_RANGES } from "../../lib/asset-risk.ts";
 
 const CHART_RANGES = ["1D", "5D", "1M", "3M", "6M", "1Y", "5Y"];
 
@@ -13,6 +14,7 @@ export const TOOL_NAMES = [
   "search_instruments",
   "get_quote",
   "get_price_history",
+  "get_asset_risk",
   "get_company_research",
   "get_company_dataset",
   "search_filing_text",
@@ -45,6 +47,14 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: obj({
       instrument_id: { type: "string" },
       range: { type: "string", enum: CHART_RANGES, description: "1D, 5D, 1M, 3M, 6M, 1Y or 5Y" },
+    }, ["instrument_id", "range"]),
+  },
+  {
+    name: "get_asset_risk",
+    description: "Historical price risk for a specific stock, fund or token using completed daily closes. Returns peak-to-trough drawdown, daily volatility, price change, date range, source and missing sessions. Use for questions about historical price risk.",
+    input_schema: obj({
+      instrument_id: { type: "string", description: "Canonical listing or token id" },
+      range: { type: "string", enum: [...ASSET_RISK_RANGES] },
     }, ["instrument_id", "range"]),
   },
   {
@@ -140,7 +150,7 @@ export interface ToolOutcome {
 }
 
 export const COMPANY_RESEARCH_TOOLS: ReadonlySet<string> = new Set([
-  "search_instruments", "get_quote", "get_price_history",
+  "search_instruments", "get_quote", "get_price_history", "get_asset_risk",
   "get_company_research", "get_company_dataset", "search_filing_text",
 ]);
 
@@ -153,10 +163,8 @@ export interface ToolContext {
   now: number;
 }
 
-const companyTools = new Set(["search_instruments", "get_quote", "get_price_history", "get_company_research", "get_company_dataset", "search_filing_text"]);
-
 export function canUseTool(name: string, ctx: ToolContext): boolean {
-  return !ctx.company || companyTools.has(name);
+  return !ctx.company || COMPANY_RESEARCH_TOOLS.has(name);
 }
 
 export function scopedHistory<T extends { content: string }>(history: T[], ctx: ToolContext): T[] {

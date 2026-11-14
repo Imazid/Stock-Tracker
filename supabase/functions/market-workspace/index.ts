@@ -13,7 +13,7 @@ import { decodeInstrument, instrumentID, parseYahooSymbol, venueCurrency, VENUES
 import { validate } from "../_shared/trading/strategy.ts";
 import { cachedMarketExplore, knownWatchedListings } from "./explore.ts";
 import { companyResearch } from "./company.ts";
-import { mobileResearchReport, researchListing } from "./research_report.ts";
+import { mobileAssetRisk, mobileResearchReport, researchListing } from "./research_report.ts";
 import { answerCompanyQuestion } from "./research_answer.ts";
 import { mobileCompanyAlertActivity, mobileCompanyAlerts } from "./research_alerts.ts";
 import { AI_LIMITS } from "../_shared/ai/proxy.ts";
@@ -106,6 +106,10 @@ Deno.serve(async (request) => {
     if (body.action === "companyAlerts" && userID) {
       return ok(await mobileCompanyAlerts(body, request.headers.get("authorization")!,
         env("RESEARCH_WEB_ORIGIN"), env("RESEARCH_WEB_BYPASS_SECRET")));
+    }
+    if (body.action === "assetRisk" && userID) {
+      return ok(await mobileAssetRisk(Field.string(body.instrumentId, "instrumentId", 42),
+        Field.string(body.range, "range", 2), env("RESEARCH_WEB_ORIGIN"), env("RESEARCH_WEB_BYPASS_SECRET")));
     }
     if (body.action === "companyAlertActivity" && userID) {
       const db = createClient(env("SUPABASE_URL")!, env("SUPABASE_ANON_KEY")!, {
