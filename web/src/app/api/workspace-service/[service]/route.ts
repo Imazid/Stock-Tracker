@@ -8,6 +8,7 @@ const services = {
   research: "ai-proxy",
   brokerage: "snaptrade-proxy",
   "private-markets": "private-markets",
+  "account-export": "account-export",
 } as const;
 
 const privateMarketActions = new Set([
@@ -79,6 +80,7 @@ export async function POST(request: Request, context: {params: Promise<{service:
   }
   // Existing Edge Functions verify the user's access token and enforce ownership and trading permissions.
   const idempotencyKey = request.headers.get("idempotency-key");
+  const deadline = AbortSignal.timeout(55_000);
   try {
     const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/${services[service as keyof typeof services]}`, {
       method: "POST",
@@ -89,7 +91,7 @@ export async function POST(request: Request, context: {params: Promise<{service:
       },
       body,
       cache: "no-store",
-      signal: AbortSignal.timeout(55_000),
+      signal: service === "account-export" ? AbortSignal.any([request.signal, deadline]) : deadline,
     });
     return new Response(response.body, {
       status: response.status,

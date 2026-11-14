@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { practiceCall, PracticeError } from "@/hooks/practice";
-import { browserSupabase } from "@/lib/supabase/client";
+import { verifyAuthenticator } from "@/lib/supabase/verify-authenticator";
 
 export function AccountLimits({ owner }: { owner: string }) {
   const query = useQuery({
@@ -38,17 +38,7 @@ function LimitForm({ owner, limits }: { owner: string; limits: Limits }) {
   const dailyBuys = edits.maxTotalDailyNotional ?? String(limits.maxTotalDailyNotional);
   const save = useMutation({
     mutationFn: async (verify: boolean) => {
-      if (verify) {
-        const auth = browserSupabase()?.auth;
-        if (!auth || (await auth.getSession()).data.session?.user.id !== owner) throw Error("Open the form again for your current account.");
-        const { data, error } = await auth.mfa.listFactors();
-        if (error) throw error;
-        const factor = data.totp.find((item) => item.status === "verified");
-        if (!factor) throw Error("No verified authenticator is available. Check the security settings for your account.");
-        if ((await auth.getSession()).data.session?.user.id !== owner) throw Error("Open the form again for your current account.");
-        const reply = await auth.mfa.challengeAndVerify({ factorId: factor.id, code });
-        if (reply.error) throw Error("That code couldn’t be verified. Check your authenticator and try again.");
-      }
+      if (verify) await verifyAuthenticator(owner, code);
       const requested = { maxSymbolExposurePct: Number(exposure), maxTotalDailyNotional: Number(dailyBuys) };
       const issue = accountLimitIssues(requested)[0];
       if (issue) throw Error(issue);

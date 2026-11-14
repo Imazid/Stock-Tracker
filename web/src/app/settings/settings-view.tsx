@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Segmented } from "@/components/ui/Segmented";
 import { useSession } from "@/lib/session";
 import { browserSupabase } from "@/lib/supabase/client";
+import { AccountExport } from "./account-export";
 
 export function SettingsView() {
   const [theme, setTheme] = useState<ThemeChoice>("dark");
@@ -44,6 +45,7 @@ export function SettingsView() {
               ) : session.status === "signedOut" ? <ButtonLink href="/login" variant="primary" size="sm">Sign in</ButtonLink> : <div className="skeleton h-8 w-48" />}
           </div>
         </Card>
+        {session.status === "signedIn" && <AccountExport key={session.user.id} owner={session.user.id} />}
         {session.status === "signedIn" && <AccountLimits key={session.user.id} owner={session.user.id} />}
         <Card>
           <CardHeader title="Trading environment" />
