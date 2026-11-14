@@ -23,10 +23,10 @@ struct BacktestDatasetReference: Codable, Sendable {
         timeframe = series.timeframe
         self.window = window
         bars = series.bars.count
-        firstBar = series.bars.first?.time.ISO8601Format(.iso8601.time(includingFractionalSeconds: true))
-        lastBar = series.bars.last?.time.ISO8601Format(.iso8601.time(includingFractionalSeconds: true))
+        firstBar = series.bars.first?.time.ISO8601Format(.init(includingFractionalSeconds: true))
+        lastBar = series.bars.last?.time.ISO8601Format(.init(includingFractionalSeconds: true))
         currency = series.instrument.currency
-        fetchedAt = series.fetchedAt.ISO8601Format(.iso8601.time(includingFractionalSeconds: true))
+        fetchedAt = series.fetchedAt.ISO8601Format(.init(includingFractionalSeconds: true))
         volumeIsMarketWide = series.volumeIsMarketWide
         let values = series.bars.map { [$0.time.timeIntervalSince1970 * 1_000, $0.open, $0.high, $0.low, $0.close, $0.volume] }
         sha256 = SHA256.hash(data: try JSONEncoder().encode(values)).map { String(format: "%02x", $0) }.joined()
@@ -65,7 +65,7 @@ struct SavedBacktestRow: Decodable, Identifiable {
     let saved_at: String
 
     var runDate: Date? {
-        try? Date(ran_at, strategy: .iso8601.time(includingFractionalSeconds: true))
+        try? Date(ran_at, strategy: .init(includingFractionalSeconds: true))
     }
 }
 
