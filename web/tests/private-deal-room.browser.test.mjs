@@ -7,6 +7,7 @@ const {
   PRIVATE_MARKETS_TEST_EMAIL: email, PRIVATE_MARKETS_TEST_PASSWORD: password,
   PRIVATE_MARKETS_OTHER_EMAIL: otherEmail, PRIVATE_MARKETS_OTHER_PASSWORD: otherPassword,
   VERCEL_OIDC_TOKEN: previewToken,
+  PRIVATE_MARKETS_TEST_DOCUMENT_AI: testDocumentAI,
 } = process.env;
 
 test("Deal Room requires permission to save and keeps private excerpts account-scoped", {
@@ -69,6 +70,21 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     });
     assert.equal(refused.status(), 404);
     assert.equal(refused.headers()["cache-control"], "no-store");
+
+    if (testDocumentAI === "true") {
+      await owner.getByRole("radio", { name: "AI Research", exact: true }).click();
+      await owner.getByLabel(title, { exact: true }).check();
+      await owner.getByLabel("Research question").fill("What does the fund statement say about the review?");
+      await owner.getByLabel("Allow Stock Tracker to send this question and the selected sources to its AI provider.").check();
+      const research = owner.getByRole("button", { name: "Run research", exact: true });
+      assert.ok(await research.isDisabled());
+      await owner.getByLabel("I have permission to share the selected private excerpts with OpenAI for this request.").check();
+      assert.ok(await research.isEnabled());
+      await research.click();
+      await owner.getByText("The statement reports a pending review.", { exact: true }).waitFor();
+      await owner.getByRole("radio", { name: "Deal Room", exact: true }).click();
+      await owner.getByRole("button", { name: new RegExp(title) }).click();
+    }
 
     await owner.getByRole("button", { name: "Delete excerpt", exact: true }).click();
     await owner.getByRole("button", { name: "Confirm deletion", exact: true }).click();
