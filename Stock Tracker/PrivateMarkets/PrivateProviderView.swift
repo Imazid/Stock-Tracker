@@ -8,6 +8,8 @@ struct PrivateInvestorView: View {
     @State private var declaredClass = "unknown"
     @State private var eligibility: [PrivateProviderEligibility] = []
     @State private var linkProviders: [PrivateMarketsAPI.LinkProvider] = []
+    @State private var connections: [PrivateMarketsAPI.ProviderConnection] = []
+    @State private var disconnecting: PrivateMarketsAPI.ProviderConnection?
     @State private var records: [PrivateApplication] = []
     @State private var recordsOwner: UUID?
     @State private var busy = false
@@ -37,6 +39,25 @@ struct PrivateInvestorView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if recordsOwner == auth.userId {
+                    if !connections.isEmpty {
+                        Section("Provider connections") {
+                            ForEach(connections) { connection in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(connection.name).font(.headline)
+                                    if let date = connection.ownerDisconnectedAt {
+                                        verificationDate("Disconnected on", date)
+                                        Text("Open your \(connection.name) account for updates.")
+                                            .font(.footnote).foregroundStyle(.secondary)
+                                    } else {
+                                        Text(connection.revokedAt == nil ? "Connected" : "Revoked by provider")
+                                            .font(.footnote).foregroundStyle(.secondary)
+                                        Button("Disconnect \(connection.name)") { disconnecting = connection }
+                                            .disabled(busy)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Section("Provider verification") {
                         if let owner = auth.userId {
                             ForEach(linkProviders) { provider in
@@ -93,9 +114,19 @@ struct PrivateInvestorView: View {
         }
         .navigationTitle("Investor Profile & Applications")
         .navigationBarTitleDisplayMode(.inline)
+        .alert(item: $disconnecting) { connection in
+            Alert(
+                title: Text("Disconnect \(connection.name)?"),
+                message: Text("New applications and provider updates through Stock Tracker will stop. Your saved history stays available. Manage existing applications and investments with \(connection.name)."),
+                primaryButton: .destructive(Text("Disconnect")) { disconnect(connection) },
+                secondaryButton: .cancel()
+            )
+        }
         .onChange(of: auth.userId, initial: true) { _, _ in
             eligibility = []
             linkProviders = []
+            connections = []
+            disconnecting = nil
             records = []
             recordsOwner = nil
             country = "AU"
@@ -128,6 +159,7 @@ struct PrivateInvestorView: View {
             }
             eligibility = saved.eligibility ?? []
             linkProviders = saved.linkProviders ?? []
+            connections = saved.connections ?? []
             records = tracking.applications
             recordsOwner = owner
         } catch is CancellationError {
@@ -145,6 +177,23 @@ struct PrivateInvestorView: View {
                 try await PrivateMarketsAPI.send("save_profile", fields, expectedUserID: owner)
                 if auth.userId == owner {
                     feedback = "Investor profile saved."
+                    await load()
+                }
+            } catch is CancellationError {
+            } catch { if auth.userId == owner { feedback = error.localizedDescription } }
+        }
+    }
+
+    private func disconnect(_ connection: PrivateMarketsAPI.ProviderConnection) {
+        guard let owner = auth.userId, recordsOwner == owner else { return }
+        busy = true
+        feedback = nil
+        Task {
+            defer { if auth.userId == owner { busy = false } }
+            do {
+                try await PrivateMarketsAPI.send("disconnect_provider", ["provider": connection.provider], expectedUserID: owner)
+                if auth.userId == owner {
+                    feedback = "\(connection.name) disconnected."
                     await load()
                 }
             } catch is CancellationError {
@@ -237,6 +286,10 @@ private struct PrivateApplicationDetail: View {
             List {
                 Section("Application") {
                     Text(record.displayStatus).font(.headline).accessibilityIdentifier("private.application.status")
+                    if record.connection?.revokedAt != nil {
+                        Text("Provider updates paused. Check your provider account for the current application status.")
+                            .font(.footnote).foregroundStyle(.orange)
+                    }
                     if let stage = record.offer?.round?.stage { LabeledContent("Funding round", value: stage) }
                     LabeledContent("Requested amount", value: PrivateInput.money(record.requestedAmount, currency: record.currency))
                     if let amount = record.providerApplicationAmount {

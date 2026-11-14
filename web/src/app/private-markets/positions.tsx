@@ -59,6 +59,7 @@ function HoldingCard({ owner, holding, asOf }: { owner: string; holding: Portfol
       <CardHeader title={holding.name} subtitle={`${providerName(holding.commitment.provider)} · ${holding.asset_class.replaceAll("_", " ")}`}
         actions={<Badge tone={exited ? "neutral" : "primary"}>{exited ? "Exited" : "Provider confirmed"}</Badge>} />
       <div className="space-y-2 border-t border-border p-4 text-sm">
+        {holding.commitment.connection?.revoked_at && <p className="text-xs text-warn">Provider updates paused. Check your provider account for current holdings and activity.</p>}
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {capital.map(([label, value]) => <div key={label}>
             <dt className="text-xs text-text-3">{label}</dt><dd className="break-words font-medium tabular-nums text-text">{value}</dd>
@@ -141,6 +142,7 @@ function ApplicationCard({ item }: { item: Application }) {
     <CardHeader title={name} subtitle={[item.offer?.round?.stage, providerName(item.provider)].filter(Boolean).join(" · ")}
       actions={<Badge>{applicationLabels[item.status] ?? "Provider status unavailable"}</Badge>} />
     <div className="space-y-3 border-t border-border p-4 text-[13px] text-text-2">
+      {item.connection?.revoked_at && <p className="text-warn">Provider updates paused. Check your provider account for the current application status.</p>}
       <dl className="grid grid-cols-2 gap-2">
         <div><dt className="text-text-3">Requested</dt><dd>{amount(item.requested_amount, item.currency)}</dd></div>
         <div><dt className="text-text-3">Provider amount</dt><dd>{amount(item.provider_application_amount, item.currency)}</dd></div>

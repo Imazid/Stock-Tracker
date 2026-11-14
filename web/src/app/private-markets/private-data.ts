@@ -66,7 +66,7 @@ export type PortfolioHolding = {
   remaining_units: number | null; settled_amount: number | null; committed_amount: number | null;
   settled_on: string | null; settlement_source: string | null; last_disposition_on: string | null;
   disposition_revision_at: string | null; exit_source: string | null;
-  commitment: { provider: string; provider_reference: string | null };
+  commitment: { provider: string; provider_reference: string | null; connection?: { revoked_at: string | null } | null };
   marks: { id: string; value: number; valued_on: string; source: string; methodology: string; provider_event_at: string | null }[];
   calls: { id: string; amount: number; due_on: string; settled_on: string | null; source: string }[];
   cancelled_calls: { id: string; amount: number; due_on: string; cancelled_at: string; cancellation_source: string }[];
@@ -88,10 +88,15 @@ export type ProviderVerification = {
 export type InvestorProfileResponse = {
   profile: InvestorProfile | null; eligibility: ProviderVerification[];
   link_providers?: { provider: string; jurisdiction: string }[];
+  connections?: ProviderConnection[];
+};
+export type ProviderConnection = {
+  provider: string; revoked_at: string | null; owner_disconnected_at: string | null;
 };
 export type Application = {
   id: string; status: string; requested_amount: number; provider_application_amount: number | null;
   currency: string; provider: string; provider_reference: string | null;
+  connection?: { revoked_at: string | null } | null;
   acknowledged_at: string; provider_received_at: string | null; confirmed_at: string | null;
   cooling_off_ends_at: string | null; withdrawn_at: string | null; withdrawal_requested_at: string | null;
   withdrawal_declined_at: string | null; supplementary_notice_at: string | null;
@@ -116,7 +121,7 @@ export type MonitorAlert = {
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
   "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "capital_activity" | "valuation_history" | "manual_portfolio" | "remove_manual_portfolio" | "applications" | "allocation" | "updates" |
-  "profile" | "save_profile" | "issue_provider_link" | "handoff_check" | "handoff" |
+  "profile" | "save_profile" | "issue_provider_link" | "disconnect_provider" | "handoff_check" | "handoff" |
   "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 

@@ -70,6 +70,9 @@ struct PrivateHoldingsView: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(holding.name).font(.headline)
                                 Text(holding.assetClass.rawValue).font(.footnote).foregroundStyle(.secondary)
+                                if position.commitment.connection?.revokedAt != nil {
+                                    Text("Provider updates paused").font(.footnote).foregroundStyle(.orange)
+                                }
                                 if position.hasExited {
                                     Text("Exited · Provider confirmed").font(.subheadline)
                                 } else if let mark = holding.valuation() {

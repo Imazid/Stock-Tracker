@@ -310,6 +310,7 @@ struct PrivateApplication: Decodable, Identifiable {
     let currency: String
     let provider: String
     let providerReference: String?
+    let connection: ProviderPrivateHolding.Commitment.Connection?
     let confirmedAt: Date?
     let coolingOffEndsAt: Date?
     let supplementaryNoticeAt: Date?
@@ -370,10 +371,18 @@ enum PrivateMarketsAPI {
         let code: String
         let expiresAt: Date
     }
+    struct ProviderConnection: Decodable, Identifiable {
+        let provider: String
+        let revokedAt: Date?
+        let ownerDisconnectedAt: Date?
+        var id: String { provider }
+        var name: String { PrivateProvider.directory.first { $0.id == provider }?.name ?? provider }
+    }
     struct InvestorProfile: Decodable {
         let profile: PrivateInvestorProfile?
         let eligibility: [PrivateProviderEligibility]?
         let linkProviders: [LinkProvider]?
+        let connections: [ProviderConnection]?
     }
     struct ConfirmedHoldings: Decodable {
         let holdings: [ProviderPrivateHolding]

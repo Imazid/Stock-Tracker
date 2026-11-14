@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
-import { countryName, dateLabel, privateMarkets, providerName, type InvestorProfile, type InvestorProfileResponse } from "./private-data";
+import { countryName, dateLabel, privateMarkets, providerName, type InvestorProfile, type InvestorProfileResponse, type ProviderConnection } from "./private-data";
 
 const emptyProfile: InvestorProfile = { country: "AU", declared_class: "unknown" };
 
@@ -32,6 +32,35 @@ function ProviderLinkCode({ owner, provider, jurisdiction, refresh }: {
       <p>Expires {dateLabel(code.expires_at, "time")}.</p>
     </div>}
     {issue.error && <Notice tone="down">{issue.error.message}</Notice>}
+  </div>;
+}
+
+function ProviderConnectionControl({ owner, connection, refresh }: {
+  owner: string; connection: ProviderConnection; refresh: () => Promise<void>;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const disconnect = useMutation({
+    mutationFn: () => privateMarkets("disconnect_provider", { owner, provider: connection.provider }),
+    onSuccess: async () => { await refresh(); setConfirm(false); },
+  });
+  const name = providerName(connection.provider);
+  return <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
+    <p className="font-medium text-text">{name}</p>
+    {connection.owner_disconnected_at
+      ? <p role="status">Disconnected on {dateLabel(connection.owner_disconnected_at, "time")}. Open your {name} account for updates.</p>
+      : confirm ? <>
+        <p>Disconnect {name} from Stock Tracker? New applications and provider updates through Stock Tracker will stop. Your saved history stays available. Manage existing applications and investments with {name}.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="danger" disabled={disconnect.isPending} onClick={() => disconnect.mutate()}>
+            {disconnect.isPending ? "Disconnecting…" : `Confirm disconnect ${name}`}
+          </Button>
+          <Button size="sm" disabled={disconnect.isPending} onClick={() => { disconnect.reset(); setConfirm(false); }}>Cancel</Button>
+        </div>
+        {disconnect.error && <Notice tone="down">{disconnect.error.message}</Notice>}
+      </> : <>
+        <p>{connection.revoked_at ? "Revoked by provider" : "Connected"}</p>
+        <Button size="sm" onClick={() => setConfirm(true)}>Disconnect {name}</Button>
+      </>}
   </div>;
 }
 
@@ -89,6 +118,13 @@ export function InvestorProfileCard({ owner }: { owner: string }) {
             {save.isSuccess && <p role="status">Investor profile saved.</p>}
             {save.error && <Notice tone="down">{save.error.message}</Notice>}
           </form>
+          {!!profile.data.connections?.length && <div className="space-y-2 border-t border-border pt-3">
+            <h3 className="font-medium text-text">Provider connections</h3>
+            {profile.data.connections.map((connection) => <ProviderConnectionControl
+              key={connection.provider} owner={owner} connection={connection} refresh={async () => {
+                await cache.invalidateQueries({ queryKey: ["private-markets", owner] });
+              }} />)}
+          </div>}
           <div className="space-y-2 border-t border-border pt-3">
             <h3 className="font-medium text-text">Provider verification</h3>
             {profile.data.link_providers?.map(({ provider, jurisdiction }) => <ProviderLinkCode

@@ -16,6 +16,8 @@ select format('grant usage on schema %I to authenticated, service_role', nspname
 insert into auth.users (id,email) values
   ('f3000000-0000-4000-8000-000000000001','delivery-one@example.test'),
   ('f3000000-0000-4000-8000-000000000002','delivery-two@example.test');
+insert into auth.sessions (id,user_id) values
+  ('f3000000-0000-4000-8000-000000000008','f3000000-0000-4000-8000-000000000001');
 insert into public.investor_profiles values ('f3000000-0000-4000-8000-000000000001','AU','retail');
 insert into public.provider_connections (id,user_id,provider,external_subject) values
   ('f3000000-0000-4000-8000-000000000003','f3000000-0000-4000-8000-000000000001','birchal','delivery-owner'),
@@ -196,6 +198,22 @@ select case when h.remaining_units=2 and v.value=720.125
   then 'ok   provider references preserve exact position and mark values' else 'FAIL reference holding values' end
   from public.private_holdings h join public.valuation_history v on v.holding_id=h.id
   where h.commitment_id='f3000000-0000-4000-8000-000000000041' and v.provider_reference='mark-2';
+
+select public.disconnect_private_provider(
+  'f3000000-0000-4000-8000-000000000001','f3000000-0000-4000-8000-000000000008','birchal');
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','after-disconnect',repeat('1',64),'holding_activity','delivery-owner',now(),
+  jsonb_build_object('offer_reference','offer-A','application_reference','receipt-1','activity','valuation',
+    'reference','valuation-2','currency','AUD','source','Statement','method','NAV','amount','920',
+    'record_date',now()::date))$q$,
+  '42501','the adapter cannot update a detached provider holding');
+select pg_temp.expect_delivery_error($q$select public.prepare_private_handoff(
+  'f3000000-0000-4000-8000-000000000001','f3000000-0000-4000-8000-000000000030',500,'https://example.test/delivery')$q$,
+  '42501','a detached connection cannot authorize a handoff');
+select case when h.remaining_units=2.11111111 and v.value=530.4321
+  then 'ok   disconnect preserves the confirmed position and its last approved mark' else 'FAIL detached holding data' end
+  from public.private_holdings h join public.valuation_history v on v.holding_id=h.id
+  where h.commitment_id='f3000000-0000-4000-8000-000000000040' and v.provider_reference='valuation-1';
 reset role;
 
 delete from auth.users where id='f3000000-0000-4000-8000-000000000001';

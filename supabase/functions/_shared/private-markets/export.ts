@@ -5,7 +5,7 @@ const exportSections = {
   investor_profile: ["investor_profiles", "country,declared_class", "user_id"],
   eligibility: ["investor_eligibility",
     "provider,jurisdiction,verified_class,verified_at,expires_at,accountant_certificate_reviewed_at", "provider,jurisdiction"],
-  provider_connections: ["provider_connections", "id,provider,revoked_at,verification_event_at", "id"],
+  provider_connections: ["provider_connections", "id,provider,revoked_at,verification_event_at,owner_disconnected_at", "id"],
   applications: ["investment_commitments",
     "id,opportunity_id,provider,jurisdiction,rule_version,reviewed_document_url,requested_amount::text," +
       "provider_application_amount::text,currency,acknowledged_at,status,provider_reference,provider_received_at," +

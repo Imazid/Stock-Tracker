@@ -20,6 +20,7 @@ insert into public.investor_profiles values
   ('c5000000-0000-4000-8000-000000000001','AU','retail'),
   ('c5000000-0000-4000-8000-000000000002','AU','retail');
 select case when not has_function_privilege('authenticated','public.issue_private_account_link(uuid,uuid,text,text)','execute')
+  and not has_function_privilege('authenticated','public.disconnect_private_provider(uuid,uuid,text)','execute')
   and not has_function_privilege('anon','public.redeem_private_account_link(text,text,text,text,timestamptz,jsonb)','execute')
   then 'ok account-link RPCs are service only' else 'FAIL account-link privileges' end;
 
@@ -57,6 +58,47 @@ select case when public.redeem_private_account_link('birchal','link-1',repeat('b
 select pg_temp.refused($q$select public.redeem_private_account_link('birchal','other-id',repeat('c',64),'verified-1',now(),
   jsonb_build_object('code_digest',repeat('a',64),'jurisdiction','AU','verified_class','retail'))$q$,
   '42501','different delivery cannot reuse a redeemed code');
+select pg_temp.refused($q$select public.disconnect_private_provider(
+  'c5000000-0000-4000-8000-000000000001','c5000000-0000-4000-8000-000000000012','birchal')$q$,
+  '42501','disconnect requires the owner’s active session');
+select pg_temp.refused($q$select public.disconnect_private_provider(
+  'c5000000-0000-4000-8000-000000000002','c5000000-0000-4000-8000-000000000012','birchal')$q$,
+  '42501','another owner cannot disconnect the provider account');
+select case when public.disconnect_private_provider(
+  'c5000000-0000-4000-8000-000000000001','c5000000-0000-4000-8000-000000000011','birchal')
+  then 'ok the owner can disconnect' else 'FAIL disconnect' end;
+select case when public.disconnect_private_provider(
+  'c5000000-0000-4000-8000-000000000001','c5000000-0000-4000-8000-000000000011','birchal')
+  and (select count(*) from public.investment_audit_logs where action = 'provider_disconnected_by_owner') = 1
+  then 'ok disconnect is idempotent and audited' else 'FAIL disconnect audit' end;
+
+-- Model a later transaction inside this rollback-only test's stable SQL clock.
+update public.provider_connections set owner_disconnected_at=now()-interval '2 seconds',
+  revoked_at=now()-interval '2 seconds', verification_event_at=now()-interval '3 seconds'
+  where external_subject='verified-1';
+update public.investor_eligibility set verified_at=now()-interval '3 seconds' where user_id='c5000000-0000-4000-8000-000000000001';
+select pg_temp.refused($q$select public.accept_private_provider_delivery('birchal','reactivate',repeat('f',64),'verification','verified-1',now(),
+  jsonb_build_object('jurisdiction','AU','verified_class','retail','evidence_reference','new review','expires_at',now()+interval '1 hour'))$q$,
+  '42501','fresh signed verification alone cannot reconnect the owner');
+select case when public.redeem_private_account_link('birchal','link-1',repeat('b',64),'verified-1',now(),'{}'::jsonb ||
+  jsonb_build_object('code_digest',repeat('a',64),'jurisdiction','AU','verified_class','retail'))='duplicate'
+  and exists (select from public.provider_connections where external_subject='verified-1' and owner_disconnected_at is not null)
+  then 'ok retrying the original signed link leaves the account disconnected' else 'FAIL link retry altered consent' end;
+select public.issue_private_account_link(
+  'c5000000-0000-4000-8000-000000000001','c5000000-0000-4000-8000-000000000011','birchal',repeat('f',64));
+select public.disconnect_private_provider(
+  'c5000000-0000-4000-8000-000000000001','c5000000-0000-4000-8000-000000000011','birchal');
+select case when exists (select from provider_operations.private_link_codes where digest=repeat('f',64))
+  then 'ok retrying disconnection preserves a newly issued code' else 'FAIL disconnect retry removed a new code' end;
+select pg_temp.refused($q$select public.redeem_private_account_link('birchal','wrong-subject',repeat('f',64),'other-subject',now(),
+  jsonb_build_object('code_digest',repeat('f',64),'jurisdiction','AU','verified_class','retail','evidence_reference','review','expires_at',now()+interval '1 hour'))$q$,
+  '42501','a new code cannot reassign an existing connection');
+select case when public.redeem_private_account_link('birchal','relink',repeat('f',64),'verified-1',now(),
+  jsonb_build_object('code_digest',repeat('f',64),'jurisdiction','AU','verified_class','retail','evidence_reference','review','expires_at',now()+interval '1 hour'))='accepted'
+  then 'ok fresh owner code allows the same provider account to reconnect' else 'FAIL relink' end;
+select case when exists (select from public.provider_connections where external_subject='verified-1'
+  and revoked_at is null and owner_disconnected_at is null)
+  then 'ok successful reconnect restores active status' else 'FAIL reconnect state' end;
 select public.issue_private_account_link(
   'c5000000-0000-4000-8000-000000000002','c5000000-0000-4000-8000-000000000012','birchal',repeat('d',64));
 select pg_temp.refused($q$select public.issue_private_account_link(

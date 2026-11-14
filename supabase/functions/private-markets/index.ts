@@ -18,7 +18,7 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
-  "profile", "save_profile", "issue_provider_link", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
+  "profile", "save_profile", "issue_provider_link", "disconnect_provider", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
@@ -644,7 +644,7 @@ Deno.serve(async (req) => {
       }
       case "profile": {
         if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_REQUEST", "Send only the profile action.");
-        const [profile, checks, links] = await Promise.all([
+        const [profile, checks, links, connections] = await Promise.all([
           admin.from("investor_profiles").select("country,declared_class").eq("user_id", userId).maybeSingle(),
           admin.from("investor_eligibility")
             .select("provider,jurisdiction,verified_class,verified_at,expires_at,accountant_certificate_reviewed_at," +
@@ -652,17 +652,31 @@ Deno.serve(async (req) => {
             .eq("user_id", userId).eq("connection.user_id", userId)
             .order("provider").order("jurisdiction"),
           admin.rpc("private_account_link_providers", { p_user: userId }),
+          admin.from("provider_connections").select("provider,revoked_at,owner_disconnected_at")
+            .eq("user_id", userId).order("provider"),
         ]);
         if (profile.error) throw profile.error;
         if (checks.error) throw checks.error;
         if (links.error) throw links.error;
-        return jsonResponse(200, { profile: profile.data, eligibility: checks.data, link_providers: links.data });
+        if (connections.error) throw connections.error;
+        return jsonResponse(200, {
+          profile: profile.data, eligibility: checks.data, link_providers: links.data, connections: connections.data,
+        });
       }
+      case "disconnect_provider":
       case "issue_provider_link": {
         const provider = body.provider;
         if (Object.keys(body).some((key) => !["action", "provider"].includes(key)) ||
           typeof provider !== "string" || !["birchal", "onmarket", "angellist", "syndex"].includes(provider)) {
           return errorResponse(400, "INVALID_PROVIDER", "Choose an available investment provider.");
+        }
+        if (body.action === "disconnect_provider") {
+          const { error } = await admin.rpc("disconnect_private_provider", {
+            p_user: userId, p_session: sessionId(req), p_provider: provider,
+          });
+          if (error?.code === "42501") return errorResponse(403, "PROVIDER_CONNECTION_UNAVAILABLE", "That provider connection is unavailable.");
+          if (error) throw error;
+          return jsonResponse(200, { disconnected: true });
         }
         const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
         const code = hex(crypto.getRandomValues(new Uint8Array(16)));
@@ -781,7 +795,8 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.from("private_holdings")
           .select("id,name,asset_class,currency,company_id,units,ownership_percent,committed_amount,settled_amount," +
             "settled_on,settlement_source,confirmed_at,remaining_units,last_disposition_on,disposition_revision_at,exit_source," +
-            "commitment:investment_commitments!inner(provider,provider_reference,status)," +
+            "commitment:investment_commitments!inner(provider,provider_reference,status," +
+            "connection:provider_connections!private_commitment_provider_connection(revoked_at))," +
             "marks:valuation_history(id,value,valued_on,source,methodology,provider_event_at)," +
             "calls:capital_calls(id,amount,due_on,settled_on,source)," +
             "cancelled_calls:capital_calls(id,amount,due_on,source,cancelled_at,cancellation_source)," +
@@ -820,6 +835,7 @@ Deno.serve(async (req) => {
           .select("id,status,requested_amount,provider_application_amount,currency,provider,provider_reference,confirmed_at,cooling_off_ends_at,acknowledged_at," +
             "provider_received_at,withdrawal_requested_at,withdrawal_declined_at,withdrawn_at,provider_event_at," +
             "supplementary_notice_at,supplementary_withdrawal_ends_at,supplementary_document_url," +
+            "connection:provider_connections!private_commitment_provider_connection(revoked_at)," +
             "offer:investment_opportunities(round:funding_rounds(stage,company:private_companies(name)))")
           .eq("user_id", userId).order("acknowledged_at", { ascending: false }).limit(100);
         if (error) throw error;

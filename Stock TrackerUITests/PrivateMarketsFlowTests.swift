@@ -28,6 +28,31 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertNotNil(code.label.range(of: #"^[a-f0-9]{32}$"#, options: .regularExpression))
     }
 
+    @MainActor
+    func testInvestorCanDisconnectProviderAndKeepVerificationHistory() throws {
+        try launchWithLocalSession("PRIVATE_PROVIDER_DISCONNECT_TEST_SESSION")
+        openPrivateMarkets()
+        let profile = app.buttons["Investor profile & applications"]
+        for _ in 0..<4 where !profile.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(profile.isHittable)
+        profile.tap()
+        let disconnect = app.buttons["Disconnect Birchal"]
+        for _ in 0..<4 where !disconnect.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(disconnect.isHittable)
+        disconnect.tap()
+        let confirmation = app.alerts["Disconnect Birchal?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["Cancel"].tap()
+        XCTAssertTrue(disconnect.isHittable)
+        disconnect.tap()
+        confirmation.buttons["Disconnect"].tap()
+        XCTAssertTrue(app.staticTexts["Open your Birchal account for updates."].waitForExistence(timeout: 15))
+        XCTAssertFalse(disconnect.exists)
+        let history = app.staticTexts["private.investor.verificationStatus.birchal:AU"]
+        for _ in 0..<4 where !history.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertEqual(history.label, "Connection revoked")
+    }
+
     func testManualHoldingAppearsInUnifiedPortfolioAndSurvivesRelaunch() {
         openPrivateMarkets()
         app.buttons["private.destination.briefcase"].tap()

@@ -352,8 +352,13 @@ public enum PrivateMath {
 /// opening settlement and later capital calls are separate cash-flow entries.
 public struct ProviderPrivateHolding: Decodable, Identifiable, Sendable {
     public struct Commitment: Decodable, Sendable {
+        public struct Connection: Decodable, Sendable {
+            public let revokedAt: Date?
+        }
+
         public let provider: String
         public let providerReference: String
+        public let connection: Connection?
     }
 
     public struct Mark: Decodable, Sendable {
