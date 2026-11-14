@@ -1,3 +1,4 @@
+import { deliverProviderAlerts } from "./alert-delivery.ts";
 import { streamAlpacaOrders } from "./alpaca-stream.ts";
 import { adapterFor } from "../_shared/brokers/registry.ts";
 import { BrokerError } from "../_shared/brokers/types.ts";
@@ -140,8 +141,14 @@ export async function providerMaintenance(request: Request): Promise<Response> {
       throw new HttpError(401, "unauthorized", "Not allowed.");
     }
     const mode = request.headers.get("x-provider-maintenance-mode");
-    if (mode !== null && mode !== "alpaca-paper-stream") {
+    if (mode !== null && mode !== "alpaca-paper-stream" && mode !== "alert-delivery") {
       throw new HttpError(400, "invalid", "Unknown maintenance mode.");
+    }
+    if (mode === "alert-delivery") {
+      // Delivery failures stay in the outbox and use their own log event.
+      const data = await deliverProviderAlerts(database(), env);
+      logEvent("provider_alert_delivery", data);
+      return json(200, { ok: true, data });
     }
     sql = database();
     if (mode === "alpaca-paper-stream") {

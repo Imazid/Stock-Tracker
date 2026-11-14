@@ -156,7 +156,7 @@ Deploy the updated `provider-maintenance` function before applying the order-str
 
 Postgres records `alpaca-paper-order-stream` run counts and errors separately. A run with zero connections is expected when there are no eligible paper orders. To disable streaming while retaining REST checks, unschedule just this cron job with `select cron.unschedule('alpaca-paper-order-stream');`. To restore it, use the schedule in migration `20261115150000`. Confirm a real paper connection by comparing a broker-confirmed order and fill with its Stock Tracker receipt. [Alpaca order streaming](https://docs.alpaca.markets/us/docs/websocket-streaming)
 
-The `provider-operations-check` job runs every minute. It opens an alert when a worker has no report for five minutes, a worker records three failing runs within 15 minutes, an order spends five minutes in `submitting`, or an order spends ten minutes in `reconciliation_required`. It records one open alert per condition and worker or provider environment. It logs an `opened` or `resolved` event in Postgres when a condition changes. Check the database logs or the private alerts table. External paging requires a configured log destination.
+The `provider-operations-check` job runs every minute. It opens an alert when a worker has no report for five minutes, a worker records three failing runs within 15 minutes, an order spends five minutes in `submitting`, or an order spends ten minutes in `reconciliation_required`. It records one open alert per condition and worker or provider environment. It logs an `opened` or `resolved` event in Postgres when a condition changes. Check the database logs or the private alerts table. The alert delivery worker can also forward these events to an on-call receiver.
 
 If `pg_cron` was enabled after applying the migration, register `provider-operations-check` and `provider-operations-retention` using the schedules in the migration. The jobs run as the migration owner. As a database operator, check both the worker reports and the alert check's cron history. A successful cron invocation that queues a worker request does not prove the worker completed.
 
@@ -173,6 +173,35 @@ select worker, finished_at, duration_ms, jobs, errors, failure_codes
 from provider_operations.worker_runs where errors > 0 order by finished_at desc limit 30;
 
 select * from provider_operations.submit_summary_24h;
+```
+
+### External incident delivery
+
+Deploy the updated `provider-maintenance` Edge Function and apply the provider alert delivery migration. The `provider-alert-delivery` cron job calls the worker once per minute when an event is due, using the existing maintenance URL and scheduler secret in Vault. The outbox records each incident opening and resolution in the detector’s transaction. Previously closed incidents stay in the database. While the receiver is unconfigured, the worker leaves queued events untouched.
+
+Set `PROVIDER_ALERT_WEBHOOK_URL` to the HTTPS endpoint of your incident receiver and `PROVIDER_ALERT_WEBHOOK_SECRET` to a unique shared signing secret of at least 32 bytes. Configure the receiver to verify `X-Stock-Tracker-Signature` as hex HMAC-SHA256 over the ASCII `X-Stock-Tracker-Timestamp`, a period, and the original request body bytes. Use a five-minute timestamp tolerance and acknowledge a stored event or known duplicate with HTTP 2xx. Persist the `Idempotency-Key` header when you accept an event. Each opening and resolution has its own key. Use `incidentId` to associate the two with one incident. The body contains the schema version, incident and event IDs, transition, time, condition, worker or provider environment, and aggregate count. Send an opening to the on-call destination and resolve the corresponding incident when the resolution arrives.
+
+The worker sends up to 12 events per invocation and waits up to six seconds for each response. A resolution waits for the receiver to acknowledge its opening. Network and HTTP failures retry with exponential backoff from one minute to one hour. A longer `Retry-After` is respected up to one hour. After ten recorded errors, the event stays in the failed state for operator review. A lost worker lease makes the event available after 45 seconds. Scheduled retention removes deliveries with their parent incidents 90 days after resolution.
+
+```sql
+select alert_id, transition, condition, subject, attempts, available_at,
+  delivered_at, failed_at, last_failure, last_http_status
+from provider_operations.alert_deliveries
+where delivered_at is null
+order by available_at, alert_id;
+
+select jobid, runid, status, start_time, end_time
+from cron.job_run_details
+where jobid = (select jobid from cron.job where jobname = 'provider-alert-delivery')
+order by start_time desc limit 10;
+```
+
+After correcting a receiver failure, requeue the failed delivery as a database operator. Its original idempotency key is retained.
+
+```sql
+update provider_operations.alert_deliveries
+set attempts = 0, failed_at = null, available_at = now()
+where alert_id = 123 and transition = 'opened' and failed_at is not null;
 ```
 
 For a missing worker report, check its cron history, worker deployment, scheduler secret configuration and recent function logs. For repeated errors, check the recorded category and the provider's status before changing credentials or retry settings. For an unresolved order, locate the affected intent in the flagged provider environment and reconcile it using the existing order workflow. Check the provider's order and fill records before taking further action. Sending a new order while the outcome remains unknown can duplicate execution.
