@@ -58,7 +58,7 @@ private enum HoldingFilter: String, CaseIterable {
 }
 
 private enum PortfolioSheet: Identifiable, Equatable {
-    case add, broker, newPortfolio
+    case add, broker, newPortfolio, holdingConflicts
     case stockTransfers(UUID)
     case brokerCash(UUID)
     case paywall(feature: String, tier: SubscriptionTier)
@@ -68,6 +68,7 @@ private enum PortfolioSheet: Identifiable, Equatable {
         case .add: return "add"
         case .broker: return "broker"
         case .newPortfolio: return "new"
+        case .holdingConflicts: return "holding-conflicts"
         case .stockTransfers(let userId): return "stock-transfers-\(userId)"
         case .brokerCash(let userId): return "broker-cash-\(userId)"
         case .paywall(let feature, _): return "paywall-\(feature)"
@@ -170,6 +171,15 @@ struct PortfolioView: View {
         NavigationStack(path: $path) {
             ScrollViewReader { proxy in
             List {
+                if cloudAuth.userId == marketData.portfolioOwner, !sync.holdingConflicts.isEmpty {
+                    Button {
+                        sheet = .holdingConflicts
+                    } label: {
+                        Label("Review unsynced holding changes", systemImage: "exclamationmark.icloud")
+                    }
+                    .accessibilityIdentifier("portfolio.syncConflicts")
+                    .portfolioRow(top: DS.Space.s, bottom: DS.Space.m)
+                }
                 if marketData.portfolio.isEmpty {
                     emptyState
                     privateAllocationSection
@@ -273,6 +283,8 @@ struct PortfolioView: View {
                 AddHoldingFlow(onAdded: { symbol in showToast("Added \(symbol)") })
             case .broker:
                 SnapTradeConnectionView()
+            case .holdingConflicts:
+                HoldingSyncReview()
             case .newPortfolio:
                 CreatePortfolioSheet()
             case .stockTransfers(let userId):
@@ -284,6 +296,7 @@ struct PortfolioView: View {
             }
         }
         .onChange(of: cloudAuth.userId) { _, userId in
+            if sheet == .holdingConflicts { sheet = nil }
             if case .stockTransfers(let owner) = sheet, owner != userId { sheet = nil }
             if case .brokerCash(let owner) = sheet, owner != userId { sheet = nil }
             resetHoldingsSearch()

@@ -1894,6 +1894,77 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(try rows(table, select: "id", token: token).compactMap { $0["id"] as? String }, [seededId])
     }
 
+    func testStaleSaleKeepsSyncedHoldingAndPendingTradeForReview() throws {
+        let email = "ledger-revision-ios-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        let session = try request("GET", "/auth/v1/user", token: token)
+        let user = try XCTUnwrap(JSONSerialization.jsonObject(with: session.data) as? [String: Any])
+        let owner = try XCTUnwrap(user["id"] as? String)
+        let holding = UUID().uuidString
+        let initial: [String: Any] = [
+            "id": holding, "user_id": owner, "asset_symbol": "AAPL", "asset_name": "Apple",
+            "asset_exchange": "US", "asset_kind": "Stock", "shares": 3, "avg_cost": 100,
+        ]
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: initial), token: token).status, 201)
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                               "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                               "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio", timeout: 25))
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<10 where !element.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(element.isHittable, app.debugDescription)
+        }
+        let position = app.buttons["portfolio.holding.AAPL"].firstMatch
+        reveal(position)
+        position.tap()
+        let add = app.buttons["holding.addTransaction"]
+        reveal(add)
+        add.tap()
+
+        // A different signed-in client makes an absolute holding correction while the form is open.
+        let patched = try request("PATCH", "/rest/v1/portfolio_holdings?id=eq.\(holding)",
+                                  body: JSONSerialization.data(withJSONObject: ["shares": 6, "avg_cost": 115]), token: token)
+        XCTAssertEqual(patched.status, 204)
+        let sell = app.buttons["tx.type.sell"]
+        XCTAssertTrue(sell.waitForExistence(timeout: 8))
+        sell.tap()
+        let quantity = app.textFields.matching(identifier: "0.00").element(boundBy: 0)
+        quantity.tap()
+        quantity.typeText("1")
+        let price = app.textFields["tx.price"].firstMatch
+        let original = (price.value as? String) ?? ""
+        price.tap()
+        if original != "0.00" { price.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: original.count)) }
+        price.typeText("150")
+        app.buttons["keyboard.done"].firstMatch.tap()
+        app.buttons["tx.save"].tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
+        app.navigationBars["AAPL"].buttons.firstMatch.tap()
+
+        for _ in 0..<6 { app.swipeDown(velocity: .fast) }
+        let review = app.buttons["portfolio.syncConflicts"]
+        XCTAssertTrue(review.waitForExistence(timeout: 18), app.debugDescription)
+        review.tap()
+        XCTAssertTrue(app.navigationBars["Holding sync"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Synced units"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Sell 1"].exists)
+        let cloud = try rows("portfolio_holdings", select: "id,shares,avg_cost", token: token)
+        XCTAssertEqual(cloud.first?["shares"] as? Double, 6)
+        XCTAssertEqual(cloud.first?["avg_cost"] as? Double, 115)
+        XCTAssertTrue(try rows("transactions", select: "id", token: token).isEmpty)
+        reveal(app.buttons["Discard pending changes"])
+        app.buttons["Discard pending changes"].tap()
+        app.buttons["Discard changes"].tap()
+        app.buttons["Done"].tap()
+        XCTAssertTrue(review.waitForNonExistence(timeout: 8))
+    }
+
     func testClosingSaleAndDeletedTransactionSync() throws {
         let email = "ledger-ui-\(UUID().uuidString.lowercased())@example.com"
         let signup = try request("POST", "/auth/v1/signup", body: try JSONSerialization.data(withJSONObject: [
