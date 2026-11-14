@@ -385,8 +385,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let session = ProcessInfo.processInfo.environment[variable]
         try XCTSkipUnless(session != nil, "Set \(variable) to the access and refresh tokens of a seeded disposable account.")
         let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+        let port = ProcessInfo.processInfo.environment["PRIVATE_TEST_BACKEND_PORT"].flatMap(UInt16.init) ?? 58533
         app.terminate()
-        app.launchArguments += ["-SupabaseURLOverride", "http://127.0.0.1:58533", "-SupabaseAnonKeyOverride", key]
+        app.launchArguments += ["-SupabaseURLOverride", "http://127.0.0.1:\(port)", "-SupabaseAnonKeyOverride", key]
         app.launchEnvironment["UITEST_LOCAL_SUPABASE_SESSION"] = try XCTUnwrap(session)
         app.launch()
     }
