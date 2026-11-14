@@ -313,20 +313,35 @@ private struct PrivateDiscoveryView: View {
                     }
                 }
             }
-            if following, !store.state.follows.isEmpty {
+            if following {
                 Section("Watchlist") {
+                    if store.state.follows.isEmpty { Text("Follow a company from its detail page.").foregroundStyle(.secondary) }
                     ForEach(store.state.follows) { company in
-                        if company.source.privateSourceIsSafe {
-                            Link(company.name, destination: company.source)
-                                .swipeActions {
-                                    Button("Unfollow", role: .destructive) {
-                                        do { try store.change { $0.follows.removeAll { $0.id == company.id } } }
-                                        catch { watchlistError = "The watchlist could not be saved." }
+                        Group {
+                            if let source = company.source, source.privateSourceIsSafe {
+                                Link(company.name, destination: source)
+                            } else {
+                                Text(company.name)
+                            }
+                        }
+                        .accessibilityIdentifier("private.watchlist.\(company.id.uuidString)")
+                        .swipeActions {
+                            Button("Unfollow", role: .destructive) {
+                                let owner = auth.userId
+                                Task {
+                                    do {
+                                        try await store.setFollowing(company, following: false, owner: owner)
+                                        watchlistError = nil
+                                    } catch is CancellationError {
+                                    } catch {
+                                        if auth.userId == owner { watchlistError = error.localizedDescription }
                                     }
                                 }
+                            }
+                            .disabled(store.savingWatchlist)
                         }
                     }
-                    if let watchlistError { Text(watchlistError).foregroundStyle(Color.orange) }
+                    if let message = watchlistError ?? store.watchlistError { Text(message).foregroundStyle(Color.orange) }
                 }
             }
             Section("Provider websites") {
@@ -345,7 +360,11 @@ private struct PrivateDiscoveryView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Company, symbol, sector or provider")
-        .refreshable { await refresh() }
+        .task(id: auth.userId) { if let owner = auth.userId { await store.refreshWatchlist(for: owner) } }
+        .refreshable {
+            await refresh()
+            if let owner = auth.userId { await store.refreshWatchlist(for: owner) }
+        }
         .onChange(of: currency) { _, _ in clearAmounts() }
         .sheet(isPresented: $showFilters) {
             NavigationStack {
@@ -866,8 +885,17 @@ struct PrivateDealDetail: View {
                 if let founders = deal.company.founders, !founders.isEmpty { LabeledContent("Founders", value: founders.joined(separator: ", ")) }
                 if let investors = deal.company.investors, !investors.isEmpty { LabeledContent("Disclosed investors", value: investors.joined(separator: ", ")) }
                 Button {
-                    do { try store.toggleFollow(deal) } catch { self.error = error.localizedDescription }
+                    let owner = auth.userId
+                    let following = !followed
+                    let company = PrivateMarketsStore.Follow(id: deal.company.id, name: deal.company.name, source: deal.company.sourceUrl)
+                    Task {
+                        do { try await store.setFollowing(company, following: following, owner: owner) }
+                        catch is CancellationError { }
+                        catch { if auth.userId == owner { self.error = error.localizedDescription } }
+                    }
                 } label: { Label(followed ? "Unfollow company" : "Follow company", systemImage: followed ? "bookmark.fill" : "bookmark") }
+                .disabled(store.savingWatchlist)
+                .accessibilityIdentifier("private.deal.follow")
             }
             Section("Funding terms") {
                 LabeledContent("Stage", value: deal.round.stage)
@@ -946,6 +974,7 @@ struct PrivateDealDetail: View {
         }
         .navigationTitle(deal.company.name)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: auth.userId) { if let owner = auth.userId { await store.refreshWatchlist(for: owner) } }
         .alert("Private Markets", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK") { error = nil }
         } message: { Text(error ?? "") }

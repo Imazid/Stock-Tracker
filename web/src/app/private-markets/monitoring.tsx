@@ -13,7 +13,8 @@ import { SourceLink } from "./catalog";
 import {
   dateLabel, privateMarkets, type CompanyUpdate, type MonitorAlert, type MonitorPreferences, type PrivateDeal, type SavedReport,
 } from "./private-data";
-import { maxMonitoredCompanies, useWebMonitor, webMonitorKey, type WebMonitorOptions } from "./web-monitor";
+import { useWebMonitor, webMonitorKey, type WebMonitorOptions } from "./web-monitor";
+import { useCompanyWatchlist, type FollowedCompany } from "./watchlist";
 
 const groupSize = 100;
 const alertLabels: Record<string, string> = {
@@ -28,30 +29,51 @@ const alertLabels: Record<string, string> = {
   holding_exit: "Confirmed exit",
 };
 
-function MonitoringForm({ preferences, saving, deals, onSave }: {
+function WatchlistEditor({ deals, followed, saving, onChange }: {
+  deals: PrivateDeal[];
+  followed: FollowedCompany[];
+  saving: boolean;
+  onChange: (id: string, following: boolean) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const ids = new Set(followed.map(({ id }) => id));
+  const companies = new Map(deals.map(({ round }) => [round.company.id, round.company]));
+  const visible = [...companies.values()].filter(({ name }) => name.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => Number(ids.has(b.id)) - Number(ids.has(a.id)) || a.name.localeCompare(b.name));
+  const unavailable = followed.filter(({ id }) => !companies.has(id));
+
+  return <fieldset disabled={saving} className="min-w-0 space-y-3 border-t border-border p-4">
+    <Field label="Find a company to follow" htmlFor="private-monitor-company">
+      <Input id="private-monitor-company" type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
+    </Field>
+    <p className="text-xs text-text-2" role="status">{followed.length} followed</p>
+    <div className="max-h-56 space-y-1 overflow-y-auto">
+      {visible.map(({ id, name, sector }) => <label key={id} className="flex items-start gap-2 rounded-md px-1 py-1.5 text-sm text-text hover:bg-surface-3">
+        <input className="mt-0.5 shrink-0" type="checkbox" checked={ids.has(id)} onChange={(event) => onChange(id, event.target.checked)} />
+        <span className="min-w-0 break-words">{name}<span className="block text-xs text-text-3">{sector}</span></span>
+      </label>)}
+      {visible.length === 0 && <p className="p-1 text-xs text-text-2">No matching companies in the catalogue.</p>}
+    </div>
+    {unavailable.map(({ id, name }) => <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-2" key={id}>
+      <span>{name}</span>
+      <Button size="sm" variant="ghost" onClick={() => onChange(id, false)}>Unfollow</Button>
+    </div>)}
+  </fieldset>;
+}
+
+function MonitoringForm({ preferences, saving, onSave }: {
   preferences: MonitorPreferences | null;
   saving: boolean;
-  deals: PrivateDeal[];
   onSave: (options: WebMonitorOptions) => void;
 }) {
   const [enabled, setEnabled] = useState(Boolean(preferences));
-  const [followed, setFollowed] = useState(preferences?.company_ids ?? []);
   const [eligible, setEligible] = useState(preferences?.eligible_opportunities ?? false);
   const [digest, setDigest] = useState(preferences?.digest_enabled ?? false);
-  const [query, setQuery] = useState("");
-  const companies = new Map(deals.map(({ round }) => [round.company.id, round.company]));
-  const visible = [...companies.values()].filter(({ name }) => name.toLowerCase().includes(query.trim().toLowerCase()))
-    .sort((first, second) => Number(followed.includes(second.id)) - Number(followed.includes(first.id)) || first.name.localeCompare(second.name));
-  const uncatalogued = followed.filter((id) => !companies.has(id));
   const activeUntil = preferences && new Date(Date.parse(preferences.refreshed_at) + 90 * 86_400_000).toISOString();
-
-  function toggle(id: string, selected: boolean) {
-    setFollowed((current) => selected ? [...current, id] : current.filter((item) => item !== id));
-  }
 
   return <form className="space-y-4 border-t border-border p-4" onSubmit={(event) => {
     event.preventDefault();
-    if (!saving) onSave({ enabled, company_ids: followed, eligible_opportunities: eligible, digest_enabled: digest });
+    if (!saving) onSave({ enabled, eligible_opportunities: eligible, digest_enabled: digest });
   }}>
     <fieldset disabled={saving} className="min-w-0 space-y-4 disabled:opacity-60">
       <label className="flex items-start gap-2 text-sm font-medium text-text">
@@ -59,34 +81,16 @@ function MonitoringForm({ preferences, saving, deals, onSave }: {
         Collect alerts for this account from the web
       </label>
       <p className="text-[13px] text-text-2">
-        The inbox is shared with iPhone. This subscription collects published updates for the companies you select and provider-confirmed activity.
+        The inbox is shared with iPhone. This subscription collects published updates for the companies you follow and provider-confirmed activity.
       </p>
       {enabled && <>
-        <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
-          <Field label="Find a company to follow" htmlFor="private-monitor-company">
-            <Input id="private-monitor-company" type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </Field>
-          <p className="text-xs text-text-2" role="status">{followed.length} of {maxMonitoredCompanies} followed</p>
-          <div className="max-h-56 space-y-1 overflow-y-auto">
-            {visible.map(({ id, name, sector }) => <label key={id} className="flex items-start gap-2 rounded-md px-1 py-1.5 text-sm text-text hover:bg-surface-3">
-              <input className="mt-0.5 shrink-0" type="checkbox" checked={followed.includes(id)}
-                disabled={!followed.includes(id) && followed.length >= maxMonitoredCompanies} onChange={(event) => toggle(id, event.target.checked)} />
-              <span className="min-w-0 break-words">{name}<span className="block text-xs text-text-3">{sector}</span></span>
-            </label>)}
-            {visible.length === 0 && <p className="p-1 text-xs text-text-2">No matching companies in the catalogue.</p>}
-          </div>
-          {uncatalogued.length > 0 && <p className="text-xs text-text-2">
-            {uncatalogued.length} followed {uncatalogued.length === 1 ? "company is" : "companies are"} outside the current catalogue.
-            <Button size="sm" variant="ghost" onClick={() => setFollowed((current) => current.filter((id) => companies.has(id)))}>Remove from selection</Button>
-          </p>}
-        </div>
         <label className="flex items-start gap-2 text-[13px] text-text-2">
           <input className="mt-0.5" type="checkbox" checked={eligible} onChange={(event) => setEligible(event.target.checked)} />
           Include new rounds matching my current provider-verified eligibility
         </label>
         <label className="flex items-start gap-2 text-[13px] text-text-2">
           <input className="mt-0.5" type="checkbox" checked={digest} onChange={(event) => setDigest(event.target.checked)} />
-          Allow Stock Tracker to send published updates for these companies to its AI provider for daily summaries
+          Allow Stock Tracker to send published updates for companies I follow to its AI provider for daily summaries
         </label>
       </>}
       {activeUntil && <p className="text-xs text-text-3">Web monitoring expires {dateLabel(activeUntil)} unless you save preferences again.</p>}
@@ -123,6 +127,7 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
   const [companyScope, setCompanyScope] = useState<"tracked" | "holdings">("tracked");
   const scope = webMonitorKey(owner);
   const { settings, save } = useWebMonitor(owner);
+  const { watchlist, save: saveFollow } = useCompanyWatchlist(owner);
   const revision = settings.data?.revision ?? null;
   const preferences = settings.data?.preferences ?? null;
   const alerts = useQuery({
@@ -144,7 +149,8 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
     }
     return holding.company && !holding.exitedOn ? [holding.company.id] : [];
   });
-  const tracked = [...(preferences?.company_ids ?? []), ...owned];
+  const followed = watchlist.data?.companies ?? [];
+  const tracked = [...followed.map(({ id }) => id), ...owned];
   const companyIDs = [...new Set(companyScope === "holdings" ? owned : tracked)].sort();
   const updates = useQuery({
     queryKey: [...scope, "updates", companyIDs], enabled: companyIDs.length > 0, gcTime: 0, retry: false,
@@ -164,13 +170,22 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
   return <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)]">
     <div className="min-w-0 space-y-4">
       <Card>
+        <CardHeader title="Company watchlist" />
+        {watchlist.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading watchlist…</p>}
+        {watchlist.error && <div className="border-t border-border p-4"><Notice tone="down">{watchlist.error.message} <Button size="sm" onClick={() => void watchlist.refetch()}>Retry watchlist</Button></Notice></div>}
+        {catalogueError && <div className="border-t border-border p-4"><Notice tone="down">{catalogueError.message} <Button size="sm" onClick={retryCatalogue}>Retry catalogue</Button></Notice></div>}
+        {catalogueLoading && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading published companies…</p>}
+        {watchlist.data && <WatchlistEditor deals={deals} followed={followed}
+          saving={saveFollow.isPending || watchlist.isFetching || watchlist.isError}
+          onChange={(id, following) => saveFollow.mutate({ id, following }, { onSuccess: () => setSelectedIDs([]) })} />}
+        {saveFollow.error && <div className="px-4 pb-4"><Notice tone="down">{saveFollow.error.message}</Notice></div>}
+      </Card>
+      <Card>
         <CardHeader title="Monitoring preferences" />
         {settings.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading preferences…</p>}
         {settings.error && <div className="border-t border-border p-4"><Notice tone="down">{settings.error.message} <Button size="sm" onClick={() => void settings.refetch()}>Retry preferences</Button></Notice></div>}
-        {catalogueError && <div className="border-t border-border p-4"><Notice tone="down">{catalogueError.message} <Button size="sm" onClick={retryCatalogue}>Retry catalogue</Button></Notice></div>}
-        {catalogueLoading && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading published companies…</p>}
         {settings.data && <MonitoringForm key={`${revision}:${Boolean(preferences)}`} preferences={preferences}
-          saving={save.isPending || settings.isFetching || settings.isError} deals={deals}
+          saving={save.isPending || settings.isFetching || settings.isError}
           onSave={(options) => save.mutate({ ...options, expected_revision: revision, expected_enabled: Boolean(preferences) },
             { onSuccess: () => setSelectedIDs([]) })} />}
         {save.error && <div className="px-4 pb-4"><Notice tone="down">{save.error.message}</Notice></div>}

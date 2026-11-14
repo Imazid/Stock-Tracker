@@ -7,7 +7,7 @@ import { Field, Input } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { CompareRounds, CompanyFacts, CompanyLogo, DealCard, hasUpcomingQuotation, SourceLink } from "./catalog";
 import { availability, countryName, dateLabel, type PrivateCompany, type PrivateDeal } from "./private-data";
-import { maxMonitoredCompanies, useWebMonitor } from "./web-monitor";
+import { useCompanyWatchlist } from "./watchlist";
 
 type RoundActions = {
   asOf: number;
@@ -66,46 +66,19 @@ function RoundCards({ deals, actions, onCompany }: {
 }
 
 function FollowCompany({ owner, company, showUpdates }: { owner: string; company: PrivateCompany; showUpdates: () => void }) {
-  const { settings, save } = useWebMonitor(owner);
-  const [confirm, setConfirm] = useState(false);
-  const view = settings.data;
-  const preferences = view?.preferences;
-  const followIDs = preferences?.company_ids ?? [];
-  const followed = followIDs.includes(company.id);
-  const atLimit = !followed && followIDs.length >= maxMonitoredCompanies;
-  const busy = settings.isFetching || save.isPending;
-
-  function changeFollow() {
-    if (!view || busy || atLimit) return;
-    setConfirm(false);
-    save.mutate({
-      expected_revision: view.revision,
-      expected_enabled: Boolean(preferences),
-      enabled: true,
-      company_ids: followed ? followIDs.filter((id) => id !== company.id) : [...followIDs, company.id],
-      eligible_opportunities: preferences?.eligible_opportunities ?? false,
-      digest_enabled: preferences?.digest_enabled ?? false,
-    });
-  }
+  const { watchlist, save } = useCompanyWatchlist(owner);
+  const followed = watchlist.data?.companies.some(({ id }) => id === company.id) ?? false;
+  const busy = watchlist.isFetching || save.isPending;
 
   return <div className="space-y-2 border-t border-border pt-3">
-    {settings.isPending && <p className="text-sm text-text-2" role="status">Loading watchlist…</p>}
-    {settings.error && <Notice tone="down">{settings.error.message} <Button size="sm" onClick={() => void settings.refetch()}>Retry watchlist</Button></Notice>}
-    {view && !settings.error && <div className="flex flex-wrap items-center gap-2">
-      <Button size="sm" variant={followed ? "secondary" : "primary"} disabled={busy || atLimit || confirm}
-        onClick={() => preferences ? changeFollow() : setConfirm(true)}>{followed ? "Unfollow company" : "Follow company"}</Button>
+    {watchlist.isPending && <p className="text-sm text-text-2" role="status">Loading watchlist…</p>}
+    {watchlist.error && <Notice tone="down">{watchlist.error.message} <Button size="sm" onClick={() => void watchlist.refetch()}>Retry watchlist</Button></Notice>}
+    {watchlist.data && !watchlist.error && <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" variant={followed ? "secondary" : "primary"} disabled={busy}
+        onClick={() => save.mutate({ id: company.id, following: !followed })}>{followed ? "Unfollow company" : "Follow company"}</Button>
       {followed && <Button size="sm" onClick={showUpdates}>View company updates</Button>}
       {save.isPending && <p className="text-xs text-text-2" role="status">Saving watchlist…</p>}
-      {save.isSuccess && <p className="text-xs text-text-2" role="status">{followed ? "Company followed." : "Company unfollowed."}</p>}
     </div>}
-    {confirm && <div className="space-y-2 text-sm text-text-2">
-      <p>Enable web monitoring to collect this company’s published updates and provider-confirmed activity in your account inbox.</p>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="primary" disabled={busy || settings.isError} onClick={changeFollow}>Enable monitoring and follow</Button>
-        <Button size="sm" onClick={() => setConfirm(false)}>Cancel</Button>
-      </div>
-    </div>}
-    {atLimit && <p className="text-xs text-text-2">Your watchlist has {maxMonitoredCompanies} companies. Unfollow a company before adding another.</p>}
     {save.error && <Notice tone="down">{save.error.message}</Notice>}
   </div>;
 }

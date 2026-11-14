@@ -23,6 +23,7 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 // One web subscription per account, independent of any iPhone installation.
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
+  "company_watchlist", "save_company_watchlist",
   "web_monitor_preferences", "save_web_monitor", "monitor_settings", "monitor_inbox", "monitor_digests", "allocation",
   "profile", "save_profile", "issue_provider_link", "disconnect_provider", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
   "handoff_review", "handoff_resume_check", "handoff_resume",
@@ -557,6 +558,26 @@ Deno.serve(async (req) => {
       if (error) throw error;
     };
     switch (body.action) {
+      case "company_watchlist": {
+        if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_WATCHLIST", "Choose the account watchlist.");
+        const { data, error } = await admin.rpc("private_company_watchlist", { p_user: userId });
+        if (error) throw error;
+        return jsonResponse(200, { companies: data });
+      }
+      case "save_company_watchlist": {
+        const { add_company_ids: add, remove_company_ids: remove, import_device: importing = false } = body;
+        if (Object.keys(body).some((key) => !["action", "add_company_ids", "remove_company_ids", "import_device"].includes(key)) ||
+          !Array.isArray(add) || !Array.isArray(remove) || add.length + remove.length > 250 ||
+          [...add, ...remove].some((id) => typeof id !== "string" || !uuid.test(id)) || typeof importing !== "boolean") {
+          return errorResponse(400, "INVALID_WATCHLIST", "Choose up to 250 companies to update.");
+        }
+        const { data, error } = await admin.rpc("update_private_company_watchlist", {
+          p_user: userId, p_add: add, p_remove: remove, p_import: importing,
+        });
+        if (error?.code === "22023") return errorResponse(422, "WATCHLIST_UNAVAILABLE", error.message);
+        if (error) throw error;
+        return jsonResponse(200, { companies: data });
+      }
       case "export_records": {
         const section = exportSection(body.section);
         const offset = exportOffset(body.offset);

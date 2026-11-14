@@ -122,6 +122,7 @@ export type MonitorAlert = {
 };
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
+  "company_watchlist" | "save_company_watchlist" |
   "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "capital_activity" | "valuation_history" | "manual_portfolio" | "remove_manual_portfolio" | "account_holdings" | "save_account_holding" | "remove_account_holding" | "save_account_valuation" | "remove_account_valuation" | "save_account_cash_flow" | "remove_account_cash_flow" | "applications" | "allocation" | "updates" |
   "set_account_holding_company" | "account_provider_options" | "set_account_holding_provider" |
   "profile" | "save_profile" | "issue_provider_link" | "disconnect_provider" | "handoff_check" | "handoff" |

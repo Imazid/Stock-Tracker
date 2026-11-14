@@ -1094,6 +1094,31 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAccountWatchlistShowsAndRemovesACompanyFollowedOnWeb() throws {
+        let login = ProcessInfo.processInfo.environment["PRIVATE_WATCHLIST_TEST_LOGIN"]
+        try XCTSkipUnless(login != nil, "Set PRIVATE_WATCHLIST_TEST_LOGIN for a disposable account already following Blackbird.")
+        app.terminate()
+        app.launchArguments += ["-UITestSignIn", try XCTUnwrap(login)]
+        app.launch()
+
+        openPrivateMarkets()
+        app.buttons["private.destination.building.2"].tap()
+        let blackbird = app.buttons["private.explorer.company.8D0EDEAF-C9B8-41AE-AC04-590D7643BCC0"]
+        XCTAssertTrue(blackbird.waitForExistence(timeout: 20), app.debugDescription)
+        blackbird.tap()
+        let fund = app.buttons["private.funding.round.2026 early-stage and growth funds"]
+        XCTAssertTrue(fund.waitForExistence(timeout: 8), app.debugDescription)
+        fund.tap()
+        let follow = app.buttons["private.deal.follow"]
+        XCTAssertTrue(follow.waitForExistence(timeout: 10), app.debugDescription)
+        let unfollow = NSPredicate(format: "label == %@", "Unfollow company")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: unfollow, object: follow)], timeout: 15), .completed)
+        follow.tap()
+        let updated = NSPredicate(format: "label == %@", "Follow company")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: updated, object: follow)], timeout: 15), .completed)
+    }
+
+    @MainActor
     func testHistoricalFundDisplaysCommitmentsAndItsPublishedSource() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
                           "Run this test with the hosted Private Markets configuration.")

@@ -1,11 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { privateMarkets, PrivateMarketsError, type MonitorPreferences } from "./private-data";
 
-export type WebMonitorOptions = Pick<MonitorPreferences, "company_ids" | "eligible_opportunities" | "digest_enabled"> & { enabled: boolean };
+export type WebMonitorOptions = Pick<MonitorPreferences, "eligible_opportunities" | "digest_enabled"> & { enabled: boolean };
 type WebMonitorSettings = { revision: string | null; preferences: MonitorPreferences | null };
 
 export const webMonitorKey = (owner: string) => ["private-markets", owner, "monitor"];
-export const maxMonitoredCompanies = 250;
 
 export function useWebMonitor(owner: string) {
   const scope = webMonitorKey(owner);
@@ -17,7 +16,7 @@ export function useWebMonitor(owner: string) {
   });
   const save = useMutation({
     mutationFn: (options: WebMonitorOptions & { expected_revision: string | null; expected_enabled: boolean }) =>
-      privateMarkets<WebMonitorSettings>("save_web_monitor", { owner, ...options }),
+      privateMarkets<WebMonitorSettings>("save_web_monitor", { owner, ...options, company_ids: [] }),
     onMutate: () => cache.cancelQueries({ queryKey: preferencesKey }),
     onSuccess: (value) => {
       cache.setQueryData(preferencesKey, value);

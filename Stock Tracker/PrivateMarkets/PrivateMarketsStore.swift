@@ -587,16 +587,19 @@ enum PrivateMarketsAPI {
 final class PrivateMarketsStore: ObservableObject {
     static let shared = PrivateMarketsStore()
 
-    struct Follow: Codable, Identifiable {
+    struct Follow: Codable, Equatable, Identifiable {
         let id: UUID
         let name: String
-        let source: URL
+        let source: URL?
     }
+
+    private struct AccountWatchlist: Decodable { let companies: [Follow] }
 
     struct State: Codable {
         var holdings: [PrivateHolding] = []
         var angelListSnapshots: [PrivateFundSnapshot]?
         var follows: [Follow] = []
+        var followsImported: Bool?
         var notify = false
         var seenUpdates: [UUID] = []
         var capitalReminders: Bool?
@@ -609,6 +612,10 @@ final class PrivateMarketsStore: ObservableObject {
 
     @Published private(set) var state = State()
     @Published private(set) var storageError: String?
+    @Published private(set) var watchlistError: String?
+    @Published private(set) var savingWatchlist = false
+    private var watchlistTask: Task<Void, Never>?
+    private var watchlistScope = UUID()
     @Published private(set) var providerHoldings: [ProviderPrivateHolding] = []
     @Published private(set) var accountHoldings: [PrivateMarketsAPI.AccountHolding] = []
     @Published private(set) var accountHoldingsError: String?
@@ -680,6 +687,11 @@ final class PrivateMarketsStore: ObservableObject {
         }
         state = State()
         storageError = nil
+        watchlistTask?.cancel()
+        watchlistTask = nil
+        watchlistScope = UUID()
+        watchlistError = nil
+        savingWatchlist = false
         providerHoldings = []
         accountHoldings = []
         accountHoldingsError = nil
@@ -978,17 +990,81 @@ final class PrivateMarketsStore: ObservableObject {
         }
     }
 
-    func toggleFollow(_ deal: PrivateDeal) throws {
-        guard state.follows.count < 100 || state.follows.contains(where: { $0.id == deal.company.id }) else {
-            throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [NSLocalizedDescriptionKey: "Your watchlist can hold up to 100 companies."])
+    func refreshWatchlist(for owner: UUID) async {
+        guard scope == owner, !savingWatchlist, SecureBackend.isConfigured, storageError == nil else { return }
+        if let watchlistTask {
+            await watchlistTask.value
+            return
         }
-        try change { next in
-            if next.follows.contains(where: { $0.id == deal.company.id }) {
-                next.follows.removeAll { $0.id == deal.company.id }
-            } else {
-                next.follows.append(.init(id: deal.company.id, name: deal.company.name, source: deal.company.sourceUrl))
+        let snapshot = watchlistScope
+        let legacy = state.followsImported == true ? [] : state.follows.map(\.id.uuidString)
+        let task = Task {
+            defer { if !Task.isCancelled, watchlistScope == snapshot { watchlistTask = nil } }
+            do {
+                let response: AccountWatchlist
+                if legacy.isEmpty {
+                    response = try await PrivateMarketsAPI.request("company_watchlist", expectedUserID: owner)
+                } else {
+                    response = try await PrivateMarketsAPI.request("save_company_watchlist", [
+                        "add_company_ids": legacy, "remove_company_ids": [String](), "import_device": true,
+                    ], expectedUserID: owner)
+                }
+                try Task.checkCancellation()
+                guard watchlistScope == snapshot else { return }
+                try applyWatchlist(response)
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled, watchlistScope == snapshot { watchlistError = error.localizedDescription }
             }
         }
+        watchlistTask = task
+        await task.value
+    }
+
+    func setFollowing(_ company: Follow, following: Bool, owner: UUID?) async throws {
+        guard didLoad, scope == owner, !savingWatchlist else { throw CancellationError() }
+        guard let owner else {
+            let exists = state.follows.contains { $0.id == company.id }
+            if exists == following { return }
+            guard !following || state.follows.count < 100 else {
+                throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [NSLocalizedDescriptionKey: "Your device watchlist can hold up to 100 companies."])
+            }
+            try change { next in
+                if following { next.follows.append(company) }
+                else { next.follows.removeAll { $0.id == company.id } }
+            }
+            return
+        }
+        let snapshot = watchlistScope
+        if state.followsImported != true { await refreshWatchlist(for: owner) }
+        try Task.checkCancellation()
+        guard watchlistScope == snapshot, !savingWatchlist else { throw CancellationError() }
+        guard state.followsImported == true else {
+            throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: watchlistError ?? "The account watchlist could not be loaded.",
+            ])
+        }
+        watchlistTask?.cancel()
+        watchlistTask = nil
+        savingWatchlist = true
+        defer { if watchlistScope == snapshot { savingWatchlist = false } }
+        let response: AccountWatchlist = try await PrivateMarketsAPI.request("save_company_watchlist", [
+            "add_company_ids": following ? [company.id.uuidString] : [],
+            "remove_company_ids": following ? [] : [company.id.uuidString],
+        ], expectedUserID: owner)
+        try Task.checkCancellation()
+        guard watchlistScope == snapshot else { throw CancellationError() }
+        try applyWatchlist(response)
+    }
+
+    private func applyWatchlist(_ response: AccountWatchlist) throws {
+        if state.followsImported != true || state.follows != response.companies {
+            try change {
+                $0.follows = response.companies
+                $0.followsImported = true
+            }
+        }
+        watchlistError = nil
     }
 
     func checkUpdates(for userID: UUID, companyScope: PrivateUpdateScope = .tracked,
@@ -997,6 +1073,9 @@ final class PrivateMarketsStore: ObservableObject {
         if let storageError {
             throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [NSLocalizedDescriptionKey: storageError])
         }
+        if companyScope != .owned { await refreshWatchlist(for: userID) }
+        try Task.checkCancellation()
+        guard scope == userID else { throw CancellationError() }
         let followed = state.follows.map(\.id)
         let owned = activeManualHoldings.compactMap(\.catalogueCompanyID) +
             providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId) + accountCompanyIDs
@@ -1231,7 +1310,8 @@ final class PrivateMarketsStore: ObservableObject {
             .compactMap(\.catalogueCompanyID)
         let account = independentAccountHoldings.filter { $0.exitedOn == nil }.compactMap { $0.company?.id }
         var knownCompanies = Set<UUID>()
-        let companies = (records.follows.map(\.id) + manual + account).filter { knownCompanies.insert($0).inserted }
+        let deviceFollows = records.followsImported == true ? [] : records.follows.map(\.id)
+        let companies = (deviceFollows + manual + account).filter { knownCompanies.insert($0).inserted }
         let accountLinks: [MonitoringScope.ProviderLink] = accountHoldings.compactMap { holding in
             guard let match = holding.providerMatch else { return nil }
             return .init(holdingID: match.id, companyID: holding.company?.id ?? match.companyId)

@@ -214,7 +214,7 @@ private struct PrivateMarketsExportDocument: FileDocument {
                 ("provider_connections", "Provider connections"), ("applications", "Applications"),
                 ("provider_holdings", "Provider holdings"), ("valuations", "Valuations"),
                 ("capital_calls", "Capital calls"), ("distributions", "Distributions"),
-                ("sales", "Sales"), ("monitor_preferences", "Monitoring preferences"),
+                ("sales", "Sales"), ("company_watchlist", "Company watchlist"), ("monitor_preferences", "Monitoring preferences"),
                 ("monitoring_alerts", "Monitoring alerts"), ("research_history", "Research history"),
                 ("excerpts", "Document excerpts"), ("reports", "Saved reports"),
                 ("manual_portfolio", "Published self-reported holdings"),

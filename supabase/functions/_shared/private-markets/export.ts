@@ -23,6 +23,7 @@ const exportSections = {
   sales: ["private_holding_dispositions",
     "id,holding_id,provider_reference,provider_event_at,sold_units::text,net_proceeds::text,disposed_cost::text,settled_on,source,reversed", "id"],
   monitor_preferences: ["private_monitor_devices", "company_ids,provider_links,eligible_opportunities,digest_enabled,refreshed_at", "device_id"],
+  company_watchlist: ["private_company_follows", "company_id,following,updated_at", "company_id"],
   monitoring_alerts: ["private_market_alerts", "id,subject_id,kind,company_name,title,significance,source_url,source_label,occurred_at,revised_at", "id"],
   research_history: ["agent_analysis_runs", "id,report_id,status,created_at,failure_code,failure_message", "id"],
   excerpts: ["deal_documents", "id,title,created_at,sealed", "id"],
@@ -36,6 +37,7 @@ export const privateExportSections = {
   applications: "Private applications", provider_holdings: "Private holdings", valuations: "Private valuations",
   capital_calls: "Capital calls", distributions: "Private distributions", sales: "Private sales",
   monitor_preferences: "Company monitoring preferences", monitoring_alerts: "Company monitoring alerts",
+  company_watchlist: "Private company watchlist",
   research_history: "Private research history", excerpts: "Saved document excerpts", reports: "Saved research reports", manual_portfolio: "Published self-reported holdings", account_holdings: "Self-reported account holdings",
 } satisfies Record<keyof typeof exportSections, string>;
 
