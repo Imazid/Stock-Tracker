@@ -2,7 +2,6 @@
 // verdict on every answer. Nothing here invents a number: when every source fails the
 // caller gets an error with the reasons, and the page says the price isn't available.
 
-import { catalogInstruments } from "@engine/catalog.ts";
 import { MarketCalendar } from "@engine/calendar.ts";
 import { type Instrument, instrumentID, makeInstrument, parseYahooSymbol } from "@engine/market.ts";
 import type {
@@ -17,6 +16,7 @@ import type {
 import { ALPACA_CRYPTO_SOURCE, ALPACA_IEX_SOURCE, alpacaCandles, alpacaConfigured, alpacaQuote, alpacaSupports } from "./alpaca";
 import { cached } from "./cache";
 import { allSearchFilters, selectMarketSearchResults, type SearchFilters } from "@/lib/market-search";
+import { marketCatalog } from "@/lib/market-catalog";
 import { marketIndexes } from "@/lib/market-indexes";
 import { COIN_NAMES, COINGECKO_IDS, COINGECKO_SOURCE, coinGeckoQuote } from "./coingecko";
 import { decodeSearch, researchSearch } from "@/server/research/search";
@@ -259,7 +259,7 @@ export async function search(query: string, { allowLicensedIdentifiers = true, i
     for (const [sym, name] of Object.entries(COIN_NAMES)) {
       if (sym.startsWith(upper) || name.toUpperCase().includes(upper)) add({ ...toView(makeInstrument(sym, "crypto", "crypto", name)), origin: "catalog", exchangeLabel: "Crypto" });
     }
-    for (const instrument of includeIndexes ? [...marketIndexes, ...catalogInstruments] : catalogInstruments) {
+    for (const instrument of includeIndexes ? [...marketIndexes, ...marketCatalog] : marketCatalog) {
       if (instrument.symbol.startsWith(upper) || instrument.name.toUpperCase().includes(upper)) {
         add({ ...toView(instrument), origin: "catalog", exchangeLabel: instrument.venue.toUpperCase() });
       }
