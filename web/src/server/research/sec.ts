@@ -96,7 +96,8 @@ export async function secSubmissions(listing: SecListing): Promise<SecSubmission
       profile: {
         name: asText(raw.name) ?? listing.name, cik: listing.cik, exchange: listing.exchange,
         industry: asText(raw.sicDescription), headquarters: [asText(business.city), asText(business.stateOrCountryDescription)].filter(Boolean).join(", ") || undefined,
-        sic: asText(raw.sic, 4), incorporationCode: asText(raw.stateOfIncorporation, 2),
+        sic: asText(raw.sic) ?? (typeof raw.sic === "number" ? String(raw.sic) : undefined),
+        incorporationCode: asText(raw.stateOfIncorporation),
         incorporation: asText(raw.stateOfIncorporationDescription),
         website: safeUrl(raw.website) ?? safeUrl(raw.investorWebsite),
         evidence: evidence(url, fetchedAt),

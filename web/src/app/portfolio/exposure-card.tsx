@@ -17,6 +17,7 @@ const breakdowns = {
 
 type Breakdown = keyof typeof breakdowns;
 const breakdownKeys = Object.keys(breakdowns) as Breakdown[];
+const selectedButton = "aria-pressed:border-primary aria-pressed:bg-primary-soft aria-pressed:text-primary-fg";
 
 export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
   holdings: readonly { shares: number; instrument: InstrumentView | null }[];
@@ -38,7 +39,8 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
   const issuerIds = [...new Set(holdings.flatMap(({ instrument }) => {
     if (!instrument || instrument.venue === "crypto") return [];
     const data = quoteFor(instrument.id);
-    return data?.instrument.id === instrument.id && data.instrument.assetClass === "equity" ? [instrument.id] : [];
+    return data?.instrument.id === instrument.id && data.instrument.assetClass === "equity" && !data.quote.stale
+      ? [instrument.id] : [];
   }))].sort();
   const issuerQueries = useQueries({
     queries: Array.from({ length: Math.ceil(issuerIds.length / ISSUER_LOOKUP_LIMIT) }, (_, index) => {
@@ -75,7 +77,7 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
         </dl>
         <div role="group" aria-label="Reporting currency" className="flex gap-1">
           {(["AUD", "USD"] as const).map((currency) => (
-            <Button key={currency} size="sm" variant={currency === base ? "primary" : "secondary"}
+            <Button key={currency} size="sm" variant="secondary" className={selectedButton}
               aria-pressed={currency === base} onClick={() => setBase(currency)}>{currency}</Button>
           ))}
         </div>
@@ -101,7 +103,7 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
         </dl>
         <div role="group" aria-label="Exposure breakdown" className="flex flex-wrap gap-1.5">
           {breakdownKeys.map((key) => (
-            <Button key={key} size="sm" variant={key === breakdown ? "primary" : "secondary"}
+            <Button key={key} size="sm" variant="secondary" className={selectedButton}
               aria-pressed={key === breakdown} onClick={() => setBreakdown(key)}>{breakdowns[key]}</Button>
           ))}
         </div>
