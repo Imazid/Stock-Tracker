@@ -224,6 +224,12 @@ final class AccountSyncTests: XCTestCase {
             XCTAssertEqual(reviewed["snaptrade_reported_amount"] as? String, "5.25")
             XCTAssertEqual(reviewed["currency"] as? String, "USD")
         }
+
+        let export = app.buttons["portfolio.cashIncome.export"].firstMatch
+        reveal(export)
+        export.tap()
+        let picker = app.buttons["Save"].firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 12), "Cash income CSV reaches the Files save dialog")
     }
 
     func testClosingSaleAndDeletedTransactionSync() throws {
