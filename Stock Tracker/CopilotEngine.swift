@@ -387,7 +387,9 @@ final class CopilotEngine: ObservableObject {
                 text += " \(name) returned \(TradingFormat.percent(benchmark)) over the same dates."
             }
             text += " A backtest is a simulation of the past; it does not predict what happens next."
-            return CopilotMessage(isUser: false, text: text, cards: [.backtest(id: UUID(), box: BacktestBox(result: result))])
+            let box = BacktestBox(result: result, title: result.strategyTitle,
+                                  currency: draft.currency, testedRuleLines: draft.spec.ruleLines)
+            return CopilotMessage(isUser: false, text: text, cards: [.backtest(id: UUID(), box: box)])
         } catch {
             return CopilotMessage(isUser: false, text: "The backtest couldn't run: \(error.localizedDescription) Nothing was estimated in its place.")
         }

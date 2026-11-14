@@ -282,7 +282,12 @@ struct AgentDetailView: View {
         .dsScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showLimits) { AgentLimitsEditor(agentID: agentID) }
-        .sheet(item: $backtest) { box in NavigationStack { BacktestReportView(result: box.result, title: trading.agent(agentID)?.name ?? "Agent") } }
+        .sheet(item: $backtest) { box in
+            NavigationStack {
+                BacktestReportView(result: box.result, title: box.title,
+                                   currency: box.currency, testedRuleLines: box.testedRuleLines)
+            }
+        }
         .sheet(item: $openedProposal) { ProposalReviewSheet(proposalID: $0.id) }
         .sheet(item: $openedOrder) { ref in NavigationStack { OrderDetailView(orderID: ref.id) } }
         .alert("That didn't work", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
@@ -679,7 +684,8 @@ struct AgentDetailView: View {
                                maxPositionPct: agent.riskPolicy.maxPositionPct, riskPolicy: agent.riskPolicy)
         Task {
             do {
-                backtest = BacktestBox(result: try await trading.backtest(draft, years: 2, agentID: agent.id))
+                backtest = BacktestBox(result: try await trading.backtest(draft, years: 2, agentID: agent.id), title: agent.name,
+                                       currency: draft.currency, testedRuleLines: draft.spec.ruleLines)
             } catch {
                 problem = "The backtest couldn't run: \(error.localizedDescription)"
             }
