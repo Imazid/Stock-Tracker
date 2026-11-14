@@ -250,9 +250,14 @@ final class PrivateMarketsFlowTests: XCTestCase {
         openPrivateMarkets()
         app.buttons["private.destination.magnifyingglass"].tap()
         XCTAssertTrue(app.navigationBars["Discover Deals"].waitForExistence(timeout: 5))
-        let birchal = app.staticTexts["Birchal"]
-        if !birchal.isHittable { app.swipeUp() }
-        XCTAssertTrue(birchal.waitForExistence(timeout: 8))
+        let following = app.switches["Following"]
+        XCTAssertTrue(following.waitForExistence(timeout: 5))
+        following.tap()
+        let syndex = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@", "Registry services in Australia and New Zealand"
+        )).firstMatch
+        for _ in 0..<4 where !syndex.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(syndex.exists, app.debugDescription)
         let back = app.navigationBars["Discover Deals"].buttons["BackButton"]
         XCTAssertTrue(back.waitForExistence(timeout: 5))
         back.tap()

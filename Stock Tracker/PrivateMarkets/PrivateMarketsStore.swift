@@ -23,8 +23,8 @@ struct PrivateProvider: Identifiable {
               access: "Provider accreditation and deal-room permissions apply.",
               url: URL(string: "https://help.angellist.com/hc/en-us/articles/38089333472269-What-is-Meridian")!),
         .init(id: "syndex", name: "Syndex", categories: "Private funds, registries and secondary markets",
-              access: "New Zealand provider. Registration and cross-border eligibility apply.",
-              url: URL(string: "https://www.syndex.exchange/investors")!)
+              access: "Registry services in Australia and New Zealand. Liquidity depends on the issuer and jurisdiction.",
+              url: URL(string: "https://www.syndex.com.au/")!)
     ]
 }
 
