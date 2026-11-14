@@ -511,7 +511,7 @@ final class AccountSyncTests: XCTestCase {
             let proceed = app.buttons["account.delete.confirm"]
             for _ in 0..<4 where !proceed.isHittable { app.swipeUp(velocity: .slow) }
             proceed.tap()
-            let confirm = app.buttons["Permanently Delete Account"]
+            let confirm = app.buttons.matching(identifier: "account.delete.permanent").firstMatch
             XCTAssertTrue(confirm.waitForExistence(timeout: 5))
             confirm.tap()
         }

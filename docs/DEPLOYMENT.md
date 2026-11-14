@@ -14,6 +14,7 @@ The provisioning steps below apply when setting up a separate environment.
 | `provider-maintenance` | Supabase Edge Functions and Cron | provider order reconciliation and fill imports |
 | `market-data-proxy`, `snaptrade-proxy`, `ai-proxy` | Supabase Edge Functions | signed-in iOS data, broker aggregation and model access |
 | `market-workspace` | Supabase Edge Functions | workspace market data, fundamentals and shared backtesting |
+| `account-deletion` | Supabase Edge Functions | authenticated account deletion and provider token revocation |
 | Web app | Vercel (Sydney functions) | `web/` |
 
 ## 1. Create the backend (one time)
@@ -128,6 +129,12 @@ Verify that the unauthenticated endpoint returns 401. Confirm scheduled requests
 ## 9. Scheduled SnapTrade activity
 
 Deploy `snaptrade-activity-sync` and `snaptrade-proxy`. Set a dedicated secret of at least 32 characters as `SNAPTRADE_ACTIVITY_SYNC_SECRET` on the Edge Function and `snaptrade_activity_secret` in Supabase Vault. Set `snaptrade_activity_url` in Vault to the full HTTPS sync endpoint. Use `pg_cron` and `pg_net` as for provider maintenance. If the extensions are enabled after applying the migration, register `select cron.schedule('snaptrade-activity-sync', '* * * * *', 'select public.invoke_snaptrade_activity_sync()');`.
+
+## Account deletion
+
+Apply the database migrations before deploying `account-deletion`. The function verifies the Supabase user and active session, and requires password confirmation or a fresh Sign in with Apple authorization code. An account with verified MFA must use an elevated session. The server removes an active SnapTrade connection before deleting the Supabase user and its dependent data.
+
+For Sign in with Apple, configure the project secrets `ACCOUNT_DELETION_APPLE_TEAM_ID`, `ACCOUNT_DELETION_APPLE_KEY_ID` and `ACCOUNT_DELETION_APPLE_PRIVATE_KEY` with a Sign in with Apple key for the iOS app identifier `Cubeplay.Stock-Tracker`. Test from Account settings with a disposable Apple sign-in and verify that Apple revoked the refresh token and the Supabase account was deleted. Keep these secrets on the server. [Apple’s account deletion requirements](https://developer.apple.com/support/offering-account-deletion-in-your-app/)
 
 Each tick leases up to three SnapTrade identities and processes one provider request per identity. It publishes a 90-calendar-day snapshot once all accounts and pages are read, then schedules the next refresh 24 hours later. The portfolio editor prefers a complete snapshot synced in the past 36 hours. It offers a live broker read for other dates and on request. A revoked identity deletes its staged and published activity. Scheduler logs contain counts and error codes.
 
