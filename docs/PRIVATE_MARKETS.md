@@ -63,6 +63,32 @@ Application details show the requested amount, the amount reported by the provid
 | AngelList | Meridian hosts funds, SPVs and permissioned deal rooms. Link is an OAuth MCP for read-only authorised fund data. Digital Subscriptions is a separate commercial product. | The iOS app implements on-device OAuth with PKCE, dynamic registration and revocation. Fund records are requested directly from AngelList using read-only scopes. Users can review structured capital account fields and save a device-local statement to My Private Portfolio. An entitled account is required to verify actual provider responses. |
 | Syndex | Registry services in Australia and New Zealand, a New Zealand marketplace, and Australian liquidity tools for companies with the applicable Australian financial services licence. | Public directory link. Stock Tracker requires its own registry agreement, interface documentation and jurisdiction review. |
 
+### Provider event delivery
+
+Approved Stock Tracker adapters post one event to `/functions/v1/private-provider-events` over HTTPS. Each adapter authenticates its provider's original message using that provider's documented interface, then translates it to the format below. Use the trusted account-linking flow to establish the provider subject before sending an event. The delivery endpoint resolves the Stock Tracker account from that binding. Never send a Stock Tracker user ID, funding credentials or identity documents.
+
+Every request uses the following headers.
+
+| Header | Value |
+| --- | --- |
+| `x-stock-tracker-provider` | `birchal`, `onmarket`, `angellist` or `syndex` |
+| `x-stock-tracker-key-id` | The assigned adapter key ID, using 1–64 letters, digits, underscores or hyphens |
+| `x-stock-tracker-timestamp` | Ten-digit Unix time in seconds, within five minutes of the server clock |
+| `x-stock-tracker-signature` | `v1=` followed by the lowercase hexadecimal HMAC-SHA256 |
+
+Compute the HMAC over the UTF-8 bytes of `stock-tracker-provider-events/v1\n<provider>\n<key-id>\n<timestamp>\n` followed by the exact request body bytes. The body is a UTF-8 JSON object of up to 12 KiB with `event_id`, `kind`, `subject`, `event_at` and `details`. Use a stable provider-wide event ID of up to 160 letters, digits, underscores, periods, colons or hyphens. Use UTC ISO 8601 for timestamps, with an `event_at` no later than the server time. Use `YYYY-MM-DD` for dates, uppercase ISO currency codes, and decimal strings for money and units.
+
+| Kind | Required details | Other details |
+| --- | --- | --- |
+| `verification` | `jurisdiction`, `evidence_reference`, `verified_class` | `expires_at`, `accountant_reviewed_at`. Send a null class to revoke verification. |
+| `application` | `commitment_id`, `reference`, `status` | `cooling_off_ends_at`, `application_amount`, `application_currency`, `units`, `invested_amount`, `supplementary_deadline`, `supplementary_document_url`. Supply the evidence required by the application transition. |
+| `holding_activity` | `holding_id`, `reference`, `currency`, `source`, `activity` | `amount`, `record_date`, `method`, `settled_on`. Activity is `opening_settlement`, `valuation`, `capital_call`, `capital_call_cancellation`, `distribution` or `distribution_reversal`. |
+| `holding_disposition` | `holding_id`, `reference`, `currency`, `source`, `reversed` (boolean) | A settled sale requires `settled_on`, `sold_units` and `net_proceeds`. Include `disposed_cost` when the provider supplies a cost basis. |
+
+A successful response is HTTP 200 with a JSON `status` of `accepted` or `duplicate`. The receipt and ledger operation commit in the same transaction. An accepted older provider event can leave a newer ledger record in effect. After a timeout or 503, retry with the same event ID and exact body bytes, signing again with a fresh header timestamp. Replay with changed content returns 409. Send a provider correction with a new event ID and the applicable provider revision time. Responses 400 and 413 indicate invalid or oversized input, 401 indicates failed authentication, 403 indicates missing account binding or insufficient access, and 422 indicates that the current ledger checks rejected the event.
+
+Store `PRIVATE_PROVIDER_EVENT_KEYS` as a JSON object keyed by provider and then key ID, with standard Base64-encoded, independently generated 32-byte keys as values. Give each adapter only its assigned key through the approved secret store. To rotate, add the replacement key ID, update the adapter, then remove the previous key after the cutover. The endpoint refuses unsigned requests and unknown keys. Provider and jurisdiction approvals still govern event processing.
+
 ### AngelList capital account statements
 
 Choose an authorized capital-account response and map one record’s identifier, fund name, currency, statement date and reported balances. The device requires the user to confirm the account belongs to them or their investing entity. A manager’s access to an LP record does not establish personal ownership. Values are copied from selected structured fields and stored in the signed-in Stock Tracker account’s data-protected local file. OAuth tokens remain in Keychain. No selected values are sent to Stock Tracker’s backend or to an AI model.
@@ -90,7 +116,7 @@ The product records capital calls, distributions, stale marks, share classes and
 
 ## Development and rollout
 
-1. Apply migrations to a disposable project with `supabase start` or run `scripts/verify-migrations.sh`. Enable local Edge Runtime for the disposable project and serve the functions. The hosted Stock Tracker project has the Private Markets migrations and Edge Function. For updates, dry-run the linked migrations and deploy the `private-markets` function by name.
+1. Apply migrations to a disposable project with `supabase start` or run `scripts/verify-migrations.sh`. Enable local Edge Runtime for the disposable project and serve the functions. The hosted Stock Tracker project has the Private Markets migrations and Edge Function. For updates, dry-run the linked migrations and deploy each changed Edge Function by name.
 2. Configure the existing `CREDENTIAL_KEKS` and `CREDENTIAL_ACTIVE_KEK` secrets. Configure at least one supported model key using the existing AI gateway configuration. The private function shares the per-user AI quota. Keep older encryption keys available while retained documents and reports reference them.
 3. Install a build with the Stock Tracker Supabase URL and publishable key. Test authentication, the closed catalogue, a user-created holding, and a research request in staging. The app's test build can use a local Supabase URL.
 4. Before enabling `PRIVATE_MARKETS_DOCUMENT_AI_ENABLED`, review provider retention, cross-border handling, data-room terms and permission notices. Set `PRIVATE_MARKETS_DOCUMENT_AI_PROVIDER` to the approved provider, `openai` or `gemini`. Document runs use that provider exclusively. Keep the feature flag false when approval is absent.
