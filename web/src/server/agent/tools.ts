@@ -19,6 +19,7 @@ import { CHART_RANGES, type ChartRange, type QuoteView } from "@/lib/market-type
 import { toView } from "@/lib/instrument-view";
 import { portfolioInstrument } from "@/lib/portfolio-exposure";
 import { portfolioMovement } from "@/lib/portfolio-movement";
+import { accountPortfolioRisk } from "@/server/portfolio/risk";
 import { ASSET_RISK_RANGES, assetRisk, type AssetRiskRange } from "@/lib/asset-risk";
 import { accountAgentActivity } from "./activity";
 import { clean, type ToolContext, type ToolName, TOOL_NAMES, type ToolOutcome } from "./tools-schema.ts";
@@ -252,6 +253,17 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
     return {
       data: { ...summary, recent: summary.recent.map(({ agentName, summary, status, startedAt, trigger }) => ({ agentName, summary, status, startedAt, trigger })) },
       card: { kind: "agent_activity", title: "Open agent activity timeline", href: "/agents#agent-activity", payload: null },
+    };
+  },
+
+  async get_portfolio_risk(_input, ctx) {
+    if (!ctx.signedIn || !ctx.supabase || !ctx.owner) {
+      return { data: { error: "Enable account sharing to include holdings in a model answer." }, isError: true };
+    }
+    const summary = await accountPortfolioRisk(ctx.supabase, ctx.owner, ctx.signal ?? AbortSignal.timeout(45_000), ctx.now);
+    return {
+      data: { ...summary, method: "Weights use priced open synced holdings in AUD. Cash is excluded. SIC sectors cover classified direct shares. Fund constituents, revenue by country and FX hedges are outside the input. Historical drawdown describes each listing's price series." },
+      sources: summary.top.map(({ symbol, id, source, observedAt, status }) => ({ label: `${symbol} quote`, instrumentId: id, source, observedAt, status })),
     };
   },
 

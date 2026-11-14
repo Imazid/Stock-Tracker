@@ -13,6 +13,8 @@ import { serverSupabase } from "@/lib/supabase/server";
 import { type AgentEvent, type ChatTurn, runTurn } from "@/server/agent/run";
 import { runOpenAITurn } from "@/server/agent/openai";
 import { accountAgentActivity } from "@/server/agent/activity";
+import { accountPortfolioRisk } from "@/server/portfolio/risk";
+import { portfolioRiskQuestion } from "@/lib/portfolio-risk-question";
 import { jsonError, rateLimited } from "@/server/http/respond";
 
 export const runtime = "nodejs";
@@ -40,11 +42,11 @@ export async function POST(request: Request) {
   const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
   const openAIKey = process.env.OPENAI_API_KEY;
   const supabase = await serverSupabase();
-  let signedIn = false;
+  let owner: string | undefined;
   if (supabase) {
     const { data } = await supabase.auth.getUser();
-    signedIn = Boolean(data.user);
-    if (!signedIn) return jsonError(401, "unauthenticated", "Sign in to use the assistant.");
+    owner = data.user?.id;
+    if (!owner) return jsonError(401, "unauthenticated", "Sign in to use the assistant.");
   } else if (supabaseConfigured || process.env.NODE_ENV === "production") {
     return jsonError(503, "feature_disabled", "Accounts aren't configured, so the assistant is off.");
   }
@@ -71,9 +73,11 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid", error instanceof Error ? error.message : "Bad request.");
   }
 
-  const period = company ? undefined : agentActivityQuestion(history[history.length - 1].content.trim());
-  if (period && (!signedIn || !supabase)) return jsonError(401, "unauthenticated", "Sign in to see your agent activity.");
-  if (!period && !anthropicConfigured && !openAIKey) return jsonError(503, "feature_disabled", "The assistant is unavailable on this site.");
+  const question = history[history.length - 1].content.trim();
+  const period = company ? undefined : agentActivityQuestion(question);
+  const riskQuestion = !company && portfolioRiskQuestion(question);
+  if ((period || riskQuestion) && (!owner || !supabase)) return jsonError(401, "unauthenticated", "Sign in to use account data.");
+  if (!period && !riskQuestion && !anthropicConfigured && !openAIKey) return jsonError(503, "feature_disabled", "The assistant is unavailable on this site.");
 
   const encoder = new TextEncoder();
   const abort = new AbortController();
@@ -98,8 +102,16 @@ export async function POST(request: Request) {
           emit({ type: "done", stopReason: "end_turn", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
           return;
         }
+        if (riskQuestion && supabase && owner) {
+          const summary = await accountPortfolioRisk(supabase, owner, abort.signal).catch(() => undefined);
+          if (summary) emit({ type: "portfolio_risk", summary });
+          else emit({ type: "error", code: "unavailable", message: "Your portfolio risk summary could not be loaded. Try again in a moment." });
+          emit({ type: "done", stopReason: "end_turn", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+          return;
+        }
         const context = { supabase: shareAccountContext && !company ? supabase ?? undefined : undefined,
-          signedIn: shareAccountContext && !company && signedIn, company, timeZone, now: Date.now() };
+          signedIn: shareAccountContext && !company && Boolean(owner), owner: shareAccountContext && !company ? owner : undefined,
+          company, timeZone, now: Date.now(), signal: abort.signal };
         if (anthropicConfigured) await runTurn(history, context, emit, abort.signal);
         else if (openAIKey) await runOpenAITurn(openAIKey, history, context, emit, abort.signal);
       } catch (error) {

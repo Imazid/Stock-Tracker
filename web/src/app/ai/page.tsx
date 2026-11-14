@@ -3,12 +3,14 @@ import { AssistantChat } from "@/components/assistant/AssistantChat";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { portfolioQuestion } from "@/lib/portfolio-question";
 import { AGENT_ACTIVITY_QUESTION } from "@/lib/agent-activity-question";
+import { PORTFOLIO_RISK_QUESTION } from "@/lib/portfolio-risk-question";
 
 export const metadata: Metadata = { title: "AI Workspace" };
 
 export default async function AIWorkspacePage({ searchParams }: { searchParams: Promise<{ topic?: string }> }) {
   const { topic } = await searchParams;
-  const initialQuestion = topic === "portfolio-movement" ? portfolioQuestion : topic === "agent-activity" ? AGENT_ACTIVITY_QUESTION : undefined;
+  const initialQuestion = topic === "portfolio-movement" ? portfolioQuestion
+    : topic === "portfolio-risk" ? PORTFOLIO_RISK_QUESTION : topic === "agent-activity" ? AGENT_ACTIVITY_QUESTION : undefined;
   return (
     <div className="flex h-[calc(100dvh-8rem)] min-h-[32rem] flex-col gap-4">
       <PageHeader

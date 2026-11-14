@@ -6,6 +6,16 @@ import test from "node:test";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { asToolResult, canUseTool, clean, scopedHistory, TOOL_NAMES, TOOLS } from "./tools-schema.ts";
 import { agentActivityQuestion } from "../../lib/agent-activity-question.ts";
+import { portfolioRiskQuestion, PORTFOLIO_RISK_QUESTION } from "../../lib/portfolio-risk-question.ts";
+
+test("portfolio risk questions select the account summary without intercepting trade or comparison requests", () => {
+  assert(portfolioRiskQuestion(PORTFOLIO_RISK_QUESTION));
+  assert(portfolioRiskQuestion("Please review my portfolio risk."));
+  assert(portfolioRiskQuestion("How concentrated is my portfolio?"));
+  assert.equal(portfolioRiskQuestion("What are the biggest risks in AAPL?"), false);
+  assert.equal(portfolioRiskQuestion("Compare my portfolio risk with SPY."), false);
+  assert.equal(portfolioRiskQuestion("Review my portfolio risk and buy BTC."), false);
+});
 
 test("direct activity questions match a period without trapping unrelated assistant requests", () => {
   assert.equal(agentActivityQuestion("Show me what my agents have done this week."), "thisWeek");

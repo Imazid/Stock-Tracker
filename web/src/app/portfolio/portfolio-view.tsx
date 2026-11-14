@@ -110,7 +110,7 @@ function AccountPortfolio({ recordTransfer, logosEnabled, aiEnabled, userId, sta
           {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={loadingPrices} aiEnabled={aiEnabled && !selected} />}
           {userId && !selected && holdings.length > 0 && <HoldingEvents key={userId} userId={userId} />}
           {holdings.length > 0 && <ExposureCard key={userId} holdings={holdings} quoteFor={quoteFor}
-            loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} />}
+            loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} showRisk={!selected} />}
           {holdings.length > 0 && <ButtonLink href="/#portfolio">Manage holdings</ButtonLink>}
           {selected && <p className="text-sm text-text-2">For account-wide cash, statement returns and tax records, choose All portfolios.</p>}
           {userId && !selected && <>

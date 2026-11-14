@@ -12,11 +12,14 @@ import { getJSON } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/session";
 import { AGENT_ACTIVITY_QUESTION, agentActivityQuestion } from "@/lib/agent-activity-question";
+import { PORTFOLIO_RISK_QUESTION, portfolioRiskQuestion } from "@/lib/portfolio-risk-question";
+import { PortfolioRiskAnswer } from "./PortfolioRiskAnswer";
 
 export const SUGGESTIONS = [
   "How has BHP done over the last year compared with the ASX 200?",
   "Compare BTC and ETH volatility over the last 3 months.",
   AGENT_ACTIVITY_QUESTION,
+  PORTFOLIO_RISK_QUESTION,
   "What's in my watchlist today, and what moved the most?",
   "Backtest buying BTC when the 20-day average crosses above the 50-day, exiting on the reverse.",
   "Prepare a ticket to buy 5 AAPL with a limit at today's bid.",
@@ -48,7 +51,8 @@ function Turn({ turn }: { turn: AssistantTurn }) {
       ) : null}
       {turn.text ? <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-text">{turn.text}</div> : null}
       {turn.activity && <ActivityAnswer activity={turn.activity} />}
-      {!turn.done && !turn.text && !turn.activity ? <p className="text-[13px] text-text-3">Working…</p> : null}
+      {turn.risk && <PortfolioRiskAnswer risk={turn.risk} />}
+      {!turn.done && !turn.text && !turn.activity && !turn.risk ? <p className="text-[13px] text-text-3">Working…</p> : null}
       {turn.cards.map((card, i) => (
         <Link key={i} href={card.href} className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] hover:border-primary/50">
           <CardIcon kind={card.kind} />
@@ -145,20 +149,22 @@ function Conversation({ compact = false, company, reportRequest = 0, initialQues
   }, [busy, reportPrompt, reportRequest, send, session.status, status.data]);
 
   const submit = (text: string) => {
-    if (!text.trim() || (unavailable && (company || !agentActivityQuestion(text.trim())))) return;
+    if (!text.trim() || (unavailable && !canAnswerInApp(text))) return;
     setDraft("");
     void send(text, shareAccountContext);
   };
 
   const unavailable = status.data && !status.data.assistant;
   const activityDraft = initialQuestion && agentActivityQuestion(initialQuestion);
+  const riskDraft = initialQuestion && portfolioRiskQuestion(initialQuestion);
+  const canAnswerInApp = (text: string) => !company && (agentActivityQuestion(text) || portfolioRiskQuestion(text));
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col", compact ? "" : "rounded-xl border border-border bg-surface")}>
       <div className={cn("min-h-0 flex-1 space-y-4 overflow-y-auto", compact ? "p-4" : "p-5")} aria-live="polite">
         {unavailable ? (
           <Notice tone="warn" title="AI research is unavailable">
-            {company ? "This site needs a configured AI provider to answer research questions." : "You can still ask about your recorded agent activity."}
+            {company ? "This site needs a configured AI provider to answer research questions." : "You can still review portfolio risks and recorded agent activity."}
           </Notice>
         ) : null}
         {turns.length === 0 ? (
@@ -167,6 +173,7 @@ function Conversation({ compact = false, company, reportRequest = 0, initialQues
             <p className="text-[13px] leading-relaxed text-text-2">
               {company ? "Research uses the selected listing, company datasets and source documents available to this app." : activityDraft
                 ? "Send the question to see recorded checks, proposals and practice fills. This summary uses your Stock Tracker account."
+                : riskDraft ? "Review concentration and price history for your current holdings. Stock Tracker calculates this summary without sharing holdings with an AI model."
                 : initialQuestion
                 ? "Enable account sharing to include your synced holdings, then send the question. The response links to the quotes used in the calculation."
                 : <>Answers come from the app&apos;s market data and your own lists, with sources and times. It can draft a strategy, run a backtest or fill in an order ticket for you to review — it never places, approves or sends an order. General information only, not personal advice.</>}
@@ -174,7 +181,7 @@ function Conversation({ compact = false, company, reportRequest = 0, initialQues
             {!initialQuestion && <ul className="space-y-1.5">
               {suggestions.slice(0, compact ? 3 : suggestions.length).map((s, i) => (
                 <li key={s}>
-                  <button type="button" disabled={busy || (unavailable && !agentActivityQuestion(s))} onClick={() => submit(s)} className="w-full rounded-lg border border-border px-3 py-2 text-left text-[13px] text-text-2 hover:border-primary/50 hover:text-text disabled:opacity-50">{company && i === 0 ? "Generate AI research report" : s}</button>
+                  <button type="button" disabled={busy || (unavailable && !canAnswerInApp(s))} onClick={() => submit(s)} className="w-full rounded-lg border border-border px-3 py-2 text-left text-[13px] text-text-2 hover:border-primary/50 hover:text-text disabled:opacity-50">{company && i === 0 ? "Generate AI research report" : s}</button>
                 </li>
               ))}
             </ul>}
@@ -213,13 +220,13 @@ function Conversation({ compact = false, company, reportRequest = 0, initialQues
             rows={compact ? 2 : 3}
             maxLength={8000}
             disabled={!!company && unavailable}
-            placeholder={unavailable && !company ? "Ask about agent activity…" : "Ask a question…"}
+            placeholder={unavailable && !company ? "Ask about portfolio risks or agent activity…" : "Ask a question…"}
             className="min-h-0 flex-1 resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text placeholder:text-text-3 focus:border-primary focus:outline-none disabled:opacity-50"
           />
           {busy ? (
             <Button type="button" variant="secondary" size="sm" onClick={stop} aria-label="Stop"><Square className="h-4 w-4" /></Button>
           ) : (
-            <Button type="submit" variant="primary" size="sm" disabled={!draft.trim() || (unavailable && !agentActivityQuestion(draft.trim()))} aria-label="Send"><ArrowUp className="h-4 w-4" /></Button>
+            <Button type="submit" variant="primary" size="sm" disabled={!draft.trim() || (unavailable && !canAnswerInApp(draft))} aria-label="Send"><ArrowUp className="h-4 w-4" /></Button>
           )}
         </div>
         {turns.length > 0 ? (
