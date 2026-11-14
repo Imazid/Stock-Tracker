@@ -11,8 +11,8 @@ export type Holding = { id: string; asset_symbol: string; asset_name: string; as
 export type Watch = { id: string; symbol: string; name: string; kind: string; exchange: string | null };
 export type Alert = { id: string; symbol: string; target_price: number; condition: "Above" | "Below"; is_active: boolean; repeats: boolean };
 export type Transaction = { id: string; holding_id: string; transaction_date: string; shares: number; price_per_share: number; type: string };
-export type Journal = { holdings: Holding[]; watch: Watch[]; alerts: Alert[]; snapshots: Point[]; transactions: Transaction[] };
-export const emptyJournal: Journal = { holdings: [], watch: [], alerts: [], snapshots: [], transactions: [] };
+export type Journal = { holdings: Holding[]; watch: Watch[]; alerts: Alert[]; transactions: Transaction[] };
+export const emptyJournal: Journal = { holdings: [], watch: [], alerts: [], transactions: [] };
 
 export const venues: Record<Venue, { title: string; currency: string; suffix?: string }> = {
   us: { title: "US", currency: "USD" }, crypto: { title: "Crypto", currency: "USD" },

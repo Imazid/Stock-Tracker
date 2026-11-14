@@ -24,6 +24,8 @@ import { IncomeLedger } from "./income-ledger";
 import { PerformanceLedger } from "./performance-ledger";
 import { useSession } from "@/lib/session";
 import { browserSupabase } from "@/lib/supabase/client";
+import { PortfolioHistory } from "@/workspace/components/portfolio-history";
+import "@/workspace/styles.css";
 
 interface HoldingRow {
   id: string;
@@ -36,21 +38,12 @@ interface HoldingRow {
   avg_cost: number;
 }
 
-interface Snapshot {
-  snapshot_date: string;
-  total_value: number;
-}
-
 async function readPortfolio(userId: string) {
   const db = browserSupabase();
   if (!db) throw new Error("Accounts are unavailable.");
-  const [holdings, snapshots] = await Promise.all([
-    db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account")
-      .eq("user_id", userId).is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(201),
-    db.from("portfolio_snapshots").select("snapshot_date,total_value").eq("user_id", userId)
-      .order("snapshot_date", { ascending: false }).limit(30),
-  ]);
-  if (holdings.error || snapshots.error) throw new Error("Couldn’t load your synced portfolio.");
+  const holdings = await db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account")
+    .eq("user_id", userId).is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(201);
+  if (holdings.error) throw new Error("Couldn’t load your synced portfolio.");
   return {
     holdings: (holdings.data as HoldingRow[]).slice(0, 200).map((row) => {
       const listing = portfolioInstrument({
@@ -59,7 +52,6 @@ async function readPortfolio(userId: string) {
       return { ...row, instrument: listing ? toView(listing) : null };
     }),
     truncated: holdings.data.length > 200,
-    snapshots: snapshots.data as Snapshot[],
   };
 }
 
@@ -85,7 +77,6 @@ export function PortfolioView() {
     })),
   });
   const quotes = new Map(ids.map((id, index) => [id, prices[index]]));
-  const snapshots = portfolio.data?.snapshots ?? [];
   const movement = portfolioMovement(pricedListings, (id) => quotes.get(id)?.data?.quote);
 
   return (
@@ -104,6 +95,7 @@ export function PortfolioView() {
           actions={<Button onClick={() => void portfolio.refetch()}>Retry</Button>} /></Card>
       ) : (
         <>
+          {userId && <div className="workspace portfolio-history-embed"><PortfolioHistory key={userId} userId={userId} /></div>}
           {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={prices.some((price) => price.isPending)} />}
           {holdings.length > 0 && <ExposureCard key={userId} holdings={holdings} quoteFor={(id) => quotes.get(id)?.data}
             loading={prices.some((price) => price.isPending)} truncated={portfolio.data?.truncated ?? false} />}
@@ -157,19 +149,6 @@ export function PortfolioView() {
                 })}
               </ul>
             ) : <EmptyState title="Your portfolio has no open holdings" body="Add or sync holdings in the iPhone app using this account." />}
-          </Card>
-          <Card>
-            <CardHeader title="Saved portfolio values" subtitle="The 30 most recent daily valuations recorded by the iPhone app, in USD." />
-            {snapshots.length ? (
-              <ul className="divide-y divide-border border-t border-border">
-                {snapshots.map((snapshot) => (
-                  <li key={snapshot.snapshot_date} className="flex items-center justify-between gap-4 px-4 py-2.5 text-sm">
-                    <time dateTime={snapshot.snapshot_date}>{snapshot.snapshot_date}</time>
-                    <span className="tabular">{money(snapshot.total_value, "USD")}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : <EmptyState title="No saved valuations yet" />}
           </Card>
         </>
       )}
