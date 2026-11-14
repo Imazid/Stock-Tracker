@@ -23,7 +23,7 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 // One web subscription per account, independent of any iPhone installation.
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
-  "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
+  "web_monitor_preferences", "save_web_monitor", "monitor_settings", "monitor_inbox", "monitor_digests", "allocation",
   "profile", "save_profile", "issue_provider_link", "disconnect_provider", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
   "handoff_review", "handoff_resume_check", "handoff_resume",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
@@ -361,6 +361,11 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
   if (!Array.isArray(data)) throw new Error("Invalid scheduled research response");
   const jobs = data as DigestJob[];
   const results = await Promise.allSettled(jobs.map(async (job) => {
+    const currentScope = await admin.rpc("private_market_digest_is_current", {
+      p_job: job.job_id, p_lease: job.lease, p_sources: job.sources,
+    });
+    if (currentScope.error) throw currentScope.error;
+    if (currentScope.data !== true) return false;
     const includesRevision = job.sources.some((source) => source.is_revision === true);
     const question = includesRevision
       ? "Summarise the current published disclosures. Distinguish updated sources from newly included announcements and identify what still needs verification. Describe a specific change only if the source says what changed."
@@ -616,16 +621,22 @@ Deno.serve(async (req) => {
         return jsonResponse(200, { registered: data === true });
       }
       case "monitor_settings": {
-        const { device_id: device, company_ids: companies, enabled, eligible_opportunities: eligible, digest } = body;
+        const { device_id: device, company_ids: companies, enabled, eligible_opportunities: eligible, digest, provider_links: links } = body;
         if (typeof device !== "string" || !uuid.test(device) || device.toLowerCase() === webMonitorDevice || typeof enabled !== "boolean" || typeof eligible !== "boolean" ||
           (digest !== undefined && typeof digest !== "boolean") ||
           !Array.isArray(companies) || companies.length > 250 || companies.some((id) => typeof id !== "string" || !uuid.test(id))) {
           return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Send a device identifier and up to 250 company identifiers.");
         }
-        const { error } = await admin.rpc("configure_private_monitor", {
-          p_user: userId, p_device: device, p_companies: companies, p_enabled: enabled, p_eligible: eligible,
-          ...(digest === undefined ? {} : { p_digest: digest }),
-        });
+        if (links !== undefined && (!Array.isArray(links) || links.length > 250 || links.some((link) => {
+          if (!link || typeof link !== "object" || Array.isArray(link)) return true;
+          const { holding_id: holding, company_id: company, ...other } = link;
+          return Object.keys(other).length > 0 || typeof holding !== "string" || !uuid.test(holding) ||
+            (company !== undefined && (typeof company !== "string" || !uuid.test(company)));
+        }))) return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Choose valid provider links for monitoring.");
+        const settings = { p_user: userId, p_device: device, p_companies: companies, p_enabled: enabled, p_eligible: eligible };
+        const { error } = links === undefined
+          ? await admin.rpc("configure_private_monitor", { ...settings, ...(digest === undefined ? {} : { p_digest: digest }) })
+          : await admin.rpc("configure_private_monitor_ownership", { ...settings, p_digest: digest ?? null, p_links: links });
         if (error?.code === "22023") return errorResponse(422, "MONITOR_SETTINGS_UNAVAILABLE", error.message);
         if (error) throw error;
         return jsonResponse(200, {});

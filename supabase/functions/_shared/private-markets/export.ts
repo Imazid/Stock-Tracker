@@ -22,7 +22,7 @@ const exportSections = {
     "id,holding_id,amount::text,received_on,source,provider_reference,provider_event_at,reversed_at,reversal_source", "id"],
   sales: ["private_holding_dispositions",
     "id,holding_id,provider_reference,provider_event_at,sold_units::text,net_proceeds::text,disposed_cost::text,settled_on,source,reversed", "id"],
-  monitor_preferences: ["private_monitor_devices", "company_ids,eligible_opportunities,digest_enabled,refreshed_at", "device_id"],
+  monitor_preferences: ["private_monitor_devices", "company_ids,provider_links,eligible_opportunities,digest_enabled,refreshed_at", "device_id"],
   monitoring_alerts: ["private_market_alerts", "id,subject_id,kind,company_name,title,significance,source_url,source_label,occurred_at,revised_at", "id"],
   research_history: ["agent_analysis_runs", "id,report_id,status,created_at,failure_code,failure_message", "id"],
   excerpts: ["deal_documents", "id,title,created_at,sealed", "id"],

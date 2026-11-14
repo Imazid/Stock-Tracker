@@ -719,13 +719,13 @@ final class PrivateMarketsStore: ObservableObject {
     }
 
     private func applyAccountHoldings(_ response: PrivateMarketsAPI.AccountHoldings) {
-        let previousCompanies = monitoredCompanies(in: state)
+        let previousScope = monitoringScope(in: state)
         accountHoldingsRevision = response.revision
         accountHoldings = response.holdings
         accountHoldingsError = nil
         hasLoadedAccountHoldings = true
         syncCapitalReminders()
-        if state.monitorEnabled == true, let scope, previousCompanies != monitoredCompanies(in: state) {
+        if state.monitorEnabled == true, let scope, previousScope != monitoringScope(in: state) {
             queueMonitorSettings(for: scope)
         }
     }
@@ -856,7 +856,7 @@ final class PrivateMarketsStore: ObservableObject {
         try edit(&next)
         let data = try JSONEncoder().encode(next)
         try data.write(to: Self.file(for: scope), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        let monitorScopeChanged = monitoredCompanies(in: next) != monitoredCompanies(in: state)
+        let monitorScopeChanged = monitoringScope(in: next) != monitoringScope(in: state)
         state = next
         syncCapitalReminders()
         if monitorScopeChanged, state.monitorEnabled == true, let scope { queueMonitorSettings(for: scope) }
@@ -983,16 +983,13 @@ final class PrivateMarketsStore: ObservableObject {
             throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [NSLocalizedDescriptionKey: storageError])
         }
         let followed = state.follows.map(\.id)
+        let owned = activeManualHoldings.compactMap(\.catalogueCompanyID) +
+            providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId) + accountCompanyIDs
         let companyIDs: [UUID]
         switch companyScope {
-        case .tracked:
-            companyIDs = followed + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId) +
-                accountCompanyIDs
-        case .owned:
-            companyIDs = activeManualHoldings.compactMap(\.catalogueCompanyID) +
-                providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId) + accountCompanyIDs
-        case .followed:
-            companyIDs = followed
+        case .tracked: companyIDs = followed + owned
+        case .owned: companyIDs = owned
+        case .followed: companyIDs = followed
         }
         let ids = Set(companyIDs).map(\.uuidString).sorted()
         var updates: [PrivateCompanyUpdate] = []
@@ -1154,12 +1151,14 @@ final class PrivateMarketsStore: ObservableObject {
         let revision = UUID()
         monitorSettingsRevision = revision
         monitorLastSync = nil
+        let monitoring = monitoringScope(in: state)
         let fields: [String: Any] = [
             "enabled": enabled,
             "device_id": Self.monitorDeviceID.uuidString,
             "eligible_opportunities": state.monitorEligible == true,
             "digest": state.monitorDigest == true,
-            "company_ids": enabled ? monitoredCompanies(in: state).map(\.uuidString) : [],
+            "company_ids": enabled ? monitoring.companies.map(\.uuidString) : [],
+            "provider_links": enabled ? monitoring.providerLinks.map(\.fields) : [],
         ]
         let environment = Self.pushEnvironment
         let token = state.notify ? pushToken : nil
@@ -1196,10 +1195,39 @@ final class PrivateMarketsStore: ObservableObject {
         return task
     }
 
-    private func monitoredCompanies(in records: State) -> [UUID] {
-        var seen = Set<UUID>()
-        return Array((records.follows.map(\.id) + records.holdings.compactMap(\.catalogueCompanyID) + accountCompanyIDs)
-            .filter { seen.insert($0).inserted }.prefix(250))
+    private struct MonitoringScope: Equatable {
+        struct ProviderLink: Equatable {
+            let holdingID: UUID
+            let companyID: UUID?
+
+            var fields: [String: String] {
+                var values = ["holding_id": holdingID.uuidString]
+                values["company_id"] = companyID?.uuidString
+                return values
+            }
+        }
+
+        let companies: [UUID]
+        let providerLinks: [ProviderLink]
+    }
+
+    private func monitoringScope(in records: State) -> MonitoringScope {
+        let manual = records.holdings.filter { $0.matchingProviderHoldingID == nil && $0.closedOn() == nil }
+            .compactMap(\.catalogueCompanyID)
+        let account = independentAccountHoldings.filter { $0.exitedOn == nil }.compactMap { $0.company?.id }
+        var knownCompanies = Set<UUID>()
+        let companies = (records.follows.map(\.id) + manual + account).filter { knownCompanies.insert($0).inserted }
+        let accountLinks: [MonitoringScope.ProviderLink] = accountHoldings.compactMap { holding in
+            guard let match = holding.providerMatch else { return nil }
+            return .init(holdingID: match.id, companyID: holding.company?.id ?? match.companyId)
+        }
+        let deviceLinks: [MonitoringScope.ProviderLink] = records.holdings.compactMap { holding in
+            guard let match = holding.matchingProviderHoldingID else { return nil }
+            return .init(holdingID: match, companyID: holding.catalogueCompanyID)
+        }
+        var knownHoldings = Set<UUID>()
+        let links = (accountLinks + deviceLinks).filter { knownHoldings.insert($0.holdingID).inserted }
+        return MonitoringScope(companies: Array(companies.prefix(250)), providerLinks: Array(links.prefix(250)))
     }
 
     private static var monitorDeviceID: UUID {

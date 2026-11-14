@@ -607,7 +607,7 @@ struct PrivateUpdatesView: View {
                     Text("Sends published announcements and financial disclosures for tracked companies to the AI provider. Summaries use your daily research quota.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Text("Online monitoring shares the catalogue company IDs you track with your Stock Tracker account.")
+                Text("Online monitoring saves your tracked companies and links to provider holdings in your Stock Tracker account.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Toggle("Notify me about Private Markets updates", isOn: Binding(
                     get: { store.state.notify }, set: setNotifications))
