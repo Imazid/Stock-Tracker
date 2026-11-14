@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dilutedOwnership, exitProceeds, pricedRoundOwnership, scenarioAmount, type Preference } from "./private-scenarios.ts";
+import { dilutedOwnership, exitProceeds, pricedRoundOwnership, scenarioAmount, scenarioReturns, type Preference } from "./private-scenarios.ts";
 
 test("scenario inputs accept decimal values and correctly grouped thousands", () => {
   assert.equal(scenarioAmount(" 5,000.25 "), 5000.25);
@@ -18,6 +18,19 @@ test("priced round and dilution use the stated post-money values", () => {
   assert.equal(dilutedOwnership(0.25, 1_000_000, 1_000_000), null);
   assert.equal(pricedRoundOwnership(1, 0), null);
   assert.equal(pricedRoundOwnership(1000, 999), null);
+});
+
+test("scenario returns use invested capital and each exit's holding period", () => {
+  assert.deepEqual(scenarioReturns(5_000, 20_000, null), { multiple: 4, annualised: null });
+  assert.deepEqual(scenarioReturns(5_000, 20_000, 2), { multiple: 4, annualised: 1 });
+  assert.ok(Math.abs(scenarioReturns(5_000, 10_000, 0.5).annualised - 3) < 1e-12);
+  assert.deepEqual(scenarioReturns(5_000, 0, 5), { multiple: 0, annualised: -1 });
+  assert.deepEqual(scenarioReturns(5_000, 1_250, 2), { multiple: 0.25, annualised: -0.5 });
+  assert.deepEqual(scenarioReturns(5_000, 5_000, 3), { multiple: 1, annualised: 0 });
+  assert.deepEqual(scenarioReturns(5_000, 10_000, 0), { multiple: 2, annualised: null });
+  assert.deepEqual(scenarioReturns(5_000, 10_000, Number.MIN_VALUE), { multiple: 2, annualised: null });
+  assert.equal(scenarioReturns(0, 10_000, 2), null);
+  assert.equal(scenarioReturns(5_000, -500, 2), null);
 });
 
 test("the preference waterfall covers shortfall, conversion, and uncapped participation", () => {

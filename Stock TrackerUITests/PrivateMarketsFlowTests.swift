@@ -519,13 +519,22 @@ final class PrivateMarketsFlowTests: XCTestCase {
         enter("Preferred ownership at exit (%)", "20")
         enter("Total liquidation preference", "1000")
         enter("Bear exit value", "500")
+        enter("Bear holding period (years, optional)", "3")
         let bear = app.staticTexts["private.scenario.bear.proceeds"]
         XCTAssertTrue(bear.waitForExistence(timeout: 5))
         XCTAssertTrue(bear.label.contains("0.00×"))
+        let bearRate = app.staticTexts["private.scenario.bear.annualised"]
+        XCTAssertTrue(bearRate.waitForExistence(timeout: 5))
+        XCTAssertTrue(bearRate.label.contains("100.00%"))
+        XCTAssertTrue(bearRate.label.contains("-") || bearRate.label.contains("−"))
         enter("Bull exit value", "10000")
+        enter("Bull holding period (years, optional)", "2")
         let bull = app.staticTexts["private.scenario.bull.proceeds"]
         XCTAssertTrue(bull.waitForExistence(timeout: 5))
         XCTAssertTrue(bull.label.contains("10.00×"))
+        let bullRate = app.staticTexts["private.scenario.bull.annualised"]
+        XCTAssertTrue(bullRate.waitForExistence(timeout: 5))
+        XCTAssertTrue(bullRate.label.contains("216.2278%"))
     }
 
     @MainActor

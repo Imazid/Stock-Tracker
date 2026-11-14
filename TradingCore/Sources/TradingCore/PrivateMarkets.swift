@@ -323,6 +323,18 @@ public enum PrivateMath {
         return existingShare * (1 - newCapital / postMoney)
     }
 
+    /// One upfront investment and one exit payment in the same currency.
+    public static func scenarioReturns(invested: Decimal, proceeds: Decimal, years: Decimal?) -> (multiple: Decimal, annualised: Double?)? {
+        guard !invested.isNaN, !proceeds.isNaN, invested > 0, proceeds >= 0 else { return nil }
+        let multiple = proceeds / invested
+        guard !multiple.isNaN else { return nil }
+        guard let years, !years.isNaN, years > 0 else { return (multiple, nil) }
+        let time = NSDecimalNumber(decimal: years).doubleValue
+        guard time.isFinite, time > 0 else { return (multiple, nil) }
+        let rate = expm1(log(NSDecimalNumber(decimal: multiple).doubleValue) / time)
+        return (multiple, rate.isFinite ? rate : nil)
+    }
+
     /// Reports a unique, bracketed annual rate for conventional dated cash flows.
     /// A later contribution after net positive proceeds can create multiple roots.
     public static func xirr(_ cashFlows: [(Date, Decimal)]) -> Double? {

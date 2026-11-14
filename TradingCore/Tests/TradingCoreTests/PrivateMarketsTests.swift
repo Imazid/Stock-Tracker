@@ -120,6 +120,24 @@ final class PrivateMarketsTests: XCTestCase {
         }
     }
 
+    func testScenarioReturnsUseInvestedCapitalAndTheHoldingPeriod() throws {
+        let multipleOnly = try XCTUnwrap(PrivateMath.scenarioReturns(invested: 5_000, proceeds: 20_000, years: nil))
+        XCTAssertEqual(multipleOnly.multiple, 4)
+        XCTAssertNil(multipleOnly.annualised)
+        let doubled = try XCTUnwrap(PrivateMath.scenarioReturns(invested: 5_000, proceeds: 20_000, years: 2))
+        XCTAssertEqual(try XCTUnwrap(doubled.annualised), 1, accuracy: 1e-12)
+        let fractional = try XCTUnwrap(PrivateMath.scenarioReturns(invested: 5_000, proceeds: 10_000, years: 0.5))
+        XCTAssertEqual(try XCTUnwrap(fractional.annualised), 3, accuracy: 1e-12)
+        let completeLoss = try XCTUnwrap(PrivateMath.scenarioReturns(invested: 5_000, proceeds: 0, years: 5))
+        XCTAssertEqual(completeLoss.multiple, 0)
+        XCTAssertEqual(completeLoss.annualised, -1)
+        let partialLoss = try XCTUnwrap(PrivateMath.scenarioReturns(invested: 5_000, proceeds: 1_250, years: 2))
+        XCTAssertEqual(try XCTUnwrap(partialLoss.annualised), -0.5, accuracy: 1e-12)
+        XCTAssertNil(PrivateMath.scenarioReturns(invested: 5_000, proceeds: 10_000, years: 0)?.annualised)
+        XCTAssertNil(PrivateMath.scenarioReturns(invested: 0, proceeds: 10_000, years: 2))
+        XCTAssertNil(PrivateMath.scenarioReturns(invested: 5_000, proceeds: -500, years: 2))
+    }
+
     func testSaleSeparatesRealizedAndUnrealizedGainWhenBasisIsKnown() {
         let first = Date(timeIntervalSince1970: 0)
         let mark = first.addingTimeInterval(86_400)

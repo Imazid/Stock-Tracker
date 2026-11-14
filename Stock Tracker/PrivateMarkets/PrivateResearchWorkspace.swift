@@ -584,15 +584,20 @@ private struct PrivateResearchRefreshView: View {
 }
 
 struct PrivateScenarioCalculator: View {
+    private struct ExitScenario: Identifiable {
+        let id: String
+        var value = ""
+        var years = ""
+    }
+
     @State private var useExistingStake: Bool
     @State private var existingStake: String
+    @State private var stakeCost = ""
     @State private var investment: String
     @State private var postMoney: String
     @State private var nextRaise: String
     @State private var nextPost: String
-    @State private var bear = ""
-    @State private var base = ""
-    @State private var bull = ""
+    @State private var exits = [ExitScenario(id: "Bear"), ExitScenario(id: "Base"), ExitScenario(id: "Bull")]
     @State private var modelPreference = false
     @State private var shareClass: PrivateMath.ExitShareClass = .common
     @State private var preferredOwnership = ""
@@ -633,6 +638,10 @@ struct PrivateScenarioCalculator: View {
         return PrivateMath.dilutedOwnership(startingOwnership, newCapital: raise, postMoney: next)
     }
 
+    private var investedCapital: Decimal? {
+        PrivateInput.amount(useExistingStake ? stakeCost : investment)
+    }
+
     var body: some View {
         Form {
             if let round {
@@ -649,6 +658,10 @@ struct PrivateScenarioCalculator: View {
                 Toggle("Start with an ownership percentage", isOn: $useExistingStake)
                 if useExistingStake {
                     input("Existing ownership (%)", $existingStake)
+                    input("Invested capital (optional)", $stakeCost)
+                    if !stakeCost.isEmpty && (investedCapital ?? 0) <= 0 {
+                        Text("Enter a positive amount.").font(.footnote).foregroundStyle(.secondary)
+                    }
                 } else {
                     input("Investment amount", $investment)
                     input("Post-money valuation", $postMoney)
@@ -682,9 +695,11 @@ struct PrivateScenarioCalculator: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Assumed exit equity values") {
-                scenario("Bear", $bear)
-                scenario("Base", $base)
-                scenario("Bull", $bull)
+                ForEach($exits) { $exit in
+                    scenario(exit.id, value: $exit.value, years: $exit.years)
+                }
+                Text("Measure each holding period from the initial investment to the assumed exit. Annualised returns use one upfront investment and one exit payment before fees and taxes.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Scenario Calculator")
@@ -701,15 +716,26 @@ struct PrivateScenarioCalculator: View {
         TextField(title, text: value).keyboardType(.decimalPad).focused($focusedInput, equals: title)
     }
 
-    private func scenario(_ title: String, _ value: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func scenario(_ title: String, value: Binding<String>, years: Binding<String>) -> some View {
+        let duration = PrivateInput.amount(years.wrappedValue)
+        return VStack(alignment: .leading, spacing: 5) {
             input(title + " exit value", value)
+            input(title + " holding period (years, optional)", years)
+            if !years.wrappedValue.isEmpty && (duration ?? 0) <= 0 {
+                Text("Enter a positive duration in years.").font(.footnote).foregroundStyle(.secondary)
+            }
             if let share = finalOwnership, let exit = PrivateInput.amount(value.wrappedValue), let proceeds = proceeds(share: share, exit: exit) {
-                let multiple = !useExistingStake ? PrivateInput.amount(investment).flatMap { $0 > 0 ? proceeds / $0 : nil } : nil
+                let returns = investedCapital.flatMap { PrivateMath.scenarioReturns(invested: $0, proceeds: proceeds, years: duration) }
                 let amount = proceeds.formatted(.number.precision(.fractionLength(2)))
-                Text(multiple.map { "Proceeds \(amount) · \($0.formatted(.number.precision(.fractionLength(2))))×" } ?? "Proceeds \(amount)")
+                Text(returns.map { "Proceeds \(amount) · \($0.multiple.formatted(.number.precision(.fractionLength(2))))×" } ?? "Proceeds \(amount)")
                     .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
                     .accessibilityIdentifier("private.scenario.\(title.lowercased()).proceeds")
+                if let duration, duration > 0 {
+                    let rate = returns?.annualised?.formatted(.percent.precision(.fractionLength(2...4))) ?? "Unavailable"
+                    Text("Annualised return " + rate)
+                        .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("private.scenario.\(title.lowercased()).annualised")
+                }
             } else if !value.wrappedValue.isEmpty && modelPreference {
                 Text("Check ownership and payout terms.").font(.footnote).foregroundStyle(.secondary)
             }

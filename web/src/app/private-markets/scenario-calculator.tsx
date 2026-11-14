@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { Segmented } from "@/components/ui/Segmented";
-import { dilutedOwnership, exitProceeds, pricedRoundOwnership, scenarioAmount, type ShareClass } from "@/lib/private-scenarios";
+import { dilutedOwnership, exitProceeds, pricedRoundOwnership, scenarioAmount, scenarioReturns, type ShareClass } from "@/lib/private-scenarios";
 import { SourceLink } from "./catalog";
 import { amount, type PrivateDeal } from "./private-data";
 
@@ -38,6 +38,7 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
   const [invested, setInvested] = useState("");
   const [postMoney, setPostMoney] = useState(publishedPostMoney?.toString() ?? "");
   const [stake, setStake] = useState("");
+  const [stakeCost, setStakeCost] = useState("");
   const [newCapital, setNewCapital] = useState("");
   const [nextPostMoney, setNextPostMoney] = useState("");
   const [modelPreference, setModelPreference] = useState(false);
@@ -45,7 +46,9 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
   const [preferredPercent, setPreferredPercent] = useState("");
   const [liquidationPreference, setLiquidationPreference] = useState("");
   const [participating, setParticipating] = useState(false);
-  const [exits, setExits] = useState({ Bear: "", Base: "", Bull: "" });
+  const [exits, setExits] = useState({
+    Bear: { value: "", years: "" }, Base: { value: "", years: "" }, Bull: { value: "", years: "" },
+  });
 
   useEffect(() => {
     const element = dialog.current;
@@ -53,6 +56,8 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
   }, []);
 
   const investment = scenarioAmount(invested);
+  const recordedCost = scenarioAmount(stakeCost);
+  const basis = mode === "investment" ? investment : recordedCost;
   const valuation = scenarioAmount(postMoney);
   const currentStake = scenarioAmount(stake);
   const before = mode === "stake"
@@ -69,11 +74,12 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
   const preference = modelPreference && preferredShare !== null && totalPreference !== null
     ? { shareClass, preferredShare: preferredShare / 100, totalPreference, participating } : undefined;
   const scenarios = outcomes.map((label) => {
-    const value = scenarioAmount(exits[label]);
+    const value = scenarioAmount(exits[label].value);
+    const years = scenarioAmount(exits[label].years);
     const proceeds = value !== null && after !== null && (!modelPreference || preference)
       ? exitProceeds(value, after, preference) : null;
-    const multiple = mode === "investment" && proceeds !== null && investment ? proceeds / investment : null;
-    return { label, value, proceeds, multiple };
+    const returns = proceeds !== null && basis !== null ? scenarioReturns(basis, proceeds, years) : null;
+    return { label, value, years, proceeds, returns };
   });
   const highest = Math.max(0, ...scenarios.map(({ proceeds }) => proceeds ?? 0));
 
@@ -103,8 +109,12 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
         <Segmented label="Starting position" value={mode} onChange={setMode}
           options={[{ value: "investment", label: "New investment" }, { value: "stake", label: "Existing stake" }]} />
         <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-          {mode === "stake" ? <DecimalField label="Existing ownership (%)" value={stake} onChange={setStake}
-            error={stake.trim() && before === null ? "Enter a percentage from 0 to 100." : undefined} /> : <>
+          {mode === "stake" ? <>
+            <DecimalField label="Existing ownership (%)" value={stake} onChange={setStake}
+              error={stake.trim() && before === null ? "Enter a percentage from 0 to 100." : undefined} />
+            <DecimalField label={`Invested capital (${currency}, optional)`} value={stakeCost} onChange={setStakeCost}
+              error={stakeCost.trim() && (recordedCost === null || recordedCost === 0) ? "Enter a positive amount." : undefined} />
+          </> : <>
             <DecimalField label={`Investment amount (${currency})`} value={invested} onChange={setInvested}
               error={invested.trim() && (investment === null || investment === 0) ? "Enter a positive amount." : undefined} />
             <DecimalField label={`Post-money valuation (${currency})`} value={postMoney} onChange={setPostMoney}
@@ -158,19 +168,28 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
       </section>
       <section className="space-y-3 border-t border-border pt-4">
         <h3 className="text-sm font-semibold">Assumed exit values</h3>
+        <p className="text-xs text-text-3">Measure each holding period from the initial investment to the assumed exit. Annualised returns use one upfront investment and one exit payment before fees and taxes.</p>
         <div className="grid gap-3 sm:grid-cols-3">
-          {scenarios.map(({ label, value, proceeds, multiple }) => <div key={label} className="min-w-0 space-y-2 rounded-lg border border-border bg-surface-2 p-3">
-            <DecimalField label={`${label} exit value (${currency})`} value={exits[label]}
-              onChange={(value) => setExits((current) => ({ ...current, [label]: value }))}
-              error={exits[label].trim() && value === null ? "Enter a nonnegative exit value." : undefined} />
+          {scenarios.map(({ label, value, years, proceeds, returns }) => <div key={label} className="min-w-0 space-y-2 rounded-lg border border-border bg-surface-2 p-3">
+            <DecimalField label={`${label} exit value (${currency})`} value={exits[label].value}
+              onChange={(value) => setExits((current) => ({ ...current, [label]: { ...current[label], value } }))}
+              error={exits[label].value.trim() && value === null ? "Enter a nonnegative exit value." : undefined} />
+            <DecimalField label={`${label} holding period (years, optional)`} value={exits[label].years}
+              onChange={(years) => setExits((current) => ({ ...current, [label]: { ...current[label], years } }))}
+              error={exits[label].years.trim() && (years === null || years === 0) ? "Enter a positive duration in years." : undefined} />
             {proceeds !== null ? <>
               <div aria-hidden className="h-1.5 overflow-hidden rounded-full bg-surface-3">
                 <div className="h-full rounded-full bg-primary" style={{ width: `${highest > 0 ? proceeds / highest * 100 : 0}%` }} />
               </div>
               <output aria-label={`${label} proceeds`} className="block break-words text-sm font-semibold tabular-nums">
                 {money(proceeds)}
-                {multiple !== null && Number.isFinite(multiple) && <span className="ml-1 text-xs text-text-3">{decimal.format(multiple)}×</span>}
+                {returns && <span className="ml-1 text-xs text-text-3">{decimal.format(returns.multiple)}×</span>}
               </output>
+              {years !== null && years > 0 && <p className="break-words text-xs text-text-2">
+                Annualised return <output aria-label={`${label} annualised return`} className="font-semibold tabular-nums text-text">
+                  {formattedPercent(returns?.annualised ?? null)}
+                </output>
+              </p>}
             </> : value !== null &&
               <p className="text-xs text-text-2">Check the ownership and payout terms to calculate proceeds.</p>}
           </div>)}

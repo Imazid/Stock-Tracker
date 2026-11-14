@@ -46,3 +46,13 @@ export function exitProceeds(equityValue: number, ownership: number, preference?
   const classPayout = shareClass === "preferred" ? preferredPayout : equityValue - preferredPayout;
   return Math.min(1, ownership / classShare) * classPayout;
 }
+
+export function scenarioReturns(invested: number, proceeds: number, years: number | null) {
+  if (!validAmount(invested) || !validAmount(proceeds) || invested <= 0) return null;
+  const multiple = proceeds / invested;
+  if (!Number.isFinite(multiple)) return null;
+  const annualised = years !== null && Number.isFinite(years) && years > 0
+    ? Math.expm1(Math.log(multiple) / years)
+    : null;
+  return { multiple, annualised: annualised !== null && Number.isFinite(annualised) ? annualised : null };
+}
