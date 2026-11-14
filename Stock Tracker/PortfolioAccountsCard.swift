@@ -19,7 +19,7 @@ struct PortfolioAccountsCard: View {
     let onManageBrokers: () -> Void
 
     private var manual: [PortfolioHolding] { marketData.portfolio.filter { !broker.isImported($0) } }
-    private var imported: [PortfolioHolding] { marketData.portfolio.filter { broker.isImported($0) } }
+    private var imported: [PortfolioHolding] { marketData.portfolio.filter { $0.shares > 0 && broker.isImported($0) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {

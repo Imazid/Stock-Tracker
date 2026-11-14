@@ -108,7 +108,7 @@ struct PortfolioView: View {
     }
 
     private var visibleHoldings: [PortfolioHolding] {
-        let base = marketData.portfolio.filter { filter == nil || $0.asset.kind == filter }
+        let base = marketData.portfolio.filter { $0.shares > 0 && (filter == nil || $0.asset.kind == filter) }
         switch sort {
         case .value: return base.sorted { $0.currentValue > $1.currentValue }
         case .today: return base.sorted { $0.asset.changePercent > $1.asset.changePercent }

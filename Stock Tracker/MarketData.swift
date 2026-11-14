@@ -253,7 +253,6 @@ final class MarketData: ObservableObject {
 
         mergeTrackedAssetsIntoCanonicalCollections()
 
-        deduplicatePortfolio()
         migrateASXValuesToUSDIfNeeded()
 
         // No seeded history and no placeholder headlines: charts are rebuilt from
@@ -424,7 +423,6 @@ final class MarketData: ObservableObject {
             watchlist = watchlistGroups[activeWatchlistIndex].assets
         }
 
-        deduplicatePortfolio()
         mergeTrackedAssetsIntoCanonicalCollections()
         updateWidgetData()
         AppLogger.persist.info("Reloaded local data from disk after sign-out")
@@ -902,80 +900,6 @@ final class MarketData: ObservableObject {
         }
     }
 
-    private func deduplicatePortfolio() {
-        let grouped = Dictionary(grouping: portfolio, by: { $0.asset.symbol })
-        var hasDuplicates = false
-
-        for holdings in grouped.values where holdings.count > 1 {
-            hasDuplicates = true
-            break
-        }
-        guard hasDuplicates else { return }
-
-        var merged: [PortfolioHolding] = []
-        var removedIDs: [UUID] = []
-
-        for (_, holdings) in grouped {
-            if holdings.count == 1 {
-                merged.append(holdings[0])
-                continue
-            }
-
-            var totalShares: Double = 0
-            var totalCost: Double = 0
-            var allTransactions: [Transaction] = []
-            var bestAsset = holdings[0].asset
-            let earliestDate = holdings.compactMap({ $0.dateAdded as Date? }).min() ?? Date()
-
-            for h in holdings {
-                totalShares += h.shares
-                totalCost += h.shares * h.avgCost
-
-                if h.transactions.isEmpty {
-                    allTransactions.append(Transaction(
-                        date: h.dateAdded,
-                        shares: h.shares,
-                        pricePerShare: h.avgCost,
-                        type: .buy
-                    ))
-                } else {
-                    allTransactions.append(contentsOf: h.transactions)
-                }
-
-                if h.asset.price > bestAsset.price { bestAsset = h.asset }
-            }
-
-            let avgCost = totalShares > 0 ? totalCost / totalShares : 0
-            let keepID = holdings[0].id
-            merged.append(PortfolioHolding(
-                id: keepID,
-                asset: bestAsset,
-                shares: totalShares,
-                avgCost: avgCost,
-                dateAdded: earliestDate,
-                transactions: allTransactions.sorted(by: { $0.date < $1.date })
-            ))
-
-            // Track removed IDs for sync cleanup
-            for h in holdings.dropFirst() {
-                removedIDs.append(h.id)
-            }
-        }
-
-        portfolio = merged
-        saveToDisk()
-        AppLogger.portfolio.info("Deduplicated portfolio: merged to \(self.portfolio.count) holdings")
-
-        // Soft-delete removed holdings from Supabase
-        if SyncManager.shared.isSignedIn && !removedIDs.isEmpty {
-            Task {
-                for id in removedIDs {
-                    await SyncManager.shared.softDeleteHolding(id: id)
-                }
-            }
-        }
-    }
-
     // MARK: - Portfolio Mutations
 
     @discardableResult
@@ -990,7 +914,10 @@ final class MarketData: ObservableObject {
             provenance: provenance
         )
 
-        let index = portfolio.firstIndex(where: { $0.asset.symbol == asset.symbol })
+        let index = portfolio.firstIndex {
+            $0.brokerAccount?.tracking != true && $0.asset.symbol == asset.symbol &&
+                $0.asset.kind == asset.kind && $0.asset.exchange == asset.exchange
+        }
         var holding: PortfolioHolding
         if let index {
             // Merge into existing holding with weighted average cost
@@ -1040,7 +967,7 @@ final class MarketData: ObservableObject {
 
     /// Whether another *new* holding (not a top-up of an existing one) fits the plan.
     func canAddHolding(symbol: String, kind: AssetKind) -> Bool {
-        if portfolio.contains(where: { $0.asset.symbol == symbol && $0.asset.kind == kind }) { return true }
+        if portfolio.contains(where: { $0.brokerAccount?.tracking != true && $0.asset.symbol == symbol && $0.asset.kind == kind }) { return true }
         return SubscriptionManager.shared.canAddPortfolioHolding(currentCount: portfolio.count)
     }
 
@@ -1256,9 +1183,36 @@ final class MarketData: ObservableObject {
         return perShare
     }
 
-    func removeFromPortfolio(_ holding: PortfolioHolding) {
-        guard SyncManager.shared.queuePortfolioChange(holding, archived: true) else { return }
+    @discardableResult
+    func removeFromPortfolio(_ holding: PortfolioHolding) -> Bool {
+        var archived = holding
+        if archived.brokerAccount?.tracking == true {
+            archived.brokerAccount?.observed_at = Date().ISO8601Format(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        }
+        guard SyncManager.shared.queuePortfolioChange(archived, archived: true) else { return false }
         removeLocalHolding(holding)
+        return true
+    }
+
+    func saveBrokerHoldings(_ holdings: [PortfolioHolding]) -> Bool {
+        let current = Set(portfolio.map(\.id))
+        let changes = holdings.map { holding in
+            PortfolioLedgerChange(revision: UUID(), holding: holding,
+                changed: [],
+                deleted: [], archivedAt: nil, closedAt: nil)
+        }
+        guard SyncManager.shared.queuePortfolioChanges(changes) else { return false }
+        let replacements = Dictionary(uniqueKeysWithValues: holdings.map { ($0.id, $0) })
+        portfolio = portfolio.map { replacements[$0.id] ?? $0 } + holdings.filter { !current.contains($0.id) }
+        for holding in holdings where holding.shares > 0 { upsertTrackedAsset(holding.asset) }
+        saveToDisk()
+        updateWidgetData()
+        Task {
+            for holding in holdings where holding.shares > 0 && !current.contains(holding.id) {
+                await refreshQuote(for: holding.asset)
+            }
+        }
+        return true
     }
 
     private func removeLocalHolding(_ holding: PortfolioHolding) {

@@ -283,12 +283,14 @@ struct StockCryptoTrackerApp: App {
                             marketData: marketData,
                             alertManager: alertManager
                         )
+                        await SnapTradeViewModel.shared.syncAll()
                         await mfaManager.checkMFAStatus()
                         await referralManager.consumePendingReferralCode()
                         await referralManager.loadCode()
                     }
                 } else if case .signedOut = state {
                     tradingStore.useDevice()
+                    SnapTradeViewModel.shared.accountChanged()
                     marketData.reloadFromDisk()
                     syncManager.resetInitialSyncFlag()
                 }

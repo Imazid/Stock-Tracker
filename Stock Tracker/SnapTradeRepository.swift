@@ -16,6 +16,7 @@
 //
 
 import Foundation
+import Auth
 
 @MainActor
 class SnapTradeRepository {
@@ -171,6 +172,16 @@ class SnapTradeRepository {
     
     // MARK: - Accounts
 
+    func refreshRegistration() async throws -> Bool {
+        guard networkService.isServerBacked else { return isAuthenticated }
+        let owner = SupabaseManager.auth.currentUser?.id
+        guard owner != nil else { return false }
+        let registered = try await networkService.registrationStatus()
+        guard SupabaseManager.auth.currentUser?.id == owner else { throw CancellationError() }
+        setServerRegistered(registered)
+        return registered
+    }
+
     /// Institutions SnapTrade can connect right now (no user needed).
     func fetchBrokerages() async throws -> [SnapTradeBrokerage] {
         try await networkService.fetchBrokerages()
@@ -194,11 +205,11 @@ class SnapTradeRepository {
     // MARK: - Holdings
     
     /// Fetch all holdings across all accounts
-    func fetchAllHoldings() async throws -> [BrokerHolding] {
+    func fetchAllHoldings(accountIds: [String]) async throws -> [BrokerHolding] {
         let identity = try requireIdentity()
 
         let accountsWithPositions = try await tracked {
-            try await networkService.fetchAllHoldings(userId: identity.userId, userSecret: identity.userSecret)
+            try await networkService.fetchAllHoldings(accountIds: accountIds, userId: identity.userId, userSecret: identity.userSecret)
         }
 
         let allHoldings = accountsWithPositions.flatMap { (accountId, positions) in
