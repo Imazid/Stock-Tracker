@@ -1,6 +1,6 @@
 import { instrumentID } from "@engine/market.ts";
 import { COMPANY_ALERT_KINDS, type CompanyAlertKind } from "@/lib/research-alert-types";
-import { serverSupabase } from "@/lib/supabase/server";
+import { bearerSupabase, serverSupabase } from "@/lib/supabase/server";
 import { json, jsonError, rateLimited } from "@/server/http/respond";
 import { parseInstrumentID } from "@/server/market/instruments";
 import { fmpConfigured } from "@/server/research/licensed";
@@ -13,9 +13,12 @@ type Context = { params: Promise<{ id: string }> };
 async function handle(request: Request, context: Context) {
   const limited = rateLimited(request, 35);
   if (limited) return limited;
-  const db = await serverSupabase();
+  const authorization = request.headers.get("authorization");
+  const token = authorization === null ? undefined : /^Bearer\s+(\S+)$/i.exec(authorization)?.[1];
+  if (authorization !== null && !token) return jsonError(401, "unauthenticated", "Sign in to manage company alerts.");
+  const db = token ? bearerSupabase(token) : await serverSupabase();
   if (!db) return jsonError(503, "feature_disabled", "Accounts are unavailable.");
-  const { data: { user } } = await db.auth.getUser();
+  const { data: { user } } = await db.auth.getUser(token);
   if (!user) return jsonError(401, "unauthenticated", "Sign in to manage company alerts.");
 
   let id: string;

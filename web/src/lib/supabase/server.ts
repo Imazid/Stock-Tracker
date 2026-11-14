@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { SUPABASE_ANON_KEY, SUPABASE_URL, supabaseConfigured } from "@/lib/env";
 
@@ -17,5 +18,14 @@ export async function serverSupabase() {
         }
       },
     },
+  });
+}
+
+/** A per-request client for callers presenting a Supabase access token. */
+export function bearerSupabase(token: string) {
+  if (!supabaseConfigured) return undefined;
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
   });
 }

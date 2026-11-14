@@ -17,6 +17,7 @@ import TradingCore
 struct ActivityTabView: View {
     @EnvironmentObject private var trading: TradingStore
     @EnvironmentObject private var router: TradingRouter
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.theme) private var theme
 
     enum Section: String, CaseIterable, Identifiable {
@@ -50,6 +51,23 @@ struct ActivityTabView: View {
                 LazyVStack(alignment: .leading, spacing: DS.Space.l) {
                     TradingHomeBadge()
                     PausedAllBanner { router.showPauseAll = true }
+
+                    if let owner = auth.userId {
+                        NavigationLink {
+                            if auth.userId == owner {
+                                CompanyAlertActivity(owner: owner).id(owner)
+                            }
+                        } label: {
+                            HStack {
+                                Label("Company alerts", systemImage: "bell")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.footnote).accessibilityHidden(true)
+                            }
+                            .dsCard(padding: DS.Space.m)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("activity.companyAlerts")
+                    }
 
                     if let problem = trading.dataProblem {
                         HStack(alignment: .firstTextBaseline) {
