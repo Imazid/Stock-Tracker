@@ -792,7 +792,7 @@ final class TradingStore: ObservableObject {
             }
             let title = String((draft.name.isEmpty ? spec.title : draft.name).prefix(200))
             return BacktestArchive(schemaVersion: 1, title: title.isEmpty ? "Backtest" : title,
-                                   engine: "TradingCore Swift", ranAt: now.ISO8601Format(.iso8601.time(includingFractionalSeconds: true)),
+                                   engine: "TradingCore Swift", ranAt: now.ISO8601Format(.init(includingFractionalSeconds: true)),
                                    inputs: .init(spec: spec, config: config, window: window, benchmark: benchmarkInstrument.id, asOf: now),
                                    result: result, datasets: sources, benchmarkDataset: benchmarkSource, failures: failures)
         }.value
