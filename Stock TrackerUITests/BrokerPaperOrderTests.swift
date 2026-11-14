@@ -5,7 +5,12 @@ final class BrokerPaperOrderTests: XCTestCase {
     /// The fixture listens only on loopback and tracks outgoing submissions.
     func testPaperOrderNeedsApprovalAndShowsBrokerFill() throws {
         let app = try launchFixtureAccount()
-        XCUIDevice.shared.system.open(try XCTUnwrap(URL(string: "stocktracker://asset/AAPL")))
+        XCTAssertTrue(app.open("Search"))
+        let search = app.searchFields.firstMatch
+        tap(search, in: app)
+        search.typeText("AAPL")
+        tap(app.buttons["search.result.us.AAPL"], in: app, timeout: 30)
+        XCTAssertTrue(app.descendants(matching: .any)["detail.screen"].firstMatch.waitForExistence(timeout: 10))
         tap(app.buttons["brokerPaper.trade"], in: app, timeout: 30)
         tap(app.buttons["brokerPaper.connect"], in: app)
 
