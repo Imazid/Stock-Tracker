@@ -1,12 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
+import { extractExcerpt, maxExcerptLength } from "./extract-excerpt";
 import { dateLabel, privateMarkets, type SavedExcerpt } from "./private-data";
 
 export function dealRoomExcerpts(owner: string) {
@@ -19,10 +20,16 @@ export function dealRoomExcerpts(owner: string) {
 export function DealRoom({ owner }: { owner: string }) {
   const titleID = useId();
   const excerptID = useId();
+  const fileID = useId();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const importRequest = useRef<AbortController | null>(null);
   const cache = useQueryClient();
   const [title, setTitle] = useState("");
   const [excerpt, setExcerpt] = useState("");
   const [authorized, setAuthorized] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<{ message: string; error?: boolean }>();
+  useEffect(() => () => importRequest.current?.abort(), []);
   const [opened, setOpened] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const options = dealRoomExcerpts(owner);
@@ -55,7 +62,35 @@ export function DealRoom({ owner }: { owner: string }) {
       await cache.invalidateQueries({ queryKey: options.queryKey, exact: true });
     },
   });
-  const valid = Boolean(title.trim()) && excerpt.trim().length >= 40 && excerpt.length <= 4_500;
+  const valid = Boolean(title.trim()) && excerpt.trim().length >= 40 && excerpt.length <= maxExcerptLength;
+
+  async function importFile(file: File) {
+    if (save.isPending || importRequest.current) return;
+    const controller = new AbortController();
+    importRequest.current = controller;
+    setImporting(true);
+    setImportStatus(undefined);
+    try {
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+      const result = await extractExcerpt(file, signal);
+      if (controller.signal.aborted) return;
+      setTitle(result.title);
+      setExcerpt(result.text);
+      revise();
+      setImportStatus({ message: result.limited
+        ? "Imported the beginning of the file. Review and edit the excerpt before saving."
+        : "Review and edit the extracted text before saving." });
+    } catch (error) {
+      if (!controller.signal.aborted) setImportStatus({ error: true, message: error instanceof Error && error.name === "Error"
+        ? error.message
+        : "Could not extract text. Try an unlocked PDF, a UTF-8 text file, or paste an excerpt." });
+    } finally {
+      if (importRequest.current === controller) {
+        importRequest.current = null;
+        if (!controller.signal.aborted) setImporting(false);
+      }
+    }
+  }
 
   function revise() {
     setAuthorized(false);
@@ -67,24 +102,39 @@ export function DealRoom({ owner }: { owner: string }) {
       <CardHeader title="Add a research excerpt" />
       <form className="space-y-3 border-t border-border p-4" onSubmit={(event) => {
         event.preventDefault();
-        if (valid && authorized && !save.isPending) save.mutate();
+        if (valid && authorized && !save.isPending && !importing) save.mutate();
       }}>
+        <div className="space-y-2">
+          <input ref={fileInput} id={fileID} type="file" className="hidden" accept=".pdf,.txt,application/pdf,text/plain"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void importFile(file);
+            }} />
+          <Button size="sm" aria-controls={fileID} disabled={importing || save.isPending}
+            onClick={() => fileInput.current?.click()}>Extract text from a file</Button>
+          <p className="text-xs text-text-3">PDF or UTF-8 text up to 10 MB. Extraction runs in your browser.</p>
+          {importing && <p role="status" className="text-sm text-text-2">Extracting text…</p>}
+          {importStatus && (importStatus.error
+            ? <Notice tone="down">{importStatus.message}</Notice>
+            : <p role="status" className="text-sm text-text-2">{importStatus.message}</p>)}
+        </div>
         <Field label="Excerpt title" htmlFor={titleID}>
-          <Input id={titleID} maxLength={160} value={title} required disabled={save.isPending}
+          <Input id={titleID} maxLength={160} value={title} required disabled={save.isPending || importing}
             onChange={(event) => { setTitle(event.target.value); revise(); }} />
         </Field>
-        <Field label="Reviewed excerpt" htmlFor={excerptID} hint="Paste 40–4,500 characters. Remove personal identifiers and banking details.">
+        <Field label="Reviewed excerpt" htmlFor={excerptID} hint="Review 40–4,500 characters. Remove personal identifiers and banking details.">
           <textarea id={excerptID} className="w-full rounded-lg border border-border bg-surface-2 p-3 text-sm text-text"
-            rows={8} value={excerpt} minLength={40} maxLength={4_500} required disabled={save.isPending}
+            rows={8} value={excerpt} minLength={40} maxLength={maxExcerptLength} required disabled={save.isPending || importing}
             onChange={(event) => { setExcerpt(event.target.value); revise(); }} />
         </Field>
         <label className="flex items-start gap-2 text-[13px] text-text-2">
-          <input type="checkbox" className="mt-0.5" checked={authorized} disabled={save.isPending}
+          <input type="checkbox" className="mt-0.5" checked={authorized} disabled={save.isPending || importing}
             onChange={(event) => setAuthorized(event.target.checked)} />
           <span>I have permission to store this excerpt in Stock Tracker.</span>
         </label>
         <p className="text-xs text-text-2">Stock Tracker encrypts saved excerpts. AI research requires separate consent.</p>
-        <Button type="submit" variant="primary" size="sm" disabled={!valid || !authorized || save.isPending}>
+        <Button type="submit" variant="primary" size="sm" disabled={!valid || !authorized || save.isPending || importing}>
           {save.isPending ? "Saving…" : "Save excerpt"}
         </Button>
         {save.isSuccess && <p role="status" className="text-sm text-text-2">Excerpt saved.</p>}

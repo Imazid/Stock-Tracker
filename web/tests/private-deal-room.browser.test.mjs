@@ -10,6 +10,29 @@ const {
   PRIVATE_MARKETS_TEST_DOCUMENT_AI: testDocumentAI,
 } = process.env;
 
+function pdfWithText(first, second) {
+  const stream = (value) => {
+    const body = value ? `BT /F1 12 Tf 72 720 Td (${value}) Tj ET` : "";
+    return `<< /Length ${body.length} >>\nstream\n${body}\nendstream`;
+  };
+  const page = (content) => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents ${content} 0 R >>`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    page(5), page(6), stream(first), stream(second),
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = objects.map((object, index) => {
+    const offset = pdf.length;
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    return String(offset).padStart(10, "0") + " 00000 n ";
+  });
+  const start = pdf.length;
+  pdf += `xref\n0 8\n0000000000 65535 f \n${offsets.join("\n")}\ntrailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${start}\n%%EOF\n`;
+  return Buffer.from(pdf, "ascii");
+}
+
 test("Deal Room requires permission to save and keeps private excerpts account-scoped", {
   skip: !origin || !executablePath || !email || !password || !otherEmail || !otherPassword,
   timeout: 120_000,
@@ -38,12 +61,46 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
   try {
     const owner = await signIn(email, password);
     const save = owner.getByRole("button", { name: "Save excerpt", exact: true });
-    await owner.getByLabel("Excerpt title").fill(title);
-    await owner.getByLabel("Reviewed excerpt").fill(excerpt);
-    assert.ok(await save.isDisabled());
+    const titleField = owner.getByLabel("Excerpt title");
+    const draft = owner.getByLabel("Reviewed excerpt");
     const permission = owner.getByLabel("I have permission to store this excerpt in Stock Tracker.");
+    const upload = owner.locator('input[type="file"]');
+    const importButton = owner.getByRole("button", { name: "Extract text from a file", exact: true });
+    const submissions = [];
+    owner.on("request", (request) => {
+      if (request.url() === api && request.postDataJSON()?.action === "save_document") submissions.push(request);
+    });
+    const chooser = owner.waitForEvent("filechooser");
+    await importButton.click();
+    await (await chooser).setFiles({ name: "long.txt", mimeType: "text/plain", buffer: Buffer.from("é".repeat(4_499) + "📈more") });
+    await owner.getByText("Imported the beginning of the file.", { exact: false }).waitFor();
+    assert.equal(await draft.inputValue(), "é".repeat(4_499));
+    assert.equal(await titleField.inputValue(), "long");
+    assert.ok(await save.isDisabled());
+
     await permission.check();
-    await owner.getByLabel("Reviewed excerpt").fill(excerpt + " Updated.");
+    await upload.setInputFiles({ name: "unreadable.txt", mimeType: "text/plain", buffer: Buffer.from([0xff, 0xfe, 0xff]) });
+    await owner.getByText("Save the text file as UTF-8 and try again.", { exact: true }).waitFor();
+    assert.equal(await draft.inputValue(), "é".repeat(4_499));
+
+    await upload.setInputFiles({ name: "empty.pdf", mimeType: "application/pdf", buffer: pdfWithText("", "") });
+    await owner.getByText("This PDF has no selectable text.", { exact: false }).waitFor();
+    assert.equal(await draft.inputValue(), "é".repeat(4_499));
+
+    const importPDF = {
+      name: title + ".pdf", mimeType: "application/pdf",
+      buffer: pdfWithText("The fund statement records that the sample portfolio contains three positions.", "The manager review is still pending."),
+    };
+    await upload.setInputFiles(importPDF);
+    await owner.getByText("Review and edit the extracted text before saving.", { exact: true }).waitFor();
+    assert.equal(await titleField.inputValue(), title);
+    assert.equal(await draft.inputValue(),
+      "[Page 1]\nThe fund statement records that the sample portfolio contains three positions.\n\n[Page 2]\nThe manager review is still pending.");
+    assert.ok(await save.isDisabled());
+    assert.equal(submissions.length, 0);
+
+    await permission.check();
+    await draft.fill(excerpt + " Updated.");
     assert.ok(await save.isDisabled());
     await permission.check();
 
@@ -51,6 +108,9 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     await save.click();
     const response = await saved;
     assert.equal(response.status(), 201);
+    assert.deepEqual(response.request().postDataJSON(), {
+      action: "save_document", title, excerpt: excerpt + " Updated.", authorized: true,
+    });
     const document = await response.json();
     assert.deepEqual(Object.keys(document).sort(), ["id", "title"]);
     await owner.getByText(excerpt + " Updated.", { exact: true }).waitFor();
