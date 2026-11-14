@@ -59,7 +59,7 @@ export function AllocationCard({ owner, holdings, quoteFor, loading, truncated }
         Self-reported valuations are temporarily unavailable. <Button size="sm" onClick={() => void manual.refetch()}>Retry snapshot</Button>
       </Notice>}
       {account.error && <Notice tone="down">
-        Values for holdings added on web are temporarily unavailable. <Button size="sm" onClick={() => void account.refetch()}>Retry holdings</Button>
+        Account holding valuations are temporarily unavailable. <Button size="sm" onClick={() => void account.refetch()}>Retry holdings</Button>
       </Notice>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <dl>
@@ -104,7 +104,7 @@ export function AllocationCard({ owner, holdings, quoteFor, loading, truncated }
         </ul>}
       <div className="space-y-2 border-t border-border pt-3">
         <p className="text-xs text-text-3">
-          Private carrying values use dated provider statements or published self-reported marks. Self-reported values come from your web holdings and latest iPhone snapshot. Cash is excluded.
+          Private carrying values use dated provider statements or published self-reported marks. Self-reported values come from your account holdings and latest iPhone snapshot. Cash is excluded.
           {listed.oldestQuote && ` Oldest included listing quote ${dateTime(listed.oldestQuote)}.`}
           {allocation.oldestValuation && ` Oldest included private valuation ${dateLabel(allocation.oldestValuation)}.`}
           {allocation.fxDates.length > 0 && ` ECB reference rates observed ${allocation.fxDates.join(", ")}.`}

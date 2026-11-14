@@ -52,7 +52,7 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
       const date = value("valuedOn");
       const source = value("source");
       const method = value("method");
-      const decimals = /^\d{1,15}(?:\.\d{1,8})?$/;
+      const decimals = /^\d{1,22}(?:\.\d{1,16})?$/;
       if (!name || !/^[A-Z]{3}$/.test(currency) ||
         [...numeric.map(([key]) => value(key)), valuation].some((entry) => entry && !decimals.test(entry)) ||
         Number(value("ownership")) > 100) {
@@ -79,10 +79,10 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
         <Field label="Company or fund name" htmlFor={field("name")}><Input id={field("name")} name="name" required maxLength={160} defaultValue={holding?.name} /></Field>
         <Field label="Asset class" htmlFor={field("assetClass")}><Select id={field("assetClass")} name="assetClass" defaultValue={holding?.assetClass}>{classes.map((name) => <option key={name}>{name}</option>)}</Select></Field>
         <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} defaultValue={holding?.currency ?? "AUD"} /></Field>
-        {numeric.map(([key, label, value]) => <Field key={key} label={label} htmlFor={field(key)}><Input id={field(key)} name={key} inputMode="decimal" maxLength={24} defaultValue={value} /></Field>)}
+        {numeric.map(([key, label, value]) => <Field key={key} label={label} htmlFor={field(key)}><Input id={field(key)} name={key} inputMode="decimal" maxLength={39} defaultValue={value} /></Field>)}
         <Field label="Share class" htmlFor={field("shareClass")}><Input id={field("shareClass")} name="shareClass" maxLength={160} defaultValue={holding?.shareClass} /></Field>
         <Field label="Lock-up ends" htmlFor={field("lockup")}><Input id={field("lockup")} type="date" name="lockup" defaultValue={holding?.lockupUntil?.slice(0, 10)} /></Field>
-        <Field label="Carrying value" htmlFor={field("valuation")}><Input id={field("valuation")} name="valuation" inputMode="decimal" maxLength={24} defaultValue={holding?.valuation?.value} /></Field>
+        <Field label="Carrying value" htmlFor={field("valuation")}><Input id={field("valuation")} name="valuation" inputMode="decimal" maxLength={39} defaultValue={holding?.valuation?.value} /></Field>
         <Field label="Valuation date" htmlFor={field("valuedOn")}><Input id={field("valuedOn")} type="date" name="valuedOn" max={dayInSydney(now)} defaultValue={holding?.valuation?.date.slice(0, 10)} /></Field>
         <Field label="Valuation source" htmlFor={field("source")}><Input id={field("source")} name="source" maxLength={400} defaultValue={holding?.valuation?.source} /></Field>
         <Field label="Valuation method" htmlFor={field("method")}><Input id={field("method")} name="method" maxLength={400} defaultValue={holding?.valuation?.method} /></Field>
@@ -129,13 +129,13 @@ export function AccountHoldingsPanel({ owner }: { owner: string }) {
   }
   return <section className="min-w-0 space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div><h2 className="font-semibold text-text">Holdings added on web</h2>
-        <p className="text-sm text-text-2">Self-reported holdings saved to your account and visible on iPhone. Enter each position once so allocation counts it once.</p></div>
+      <div><h2 className="font-semibold text-text">Account holdings</h2>
+        <p className="text-sm text-text-2">Self-reported holdings you can edit on the web or iPhone. Enter each position once so allocation counts it once.</p></div>
       {current && !editor && <Button size="sm" disabled={mutation.isPending} onClick={() => {
         mutation.reset(); setDeleting(undefined); setEditor({ holding: null, revision: current.revision });
       }}>Add private holding</Button>}
     </div>
-    {result.isPending && <p role="status" className="text-sm text-text-2">Loading holdings added on web…</p>}
+    {result.isPending && <p role="status" className="text-sm text-text-2">Loading account holdings…</p>}
     {result.error && <Notice tone="down">{result.error.message} <Button size="sm" onClick={() => void refresh()}>Retry holdings</Button></Notice>}
     {mutation.error && <Notice tone="down">{mutation.error.message} <Button size="sm" onClick={() => void refresh()}>Refresh holdings</Button></Notice>}
     {editor && <HoldingForm key={editor.holding?.id ?? "new"} owner={owner} holding={editor.holding}

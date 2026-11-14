@@ -389,7 +389,15 @@ enum PrivateMarketsAPI {
         let nextOffset: Int?
     }
     struct DocumentExcerpt: Decodable { let excerpt: String }
-    struct AccountHoldings: Decodable { let holdings: [AccountHolding] }
+    struct AccountHoldings: Decodable {
+        let revision: UUID?
+        let holdings: [AccountHolding]
+    }
+    struct DocumentSummary: Decodable, Identifiable {
+        let id: UUID
+        let title: String
+    }
+    struct DocumentList: Decodable { let items: [DocumentSummary] }
     struct AccountHolding: Decodable, Identifiable {
         struct Mark: Decodable {
             let value: String
@@ -495,6 +503,8 @@ final class PrivateMarketsStore: ObservableObject {
     @Published private(set) var providerHoldings: [ProviderPrivateHolding] = []
     @Published private(set) var accountHoldings: [PrivateMarketsAPI.AccountHolding] = []
     @Published private(set) var accountHoldingsError: String?
+    @Published private(set) var hasLoadedAccountHoldings = false
+    private(set) var accountHoldingsRevision: UUID?
     private var accountHoldingsTask: Task<Void, Never>?
     @Published private(set) var providerError: String?
     @Published private(set) var loadingProviderHoldings = false
@@ -546,6 +556,8 @@ final class PrivateMarketsStore: ObservableObject {
         providerHoldings = []
         accountHoldings = []
         accountHoldingsError = nil
+        hasLoadedAccountHoldings = false
+        accountHoldingsRevision = nil
         accountHoldingsTask?.cancel()
         accountHoldingsTask = nil
         providerError = nil
@@ -584,8 +596,7 @@ final class PrivateMarketsStore: ObservableObject {
                 let response: PrivateMarketsAPI.AccountHoldings = try await PrivateMarketsAPI.request("account_holdings", expectedUserID: userID)
                 try Task.checkCancellation()
                 guard scope == userID else { return }
-                accountHoldings = response.holdings
-                accountHoldingsError = nil
+                applyAccountHoldings(response)
             } catch is CancellationError {
             } catch {
                 if !Task.isCancelled, scope == userID { accountHoldingsError = error.localizedDescription }
@@ -593,6 +604,34 @@ final class PrivateMarketsStore: ObservableObject {
         }
         accountHoldingsTask = task
         await task.value
+    }
+
+    private func applyAccountHoldings(_ response: PrivateMarketsAPI.AccountHoldings) {
+        accountHoldingsRevision = response.revision
+        accountHoldings = response.holdings
+        accountHoldingsError = nil
+        hasLoadedAccountHoldings = true
+    }
+
+    func saveAccountHolding(_ holding: [String: Any], owner: UUID, revision: UUID?) async throws {
+        try await updateAccountHoldings("save_account_holding", fields: ["holding": holding], owner: owner, revision: revision)
+    }
+
+    func removeAccountHolding(_ id: UUID, owner: UUID, revision: UUID?) async throws {
+        try await updateAccountHoldings("remove_account_holding", fields: ["id": id.uuidString], owner: owner, revision: revision)
+    }
+
+    private func updateAccountHoldings(_ action: String, fields: [String: Any], owner: UUID, revision: UUID?) async throws {
+        guard scope == owner else { throw CancellationError() }
+        var body = fields
+        body["expected_revision"] = revision.map { $0.uuidString.lowercased() as Any } ?? NSNull()
+        let response: PrivateMarketsAPI.AccountHoldings = try await PrivateMarketsAPI.request(action, body, expectedUserID: owner)
+        try Task.checkCancellation()
+        guard scope == owner else { throw CancellationError() }
+        // Discard any read that started before the write committed.
+        accountHoldingsTask?.cancel()
+        accountHoldingsTask = nil
+        applyAccountHoldings(response)
     }
 
     func refreshInvestmentHoldings(for userID: UUID) async {

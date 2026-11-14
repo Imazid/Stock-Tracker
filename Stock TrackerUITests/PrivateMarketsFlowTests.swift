@@ -523,6 +523,67 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAccountHoldingCanBeCreatedEditedAndRemovedOnIPhone() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_HOLDINGS_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let add = app.buttons["private.holding.accountAdd"]
+        for _ in 0..<4 where !add.isHittable {
+            _ = add.waitForExistence(timeout: 4)
+            if !add.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(add.isHittable, app.debugDescription)
+        XCTAssertTrue(add.isEnabled)
+        add.tap()
+        let name = app.textFields["private.accountHolding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("iPhone QA shared holding")
+        let toggle = app.switches["private.accountHolding.includeMark"]
+        for _ in 0..<3 where !toggle.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(toggle.isHittable)
+        let toggleControl = toggle.switches.firstMatch
+        (toggleControl.exists ? toggleControl : toggle).tap()
+        func fill(_ id: String, _ value: String) {
+            let input = app.textFields[id]
+            for _ in 0..<3 where !input.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(input.isHittable, app.debugDescription)
+            input.tap()
+            input.typeText(value)
+        }
+        fill("private.accountHolding.value", "987.12345678")
+        fill("private.accountHolding.source", "iPhone NAV statement")
+        fill("private.accountHolding.method", "Reported NAV")
+        app.buttons["private.accountHolding.save"].tap()
+        let row = app.buttons.matching(identifier: "private.holding.accountRow")
+            .matching(NSPredicate(format: "label CONTAINS %@", "iPhone QA shared holding")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 12), app.debugDescription)
+        row.tap()
+        let edit = app.buttons["private.holding.accountEdit"]
+        for _ in 0..<3 where !edit.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(edit.isHittable, app.debugDescription)
+        edit.tap()
+        let value = app.textFields["private.accountHolding.value"]
+        for _ in 0..<3 where !value.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(value.isHittable)
+        XCTAssertEqual(value.value as? String, "987.12345678")
+        value.tap()
+        value.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "987.12345678".count))
+        value.typeText("987.123456789")
+        app.buttons["private.accountHolding.save"].tap()
+        let revised = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "987.123456789", "987.123456789")).firstMatch
+        XCTAssertTrue(revised.waitForExistence(timeout: 12), app.debugDescription)
+        let remove = app.buttons["private.holding.accountRemove"]
+        for _ in 0..<3 where !remove.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(remove.isHittable)
+        remove.tap()
+        XCTAssertTrue(app.buttons["Remove holding"].waitForExistence(timeout: 5))
+        app.buttons["Remove holding"].tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 12))
+    }
+
+    @MainActor
     func testManualHoldingCanPublishToWeb() throws {
         try launchWithLocalSession("PRIVATE_MANUAL_PUBLICATION_TEST_SESSION")
         openPrivateMarkets()

@@ -36,7 +36,7 @@ export const privateExportSections = {
   applications: "Private applications", provider_holdings: "Private holdings", valuations: "Private valuations",
   capital_calls: "Capital calls", distributions: "Private distributions", sales: "Private sales",
   monitor_preferences: "Company monitoring preferences", monitoring_alerts: "Company monitoring alerts",
-  research_history: "Private research history", excerpts: "Saved document excerpts", reports: "Saved research reports", manual_portfolio: "Published self-reported holdings", account_holdings: "Self-reported holdings added on web",
+  research_history: "Private research history", excerpts: "Saved document excerpts", reports: "Saved research reports", manual_portfolio: "Published self-reported holdings", account_holdings: "Self-reported account holdings",
 } satisfies Record<keyof typeof exportSections, string>;
 
 type ExportSection = keyof typeof exportSections;
