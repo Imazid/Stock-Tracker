@@ -10,7 +10,9 @@ import { catalogInstruments } from "../_shared/trading/catalog.ts";
 import { decodeInstrument, instrumentID, parseYahooSymbol, venueCurrency, VENUES } from "../_shared/trading/market.ts";
 import { validate } from "../_shared/trading/strategy.ts";
 import { companyResearch } from "./company.ts";
-import { mobileResearchReport } from "./research_report.ts";
+import { mobileResearchReport, researchListing } from "./research_report.ts";
+import { answerCompanyQuestion } from "./research_answer.ts";
+import { AI_LIMITS } from "../_shared/ai/proxy.ts";
 import { prepareStrategy, runHistory } from "./strategy.ts";
 
 const env = (name: string) => Deno.env.get(name);
@@ -40,6 +42,7 @@ Deno.serve(async (request) => {
     if (request.method !== "POST") throw new HttpError(405, "method_not_allowed", "Send a POST request.");
     const body = await readJSONObject(request, 12_000);
     const featured = body.action === "featured";
+    let userID: string | undefined;
     if (featured) {
       const expected = env("WORKSPACE_OVERVIEW_SECRET");
       const provided = request.headers.get("x-workspace-overview-secret");
@@ -48,15 +51,44 @@ Deno.serve(async (request) => {
       }
     } else {
       const caller = await authenticate(request, { url: env("SUPABASE_URL"), anonKey: env("SUPABASE_ANON_KEY") });
+      userID = caller.userID;
       const { data: allowed, error } = await serviceClient().rpc("consume_market_data_quota", { p_user_id: caller.userID });
       if (error) throw new HttpError(503, "unavailable", "Market data limits could not be checked.");
       if (!allowed) throw new HttpError(429, "rate_limit", "Market data request limit reached. Wait a minute and retry.");
     }
     const now = Date.now();
+    if (body.action === "companyQuestion" && userID) {
+      const id = Field.string(body.instrumentId, "instrumentId", 42);
+      researchListing(id);
+      const limit = Number.parseInt(env("AI_DAILY_LIMIT") ?? "", 10);
+      return ok(await answerCompanyQuestion(userID, id, body, async () => {
+        const result = await mobileResearchReport(id, env("RESEARCH_WEB_ORIGIN"), env("RESEARCH_WEB_BYPASS_SECRET"), fetch, true);
+        return result.report;
+      }, {
+        config: {
+          openAIKey: env("OPENAI_API_KEY"),
+          geminiKey: env("GEMINI_API_KEY"),
+          dailyLimit: Number.isFinite(limit) && limit >= 0 ? limit : AI_LIMITS.defaultDailyLimit,
+        },
+        quota: {
+          async consume(uid, ceiling) {
+            const { data, error } = await serviceClient().rpc("consume_ai_quota", { p_user_id: uid, p_limit: ceiling }).single();
+            if (error) throw new HttpError(503, "research_quota", "The AI research limit could not be checked.");
+            const row = data as { allowed: boolean; used: number };
+            return { allowed: row.allowed, used: row.used };
+          },
+        },
+        fetch,
+      }));
+    }
     if (body.action === "companyReport") {
-      return ok(await mobileResearchReport(
-        Field.string(body.instrumentId, "instrumentId", 42), env("RESEARCH_WEB_ORIGIN"), env("RESEARCH_WEB_BYPASS_SECRET"),
-      ));
+      const id = Field.string(body.instrumentId, "instrumentId", 42);
+      const { venue, symbol } = researchListing(id);
+      const [report, company] = await Promise.all([
+        mobileResearchReport(id, env("RESEARCH_WEB_ORIGIN"), env("RESEARCH_WEB_BYPASS_SECRET")),
+        venue === "us" ? companyResearch(symbol, now, env("FINNHUB_API_KEY")).catch(() => undefined) : undefined,
+      ]);
+      return ok({ ...report, company });
     }
     if (body.action === "historicalFx") return ok(await historicalCashConversion(body, now));
     if (body.action === "portfolioBenchmark") {

@@ -7,6 +7,7 @@ import { FMP, MASSIVE, fmpConfigured, fmpFacts, fmpNews, fmpProfile, fmpRecords,
 import { SEC, SEC_DIRECTORY, findSecListing, secArchive, secConfigured, secDirectory, secFacts, secSubmissions, type SecListing } from "./sec";
 import { readSnapshot, saveSnapshot } from "./storage";
 import { ResearchProviderError } from "./upstream";
+import { bundledAnnualFacts } from "./bundled-financials";
 
 export interface ResearchFilters {
   asOf: string;
@@ -183,7 +184,13 @@ export async function getResearch(instrument: Instrument, section: ResearchSecti
       && (!filters.statement || filters.statement === fact.statement)
       && (!filters.query || `${fact.label} ${fact.concept} ${fact.unit}`.toLowerCase().includes(filters.query.toLowerCase()));
     let facts = (filters.period === "ttm" ? trailingFacts(available) : filters.versions ? available : latestVersions(available)).filter(filter);
-    if (!available.length && useFmp && (filters.period === "annual" || filters.period === "quarter")) {
+    const dated = !available.length && (filters.period === "annual" || filters.period === "all")
+      ? bundledAnnualFacts(id, filters.asOf) : [];
+    if (dated.length) {
+      facts = dated.filter(filter);
+      result.coverage.push(coverage("Annual filing figures", "historical", "Selected consolidated figures from a dated annual filing."));
+    }
+    if (!available.length && !dated.length && useFmp && (filters.period === "annual" || filters.period === "quarter")) {
       try {
         const fallback = await fmpFacts(symbol, filters.period);
         facts = latestVersions(reportedOn(fallback.facts, filters.asOf)).filter(filter);
@@ -193,7 +200,7 @@ export async function getResearch(instrument: Instrument, section: ResearchSecti
         result.coverage.push(failure("Normalised statements", error, FMP));
       }
     }
-    if (!available.length && !useFmp) result.coverage.push(coverage("Normalised statements", historical ? "unavailable" : "restricted", fmpUnavailable));
+    if (!available.length && !dated.length && !useFmp) result.coverage.push(coverage("Normalised statements", historical ? "unavailable" : "restricted", fmpUnavailable));
     result.total = facts.length;
     result.facts = facts.slice(filters.page * filters.limit, (filters.page + 1) * filters.limit);
     result.exportAllowed = result.facts.length > 0 && result.facts.every((fact) => fact.evidence.license === "public_filing");

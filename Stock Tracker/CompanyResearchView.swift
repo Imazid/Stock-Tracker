@@ -14,6 +14,7 @@ struct CompanyResearchView: View {
         let owner: UUID?
         let report: CompanyResearchReport
         let dashboardURL: URL
+        let company: CompanyMarketResearch?
     }
 
     private struct RequestKey: Equatable {
@@ -49,6 +50,16 @@ struct CompanyResearchView: View {
                         if let errorMessage {
                             Section { Text(errorMessage).font(.footnote).foregroundStyle(.secondary) }
                         }
+                        if let owner = loaded.owner {
+                            Section {
+                                NavigationLink {
+                                    CompanyQuestionView(instrument: instrument, owner: owner)
+                                } label: {
+                                    Label("Ask AI about \(instrument.symbol)", systemImage: "sparkles")
+                                }
+                                .accessibilityIdentifier("companyResearch.ask")
+                            }
+                        }
                         if let quote = report.quote {
                             Section("Market quote") {
                                 LabeledContent("Last price", value: TradingFormat.price(quote.last, quote.currency))
@@ -69,8 +80,9 @@ struct CompanyResearchView: View {
                                 ForEach(report.facts) { fact in
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(fact.label).font(.subheadline)
-                                        Text("\(fact.value.formatted(.number.precision(.fractionLength(0...4)))) \(fact.unit)")
+                                        Text("\(fact.value.formatted(.number.notation(.compactName).precision(.fractionLength(0...4)))) \(fact.unit)")
                                             .font(.body.monospacedDigit())
+                                            .accessibilityIdentifier("companyResearch.factValue")
                                         Text("Period ended \(fact.end) · Filed \(fact.evidence.publishedAt ?? "date unavailable")")
                                             .font(.caption).foregroundStyle(.secondary)
                                             .accessibilityIdentifier("companyResearch.filingDate")
@@ -83,8 +95,16 @@ struct CompanyResearchView: View {
                                 }
                             }
                         }
+                        if let company = loaded.company {
+                            CompanyMarketResearchSections(company: company)
+                        } else if loaded.owner != nil, instrument.venue == .us {
+                            Section("Recent headlines") {
+                                Text("The Finnhub company feed is unavailable.")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         if !report.events.isEmpty {
-                            Section("News & filings") {
+                            Section("News, filings and announcements") {
                                 ForEach(report.events) { event in
                                     Link(destination: event.evidence.url) {
                                         VStack(alignment: .leading, spacing: 4) {
@@ -143,6 +163,7 @@ struct CompanyResearchView: View {
         do {
             let loaded: CompanyResearchReport
             let dashboard: URL
+            var company: CompanyMarketResearch?
             if let origin = Self.directOrigin {
                 let url = origin.appending(path: "api/markets/instruments").appending(path: instrument.id).appending(path: "research/report")
                 var request = URLRequest(url: url, timeoutInterval: 40)
@@ -162,10 +183,11 @@ struct CompanyResearchView: View {
                 let payload = try decoder.decode(CompanyResearchResponse.self, from: data).data
                 loaded = payload.report
                 dashboard = payload.dashboardURL
+                company = payload.company
             }
             guard loaded.instrumentId == instrument.id else { throw URLError(.badServerResponse) }
             guard !Task.isCancelled, owner == auth.userId else { return }
-            self.loaded = LoadedReport(owner: owner, report: loaded, dashboardURL: dashboard)
+            self.loaded = LoadedReport(owner: owner, report: loaded, dashboardURL: dashboard, company: company)
         } catch {
             guard !Task.isCancelled, owner == auth.userId else { return }
             errorMessage = (error as? SecureBackend.FunctionError)?.message ?? "Couldn’t load the company report. Try again."
@@ -177,6 +199,7 @@ private struct CompanyResearchResponse: Decodable {
     struct Payload: Decodable {
         let report: CompanyResearchReport
         let dashboardURL: URL
+        let company: CompanyMarketResearch?
     }
     let data: Payload
 }
