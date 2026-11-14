@@ -183,12 +183,13 @@ select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','
   array['a0000000-0000-0000-0000-000000000010','a0000000-0000-0000-0000-000000000011']::uuid[],false,true);
 select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000081',
   array['a0000000-0000-0000-0000-000000000010']::uuid[],false,true);
-select case when public.collect_private_market_alerts() = 3 then 'ok   scheduled collection captures one alert per source across devices'
+select case when public.collect_private_market_alerts() = 4 then 'ok   scheduled collection captures one alert per source across devices'
   else 'FAIL missing or duplicate alerts' end;
 select case when public.collect_private_market_alerts() = 0 then 'ok   scheduled collection is idempotent'
   else 'FAIL monitor replay duplicated alerts' end;
-select case when count(*) = 3 and count(*) filter (where kind='announcement' and source_url like 'https://%') = 1
+select case when count(*) = 4 and count(*) filter (where kind='announcement' and source_url like 'https://%') = 1
   and count(*) filter (where kind='capital_call' and source_label is not null) = 1
+  and count(*) filter (where kind='distribution' and source_label = 'Distribution notice') = 1
   then 'ok   inbox retains publication and provider evidence' else 'FAIL invalid inbox entries' end
   from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001');
 select case when count(*) = 0 then 'ok   no cross-account inbox records' else 'FAIL cross-account inbox' end
@@ -263,7 +264,7 @@ select case when not public.finish_private_market_digest(job_id,lease,sources,'{
   then 'ok   completion is idempotent' else 'FAIL completed digest saved twice' end from digest_retry;
 select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
   '{}'::uuid[],false,false);
-select case when count(*) = 2 then 'ok   one device may opt out without erasing another device inbox'
+select case when count(*) = 3 then 'ok   one device may opt out without erasing another device inbox'
   else 'FAIL other device inbox erased' end
   from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001');
 select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000081',

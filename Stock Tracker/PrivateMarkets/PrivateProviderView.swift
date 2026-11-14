@@ -348,7 +348,7 @@ struct PrivateUpdatesView: View {
                 }
                 Text("Online monitoring shares the catalogue company IDs you track with your Stock Tracker account.")
                     .font(.footnote).foregroundStyle(.secondary)
-                Toggle("Notify me about company updates", isOn: Binding(
+                Toggle("Notify me about Private Markets updates", isOn: Binding(
                     get: { store.state.notify }, set: setNotifications))
                     .disabled(auth.userId == nil || savingNotifications)
                 Text(store.remotePushActive ? "Push notifications are active on this device." :
@@ -371,6 +371,8 @@ struct PrivateUpdatesView: View {
                             if let url = alert.sourceUrl, url.privateSourceIsSafe { Link("Read source", destination: url) }
                             if let source = alert.sourceLabel { Text(source).font(.footnote).foregroundStyle(.secondary) }
                         }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("private.monitor.alert.\(alert.kind)")
                     }
                 }
             }

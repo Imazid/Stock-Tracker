@@ -135,6 +135,53 @@ reset role;
 select case when public.private_market_push_through('ed000000-0000-4000-8000-000000000001',
   'ed000000-0000-4000-8000-000000000070',0) is null
   then 'ok   a reversal cancels any unsent push' else 'FAIL reversed exit push' end;
+set role service_role;
+select public.configure_private_monitor('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',array[]::uuid[],false,false);
+select public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution','dist-older',now()-interval '8 days',50,'AUD',current_date-9,'Older payment statement');
+select public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution','dist-new',now()-interval '1 day',125,'AUD',current_date-2,'Provider distribution statement');
+insert into public.distributions (id,user_id,holding_id,amount,received_on,source) values
+  ('ed000000-0000-4000-8000-000000000080','ed000000-0000-4000-8000-000000000001',
+   'ed000000-0000-4000-8000-000000000060',75,current_date-2,'No provider reference');
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=0
+  then 'ok   opted-out investors receive no distribution alert' else 'FAIL distribution without consent' end;
+select public.configure_private_monitor('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',array[]::uuid[],false,true);
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=1
+  then 'ok   opted-in owner receives only the recent provider-recorded distribution' else 'FAIL distribution alert count' end;
+create temporary table distribution_alert as select id, subject_id
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='distribution';
+select case when count(*)=1 and bool_and(title='Provider recorded a distribution' and source_label='Provider distribution statement'
+    and occurred_at=now()-interval '1 day' and significance='Received on ' || (current_date-2)::text || '.' and source_url is null)
+  then 'ok   distribution receipt carries the payment date, report time and source' else 'FAIL distribution evidence' end
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='distribution';
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000002')=0
+  and not exists (select 1 from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000002') where kind='distribution')
+  then 'ok   following the same company cannot expose an investor distribution' else 'FAIL distribution audience' end;
+reset role;
+select case when public.private_market_push_through('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',0) is not null
+  then 'ok   a recorded distribution is eligible for generic push' else 'FAIL distribution push' end;
+set role service_role;
+select public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution','dist-new',now()-interval '10 minutes',130,'AUD',current_date-1,'Revised distribution statement');
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=0
+  then 'ok   distribution correction does not notify twice' else 'FAIL duplicate distribution alert' end;
+select case when count(*)=1 and bool_and(a.source_label='Revised distribution statement' and a.occurred_at=now()-interval '10 minutes'
+    and a.significance='Received on ' || (current_date-1)::text || '.')
+  then 'ok   corrected distribution evidence appears on the same alert' else 'FAIL stale distribution evidence' end
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') a
+  join distribution_alert prior using (id, subject_id);
+delete from public.distributions where provider_reference='dist-new' and id=(select subject_id from distribution_alert);
+select case when not exists (
+  select 1 from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='distribution')
+  then 'ok   removing the ledger evidence hides the distribution alert' else 'FAIL orphaned distribution alert' end;
+reset role;
+select case when public.private_market_push_through('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',0) is null
+  then 'ok   removing the source cancels any unsent distribution push' else 'FAIL orphaned distribution push' end;
 set role authenticated;
 select set_config('request.jwt.claim.sub','ed000000-0000-4000-8000-000000000001',true) is not null;
 select case when count(*)=2 and count(*) filter(where reversed)=1
@@ -145,6 +192,8 @@ select pg_temp.expect_disposition_error($q$select public.record_private_holding_
   '42501','even an owner cannot submit a sale or reversal');
 select pg_temp.expect_disposition_error($q$select * from public.private_current_holding_exits$q$,
   '42501','clients cannot read the exit evidence view directly');
+select pg_temp.expect_disposition_error($q$select * from public.private_reported_distributions$q$,
+  '42501','clients cannot read the distribution evidence view directly');
 select set_config('request.jwt.claim.sub','ed000000-0000-4000-8000-000000000002',true) is not null;
 select case when count(*)=0 then 'ok   sale evidence is tenant isolated' else 'FAIL tenant isolation' end
   from public.private_holding_dispositions;

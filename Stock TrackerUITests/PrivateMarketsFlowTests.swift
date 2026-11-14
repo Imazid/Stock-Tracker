@@ -245,6 +245,29 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testProviderDistributionAppearsInMonitoringInbox() throws {
+        try launchWithLocalSession("PRIVATE_DISTRIBUTION_TEST_SESSION")
+        openPrivateMarkets()
+        let updates = app.buttons["private.companyUpdates"]
+        let monitor = app.switches["private.monitor.enable"]
+        for _ in 0..<3 where !monitor.isEnabled {
+            if updates.isHittable { updates.tap() }
+            if monitor.waitForExistence(timeout: 4), monitor.isEnabled { break }
+        }
+        XCTAssertTrue(monitor.isEnabled, app.debugDescription)
+        if monitor.value as? String != "1" { monitor.tap() }
+        let alert = app.descendants(matching: .any)["private.monitor.alert.distribution"].firstMatch
+        for _ in 0..<3 where !alert.exists {
+            app.swipeUp()
+            if alert.waitForExistence(timeout: 5) { break }
+        }
+        XCTAssertTrue(alert.exists, app.debugDescription)
+        XCTAssertTrue(alert.staticTexts["Provider recorded a distribution"].exists)
+        XCTAssertTrue(alert.staticTexts["Provider distribution statement"].exists)
+        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Received on ")).firstMatch.exists)
+    }
+
+    @MainActor
     func testPublishedCompanyShowsDatedFundingHistory() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
                           "Run this test with the hosted Private Markets configuration.")
