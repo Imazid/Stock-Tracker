@@ -220,12 +220,14 @@ final class AccountSyncTests: XCTestCase {
         account.tap()
         let sync = app.buttons["broker.sync"]
         XCTAssertTrue(sync.waitForExistence(timeout: 8))
-        XCTAssertEqual(try request("POST", "/qa/broker-positions/failure", token: token).status, 200)
-        sync.tap()
-        let failure = app.alerts["Couldn’t sync brokerage positions"]
-        XCTAssertTrue(failure.waitForExistence(timeout: 12))
-        XCTAssertEqual(quantities(try holdings()), [20, 50])
-        failure.buttons["OK"].tap()
+        for phase in ["disconnected", "failure"] {
+            XCTAssertEqual(try request("POST", "/qa/broker-positions/\(phase)", token: token).status, 200)
+            sync.tap()
+            let failure = app.alerts["Couldn’t sync brokerage positions"]
+            XCTAssertTrue(failure.waitForExistence(timeout: 12), phase)
+            XCTAssertEqual(quantities(try holdings()), [20, 50], phase)
+            failure.buttons["OK"].tap()
+        }
         XCTAssertEqual(try request("POST", "/qa/broker-positions/transfer", token: token).status, 200)
         sync.tap()
         var refreshed: [[String: Any]] = []

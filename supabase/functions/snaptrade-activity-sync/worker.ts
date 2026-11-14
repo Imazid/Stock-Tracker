@@ -1,4 +1,4 @@
-import { handleSnapTradeRequest, type SnapTradeProxyDeps } from "../_shared/snaptrade/proxy.ts";
+import { handleSnapTradeRequest, listInvestmentAccounts, type SnapTradeProxyDeps } from "../_shared/snaptrade/proxy.ts";
 import { logEvent } from "../_shared/server/http.ts";
 import { type FailureCode, providerFailure } from "../_shared/worker-report.ts";
 
@@ -33,7 +33,7 @@ export async function syncSnapTradeActivities(admin: SyncDatabase, deps: SnapTra
     try {
       let page;
       if (!job.pending_id) {
-        const result = await handleSnapTradeRequest(job.user_id, { operation: "listAccounts" }, deps);
+        const result = await listInvestmentAccounts(job.user_id, deps, false);
         if (result.status !== 200 || !Array.isArray(result.body)) {
           throw new PageError([400, 401, 403, 404, 409].includes(result.status),
             providerFailure(result.status, "provider_response"));

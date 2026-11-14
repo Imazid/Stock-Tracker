@@ -19,10 +19,12 @@ def broker_response(user, request):
     if operation == "listBrokerages":
         return 200, []
     if operation == "listAccounts":
+        phase = PHASES.get(user, "initial")
         return 200, [
             {"id": account, "brokerage_authorization": CONNECTION,
-             "institution_name": "CommSec", "number": number}
-            for account, number in [(SOURCE, "001234"), (RECEIVER, "004321")]
+             "institution_name": "CommSec", "number": number,
+             "positions_status": "disconnected" if phase == "disconnected" and account == SOURCE else "available"}
+            for account, number in [(SOURCE, "••••1234"), (RECEIVER, "••••4321")]
         ]
     if operation != "accountAllPositions":
         return 400, {"error": {"code": "UNEXPECTED_OPERATION"}}
@@ -56,7 +58,7 @@ class FixtureRelay(BaseHTTPRequestHandler):
                 self.respond(status, json.dumps(payload).encode())
             else:
                 phase = self.path.rsplit("/", 1)[1]
-                if phase not in ("failure", "transfer"):
+                if phase not in ("disconnected", "failure", "transfer"):
                     self.respond(404, b"{}")
                     return
                 PHASES[user] = phase
