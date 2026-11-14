@@ -505,3 +505,61 @@ Deno.test("activity worker classifies rate limits and defers without publishing 
   assertEquals([...failures], ["provider_rate_limit"]);
   assertEquals(calls, ["claim_snaptrade_activity_jobs", "defer_snaptrade_activity_job"]);
 });
+
+Deno.test("portfolio cash reads signed investment balances once per identified account and retains partial coverage", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "my-cash-secret" });
+  const disabled = "44444444-4444-4444-4444-444444444444";
+  const failed = "55555555-5555-5555-5555-555555555555";
+  const paper = "66666666-6666-6666-6666-666666666666";
+  const oldest = "2023-11-13T10:00:00Z";
+  const newest = "2023-11-14T10:00:00Z";
+  const account = { kind: "investment", institution_id: USER, institution_account_id: "hidden-account-id",
+    display_name: "full account number 987654321", masked_account_number: "****4321", connection_id: USER };
+  const { deps, calls } = harness(({ url, method }) => {
+    assertEquals(method, "GET");
+    assertEquals(url.searchParams.get("userId"), `st-${USER}`);
+    assertEquals(url.searchParams.get("userSecret"), "my-cash-secret");
+    if (url.pathname === "/accounts/all") return json(200, { results: [
+      { ...account, id: ACCOUNT, sync_status: { positions: null, balances: newest } },
+      { ...account, id: OTHER, sync_status: { balances: oldest } },
+      { ...account, id: disabled, connection_id: OTHER, institution_account_id: null },
+      { ...account, id: failed, institution_account_id: null },
+      { ...account, id: paper, is_paper: true },
+      { ...account, id: USER, status: "closed" },
+      { kind: "deposit", id: "unrelated-deposit-account" },
+    ] });
+    if (url.pathname === "/authorizations") return json(200, [
+      { id: USER, brokerage: { display_name: "Broker A" } },
+      { id: OTHER, disabled: true, brokerage: { display_name: "Broker B" } },
+    ]);
+    if (url.pathname === `/accounts/${ACCOUNT}/balances`) return json(200, [
+      { currency: { code: "USD" }, cash: -12.34, buying_power: 999999, userSecret: "must-not-leave" },
+      { currency: { code: "AUD" }, cash: 0, buying_power: 41 },
+      { currency: { code: "GBP" }, cash: null, buying_power: 98 },
+      { currency: { code: "EUR" }, cash: 1 }, { currency: { code: "EUR" }, cash: 2 },
+      { currency: { code: "BAD!" }, cash: 7 },
+    ]);
+    if (url.pathname === `/accounts/${disabled}/balances`) return json(200, [{ currency: { code: "USD" }, cash: 5 }]);
+    if (url.pathname === `/accounts/${paper}/balances`) return json(200, []);
+    assertEquals(url.pathname, `/accounts/${failed}/balances`);
+    return json(503, { detail: "Unavailable" });
+  }, store);
+  const request = { operation: "portfolioCash", params: { accountId: OTHER, userId: OTHER } };
+  assertEquals(await handleSnapTradeRequest(OTHER, request, deps), { status: 200, body: { accounts: [], duplicatesSkipped: 0 } });
+  assertEquals(calls.length, 0);
+  const result = await handleSnapTradeRequest(USER, request, deps);
+  assertEquals(result.status, 200);
+  assertEquals(result.body, { duplicatesSkipped: 1, accounts: [
+    { id: ACCOUNT, label: "Broker A ••••4321", paper: false, status: "available", syncedAt: "2023-11-14T10:00:00.000Z",
+      incomplete: true, balances: [
+        { currency: "AUD", amount: "0" }, { currency: "EUR", amount: null },
+        { currency: "GBP", amount: null }, { currency: "USD", amount: "-12.34" },
+      ] },
+    { id: disabled, label: "Broker B ••••4321", paper: false, status: "disconnected", syncedAt: null,
+      incomplete: false, balances: [{ currency: "USD", amount: "5" }] },
+    { id: failed, label: "Broker A ••••4321", paper: false, status: "unavailable", syncedAt: null, balances: [] },
+    { id: paper, label: "Broker A ••••4321", paper: true, status: "available", syncedAt: null, incomplete: false, balances: [] },
+  ] });
+  assertEquals(calls.length, 6);
+});

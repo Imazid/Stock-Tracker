@@ -28,6 +28,15 @@ def broker_response(user, request):
              "positions_status": "disconnected" if phase == "disconnected" and account == SOURCE else "available"}
             for account, number in [(SOURCE, "••••1234"), (RECEIVER, "••••4321")]
         ]
+    if operation == "portfolioCash":
+        return 200, {"duplicatesSkipped": 1, "accounts": [
+            {"id": SOURCE, "label": "CommSec ••••1234", "paper": False, "status": "available",
+             "syncedAt": "2026-11-13T03:00:00.000Z", "incomplete": True,
+             "balances": [{"currency": "AUD", "amount": "312.34"}, {"currency": "GBP", "amount": None},
+                          {"currency": "USD", "amount": "-12.34"}]},
+            {"id": RECEIVER, "label": "CommSec ••••4321", "paper": True, "status": "disconnected",
+             "syncedAt": None, "balances": []},
+        ]}
     if operation == "accountActivities":
         params = request["params"]
         day = params["endDate"]

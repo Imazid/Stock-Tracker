@@ -18,6 +18,7 @@ struct PortfolioAccountsCard: View {
     let hidesValues: Bool
     let onManageBrokers: () -> Void
     let onStockTransfers: (() -> Void)?
+    let onBrokerCash: (() -> Void)?
 
     private var manual: [PortfolioHolding] { marketData.portfolio.filter { !broker.isImported($0) } }
     private var imported: [PortfolioHolding] { marketData.portfolio.filter { $0.shares > 0 && broker.isImported($0) } }
@@ -62,6 +63,12 @@ struct PortfolioAccountsCard: View {
                         detail: "Bring your holdings in automatically · read-only",
                         value: nil, chevron: true, id: "portfolio.account.connect",
                         action: onManageBrokers)
+                }
+                if let onBrokerCash {
+                    divider
+                    row(icon: { symbolTile("banknote", tint: DS.accent) },
+                        title: "Brokerage cash", detail: "Balances by account and currency", value: nil,
+                        chevron: true, id: "portfolio.brokerCash.open", action: onBrokerCash)
                 }
                 if let onStockTransfers {
                     divider

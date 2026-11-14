@@ -240,6 +240,45 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(Set(refreshed.compactMap { $0["id"] as? String }), Set(original.compactMap { $0["id"] as? String }))
     }
 
+    func testBrokerCashShowsOriginalCurrenciesAndRespectsHiddenValues() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_BROKER_CASH"] == "1",
+                          "Start the brokerage fixture relay")
+        let email = "broker-cash-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        func openCash(hidden: Bool) {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)",
+                "-portfolioValueHidden", hidden ? "YES" : "NO"]
+            app.launch()
+            XCTAssertTrue(app.open("Portfolio"))
+            let entry = app.buttons["portfolio.brokerCash.open"]
+            for _ in 0..<6 where !entry.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(entry.isHittable)
+            entry.tap()
+            XCTAssertTrue(app.navigationBars["Brokerage cash"].waitForExistence(timeout: 8))
+        }
+
+        openCash(hidden: false)
+        let aud = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "312.34")).firstMatch
+        let debit = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "12.34")).firstMatch
+        XCTAssertTrue(aud.waitForExistence(timeout: 10))
+        XCTAssertTrue(debit.label.contains("-") || debit.label.contains("−"))
+        XCTAssertTrue(app.staticTexts["Unavailable"].exists)
+        XCTAssertTrue(app.staticTexts["Cash balance unavailable."].exists)
+        XCTAssertTrue(try rows("portfolio_holdings", select: "id", token: token).isEmpty)
+        XCTAssertTrue(try rows("portfolio_performance_periods", select: "id", token: token).isEmpty)
+
+        app.terminate()
+        openCash(hidden: true)
+        XCTAssertTrue(app.staticTexts["••••"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(aud.exists)
+        XCTAssertFalse(debit.exists)
+    }
+
     func testReviewedStockTransferSyncsAcrossSignIn() throws {
         // Run scripts/snaptrade-positions-fixture.py with STOCK_TRACKER_UI_TEST_API pointing to it.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STOCK_TRANSFERS"] == "1",

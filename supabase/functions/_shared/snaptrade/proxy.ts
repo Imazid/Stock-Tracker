@@ -33,6 +33,7 @@ export type SnapTradeOperation =
   | "accountPositions"
   | "accountHoldings"
   | "accountActivities"
+  | "portfolioCash"
   | "deleteUser";
 
 export const SNAPTRADE_OPERATIONS: readonly SnapTradeOperation[] = [
@@ -47,6 +48,7 @@ export const SNAPTRADE_OPERATIONS: readonly SnapTradeOperation[] = [
   "accountPositions",
   "accountHoldings",
   "accountActivities",
+  "portfolioCash",
   "deleteUser",
 ];
 
@@ -181,6 +183,8 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
         return forward(deps, "GET", `/accounts/${accountId}/${suffix}`, u, null);
       });
     }
+    case "portfolioCash":
+      return portfolioCash(userId, deps);
     case "accountActivities": {
       const { accountId, startDate, endDate, offset = 0 } = params;
       if (typeof accountId !== "string" || !UUID.test(accountId)) {
@@ -224,69 +228,171 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
   }
 }
 
-/** Use the current account API and keep the array contract used by existing clients. */
-export function listInvestmentAccounts(userId: string, deps: SnapTradeProxyDeps, includeDetails = true): Promise<ProxyResponse> {
-  if (!UUID.test(userId)) return Promise.resolve(fail(401, "UNAUTHENTICATED", "no signed-in user"));
-  return withUser(userId, deps, async (u) => {
-    const accounts = await call(deps, "GET", "/accounts/all", u, null, "");
-    if ("error" in accounts) return accounts.error;
-    const rows = isRecord(accounts.json) ? accounts.json.results : null;
-    if (!Array.isArray(rows) || rows.some((row) => !isRecord(row) || typeof row.kind !== "string")) {
-      return fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable list of accounts.");
-    }
-    const investments = new Map<string, Record<string, unknown> & { id: string; connection_id: string }>();
-    for (const row of rows) {
-      if (row.kind !== "investment") continue;
-      if (typeof row.id !== "string" || !UUID.test(row.id) ||
-        typeof row.connection_id !== "string" || !UUID.test(row.connection_id)) {
-        return fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable investment account.");
-      }
-      investments.set(row.id.toLowerCase(), { ...row, id: row.id.toLowerCase(), connection_id: row.connection_id.toLowerCase() });
-    }
-    const distinct = [...investments.values()];
-    if (!includeDetails || distinct.length === 0) {
-      return { status: 200, body: distinct.map(({ id }) => ({ id })) };
-    }
+type ProviderUser = { userId: string; userSecret: string };
+type InvestmentRow = Record<string, unknown> & { id: string; connection_id: string };
 
-    const result = await call(deps, "GET", "/authorizations", u, null, "");
-    if ("error" in result) return result.error;
-    if (!Array.isArray(result.json)) {
-      return fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable list of connections.");
+async function investmentRows(user: ProviderUser, deps: SnapTradeProxyDeps) {
+  const accounts = await call(deps, "GET", "/accounts/all", user, null, "");
+  if ("error" in accounts) return { error: accounts.error };
+  const rows = isRecord(accounts.json) ? accounts.json.results : null;
+  if (!Array.isArray(rows) || rows.some((row) => !isRecord(row) || typeof row.kind !== "string")) {
+    return { error: fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable list of accounts.") };
+  }
+  const investments = new Map<string, InvestmentRow>();
+  for (const row of rows) {
+    if (row.kind !== "investment") continue;
+    if (typeof row.id !== "string" || !UUID.test(row.id) ||
+      typeof row.connection_id !== "string" || !UUID.test(row.connection_id)) {
+      return { error: fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable investment account.") };
     }
-    const connections = new Map<string, Record<string, unknown>>();
+    investments.set(row.id.toLowerCase(), { ...row, id: row.id.toLowerCase(), connection_id: row.connection_id.toLowerCase() });
+  }
+  return { rows: [...investments.values()] };
+}
+
+function accountText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function accountDetails(row: InvestmentRow, connection: Record<string, unknown> | undefined) {
+  const brokerage = isRecord(connection?.brokerage) ? connection.brokerage : null;
+  const total = isRecord(row.net_value) && typeof row.net_value.amount === "number" &&
+      Number.isFinite(row.net_value.amount) && typeof row.net_value.currency === "string" &&
+      /^[A-Z]{3}$/.test(row.net_value.currency)
+    ? { amount: row.net_value.amount, currency: row.net_value.currency }
+    : null;
+  const suffix = accountText(row.masked_account_number)?.match(/[a-z0-9]{1,4}$/i)?.[0];
+  const status = accountText(row.status);
+  const waiting = isRecord(row.sync_status) && row.sync_status.positions === null;
+  return {
+    id: row.id,
+    brokerage_authorization: row.connection_id,
+    institution_name: accountText(brokerage?.display_name) ?? accountText(brokerage?.name) ?? "Brokerage account",
+    name: accountText(row.display_name),
+    number: suffix ? `••••${suffix}` : "",
+    meta: { type: accountText(row.raw_type) },
+    balance: total ? { total } : null,
+    positions_status: status === "closed" || status === "archived" || status === "unavailable"
+      ? status : !connection ? "unavailable" : connection.disabled === true ? "disconnected" : waiting ? "pending" : "available",
+  };
+}
+
+async function investmentDirectory(user: ProviderUser, deps: SnapTradeProxyDeps, includeDetails: boolean) {
+  const found = await investmentRows(user, deps);
+  if (!found.rows) return { error: found.error };
+  const connections = new Map<string, Record<string, unknown>>();
+  if (includeDetails && found.rows.length) {
+    const result = await call(deps, "GET", "/authorizations", user, null, "");
+    if ("error" in result) return { error: result.error };
+    if (!Array.isArray(result.json)) {
+      return { error: fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable list of connections.") };
+    }
     for (const connection of result.json) {
       if (isRecord(connection) && typeof connection.id === "string") {
         connections.set(connection.id.toLowerCase(), connection);
       }
     }
+  }
+  return { rows: found.rows, connections };
+}
+
+/** Use the current account API and keep the array contract used by existing clients. */
+export function listInvestmentAccounts(userId: string, deps: SnapTradeProxyDeps, includeDetails = true): Promise<ProxyResponse> {
+  if (!UUID.test(userId)) return Promise.resolve(fail(401, "UNAUTHENTICATED", "no signed-in user"));
+  return withUser(userId, deps, async (user) => {
+    const directory = await investmentDirectory(user, deps, includeDetails);
+    if (!directory.rows) return directory.error;
     return {
       status: 200,
-      body: distinct.map((row) => {
-        const connection = connections.get(row.connection_id);
-        const brokerage = isRecord(connection?.brokerage) ? connection.brokerage : null;
-        const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
-        const total = isRecord(row.net_value) && typeof row.net_value.amount === "number" &&
-            Number.isFinite(row.net_value.amount) && typeof row.net_value.currency === "string" &&
-            /^[A-Z]{3}$/.test(row.net_value.currency)
-          ? { amount: row.net_value.amount, currency: row.net_value.currency }
-          : null;
-        const suffix = text(row.masked_account_number)?.match(/[a-z0-9]{1,4}$/i)?.[0];
-        const status = text(row.status);
-        const waiting = isRecord(row.sync_status) && row.sync_status.positions === null;
-        return {
-          id: row.id,
-          brokerage_authorization: row.connection_id,
-          institution_name: text(brokerage?.display_name) ?? text(brokerage?.name) ?? "Brokerage account",
-          name: text(row.display_name),
-          number: suffix ? `••••${suffix}` : "",
-          meta: { type: text(row.raw_type) },
-          balance: total ? { total } : null,
-          positions_status: status === "closed" || status === "archived" || status === "unavailable"
-            ? status : !connection ? "unavailable" : connection.disabled === true ? "disconnected" : waiting ? "pending" : "available",
-        };
-      }),
+      body: directory.rows.map((row) => includeDetails ? accountDetails(row, directory.connections.get(row.connection_id)) : { id: row.id }),
     };
   });
+}
+
+function cashEntries(payload: unknown) {
+  if (!Array.isArray(payload)) return null;
+  const entries = new Map<string, number | null>();
+  const duplicates = new Set<string>();
+  let incomplete = false;
+  for (const row of payload) {
+    const code = isRecord(row) && isRecord(row.currency) ? row.currency.code : undefined;
+    if (typeof code !== "string" || !/^[A-Z]{3}$/.test(code) || !isRecord(row)) {
+      incomplete = true;
+      continue;
+    }
+    if (entries.has(code)) duplicates.add(code);
+    const amount = typeof row.cash === "number" && Number.isFinite(row.cash) && Math.abs(row.cash) <= Number.MAX_SAFE_INTEGER
+      ? row.cash : null;
+    entries.set(code, amount);
+    if (amount === null) incomplete = true;
+  }
+  return {
+    balances: [...entries].sort(([a], [b]) => a.localeCompare(b))
+      .map(([currency, amount]) => ({ currency, amount: amount === null || duplicates.has(currency) ? null : String(amount) })),
+    incomplete: incomplete || duplicates.size > 0,
+  };
+}
+
+function balanceSyncTime(row: InvestmentRow, now: number) {
+  const value = isRecord(row.sync_status) ? row.sync_status.balances : null;
+  if (typeof value !== "string" || !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && time <= now ? new Date(time).toISOString() : null;
+}
+
+async function portfolioCash(userId: string, deps: SnapTradeProxyDeps): Promise<ProxyResponse> {
+  const record = await deps.store.get(userId);
+  if (!record) return { status: 200, body: { accounts: [], duplicatesSkipped: 0 } };
+  const user = { userId: record.snapTradeUserId, userSecret: record.userSecret };
+  const deadline = performance.now() + 43_000;
+  const directory = await investmentDirectory(user, deps, true);
+  if (!directory.rows) return directory.error;
+  const distinct = new Map<string, { id: string; label: string; paper: boolean; status: string; syncedAt: string | null }>();
+  for (const row of directory.rows) {
+    const account = accountDetails(row, directory.connections.get(row.connection_id));
+    if (account.positions_status === "closed" || account.positions_status === "archived") continue;
+    const institution = typeof row.institution_id === "string" && UUID.test(row.institution_id) ? row.institution_id.toLowerCase() : null;
+    const institutionAccount = accountText(row.institution_account_id);
+    const paper = row.is_paper === true;
+    const key = institution && institutionAccount ? JSON.stringify([institution, institutionAccount, paper]) : row.id;
+    const status = account.positions_status === "pending" ? "available" : account.positions_status;
+    const syncedAt = balanceSyncTime(row, deps.now());
+    const priority = (value: string) => value === "available" ? 2 : value === "disconnected" ? 1 : 0;
+    const prior = distinct.get(key);
+    if (prior && (priority(prior.status) > priority(status) ||
+      (priority(prior.status) === priority(status) && (prior.syncedAt ?? "") >= (syncedAt ?? "")))) continue;
+    distinct.set(key, { id: row.id, label: [account.institution_name, account.number].filter(Boolean).join(" "), paper, status, syncedAt });
+  }
+
+  const selected = [...distinct.values()];
+  const output = new Array(selected.length);
+  let next = 0;
+  async function readBalances() {
+    while (next < selected.length) {
+      const index = next++;
+      const account = selected[index];
+      const remaining = deadline - performance.now();
+      if (account.status === "unavailable" || remaining <= 0) {
+        output[index] = { ...account, status: "unavailable", balances: [] };
+        continue;
+      }
+      try {
+        const result = await call({ ...deps, config: { ...deps.config, timeoutMs: Math.min(15_000, Math.ceil(remaining)) } },
+          "GET", `/accounts/${account.id}/balances`, user, null, "");
+        const entries = "error" in result ? null : cashEntries(result.json);
+        if (entries) {
+          output[index] = { ...account, ...entries, status: account.status };
+          continue;
+        }
+      } catch {
+        // Keep the other accounts usable when this provider response fails.
+      }
+      output[index] = { ...account, status: account.status === "disconnected" ? "disconnected" : "unavailable", balances: [] };
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(selected.length, 4) }, readBalances));
+  const openAccounts = directory.rows.filter((row) => row.status !== "closed" && row.status !== "archived").length;
+  return { status: 200, body: { accounts: output, duplicatesSkipped: openAccounts - selected.length } };
 }
 
 async function registerUser(userId: string, deps: SnapTradeProxyDeps): Promise<ProxyResponse> {
