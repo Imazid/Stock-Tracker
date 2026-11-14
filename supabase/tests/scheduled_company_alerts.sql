@@ -2,19 +2,12 @@ begin;
 
 do $$
 begin
-  if has_schema_privilege('authenticated', 'company_alert_operations', 'usage')
-    or has_function_privilege('anon', 'company_alert_operations.invoke_due()', 'execute') then
-    raise exception 'Clients must not invoke the alert scheduler';
+  if to_regnamespace('company_alert_operations') is not null then
+    raise exception 'Database alert dispatcher was not removed';
   end if;
-  if to_regclass('net.http_request_queue') is not null and
-    (has_table_privilege('authenticated', 'net.http_request_queue', 'select')
-    or has_table_privilege('anon', 'net.http_request_queue', 'select')) then
-    raise exception 'Clients must not read scheduler credentials from pg_net';
-  end if;
-  if exists (select from pg_extension where extname = 'pg_cron') and
-    exists (select from pg_extension where extname = 'pg_net') then
-    if not exists (select from cron.job where jobname = 'company-alerts' and active and schedule = '* * * * *') then
-      raise exception 'Alert scheduler is missing';
+  if to_regclass('cron.job') is not null then
+    if exists (select from cron.job where jobname = 'company-alerts') then
+      raise exception 'Database alert schedule was not removed';
     end if;
   end if;
 end;

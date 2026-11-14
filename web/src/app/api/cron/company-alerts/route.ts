@@ -3,10 +3,11 @@ import { json, jsonError } from "@/server/http/respond";
 import { runCompanyAlerts } from "@/server/research/alerts";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function GET(request: Request) {
-  const secret = process.env.COMPANY_ALERT_CRON_SECRET || process.env.CRON_SECRET;
+  const secret = process.env.CRON_SECRET || process.env.COMPANY_ALERT_CRON_SECRET;
   const header = request.headers.get("authorization");
   const received = Buffer.from(header ?? "");
   const expected = Buffer.from(`Bearer ${secret ?? ""}`);
