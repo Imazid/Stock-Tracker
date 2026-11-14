@@ -396,6 +396,17 @@ struct AccountView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     sectionLabel("Account")
                     VStack(spacing: 0) {
+                        if let owner = supabaseAuthManager.userId {
+                            NavigationLink {
+                                PrivateMarketsExportView(owner: owner)
+                            } label: {
+                                flatRow("square.and.arrow.up", "Export Private Markets")
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("account.private.export")
+                            divider()
+                        }
                         Button {
                             showSignOutConfirm = true
                         } label: {

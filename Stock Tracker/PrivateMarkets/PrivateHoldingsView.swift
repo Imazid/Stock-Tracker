@@ -108,6 +108,14 @@ struct PrivateHoldingsView: View {
                         .accessibilityIdentifier("private.angellist.open")
                 }
             }
+            Section {
+                NavigationLink {
+                    PrivateMarketsExportView(owner: auth.userId)
+                } label: {
+                    Label("Export Private Markets", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("private.portfolio.export")
+            }
         }
         .navigationTitle("My Private Portfolio")
         .navigationBarTitleDisplayMode(.inline)

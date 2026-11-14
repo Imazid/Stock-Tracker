@@ -1,3 +1,4 @@
+import { exportOffset, exportSection, privateExportPage } from "../_shared/private-markets/export.ts";
 import { AI_LIMITS, type AiProxyDeps } from "../_shared/ai/proxy.ts";
 import { authenticatedUserId, errorResponse, jsonResponse, readJson, serviceClient } from "../_shared/secure/edge.ts";
 import { fromBase64, fromUtf8, timingSafeEqual, utf8 } from "../_shared/secure/encoding.ts";
@@ -450,6 +451,23 @@ Deno.serve(async (req) => {
       if (error) throw error;
     };
     switch (body.action) {
+      case "export_records": {
+        const section = exportSection(body.section);
+        const offset = exportOffset(body.offset);
+        if (!section || offset === null || Object.keys(body).some((key) => !["action", "section", "offset"].includes(key))) {
+          return errorResponse(400, "INVALID_EXPORT", "Choose a supported Private Markets export section and page.");
+        }
+        const session = sessionId(req);
+        if (!session) return errorResponse(401, "UNAUTHENTICATED", "Sign in again to export your account records.");
+        const active = await admin.rpc("account_deletion_session_active", { p_user: userId, p_session: session });
+        if (active.error) throw active.error;
+        if (!active.data) return errorResponse(401, "UNAUTHENTICATED", "Your session ended. Sign in again.");
+        const page = await privateExportPage(admin, userId, section, offset, async (kind, id, sealed) => {
+          const plaintext = await open(await keys(), sealed, context(kind, userId, id));
+          return kind === "report" ? publicReport(JSON.parse(plaintext) as StoredReport) : plaintext;
+        });
+        return jsonResponse(200, page);
+      }
       case "monitor_push": {
         const { device_id: device, environment, token } = body;
         if (typeof device !== "string" || !uuid.test(device) ||

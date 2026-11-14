@@ -544,6 +544,12 @@ final class PrivateMarketsStore: ObservableObject {
         selectAccount(scope)
     }
 
+    func exportDeviceRecords(for owner: UUID?) throws -> State {
+        guard didLoad, scope == owner else { throw CancellationError() }
+        guard storageError == nil else { throw CocoaError(.fileReadNoPermission) }
+        return state
+    }
+
     func change(_ edit: (inout State) throws -> Void) throws {
         guard storageError == nil else { throw CocoaError(.fileReadNoPermission) }
         var next = state

@@ -57,6 +57,44 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(holding.label.contains("Local test investment"))
     }
 
+    @MainActor
+    func testLocalPrivateMarketsExportOpensFiles() {
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let entry = app.buttons["private.portfolio.export"]
+        for _ in 0..<3 where !entry.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(entry.isHittable)
+        entry.tap()
+        XCTAssertFalse(app.switches["private.export.cloud"].exists)
+        let save = app.buttons["private.export.save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 8))
+        save.tap()
+        let filesSave = app.buttons["Save"].firstMatch
+        XCTAssertTrue(filesSave.waitForExistence(timeout: 12))
+        filesSave.tap()
+        XCTAssertTrue(app.staticTexts["Export saved"].waitForExistence(timeout: 12), app.debugDescription)
+    }
+
+    @MainActor
+    func testAccountPrivateMarketsExportOpensFilesAfterLoadingCloudData() throws {
+        try launchWithLocalSession("PRIVATE_EXPORT_TEST_SESSION")
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 12))
+        settings.tap()
+        let account = app.buttons["settings.account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 12))
+        account.tap()
+        let entry = app.buttons["account.private.export"]
+        for _ in 0..<4 where !entry.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(entry.isHittable)
+        entry.tap()
+        let cloud = app.switches["private.export.cloud"]
+        XCTAssertTrue(cloud.waitForExistence(timeout: 8))
+        XCTAssertEqual(cloud.value as? String, "1")
+        app.buttons["private.export.save"].tap()
+        XCTAssertTrue(app.buttons["Save"].firstMatch.waitForExistence(timeout: 25), app.debugDescription)
+    }
+
     func testManualHoldingRecordsAndCorrectsSales() {
         openPrivateMarkets()
         app.buttons["private.destination.briefcase"].tap()
