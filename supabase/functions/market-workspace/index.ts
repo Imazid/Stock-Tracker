@@ -15,7 +15,7 @@ import { cachedMarketExplore, knownWatchedListings } from "./explore.ts";
 import { companyResearch } from "./company.ts";
 import { mobileResearchReport, researchListing } from "./research_report.ts";
 import { answerCompanyQuestion } from "./research_answer.ts";
-import { mobileCompanyAlerts } from "./research_alerts.ts";
+import { mobileCompanyAlertActivity, mobileCompanyAlerts } from "./research_alerts.ts";
 import { AI_LIMITS } from "../_shared/ai/proxy.ts";
 import { prepareStrategy, runHistory } from "./strategy.ts";
 
@@ -106,6 +106,13 @@ Deno.serve(async (request) => {
     if (body.action === "companyAlerts" && userID) {
       return ok(await mobileCompanyAlerts(body, request.headers.get("authorization")!,
         env("RESEARCH_WEB_ORIGIN"), env("RESEARCH_WEB_BYPASS_SECRET")));
+    }
+    if (body.action === "companyAlertActivity" && userID) {
+      const db = createClient(env("SUPABASE_URL")!, env("SUPABASE_ANON_KEY")!, {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { Authorization: request.headers.get("authorization")! } },
+      });
+      return ok(await mobileCompanyAlertActivity(db, userID));
     }
     if (body.action === "historicalFx") return ok(await historicalCashConversion(body, now));
     if (body.action === "portfolioBenchmark") {
