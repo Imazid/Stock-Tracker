@@ -23,7 +23,8 @@ test("a saved profile and a successful readiness check still require fresh provi
       await page.getByLabel("Email", { exact: true }).fill(address);
       await page.getByLabel("Password", { exact: true }).fill(secret);
       await page.getByRole("button", { name: "Sign in", exact: true }).click();
-      await page.waitForURL("**/private-markets");
+      await page.waitForURL((url) => url.pathname === "/private-markets");
+      await page.getByRole("button", { name: "Sign out", exact: true }).waitFor();
     };
     const openOffer = async () => {
       await page.getByRole("radio", { name: "Discover", exact: true }).click();
