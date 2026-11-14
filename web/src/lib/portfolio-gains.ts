@@ -22,6 +22,16 @@ export type PortfolioGains = {
 
 type Holding = { id: string; shares: number; instrument: InstrumentView | null };
 
+export function reconciledOpenCost(quantity: number, basis?: OpenCost) {
+  const units = basis ? lotUnits(basis.units) : undefined;
+  const shares = lotUnits(quantity);
+  // Synced quantities are doubles. Allow conversion noise from fractional
+  // fills and split ratios while still requiring quantities to reconcile.
+  if (!basis || !units || !shares || basis.costUsd === null || !Number.isFinite(basis.costUsd) ||
+      Math.abs(Number(units - shares)) > Math.max(1, Number(shares) * Number.EPSILON * 32)) return undefined;
+  return basis.costUsd;
+}
+
 export function unrealisedGains(
   holdings: readonly Holding[],
   open: Readonly<Record<string, OpenCost>>,
@@ -38,12 +48,8 @@ export function unrealisedGains(
   let oldestQuote: string | undefined;
   for (const { id, shares, instrument } of holdings) {
     const basis = open[id];
-    const units = basis ? lotUnits(basis.units) : undefined;
-    const position = lotUnits(shares);
-    // The synced position is a double. Allow conversion noise from fractional
-    // fills and split ratios while still requiring the quantities to reconcile.
-    if (!basis || !units || !position || basis.costUsd === null || !Number.isFinite(basis.costUsd) ||
-        Math.abs(Number(units - position)) > Math.max(1, Number(position) * Number.EPSILON * 32)) {
+    const costUsd = reconciledOpenCost(shares, basis);
+    if (costUsd === undefined) {
       basisMissing++;
       continue;
     }
@@ -51,7 +57,7 @@ export function unrealisedGains(
     const observed = Date.parse(quote?.observedAt ?? "");
     if (!instrument || !quote || quote.instrumentId !== instrument.id || quote.currency !== instrument.currency ||
         quote.stale || !Number.isFinite(quote.last) || quote.last <= 0 || !Number.isFinite(observed) ||
-        (basis.lastSplit && sydney.format(observed) < basis.lastSplit)) {
+        (basis?.lastSplit && sydney.format(observed) < basis.lastSplit)) {
       pricesMissing++;
       continue;
     }
@@ -61,7 +67,7 @@ export function unrealisedGains(
       fxMissing++;
       continue;
     }
-    const gain = shares * quote.last * rate - basis.costUsd;
+    const gain = shares * quote.last * rate - costUsd;
     if (!Number.isFinite(gain) || !Number.isFinite(total + gain)) {
       pricesMissing++;
       continue;

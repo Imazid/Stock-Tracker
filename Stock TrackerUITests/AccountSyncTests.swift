@@ -790,6 +790,73 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "positions priced")).firstMatch.exists)
     }
 
+    func testAssetDetailShowsEachSyncedAccountAndHidesPositionFigures() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_HOLDINGS_COMPARISON"] == "1",
+                          "Start the hosted holdings relay")
+        let email = "holdings-comparison-ui-detail-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let owner = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let first = UUID(), second = UUID(), otherListing = UUID()
+        let today = ISO8601DateFormatter().string(from: Date())
+
+        func row(_ id: UUID, exchange: String, shares: Int, average: Double, label: String) -> [String: Any] {
+            ["id": id.uuidString, "user_id": owner, "asset_symbol": "AAPL", "asset_name": "Apple",
+             "asset_kind": "Stock", "asset_exchange": exchange, "shares": shares, "avg_cost": average, "date_added": today,
+             "broker_account": ["account_id": UUID().uuidString.lowercased(), "label": label, "institution": "Test Broker",
+                                "observed_at": today, "tracking": true] as [String: Any]]
+        }
+        let seed = [row(first, exchange: "NASDAQ", shares: 2, average: 40, label: "Test Broker ••••1212"),
+                    row(second, exchange: "US", shares: 3, average: 0, label: "Test Broker ••••3434"),
+                    row(otherListing, exchange: "LSE", shares: 90, average: 1, label: "Test Broker ••••9898")]
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: seed), token: token).status, 201)
+
+        func openDetail(hidden: Bool) {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark",
+                "-portfolioValueHidden", hidden ? "YES" : "NO", "-preferredCurrency", "USD"]
+            app.launch()
+            XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 20))
+            XCTAssertTrue(app.open("Search"))
+            let field = app.searchFields.firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            field.tap()
+            field.typeText("AAPL")
+            let result = app.buttons["search.result.us.AAPL"]
+            XCTAssertTrue(result.waitForExistence(timeout: 20))
+            result.tap()
+        }
+
+        func element(_ type: String, _ id: UUID) -> XCUIElement {
+            app.descendants(matching: .any)["detail.position.\(type).\(id.uuidString)"].firstMatch
+        }
+
+        openDetail(hidden: false)
+        XCTAssertTrue(element("account", first).waitForExistence(timeout: 25), app.debugDescription)
+        XCTAssertTrue(element("account", second).exists)
+        XCTAssertFalse(element("account", otherListing).exists)
+        XCTAssertTrue(element("units", first).label.contains("2 shares"))
+        XCTAssertTrue(element("cost", first).label.contains("US$40.00"))
+        XCTAssertTrue(element("cost", second).label.contains("Unavailable"))
+        XCTAssertTrue(element("gain", second).label.contains("Unavailable"))
+        attach("asset-detail-account-positions")
+        app.terminate()
+
+        openDetail(hidden: true)
+        XCTAssertTrue(element("account", first).waitForExistence(timeout: 25), app.debugDescription)
+        XCTAssertTrue(element("account", second).exists)
+        XCTAssertFalse(element("units", first).exists)
+        XCTAssertFalse(element("cost", second).exists)
+        XCTAssertFalse(element("value", first).exists)
+        XCTAssertTrue(app.staticTexts["detail.position.hidden"].firstMatch.exists)
+    }
+
     func testAccountDeletionRequiresPasswordAndClearsTheAccount() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ACCOUNT_DELETION"] == "1",
                           "Set up a disposable account-deletion backend")
