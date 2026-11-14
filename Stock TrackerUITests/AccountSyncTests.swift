@@ -186,6 +186,7 @@ final class AccountSyncTests: XCTestCase {
     }
 
     func testCurrentBrokerPositionsKeepPriorQuantitiesWhenAnAccountFails() throws {
+        // Start scripts/snaptrade-positions-fixture.py and point STOCK_TRACKER_UI_TEST_API at port 58346.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_BROKER_POSITIONS"] == "1",
                           "Start the SnapTrade positions fixture relay")
         let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
@@ -219,11 +220,13 @@ final class AccountSyncTests: XCTestCase {
         account.tap()
         let sync = app.buttons["broker.sync"]
         XCTAssertTrue(sync.waitForExistence(timeout: 8))
+        XCTAssertEqual(try request("POST", "/qa/broker-positions/failure", token: token).status, 200)
         sync.tap()
         let failure = app.alerts["Couldn’t sync brokerage positions"]
         XCTAssertTrue(failure.waitForExistence(timeout: 12))
         XCTAssertEqual(quantities(try holdings()), [20, 50])
         failure.buttons["OK"].tap()
+        XCTAssertEqual(try request("POST", "/qa/broker-positions/transfer", token: token).status, 200)
         sync.tap()
         var refreshed: [[String: Any]] = []
         for _ in 0..<15 {
