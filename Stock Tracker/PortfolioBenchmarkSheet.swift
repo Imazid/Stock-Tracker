@@ -54,7 +54,7 @@ struct PortfolioBenchmarkSheet: View {
         let data: Data
     }
 
-    private enum State {
+    private enum LoadState {
         case result(Result?)
         case failure(String)
     }
@@ -68,7 +68,7 @@ struct PortfolioBenchmarkSheet: View {
     @State private var selectedPeriod = ""
     @State private var fund: Fund = Benchmark.preferred == .asx200 ? .stw : .spy
     @State private var retry = 0
-    @State private var loaded: (request: Request, state: State)?
+    @State private var loaded: (request: Request, state: LoadState)?
     @State private var navigation: [Selection] = []
 
     private var period: PortfolioBenchmarkPeriod? {
@@ -198,7 +198,7 @@ struct PortfolioBenchmarkSheet: View {
     }
 
     private func load(_ request: Request) async {
-        let state: State
+        let state: LoadState
         do {
             let data = try await SecureBackend.invoke("market-workspace", body: [
                 "action": "portfolioBenchmark", "benchmark": request.fund.rawValue, "start": request.start, "end": request.end,
