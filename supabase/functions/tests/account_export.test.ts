@@ -1,5 +1,5 @@
 // deno-lint-ignore no-import-prefix
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { accountRecords, accountSections, parseAccountPage } from "../account-export/records.ts";
 
 Deno.test("account export accepts only named sections and valid page offsets", () => {
@@ -47,4 +47,15 @@ Deno.test("account export scopes credentials metadata and trims lookahead rows",
     ["order", "listing_id"],
     ["range", 0, 50],
   ]);
+
+  calls.length = 0;
+  await accountRecords(admin, "verified-owner", "stock_spin_offs", 0);
+  assertEquals(calls[0], ["from", "portfolio_stock_spin_offs"]);
+  assert(typeof calls[1][1] === "string" && calls[1][1].includes("child_basis_pct_aud::text"));
+  assertEquals(calls[2], ["eq", "user_id", "verified-owner"]);
+
+  calls.length = 0;
+  await accountRecords(admin, "verified-owner", "stock_splits", 0);
+  assert(typeof calls[1][1] === "string" && calls[1][1].includes("fraction_shares,fraction_paid_on"));
+  assertEquals(calls[2], ["eq", "user_id", "verified-owner"]);
 });
