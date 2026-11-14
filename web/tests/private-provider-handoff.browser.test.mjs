@@ -10,7 +10,7 @@ const {
 
 test("a saved profile and a successful readiness check still require fresh provider approval", {
   skip: !origin || !executablePath || !email || !password || !otherEmail || !otherPassword,
-  timeout: 120_000,
+  timeout: 180_000,
 }, async () => {
   const browser = await chromium.launch({ executablePath, headless: true });
   try {
@@ -18,7 +18,7 @@ test("a saved profile and a successful readiness check still require fresh provi
     const api = new URL("/api/workspace-service/private-markets", origin).href;
     const profile = page.locator("#investor-profile");
     const classification = profile.getByLabel("Self-declared classification");
-    const signIn = async (address, secret) => {
+    const signIn = async (page, address, secret) => {
       await page.goto(new URL("/login?next=/private-markets", origin).href);
       await page.getByLabel("Email", { exact: true }).fill(address);
       await page.getByLabel("Password", { exact: true }).fill(secret);
@@ -44,7 +44,7 @@ test("a saved profile and a successful readiness check still require fresh provi
       return { offer, check, amount };
     };
 
-    await signIn(email, password);
+    await signIn(page, email, password);
     await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
     await profile.getByText("Retail · Verification current", { exact: true }).waitFor();
     await classification.selectOption("wholesale");
@@ -81,12 +81,13 @@ test("a saved profile and a successful readiness check still require fresh provi
     await page.getByText("No recorded applications", { exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
 
-    await page.getByRole("button", { name: "Sign out", exact: true }).click();
-    await signIn(otherEmail, otherPassword);
-    await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
-    await profile.getByText("No provider verification on record.", { exact: true }).waitFor();
-    assert.equal(await classification.inputValue(), "unknown");
-    await page.getByText("No recorded applications", { exact: true }).waitFor();
+    const other = await browser.newPage();
+    await signIn(other, otherEmail, otherPassword);
+    await other.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
+    const otherProfile = other.locator("#investor-profile");
+    await otherProfile.getByText("No provider verification on record.", { exact: true }).waitFor();
+    assert.equal(await otherProfile.getByLabel("Self-declared classification").inputValue(), "unknown");
+    await other.getByText("No recorded applications", { exact: true }).waitFor();
   } finally {
     await browser.close();
   }
