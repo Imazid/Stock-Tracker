@@ -174,14 +174,48 @@ select case when count(*)=1 and bool_and(a.source_label='Revised distribution st
   then 'ok   corrected distribution evidence appears on the same alert' else 'FAIL stale distribution evidence' end
   from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') a
   join distribution_alert prior using (id, subject_id);
-delete from public.distributions where provider_reference='dist-new' and id=(select subject_id from distribution_alert);
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','other-provider-account',
+  'ed000000-0000-4000-8000-000000000060','distribution_reversal','dist-new',now(),null,'AUD',null,'Wrong account')$q$,
+  '42501','another provider account cannot reverse a distribution');
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','disposition-owner',
+  'ed000000-0000-4000-8000-000000000060','distribution_reversal','dist-unknown',now(),null,'AUD',null,'Unknown payment')$q$,
+  '22023','a reversal must refer to an existing provider payment');
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','disposition-owner',
+  'ed000000-0000-4000-8000-000000000060','distribution_reversal','dist-new',now(),5,'AUD',null,'Conflicting amount')$q$,
+  '22023','a reversal cannot introduce another cash amount');
+select case when public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution_reversal','dist-new',now()-interval '5 minutes',null,'AUD',null,'Provider payment reversal')
+  then 'ok   provider reverses an existing distribution' else 'FAIL distribution reversal not recorded' end;
+select case when amount=130 and source='Revised distribution statement' and reversal_source='Provider payment reversal'
+    and reversed_at=now()-interval '5 minutes' and provider_event_at=now()-interval '10 minutes'
+  then 'ok   reversal preserves the original payment and its provider evidence' else 'FAIL distribution reversal evidence' end
+  from public.distributions where id=(select subject_id from distribution_alert);
+select case when not public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution_reversal','dist-new',now()-interval '5 minutes',null,'AUD',null,'Replayed reversal')
+  then 'ok   replay of a reversal has no effect' else 'FAIL duplicate reversal' end;
+select case when not public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution','dist-new',now()-interval '6 minutes',140,'AUD',current_date-1,'Late payment revision')
+  then 'ok   an older record cannot restore a reversed payment' else 'FAIL stale revision restored payment' end;
 select case when not exists (
   select 1 from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='distribution')
-  then 'ok   removing the ledger evidence hides the distribution alert' else 'FAIL orphaned distribution alert' end;
+  then 'ok   reversing the payment hides the distribution alert' else 'FAIL reversed distribution alert' end;
 reset role;
 select case when public.private_market_push_through('ed000000-0000-4000-8000-000000000001',
   'ed000000-0000-4000-8000-000000000070',0) is null
-  then 'ok   removing the source cancels any unsent distribution push' else 'FAIL orphaned distribution push' end;
+  then 'ok   reversal cancels any unsent distribution push' else 'FAIL reversed distribution push' end;
+set role service_role;
+select case when public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution','dist-new',now()-interval '1 minute',145,'AUD',current_date-1,'Reinstated provider payment')
+  then 'ok   a newer payment record can reinstate the distribution' else 'FAIL reinstatement was lost' end;
+select case when public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001')=0
+  then 'ok   reinstatement reuses the original alert' else 'FAIL duplicate alert after reinstatement' end;
+select case when count(*)=1 and bool_and(a.source_label='Reinstated provider payment')
+  then 'ok   reinstated payment appears with current evidence' else 'FAIL stale reinstated evidence' end
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') a
+  join distribution_alert prior using (id, subject_id);
+select public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'distribution_reversal','dist-new',now(),null,'AUD',null,'Final provider reversal');
+reset role;
 set role authenticated;
 select set_config('request.jwt.claim.sub','ed000000-0000-4000-8000-000000000001',true) is not null;
 select case when count(*)=2 and count(*) filter(where reversed)=1

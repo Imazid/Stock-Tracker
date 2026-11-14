@@ -417,6 +417,7 @@ Deno.serve(async (req) => {
           .eq("user_id", userId).eq("commitment.user_id", userId).eq("commitment.status", "confirmed")
           .not("confirmed_at", "is", null).not("settled_amount", "is", null)
           .eq("marks.user_id", userId).eq("calls.user_id", userId).eq("distributions.user_id", userId)
+          .is("distributions.reversed_at", null)
           .eq("dispositions.user_id", userId).eq("dispositions.reversed", false)
           .order("id").range(offset, offset + pageSize)
           .order("valued_on", { referencedTable: "marks", ascending: false })
