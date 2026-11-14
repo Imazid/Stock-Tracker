@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { holdingComparison } from "@/lib/portfolio-holdings";
 import { unrealisedGains } from "@/lib/portfolio-gains";
 import { portfolioMovement } from "@/lib/portfolio-movement";
+import { AllocationCard } from "./allocation-card";
 import { BrokerCash } from "./broker-cash";
 import { ExposureCard } from "./exposure-card";
 import { GainsCard } from "./gains-card";
@@ -54,6 +55,8 @@ export function PortfolioView({ recordTransfer = false, logosEnabled, aiEnabled 
           actions={<Button onClick={() => void portfolio.refetch()}>Retry</Button>} /></Card>
       ) : (
         <>
+          {userId && <AllocationCard key={userId} owner={userId} holdings={holdings} quoteFor={quoteFor}
+            loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} />}
           {userId && <div className="workspace portfolio-history-embed"><PortfolioHistory key={userId} userId={userId} /></div>}
           <HoldingsCard key={userId} comparison={comparison} pendingQuotes={pendingQuotes} truncated={portfolio.data?.truncated ?? false}
             logosEnabled={logosEnabled} gainsUnavailable={gains.isError} ratesUnavailable={rates.isError} />

@@ -88,7 +88,7 @@ export type MonitorAlert = {
 };
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
-  "reports" | "report" | "confirmed_holdings" | "applications" | "updates" |
+  "reports" | "report" | "confirmed_holdings" | "applications" | "allocation" | "updates" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 
 export async function privateMarkets<T>(

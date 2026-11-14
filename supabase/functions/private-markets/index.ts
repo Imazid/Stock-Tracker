@@ -15,7 +15,9 @@ import {
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 // One web subscription per account, independent of any iPhone installation.
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
-const monitoringSessionActions = new Set(["web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests"]);
+const activeSessionActions = new Set([
+  "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
+]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
   "round:funding_rounds!inner(id,stage,raised,target,valuation,valuation_method,currency,announced_on,closes_at,source_url,verified_at,traction," +
@@ -460,9 +462,9 @@ Deno.serve(async (req) => {
     }
     const userId = await authenticatedUserId(req, admin);
     if (!userId) return errorResponse(401, "UNAUTHENTICATED", "Sign in first.");
-    if (typeof body.action === "string" && monitoringSessionActions.has(body.action)) {
+    if (typeof body.action === "string" && activeSessionActions.has(body.action)) {
       const session = sessionId(req);
-      if (!session) return errorResponse(401, "UNAUTHENTICATED", "Sign in to view account monitoring.");
+      if (!session) return errorResponse(401, "UNAUTHENTICATED", "Sign in to view your account records.");
       const { data: active, error } = await admin.rpc("account_deletion_session_active", { p_user: userId, p_session: session });
       if (error) throw error;
       if (active !== true) return errorResponse(401, "UNAUTHENTICATED", "Your session ended. Sign in again.");
@@ -643,6 +645,12 @@ Deno.serve(async (req) => {
         });
         if (error) throw error;
         return jsonResponse(200, {});
+      }
+      case "allocation": {
+        if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_REQUEST", "Send only the allocation action.");
+        const { data, error } = await admin.rpc("private_portfolio_allocation", { p_user: userId });
+        if (error) throw error;
+        return jsonResponse(200, { buckets: data });
       }
       case "confirmed_holdings": {
         const offset = body.offset ?? 0;

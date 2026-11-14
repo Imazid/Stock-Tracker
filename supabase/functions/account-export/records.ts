@@ -8,7 +8,7 @@ type TableSection = { label: string; table: string; fields: string; order?: stri
 // client-writable nested records so an unexpected field is not exported.
 const sections = {
   watchlists: { label: "Watchlists", table: "watchlist_assets",
-    fields: "id,symbol,name,kind,exchange,sort_position::text,updated_at,deleted_at" },
+    fields: "id,symbol,name,kind,exchange,sort_position::text,saved_at,updated_at,deleted_at" },
   watchlist_groups: { label: "Watchlist names", table: "watchlist_groups",
     fields: "id,name,created_at,deleted_at" },
   watchlist_group_assets: { label: "Named watchlist members", table: "watchlist_group_assets",
