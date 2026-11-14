@@ -586,6 +586,40 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAccountValuationHistoryUsesOlderMarkAfterRemovingNewest() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_HOLDINGS_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let row = app.buttons.matching(identifier: "private.holding.accountRow")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Valuation history fixture")).firstMatch
+        for _ in 0..<4 where !row.isHittable {
+            _ = row.waitForExistence(timeout: 4)
+            if !row.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(row.isHittable, app.debugDescription)
+        row.tap()
+        let latest = app.staticTexts["Reviewed NAV · Second statement"]
+        for _ in 0..<4 where !latest.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(latest.isHittable, app.debugDescription)
+        let newestRow = app.descendants(matching: .any).matching(identifier: "private.accountValuation.row")
+            .containing(.staticText, identifier: "Reviewed NAV · Second statement").firstMatch
+        let remove = newestRow.buttons["Remove valuation"]
+        for _ in 0..<3 where !remove.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(remove.isHittable, app.debugDescription)
+        remove.tap()
+        let confirmation = app.sheets.buttons["Remove valuation"].firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
+        confirmation.tap()
+        XCTAssertTrue(latest.waitForNonExistence(timeout: 12), app.debugDescription)
+        let earlier = app.staticTexts["Original NAV · First statement"]
+        for _ in 0..<4 where !earlier.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(earlier.exists, app.debugDescription)
+        let amount = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "1000.123456789", "1000.123456789")).firstMatch
+        XCTAssertTrue(amount.exists)
+    }
+
+    @MainActor
     func testManualHoldingCanPublishToWeb() throws {
         try launchWithLocalSession("PRIVATE_MANUAL_PUBLICATION_TEST_SESSION")
         openPrivateMarkets()
