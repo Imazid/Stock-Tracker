@@ -18,6 +18,7 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./src/*"],
+      "@market/*": ["../supabase/functions/_shared/market/*"],
       "@engine/*": ["../supabase/functions/_shared/trading/*"],
       "@oms/*": ["../supabase/functions/_shared/oms/*"],
       "@brokers/*": ["../supabase/functions/_shared/brokers/*"],

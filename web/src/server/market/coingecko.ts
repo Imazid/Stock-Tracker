@@ -5,7 +5,7 @@
 import type { Instrument } from "@engine/market.ts";
 import { getJSON, UpstreamError } from "./http";
 
-export const COINGECKO_SOURCE = "CoinGecko aggregate";
+export { COINGECKO_SOURCE } from "@/lib/market-types";
 
 // Only coins we can price are offered in search (same rule as the iPhone app).
 export const COINGECKO_IDS: Record<string, string> = {

@@ -135,7 +135,11 @@ struct AppleStocksDetailView: View {
                         DetailNote(systemImage: "info.circle",
                                    text: "Research Everything shows available filing evidence for this ASX listing.",
                                    identifier: "detail.asxNote")
-                    case .crypto, .index, .otherStock:
+                    case .crypto:
+                        CryptoNetworkSection(coin: model.coin, state: model.coinState) {
+                            await model.loadCoin()
+                        }
+                    case .index, .otherStock:
                         EmptyView()
                     }
 
@@ -520,25 +524,25 @@ struct AppleStocksDetailView: View {
                 ranges: dayRange24h(c),
                 primary: [
                     StatItem(label: "Market cap", value: c.marketCap.map(format.compactMoney) ?? "—"),
-                    StatItem(label: "24h volume", value: c.volume24h.map(format.compactMoney) ?? "—"),
+                    StatItem(label: "24h traded value", value: c.volume24h.map(format.compactMoney) ?? "—"),
                     StatItem(label: "Rank", value: c.rank.map { "#\($0)" } ?? "—"),
                     StatItem(label: "All-time high", value: c.allTimeHigh.map { $0 >= 10_000 ? format.compactMoney($0) : format.money($0) } ?? "—"),
                     StatItem(label: "Circulating", value: c.circulatingSupply.map { format.compactNumber($0) } ?? "—"),
-                    StatItem(label: "Max supply", value: c.maxSupply.map { format.compactNumber($0) } ?? "No limit")
+                    StatItem(label: "Max supply", value: c.maxSupply.map { format.compactNumber($0) } ?? (c.unlimitedSupply ? "No fixed limit" : "—"))
                 ],
                 more: [
                     c.fullyDilutedValuation.map { StatItem(label: "Fully diluted", value: format.compactMoney($0)) },
                     c.totalSupply.map { StatItem(label: "Total supply", value: format.compactNumber($0)) },
-                    c.allTimeHighDate.map { StatItem(label: "ATH date", value: $0.formatted(.dateTime.day().month(.abbreviated).year())) }
+                    c.allTimeHighDate.map { StatItem(label: "ATH date (UTC)", value: $0) }
                 ].compactMap { $0 },
                 format: format)
         } else {
             DetailKeyStats(
-                caption: model.coinState == .failed ? "Coin figures couldn't be loaded right now." : nil,
+                caption: nil,
                 ranges: [],
                 primary: [
                     StatItem(label: "Market cap", value: "—"),
-                    StatItem(label: "24h volume", value: live.volume > 0 ? format.compactMoney(live.volume) : "—")
+                    StatItem(label: "24h traded value", value: "—")
                 ],
                 isLoading: model.coinState == .loading,
                 format: format)
@@ -611,7 +615,7 @@ struct AppleStocksDetailView: View {
         case .otherStock:
             text = "Prices from Yahoo Finance."
         case .crypto:
-            text = "Prices and coin figures from CoinGecko."
+            text = "Crypto quotes use the source shown with the market data."
         case .index:
             text = "Index levels from Yahoo Finance, in points."
         }
@@ -901,20 +905,18 @@ final class AssetDetailViewModel: ObservableObject {
         insightState = result.isEmpty ? .failed : .loaded
     }
 
-    private func loadCoin() async {
-        guard kind == .crypto, let id = QuoteService.coinGeckoID(for: seed.symbol) else { return }
-        if coin == nil { coinState = .loading }
-        Task { [weak self] in
-            // Keyless CoinGecko can back off for minutes; don't leave skeletons up.
-            try? await Task.sleep(for: .seconds(Self.slowAfter))
-            guard let self, self.coin == nil, self.coinState == .loading else { return }
-            self.coinState = .failed
-        }
+    func loadCoin() async {
+        guard kind == .crypto, coinState != .loading else { return }
+        coinState = .loading
         do {
-            coin = try await CoinGeckoCoinService.shared.facts(for: id)
+            coin = try await CoinGeckoCoinService.shared.facts(for: seed.symbol.uppercased())
             coinState = .loaded
+        } catch is CancellationError {
+            coinState = .idle
+        } catch let error as SecureBackend.FunctionError {
+            coinState = error.code == "unsupported_crypto" ? .idle : .failed
         } catch {
-            if coin == nil { coinState = .failed }
+            coinState = .failed
         }
     }
 

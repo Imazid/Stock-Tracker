@@ -1391,6 +1391,39 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(allocation["targets"] as? [String: Double], ["us:VTI": 60, "us:BND": 40])
     }
 
+    func testGuestCryptoResearchUsesNetworksAndProviderTimestamp() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_CRYPTO_RESEARCH"] == "1",
+                          "Start the crypto research relay")
+        app.launchArguments = ["-UITestFreshInstall", "-hasCompletedOnboarding", "YES",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey, "-app_theme_mode", "Dark"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.open("Search"))
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText("Chainlink")
+        let result = app.buttons["search.result.crypto.LINK"]
+        XCTAssertTrue(result.waitForExistence(timeout: 20))
+        result.tap()
+        let screen = app.descendants(matching: .any)["detail.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 15))
+        let source = app.descendants(matching: .any)["detail.crypto.source"].firstMatch
+        for _ in 0..<8 where !source.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(source.isHittable)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Market data as of")).firstMatch.exists)
+        let toggle = app.descendants(matching: .any)["detail.crypto.platforms"].firstMatch
+        if !toggle.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(toggle.isHittable)
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, "Expanded")
+        let ethereum = app.staticTexts["detail.crypto.platform.ethereum"].firstMatch
+        XCTAssertTrue(ethereum.waitForExistence(timeout: 10))
+        XCTAssertEqual(ethereum.label.lowercased(), "0x514910771af9ca656af840dff83e8264ecf986ca")
+        attach("chainlink-network-research")
+        XCTAssertFalse(app.descendants(matching: .any)["detail.companyResearch"].exists)
+    }
+
     func testSignedInAssetResearchSearchChartEvidenceAIAndWatchlist() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_RESEARCH_JOURNEY"] == "1",
                           "Start the signed-in research journey relay")
