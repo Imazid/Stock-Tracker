@@ -21,6 +21,40 @@ import UIKit
 import UserNotifications
 import TradingCore
 
+struct AgentActivityPage: Decodable {
+    let runs: [AgentActivityRow]
+    let nextCursor: String?
+}
+
+struct AgentActivityRow: Decodable, Identifiable {
+    let id: UUID
+    let agentID: UUID
+    let strategyVersion: Int
+    let trigger: RunTrigger
+    let startedAt: Date
+    let status: RunStatus
+    let summary: String
+
+    init(run: AgentRun) {
+        id = run.id
+        agentID = run.agentID
+        strategyVersion = run.strategyVersion
+        trigger = run.trigger
+        startedAt = run.startedAt
+        status = run.status
+        summary = run.summary
+    }
+}
+
+struct AgentActivityDetail: Decodable {
+    let run: AgentRun
+    let signals: [TradingSignal]
+    let proposals: [TradeProposal]
+    let orders: [Order]
+    let fills: [Fill]
+    let reviews: [AuditEvent]
+}
+
 /// A market-data source that can also quote several instruments in one go.
 nonisolated protocol TradingDataSource: MarketDataProviding {
     func quotes(for instruments: [Instrument]) async throws -> [String: Quote]
@@ -144,6 +178,31 @@ final class TradingStore: ObservableObject {
 
     func runs(for agentID: UUID) -> [AgentRun] {
         state.runs.filter { $0.agentID == agentID }.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    func agentActivity(for agentID: UUID, before: String? = nil) async throws -> AgentActivityPage {
+        guard isAccount, let server else { throw TradingServerError.notSignedIn }
+        var body: [String: Any] = ["agentID": agentID.uuidString]
+        if let before { body["before"] = before }
+        let reply = try await server.call("agentActivity", body, includeState: false)
+        return try reply.decode(AgentActivityPage.self, at: "page")
+    }
+
+    func agentActivityDetail(runID: UUID) async throws -> AgentActivityDetail {
+        if isAccount, let server {
+            let reply = try await server.call("agentActivityDetail", ["runID": runID.uuidString], includeState: false)
+            return try reply.decode(AgentActivityDetail.self, at: "detail")
+        }
+        guard let run = state.runs.first(where: { $0.id == runID }) else { throw TradingError.notFound("That run") }
+        let proposals = run.proposalIDs.compactMap(proposal)
+        let proposalIDs = Set(proposals.map(\.id))
+        let orderIDs = Set(run.orderIDs + proposals.compactMap(\.orderID))
+        return AgentActivityDetail(run: run, signals: run.signalIDs.compactMap(signal), proposals: proposals,
+                                   orders: state.orders.filter { orderIDs.contains($0.id) },
+                                   fills: state.fills.filter { orderIDs.contains($0.orderID) },
+                                   reviews: state.audit.events.filter { event in
+                                       event.proposalID.map(proposalIDs.contains) == true && [.proposalApproved, .proposalRejected].contains(event.kind)
+                                   })
     }
 
     func proposals(for agentID: UUID) -> [TradeProposal] {
