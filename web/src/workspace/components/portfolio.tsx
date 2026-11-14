@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowUpRight, Bell, PieChart, Plus, Star, Trash2, Wallet } from "lucide-react";
 import { mainPortfolioId, usePortfolioGroups } from "@/hooks/portfolio-groups";
@@ -98,6 +98,7 @@ export function JournalForm({ kind, asset, holding, userID, onDone }: { kind: "h
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState("");
   const canSelectPortfolio = kind === "holding" && !holding;
+  const portfolioFieldId = useId();
   const { groups } = usePortfolioGroups(canSelectPortfolio ? userID : undefined);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,13 +125,14 @@ export function JournalForm({ kind, asset, holding, userID, onDone }: { kind: "h
     } catch (failure) { setError(message(failure)); } finally { setBusy(false); }
   }
   return <form className="form" onSubmit={submit}><AssetText asset={asset}/>
-    {canSelectPortfolio && <label>Portfolio
-      <select name="portfolio" disabled={!groups.data} required defaultValue={mainPortfolioId}>
+    {canSelectPortfolio && <div>
+      <label htmlFor={portfolioFieldId}>Portfolio</label>
+      <select id={portfolioFieldId} name="portfolio" disabled={!groups.data} required defaultValue={mainPortfolioId}>
         {groups.data ? groups.data.map(group => <option key={group.id} value={group.id}>{group.name}</option>)
           : <option>{groups.isError ? "Portfolios unavailable" : "Loading portfolios…"}</option>}
       </select>
       {groups.isError && <button type="button" className="button secondary small" onClick={() => void groups.refetch()}>Retry</button>}
-    </label>}
+    </div>}
     {kind === "holding" && <label>Units<input type="number" name="shares" min={holding ? 0 : 0.00000001} max="1000000000000" step="any" required defaultValue={holding?.shares}/></label>}
     {kind === "alert" && <label>Condition<select name="condition"><option>Above</option><option>Below</option></select></label>}
     <label>{kind === "holding" ? "Average cost per unit (USD)" : "Target price (USD)"}<input type="number" name="price" min={kind === "alert" ? 0.00000001 : 0} max="1000000000000" step="any" required defaultValue={holding?.avg_cost}/></label>
