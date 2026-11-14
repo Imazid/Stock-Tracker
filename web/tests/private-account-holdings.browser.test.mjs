@@ -49,7 +49,7 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
     }
     await page.getByRole("button", { name: "Save holding", exact: true }).click();
     const article = page.getByRole("article").filter({ has: page.getByRole("heading", { name, exact: true }) });
-    await article.getByText("AUD 1,200.4321", { exact: true }).waitFor();
+    await article.locator("dd").getByText("AUD 1,200.4321", { exact: true }).waitFor();
     await article.getByText("0.12345678", { exact: true }).waitFor();
     if (excerptText) {
       await article.getByRole("button", { name: "Open ownership excerpt", exact: true }).click();
@@ -66,7 +66,7 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
     await page.getByLabel("Carrying value").fill("1250.4567");
     if (excerptTitle && excerptText) await page.getByLabel("I reviewed the selected excerpt.").check();
     await page.getByRole("button", { name: "Save holding", exact: true }).click();
-    await article.getByText("AUD 1,250.4567", { exact: true }).waitFor();
+    await article.locator("dd").getByText("AUD 1,250.4567", { exact: true }).waitFor();
     if (process.env.PRIVATE_ACCOUNT_MARK_HISTORY === "1") {
       await article.getByText("Valuation history", { exact: true }).click();
       await article.getByRole("button", { name: "Add valuation", exact: true }).click();
