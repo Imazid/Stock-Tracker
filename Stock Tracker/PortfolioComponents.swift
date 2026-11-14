@@ -79,7 +79,7 @@ extension Asset {
               change: change, changePercent: changePercent, volume: volume, kind: kind,
               marketCap: marketCap, peRatio: peRatio, eps: eps, week52High: week52High,
               week52Low: week52Low, avgVolume: avgVolume, dividend: dividend, beta: beta,
-              exchange: exchange ?? self.exchange)
+              exchange: exchange ?? self.exchange, isETF: isETF)
     }
 }
 
@@ -142,50 +142,82 @@ enum HoldingMetric: String, CaseIterable {
 struct PortfolioHoldingRow: View {
     let holding: PortfolioHolding
     let metric: HoldingMetric
-    /// Share of the portfolio, 0–100.
-    let weight: Double
+    let value: Double?
+    let weight: Double?
     var hidesValues = false
-    /// The broker it's synced from (nil = added by hand).
     var source: String? = nil
 
     @EnvironmentObject private var marketData: MarketData
     @Environment(\.theme) private var theme
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var asset: Asset { holding.asset }
-    private var noLivePrice: Bool { marketData.hasNoLivePrice(asset) }
-    private var hasCost: Bool { holding.costBasis > 0 }
+    private var hasCost: Bool { holding.avgCost.isFinite && holding.avgCost > 0 }
+    private var quantity: String { hidesValues ? "••••" : asset.unitsText(holding.shares) }
+    private var positionValue: String { privateFigure(value.map(marketData.formatPrice)) }
+    private var averageCost: String { privateFigure(hasCost ? marketData.formatPrice(holding.avgCost) : nil) }
+    private var unrealised: Double? { value != nil && hasCost && holding.profitLoss.isFinite ? holding.profitLoss : nil }
+    private var unrealisedText: String { privateFigure(unrealised.map(marketData.signedMoney)) }
+    private var weightText: String { weight.map { formatPercent($0) } ?? "—" }
+    private var change: Double? { value != nil && asset.changePercent.isFinite ? asset.changePercent : nil }
+    private var totalReturn: Double? {
+        guard metric == .total, value != nil, hasCost else { return nil }
+        let result = holding.totalReturnPercent
+        return result.isFinite ? result : nil
+    }
 
     var body: some View {
-        AdaptiveQuoteRow {
-            HStack(spacing: DS.Space.m) {
-                TickerLogo(symbol: asset.symbol, kind: asset.kind, exchange: asset.exchange, size: 40)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(asset.symbol)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(theme.primaryText)
-                            .lineLimit(1)
-                        if asset.isASX { MarketBadge(text: "ASX") }
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            AdaptiveQuoteRow {
+                HStack(spacing: DS.Space.m) {
+                    TickerLogo(symbol: asset.symbol, kind: asset.kind, exchange: asset.exchange, size: 40)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(asset.symbol)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(theme.primaryText)
+                            if asset.isASX { MarketBadge(text: "ASX") }
+                            if asset.isListedETF { MarketBadge(text: "ETF") }
+                        }
+                        if asset.name != asset.symbol && !asset.name.isEmpty {
+                            Text(asset.name)
+                                .font(.subheadline)
+                                .foregroundStyle(theme.secondaryText)
+                                .lineLimit(2)
+                        }
+                        Text(source.map { "\(quantity) · \($0)" } ?? quantity)
+                            .font(.footnote)
+                            .foregroundStyle(theme.secondaryText)
                     }
-                    Text([asset.unitsText(holding.shares), formatPercent(weight), source].compactMap { $0 }.joined(separator: " · "))
-                        .font(.footnote)
-                        .foregroundStyle(theme.secondaryText)
-                        .lineLimit(1)
+                }
+            } numbers: { stacked in
+                if let change {
+                    QuoteNumbers(price: marketData.formatPrice(asset.price), percent: change, stacked: stacked)
+                } else if value != nil {
+                    Text(marketData.formatPrice(asset.price))
+                        .font(.body.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(theme.primaryText)
+                } else {
+                    Text("No live price")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(theme.warningColor)
                 }
             }
-        } numbers: { stacked in
-            let value = Text(hidesValues ? "••••" : marketData.formatPrice(holding.currentValue))
-                .font(.body.weight(.semibold).monospacedDigit())
-                .foregroundStyle(theme.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .contentTransition(.numericText())
-                .priceFlash(value: holding.asset.price)
-            if stacked {
-                HStack(spacing: DS.Space.s) { value; trailingDetail; Spacer(minLength: 0) }
-            } else {
-                VStack(alignment: .trailing, spacing: 4) { value; trailingDetail }
+
+            Grid(alignment: .leading, horizontalSpacing: DS.Space.s, verticalSpacing: DS.Space.s) {
+                if typeSize.isAccessibilitySize {
+                    GridRow { positionStat }
+                    GridRow { averageStat }
+                    GridRow { gainStat }
+                    GridRow { weightStat }
+                } else {
+                    GridRow { positionStat; averageStat }
+                    GridRow { gainStat; weightStat }
+                }
+            }
+            if let totalReturn {
+                LedgerStat(label: "Total return", value: formatPercent(totalReturn, signed: true),
+                           tint: totalReturn >= 0 ? theme.positiveColor : theme.negativeColor)
             }
         }
         .padding(.vertical, DS.Space.s + 2)
@@ -195,35 +227,38 @@ struct PortfolioHoldingRow: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    @ViewBuilder
-    private var trailingDetail: some View {
-        if noLivePrice {
-            Text("No live price")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(theme.warningColor)
-        } else if metric == .total && !hasCost {
-            Text("Cost not set")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(theme.secondaryText)
-        } else {
-            // Total return includes profit already banked from partial sales (matches the holding page).
-            ChangePill(percent: metric == .today ? asset.changePercent : holding.totalReturnPercent, compact: true)
-        }
+    private var positionStat: some View { LedgerStat(label: "Position value", value: positionValue) }
+    private var averageStat: some View { LedgerStat(label: "Average cost", value: averageCost) }
+    private var weightStat: some View { LedgerStat(label: "Weight", value: weightText) }
+    private var gainStat: some View {
+        LedgerStat(label: "Unrealised gain or loss", value: unrealisedText,
+                   tint: hidesValues ? nil : unrealised.map { $0 >= 0 ? theme.positiveColor : theme.negativeColor })
+    }
+
+    private func privateFigure(_ figure: String?) -> String {
+        hidesValues ? "••••" : figure ?? "—"
     }
 
     private var accessibilityText: String {
-        var parts = [asset.name == asset.symbol ? asset.symbol : "\(asset.symbol), \(asset.name)",
-                     asset.unitsText(holding.shares)]
-        if !hidesValues { parts.append("worth \(marketData.formatPrice(holding.currentValue))") }
-        if noLivePrice {
-            parts.append("no live price")
-        } else if metric == .today {
-            parts.append("today \(asset.changePercent >= 0 ? "up" : "down") \(String(format: "%.2f", abs(asset.changePercent))) percent")
-        } else if hasCost {
-            parts.append("total return \(holding.totalReturn >= 0 ? "up" : "down") \(String(format: "%.2f", abs(holding.totalReturnPercent))) percent")
+        var parts = [asset.name == asset.symbol ? asset.symbol : "\(asset.symbol), \(asset.name)"]
+        if asset.isListedETF { parts.append("ETF") }
+        if hidesValues {
+            parts.append("Position figures hidden")
+        } else {
+            parts.append(quantity)
+            parts.append("Position value \(positionValue)")
+            parts.append("Average cost \(averageCost)")
+            parts.append("Unrealised gain or loss \(unrealisedText)")
         }
-        parts.append("\(String(format: "%.1f", weight)) percent of portfolio")
-        if let source { parts.append("synced from \(source)") }
+        if value == nil {
+            parts.append("no live price")
+        } else {
+            parts.append("Price per unit \(marketData.formatPrice(asset.price))")
+            if let change { parts.append("Price change \(formatPercent(change, signed: true))") }
+        }
+        if let totalReturn { parts.append("Total return \(formatPercent(totalReturn, signed: true))") }
+        if let weight { parts.append("\(String(format: "%.1f", weight)) percent of portfolio") }
+        if let source { parts.append(source) }
         return parts.joined(separator: ", ")
     }
 }

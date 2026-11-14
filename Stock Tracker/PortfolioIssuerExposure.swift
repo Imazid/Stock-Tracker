@@ -32,9 +32,6 @@ struct PortfolioIssuerExposure {
         return catalog
     }()
 
-    private static let etfs = Set(UniverseCatalog.all.filter { $0.assetClass == .etf }.map(\.id))
-        .union(OnboardingCatalog.etfs.map { "\($0.exchange.lowercased()):\($0.symbol)" })
-
     var labels: [UUID: String] = [:]
     var classifiedValue: Double = 0
     var sources: [Source] = []
@@ -45,7 +42,7 @@ struct PortfolioIssuerExposure {
             let asset = holding.asset
             if asset.kind == .crypto {
                 labels[holding.id] = "Crypto"
-            } else if Self.etfs.contains(asset.quoteIdentity) {
+            } else if asset.isListedETF {
                 labels[holding.id] = "ETFs"
             } else if let filing = Self.filings[asset.quoteIdentity], let listing = asset.listedStock {
                 labels[holding.id] = dimension == .sector ? filing.sector : filing.country

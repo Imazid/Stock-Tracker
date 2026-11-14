@@ -32,6 +32,7 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
     let exchange: String
     /// CoinGecko id for crypto ("bitcoin"); empty for stocks.
     var coinID: String = ""
+    var isETF: Bool? = nil
 
     var market: SymbolMarket {
         if kind == .crypto { return .crypto }
@@ -51,12 +52,13 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
         }
     }
 
-    init(symbol: String, name: String, kind: AssetKind, exchange: String, coinID: String = "") {
+    init(symbol: String, name: String, kind: AssetKind, exchange: String, coinID: String = "", isETF: Bool? = nil) {
         self.symbol = symbol
         self.name = name
         self.kind = kind
         self.exchange = exchange
         self.coinID = coinID
+        self.isETF = isETF
     }
 
     init(picked: PickedAsset) {
@@ -67,7 +69,7 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
     /// An asset to track before (or without) a live quote. Price 0 = "not loaded".
     func placeholderAsset() -> Asset {
         Asset(symbol: symbol, name: name, price: 0, change: 0, changePercent: 0, volume: 0,
-              kind: kind, exchange: kind == .crypto ? "" : exchange)
+              kind: kind, exchange: kind == .crypto ? "" : exchange, isETF: isETF)
     }
 
     /// Whether `asset` is this listing (BHP on the ASX is not BHP on the NYSE).
@@ -283,16 +285,16 @@ final class SymbolSearchModel: ObservableObject {
         guard let results = try? await APIService.shared.fetchSymbolSearch(query: q, kind: .stock) else { return nil }
         return results.compactMap { r in
             if r.exchange == "ASX" {
-                return SymbolHit(symbol: r.symbol, name: r.name, kind: .stock, exchange: "ASX")
+                return SymbolHit(symbol: r.symbol, name: r.name, kind: .stock, exchange: "ASX", isETF: r.isETF)
             }
             // Exchanges the app can price through Yahoo and practice-trade: keep the suffixed symbol.
             if let (venue, _) = Venue.parse(yahooSymbol: r.symbol), venue != .asx {
-                return SymbolHit(symbol: r.symbol.uppercased(), name: r.name, kind: .stock, exchange: "International")
+                return SymbolHit(symbol: r.symbol.uppercased(), name: r.name, kind: .stock, exchange: "International", isETF: r.isETF)
             }
             // Other US listings only (the app quotes US via Alpaca); skip markets it can't price.
             guard r.currency.uppercased() == "USD", !r.symbol.contains("."),
                   usExchange(from: r.region) != nil else { return nil }
-            return SymbolHit(symbol: r.symbol, name: r.name, kind: .stock, exchange: "US")
+            return SymbolHit(symbol: r.symbol, name: r.name, kind: .stock, exchange: "US", isETF: r.isETF)
         }
     }
 
@@ -390,7 +392,7 @@ final class SymbolSearchModel: ObservableObject {
             return Asset(symbol: hit.symbol, name: hit.name, price: quote.price, change: quote.change,
                          changePercent: quote.changePercent, volume: quote.volume, kind: hit.kind,
                          marketCap: quote.marketCap, week52High: quote.week52High, week52Low: quote.week52Low,
-                         exchange: hit.kind == .crypto ? "" : hit.exchange)
+                         exchange: hit.kind == .crypto ? "" : hit.exchange, isETF: quote.isETF ?? hit.isETF)
         } catch {
             return nil
         }

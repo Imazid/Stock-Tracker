@@ -28,14 +28,31 @@ enum PortfolioSegment: String, CaseIterable {
 }
 
 enum HoldingSort: String, CaseIterable {
-    case value, today, total, name
+    case value, today, unrealised, total, name
 
     var title: String {
         switch self {
         case .value: return "Value"
         case .today: return "Today's change"
+        case .unrealised: return "Unrealised gain or loss"
         case .total: return "Total return"
         case .name:  return "Name"
+        }
+    }
+}
+
+private enum HoldingFilter: String, CaseIterable {
+    case all = "All assets"
+    case stocks = "Stocks"
+    case etfs = "ETFs"
+    case crypto = "Crypto"
+
+    func includes(_ asset: Asset) -> Bool {
+        switch self {
+        case .all: true
+        case .stocks: asset.kind == .stock && !asset.isListedETF
+        case .etfs: asset.isListedETF
+        case .crypto: asset.kind == .crypto
         }
     }
 }
@@ -77,7 +94,9 @@ struct PortfolioView: View {
     @AppStorage("portfolioValueHidden") private var valueHidden = false
 
     @State private var path: [UUID] = []
-    @State private var filter: AssetKind?
+    @State private var filter: HoldingFilter = .all
+    @State private var holdingsQuery = ""
+    @FocusState private var holdingsSearchFocused: Bool
     @State private var sheet: PortfolioSheet?
     @State private var holdingToRemove: PortfolioHolding?
     @State private var closedSheet: ClosedPosition?
@@ -106,24 +125,38 @@ struct PortfolioView: View {
         return marketData.portfolioGroups.indices.contains(i) ? marketData.portfolioGroups[i].name : "Portfolio"
     }
 
-    private var hasBothKinds: Bool {
-        let kinds = Set(marketData.portfolio.map(\.asset.kind))
-        return kinds.count > 1
-    }
-
-    private var visibleHoldings: [PortfolioHolding] {
-        let base = marketData.portfolio.filter { $0.shares > 0 && (filter == nil || $0.asset.kind == filter) }
-        switch sort {
-        case .value: return base.sorted { $0.currentValue > $1.currentValue }
-        case .today: return base.sorted { $0.asset.changePercent > $1.asset.changePercent }
-        case .total: return base.sorted { $0.totalReturnPercent > $1.totalReturnPercent }
-        case .name:  return base.sorted { $0.asset.symbol.localizedStandardCompare($1.asset.symbol) == .orderedAscending }
+    private func visibleHoldings(_ holdings: [PortfolioHolding], values: [UUID: Double]) -> [PortfolioHolding] {
+        let terms = holdingsQuery.split(whereSeparator: \.isWhitespace)
+        let matches = holdings.filter {
+            filter.includes($0.asset) && matchesHoldingsQuery($0.asset, source: $0.brokerAccount?.label ?? broker.institution(for: $0), terms: terms)
+        }
+        let ranks = Dictionary(uniqueKeysWithValues: matches.compactMap { holding -> (UUID, Double)? in
+            guard sort != .name, let value = values[holding.id] else { return nil }
+            let rank: Double?
+            switch sort {
+            case .value: rank = value
+            case .today: rank = holding.asset.changePercent
+            case .unrealised: rank = holding.avgCost > 0 ? holding.profitLoss : nil
+            case .total: rank = holding.avgCost > 0 ? holding.totalReturnPercent : nil
+            case .name: rank = nil
+            }
+            guard let rank, rank.isFinite else { return nil }
+            return (holding.id, rank)
+        })
+        return matches.sorted { left, right in
+            let a = ranks[left.id] ?? -.infinity
+            let b = ranks[right.id] ?? -.infinity
+            if a != b { return a > b }
+            let byTicker = left.asset.symbol.localizedStandardCompare(right.asset.symbol)
+            if byTicker != .orderedSame { return byTicker == .orderedAscending }
+            if left.asset.quoteIdentity != right.asset.quoteIdentity { return left.asset.quoteIdentity < right.asset.quoteIdentity }
+            return left.id.uuidString < right.id.uuidString
         }
     }
 
-    private func weight(of holding: PortfolioHolding) -> Double {
-        let total = marketData.totalPortfolioValue
-        return total > 0 ? holding.currentValue / total * 100 : 0
+    private func matchesHoldingsQuery(_ asset: Asset, source: String? = nil, terms: [Substring]) -> Bool {
+        let text = [asset.symbol, asset.name, asset.exchange, source].compactMap { $0 }.joined(separator: " ")
+        return terms.allSatisfy { text.localizedStandardContains(String($0)) }
     }
 
     // MARK: Body
@@ -197,6 +230,7 @@ struct PortfolioView: View {
                     .portfolioRow(bottom: DS.Space.xxl)
             }
             .listStyle(.plain)
+            .scrollDismissesKeyboard(segment == .holdings ? .interactively : .automatic)
             .scrollContentBackground(.hidden)
             .dsScreenBackground(style: .portfolio)
             .task(id: cloudAuth.userId) { await refreshPrivatePositions() }
@@ -205,6 +239,7 @@ struct PortfolioView: View {
                 await refreshPrivatePositions()
             }
             .onChange(of: segmentRaw) { _, _ in
+                holdingsSearchFocused = false
                 // The segment's content starts below the hero — bring it into view.
                 dsAnimate { proxy.scrollTo("portfolio.segments", anchor: .top) }
             }
@@ -239,7 +274,9 @@ struct PortfolioView: View {
         .onChange(of: cloudAuth.userId) { _, userId in
             if case .stockTransfers(let owner) = sheet, owner != userId { sheet = nil }
             if case .brokerCash(let owner) = sheet, owner != userId { sheet = nil }
+            resetHoldingsSearch()
         }
+        .onChange(of: marketData.activePortfolioIndex) { _, _ in resetHoldingsSearch() }
         .sheet(item: $closedSheet) { ClosedPositionSheet(positionID: $0.id) }
         .alert("Remove holding?", isPresented: Binding(get: { holdingToRemove != nil }, set: { if !$0 { holdingToRemove = nil } })) {
             Button("Remove", role: .destructive) {
@@ -439,24 +476,50 @@ struct PortfolioView: View {
 
     @ViewBuilder
     private var holdingsSection: some View {
-        holdingsHeader
-            .portfolioRow(bottom: hasBothKinds ? DS.Space.s : 0)
+        let open = marketData.portfolio.filter { $0.shares > 0 }
+        let values = Dictionary(uniqueKeysWithValues: open.compactMap { holding -> (UUID, Double)? in
+            guard holding.currentValue.isFinite, holding.currentValue > 0, !marketData.hasNoLivePrice(holding.asset) else { return nil }
+            return (holding.id, holding.currentValue)
+        })
+        let total = values.values.reduce(0, +)
+        let visible = visibleHoldings(open, values: values)
 
-        if hasBothKinds {
-            filterChips.portfolioRow(bottom: DS.Space.xs)
-        }
+        holdingsHeader
+            .portfolioRow()
+        holdingsSearch
+            .portfolioRow(bottom: DS.Space.s)
+        Text("Weight uses all \(values.count) of \(open.count) open holdings with usable prices.")
+            .font(.footnote)
+            .foregroundStyle(theme.secondaryText)
+            .portfolioRow(bottom: DS.Space.s)
 
         if marketData.isOverPortfolioLimit {
             overLimitBanner.portfolioRow(top: DS.Space.s, bottom: DS.Space.s)
         }
 
-        ForEach(visibleHoldings) { holding in
+        if visible.isEmpty {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                Text("No open holdings match")
+                    .font(.subheadline.weight(.semibold))
+                Button("Clear filters") { resetHoldingsSearch() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(DS.accent)
+                    .frame(minHeight: 44)
+                    .buttonStyle(.plain)
+            }
+            .portfolioRow(bottom: DS.Space.s)
+        }
+
+        ForEach(visible) { holding in
+            let value = values[holding.id]
             Button {
                 Haptics.tap()
+                holdingsSearchFocused = false
                 path.append(holding.id)
             } label: {
-                PortfolioHoldingRow(holding: holding, metric: metric, weight: weight(of: holding), hidesValues: valueHidden,
-                                    source: broker.institution(for: holding))
+                PortfolioHoldingRow(holding: holding, metric: metric, value: value,
+                                    weight: total.isFinite && total > 0 ? value.map { $0 / total * 100 } : nil,
+                                    hidesValues: valueHidden, source: holding.brokerAccount?.label ?? broker.institution(for: holding))
             }
             .buttonStyle(PressableButtonStyle(scale: 0.99))
             .accessibilityIdentifier("portfolio.holding.\(holding.asset.symbol)")
@@ -489,7 +552,8 @@ struct PortfolioView: View {
     /// Holdings sold down to zero — their realised profit is part of Total return.
     @ViewBuilder
     private var closedSection: some View {
-        let closed = marketData.closedPositions.filter { filter == nil || $0.asset.kind == filter }
+        let terms = holdingsQuery.split(whereSeparator: \.isWhitespace)
+        let closed = marketData.closedPositions.filter { filter.includes($0.asset) && matchesHoldingsQuery($0.asset, terms: terms) }
         if !closed.isEmpty {
             let realised = closed.reduce(0) { $0 + $1.realizedGain }
             HStack(alignment: .firstTextBaseline) {
@@ -565,34 +629,57 @@ struct PortfolioView: View {
         }
     }
 
-    private var filterChips: some View {
-        let stocks = marketData.portfolio.filter { $0.asset.kind == .stock }.count
-        let crypto = marketData.portfolio.count - stocks
-        return HStack(spacing: DS.Space.s) {
-            chip("All", isOn: filter == nil) { filter = nil }
-            chip("Stocks \(stocks)", isOn: filter == .stock) { filter = .stock }
-            chip("Crypto \(crypto)", isOn: filter == .crypto) { filter = .crypto }
-            Spacer()
+    private var holdingsSearch: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(spacing: DS.Space.s) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(theme.secondaryText)
+                    .accessibilityHidden(true)
+                TextField("Search holdings", text: $holdingsQuery)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .focused($holdingsSearchFocused)
+                    .onSubmit { holdingsSearchFocused = false }
+                    .accessibilityIdentifier("portfolio.holdings.search")
+                if !holdingsQuery.isEmpty {
+                    Button { holdingsQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(theme.secondaryText)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear holdings search")
+                }
+            }
+            .padding(.leading, DS.Space.m)
+            .padding(.trailing, holdingsQuery.isEmpty ? DS.Space.m : 0)
+            .frame(minHeight: 48)
+            .background(RoundedRectangle(cornerRadius: 14).fill(theme.subtleFill))
+
+            Menu {
+                Picker("Asset type", selection: $filter) {
+                    ForEach(HoldingFilter.allCases, id: \.self) { option in
+                        Text(option.rawValue).tag(option)
+                    }
+                }
+            } label: {
+                Label(filter.rawValue, systemImage: "line.3.horizontal.decrease")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(theme.primaryText)
+                    .padding(.horizontal, DS.Space.s)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Filter holdings, \(filter.rawValue)")
+            .accessibilityIdentifier("portfolio.holdings.filter")
         }
     }
 
-    private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            Haptics.select()
-            dsAnimate(DS.quick, action)
-        } label: {
-            Text(title)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(isOn ? theme.primaryText : theme.secondaryText)
-                .padding(.horizontal, 14)
-                .frame(minHeight: 34)
-                .background(Capsule().fill(isOn ? theme.cardBackground : theme.subtleFill))
-                .overlay(Capsule().strokeBorder(theme.cardBorder.opacity(isOn ? 0.8 : 0.4), lineWidth: 0.5))
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
+    private func resetHoldingsSearch() {
+        holdingsQuery = ""
+        filter = .all
+        holdingsSearchFocused = false
     }
 
     private var overLimitBanner: some View {

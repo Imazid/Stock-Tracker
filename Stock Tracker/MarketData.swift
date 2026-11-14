@@ -1308,6 +1308,9 @@ final class MarketData: ObservableObject {
     func applyRemoteSync(watchlist remoteWatchlist: [Asset], portfolio remotePortfolio: [PortfolioHolding], history remoteHistory: [PortfolioSnapshot]) {
         // Preserve live market data for assets already known locally
         let localAssets = Dictionary((watchlist + stocks + crypto).map { ($0.quoteIdentity, $0) }, uniquingKeysWith: { first, _ in first })
+        let listedTypes = Dictionary((portfolio.map(\.asset) + stocks + watchlist).compactMap { asset in
+            asset.isETF.map { (asset.quoteIdentity, $0) }
+        }, uniquingKeysWith: { first, _ in first })
         watchlist = remoteWatchlist.map { asset in
             guard let live = localAssets[asset.quoteIdentity], live.price > 0 else { return asset }
             var a = asset
@@ -1319,8 +1322,9 @@ final class MarketData: ObservableObject {
         }
         // Preserve live market data for portfolio assets
         portfolio = remotePortfolio.map { holding in
-            guard let live = localAssets[holding.asset.quoteIdentity], live.price > 0 else { return holding }
             var h = holding
+            h.asset.isETF = h.asset.isETF ?? listedTypes[h.asset.quoteIdentity]
+            guard let live = localAssets[h.asset.quoteIdentity], live.price > 0 else { return h }
             h.asset.price = live.price
             h.asset.change = live.change
             h.asset.changePercent = live.changePercent

@@ -399,7 +399,8 @@ final class QuoteService: QuoteServiceProtocol {
             avgVolume: old.avgVolume,
             dividend: old.dividend,
             beta: old.beta,
-            exchange: placeholderExchange && !api.exchange.isEmpty ? api.exchange : old.exchange
+            exchange: placeholderExchange && !api.exchange.isEmpty ? api.exchange : old.exchange,
+            isETF: api.isETF ?? old.isETF
         )
     }
 }

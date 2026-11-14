@@ -24,6 +24,7 @@ struct AddSearchItem: Identifiable, Hashable {
     let market: String
     /// CoinGecko id for crypto, ticker for stocks.
     let lookupID: String
+    var isETF: Bool? = nil
 
     var id: String { "\(market)-\(symbol)-\(lookupID)" }
 }
@@ -37,7 +38,7 @@ enum HoldingLookup {
             let isASX = r.exchange == "ASX"
             guard isASX || r.currency.uppercased() == "USD", !r.symbol.contains(".") else { return nil }
             let item = AddSearchItem(symbol: r.symbol.uppercased(), name: r.name, kind: .stock,
-                                     market: isASX ? "ASX" : "US", lookupID: r.symbol.uppercased())
+                                     market: isASX ? "ASX" : "US", lookupID: r.symbol.uppercased(), isETF: r.isETF)
             return seen.insert(item.id).inserted ? item : nil
         }
         return rank(items, for: query)
@@ -77,14 +78,19 @@ enum HoldingLookup {
         case .stock:
             if item.market == "ASX" {
                 if let quote = try? await api.fetchYahooQuote(symbol: item.symbol + ".AX", name: item.name) {
-                    return quote.with(name: item.name, exchange: "ASX")
+                    var asset = quote.with(name: item.name, exchange: "ASX")
+                    asset.isETF = quote.isETF ?? item.isETF
+                    return asset
                 }
             } else if let quote = try? await api.fetchStockQuote(symbol: item.symbol) {
-                return quote.with(name: item.name, exchange: "US")
+                var asset = quote.with(name: item.name, exchange: "US")
+                asset.isETF = quote.isETF ?? item.isETF
+                return asset
             }
         }
         return Asset(symbol: item.symbol, name: item.name, price: 0, change: 0, changePercent: 0, volume: 0,
-                     kind: item.kind, exchange: item.kind == .crypto ? "Crypto" : (item.market == "ASX" ? "ASX" : "US"))
+                     kind: item.kind, exchange: item.kind == .crypto ? "Crypto" : (item.market == "ASX" ? "ASX" : "US"),
+                     isETF: item.isETF)
     }
 }
 
