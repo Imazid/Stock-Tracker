@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { StockSplits } from "./stock-splits";
+import { StockTransfers } from "./stock-transfers";
 
 export function LotReport({ userId }: { userId: string }) {
   const [start, setStart] = useState("");
@@ -73,6 +74,7 @@ export function LotReport({ userId }: { userId: string }) {
         </Button>
       </form>
       <StockSplits userId={userId} />
+      <StockTransfers userId={userId} />
     </Card>
   );
 }
