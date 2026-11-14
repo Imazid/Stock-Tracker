@@ -14,6 +14,7 @@ import Auth from "./auth";
 import { Market } from "./market";
 import Palette from "./palette";
 import { JournalForm, PersonalList, Portfolio } from "./portfolio";
+import { PortfolioHistory } from "./portfolio-history";
 import { Connections, Research } from "./research";
 import { Agents, OrderTicket, PaperDesk, StrategyStudio, type TradeAction, type TradingState } from "./trading";
 import { Brand, Empty, Modal } from "./ui";
@@ -241,17 +242,18 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
         </div>
       </header>
       <main ref={main} id="main" className="main" tabIndex={-1}>
-        <header className="page-heading"><div><div className="market-label"><span className="status-dot"/>{marketPage ? "MARKET WORKSPACE" : "STOCK TRACKER"}</div><h1>{page === "overview" ? "Market overview" : current.title}</h1><p>{current.description}</p></div>
+        <header className="page-heading"><div><div className="market-label"><span className="status-dot"/>{marketPage ? "MARKET WORKSPACE" : "STOCK TRACKER"}</div><h1>{page === "overview" && !signedIn ? "Market overview" : current.title}</h1><p>{current.description}</p></div>
           {marketPage && <button aria-label="Find an asset" className="button secondary market-search" onClick={() => setDialog("command")}><Search size={16}/> Find an asset <ArrowRight size={15}/></button>}
           {(page === "strategy" || page === "research") && signedIn && <button className="button secondary" onClick={() => setDialog("command")}><Search size={16}/> Change asset</button>}
         </header>
 
+        {userID && page === "overview" && <PortfolioHistory key={userID} userId={userID} portfolioLink />}
         {marketPage && <Market key={page} asset={asset} onAsset={setAsset} signedIn={signedIn} watch={journal.watch} onWatch={item => void toggleWatch(item)} onTrade={showOrder} onSignIn={signIn} full={page === "markets"}/>}
-        {page === "overview" && <div className="overview-bottom"><div className="overview-callout"><span className="callout-icon"><Wallet size={19}/></span><div><h2>Your investment workspace</h2><p>{signedIn ? `${journal.holdings.length} holdings · ${journal.watch.length} saved assets` : "Open your portfolios, watchlist and paper trades with your Stock Tracker account."}</p></div><button className="button secondary small" onClick={() => signedIn ? navigate("portfolio") : signIn()}>{signedIn ? "View portfolio" : "Connect account"}<ArrowRight size={15}/></button></div><span className="data-note"><Radio size={14}/> Market quotes may be delayed. Check the source timestamp.</span></div>}
+        {page === "overview" && <div className="overview-bottom">{!signedIn && <div className="overview-callout"><span className="callout-icon"><Wallet size={19}/></span><div><h2>Your investment workspace</h2><p>Open your portfolios, watchlist and paper trades with your Stock Tracker account.</p></div><button className="button secondary small" onClick={signIn}>Connect account<ArrowRight size={15}/></button></div>}<span className="data-note"><Radio size={14}/> Market quotes may be delayed. Check the source timestamp.</span></div>}
         {!marketPage && page !== "settings" && !signedIn && <section className="panel"><Empty icon={<KeyRound size={22}/>} title={ready ? "Sign in to open this workspace" : "Checking your account…"} text={ready ? "Use the same Stock Tracker account you use on iOS." : undefined}>{ready && <button className="button primary" onClick={signIn}>Sign in <ArrowRight size={15}/></button>}</Empty></section>}
         {signedIn && (journalError && ["portfolio","watchlist"].includes(page)) && <p role="alert" className="notice error">{journalError}</p>}
-        {signedIn && page === "portfolio" && <>
-          <Portfolio journal={journal} onAsset={selectAsset} onAdd={() => { setHolding(undefined); setDialog("holdingFinder"); }} onEdit={row => { setHolding(row); setHoldingAsset(fromHolding(row)); setDialog("holding"); }}/>
+        {userID && page === "portfolio" && <>
+          <Portfolio key={userID} userId={userID} journal={journal} onAsset={selectAsset} onAdd={() => { setHolding(undefined); setDialog("holdingFinder"); }} onEdit={row => { setHolding(row); setHoldingAsset(fromHolding(row)); setDialog("holding"); }}/>
           <div className="data-note"><Link className="text-button" href="/portfolio">Portfolio exposure, performance and reports <ExternalLink size={13}/></Link></div>
         </>}
         {signedIn && page === "watchlist" && <PersonalList journal={journal} onAsset={selectAsset} onWatch={item => void toggleWatch(item)} onAlert={() => setDialog("alert")} onAlertChange={(id,patch) => void alertChange(id,patch)}/>}

@@ -25,7 +25,7 @@ The native definitions live in [DesignSystem.swift](../Stock%20Tracker/DesignSys
 | Actions and choices | `PrimaryPillButtonStyle`, `SecondaryPillButtonStyle`, `QuietTextButtonStyle` | `Button`, `ButtonLink`, `Segmented` |
 | Input and feedback | Native form controls, `EmptyStateCard`, `StatusLabel` | `Field`, `Input`, `Select`, `Notice`, `EmptyState`, `Skeleton` |
 | Instruments and prices | `AdaptiveQuoteRow`, `QuoteNumbers`, `ChangePill`, `InstrumentLabel` | `InstrumentRow`, `ChangeText`, `StatusChip`, `SourceLine` |
-| Charts | `PortfolioPerformanceChart`, `EquityCurveChart`, `PortfolioAllocationView` | `PriceChart`, `EquityChart`, `Sparkline` |
+| Charts | `PortfolioPerformanceChart`, `EquityCurveChart`, `PortfolioAllocationView` | `PriceChart`, `EquityChart`, `Sparkline`, `PortfolioHistory` |
 | Order review and risk | `OrderTicketView`, `RiskReportView`, `PracticeChip` | Order and Practice routes, with explicit review and labelled simulation |
 | Agent and assistant evidence | `EvidenceList`, `StatusLabel`, `AgentAvatar` | `AssistantChat` source list, Agent Studio run and proposal cards |
 
@@ -37,6 +37,7 @@ Use primary actions for the next step and secondary actions for supporting work.
 - Use a sign, direction icon or label with gain and loss colors. Keep practice and provider order status visible during confirmation and in activity.
 - Use native semantic controls and Dynamic Type on iPhone. Give icon-only actions accessibility labels and verify important screens with VoiceOver, large text and Reduce Motion.
 - Use links for navigation and buttons for actions on web. Keep the focus ring visible, provide label associations and useful chart summaries, and verify keyboard order and reduced motion. `Segmented` uses the radio group pattern with arrow-key selection.
+- Portfolio history shows dated USD values with keyboard inspection and an expandable data table. Statement periods show investment change with a solid line and net external transfers with a dashed line.
 - At phone widths, allow prices, status and source labels to wrap. Retain a readable order of asset, quantity, value and source when a row stacks.
 
 The code provides reusable primitives. A full accessibility and contrast audit across all screens and states is still pending.

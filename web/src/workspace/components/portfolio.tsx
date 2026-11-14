@@ -5,14 +5,12 @@ import { AlertTriangle, ArrowUpRight, Bell, PieChart, Plus, Star, Trash2, Wallet
 import { backend, service } from "../lib/backend";
 import { dateText, fromHolding, fromWatch, instrumentID, message, money, qty, storedExchange, storedKind, storedTicker, type Holding, type Instrument, type Journal, type Quotes } from "../lib/models";
 import { AssetText, Change, Empty } from "./ui";
-import Chart from "./chart";
+import { PortfolioHistory } from "./portfolio-history";
 
-export function Portfolio({ journal, onAsset, onAdd, onEdit }: { journal: Journal; onAsset: (asset: Instrument) => void; onAdd: () => void; onEdit: (holding: Holding) => void }) {
+export function Portfolio({ userId, journal, onAsset, onAdd, onEdit }: { userId: string; journal: Journal; onAsset: (asset: Instrument) => void; onAdd: () => void; onEdit: (holding: Holding) => void }) {
   const [values, setValues] = useState<Record<string, number>>({});
   const [rates, setRates] = useState<Record<string, number>>({ USD: 1 });
   const [error, setError] = useState("");
-  const [period, setPeriod] = useState<30|90|365|0>(90);
-  const [now] = useState(() => Date.now());
   const assetsKey = JSON.stringify([...new Map(journal.holdings.filter(row => row.shares > 0).map(row => {
     const asset = fromHolding(row);
     return [instrumentID(asset), asset];
@@ -53,7 +51,6 @@ export function Portfolio({ journal, onAsset, onAdd, onEdit }: { journal: Journa
   const basis = priced.reduce((sum, item) => sum + item.row.shares * item.row.avg_cost, 0);
   const allocations = ["equity", "etf", "crypto"].map(type => priced.filter(item => item.asset.assetClass === type).reduce((sum, item) => sum + item.usd! * item.row.shares, 0));
   const partial = priced.length < open.length;
-  const points = period ? journal.snapshots.filter(point => point.time >= now - 86_400_000 * period) : journal.snapshots;
 
   return <>
     <div className="metric-grid">
@@ -62,9 +59,7 @@ export function Portfolio({ journal, onAsset, onAdd, onEdit }: { journal: Journa
       <div className="panel metric"><span><PieChart size={16}/> Asset allocation</span><div className="allocation">{allocations.map((amount, index) => <span key={index} style={{ width: `${total ? amount / total * 100 : 0}%` }}/>)}</div><small>Stock · ETF · Crypto</small></div>
     </div>
     {error && <div className="notice"><AlertTriangle size={16}/>{error}</div>}
-    <section className="panel price-panel"><div className="panel-heading"><h2>Portfolio history</h2><div className="segmented">{([[30,"1M"],[90,"3M"],[365,"1Y"],[0,"All"]] as const).map(([value,label]) => <button key={label} aria-pressed={period === value} onClick={() => setPeriod(value)}>{label}</button>)}</div></div>
-      <Chart key={period} points={points} empty="No synced portfolio snapshots in this range."/>
-    </section>
+    <PortfolioHistory userId={userId} />
     <section className="panel table-panel"><div className="panel-heading"><h2>Holdings</h2><button className="button primary small" onClick={onAdd}><Plus size={15}/> Add holding</button></div>
       {rows.length ? <div className="table-scroll"><table><thead><tr><th>Asset</th><th>Units</th><th>Average cost</th><th>Value</th><th>Unrealised</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
         {rows.map(({row, asset, usd}) => <tr key={row.id}><td><button className="plain" onClick={() => onAsset(asset)}><AssetText asset={asset}/></button></td><td>{qty(row.shares)}</td><td>{money(row.avg_cost)}</td><td>{row.shares === 0 ? money(0) : usd === undefined ? "—" : money(usd * row.shares)}</td><td><Change value={row.shares > 0 && row.avg_cost > 0 && usd !== undefined ? (usd / row.avg_cost - 1) * 100 : null}/></td><td><button className="button small secondary" onClick={() => onEdit(row)}>Edit</button></td></tr>)}

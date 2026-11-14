@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -59,10 +59,15 @@ function returnMetrics(methods: ReturnMethods) {
 
 export function PerformanceLedger({ userId }: { userId: string }) {
   const periods = useQuery({ queryKey: ["portfolio-performance", userId], queryFn: () => readPeriods(userId) });
+  const queryClient = useQueryClient();
   const [editor, setEditor] = useState<{ period?: Period }>();
   const [removing, setRemoving] = useState<string>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  async function refresh() {
+    await Promise.all([periods.refetch(), queryClient.invalidateQueries({ queryKey: ["portfolio-history", userId, "returns"] })]);
+  }
 
   async function remove(id: string) {
     const db = browserSupabase();
@@ -73,7 +78,7 @@ export function PerformanceLedger({ userId }: { userId: string }) {
       const { error } = await db.from("portfolio_performance_periods").delete().eq("id", id).eq("user_id", userId);
       if (error) throw error;
       setRemoving(undefined);
-      await periods.refetch();
+      await refresh();
     } catch {
       setError("Couldn’t remove the period. Try again.");
     } finally {
@@ -82,12 +87,12 @@ export function PerformanceLedger({ userId }: { userId: string }) {
   }
 
   return (
-    <Card>
+    <Card id="portfolio-returns">
       <CardHeader title="Portfolio returns" subtitle="Separate deposits and withdrawals from investment gains or losses."
         actions={!editor && <Button size="sm" onClick={() => { setRemoving(undefined); setEditor({}); }}>Add period</Button>} />
       <div className="space-y-4 border-t border-border p-4">
         {editor && <PeriodEditor key={editor.period?.id ?? "new"} userId={userId} period={editor.period}
-          onClose={() => setEditor(undefined)} onSave={async () => { await periods.refetch(); setEditor(undefined); }} />}
+          onClose={() => setEditor(undefined)} onSave={async () => { await refresh(); setEditor(undefined); }} />}
         {periods.isPending ? <div className="skeleton h-20" role="status" aria-label="Loading portfolio returns" />
           : periods.isError ? <EmptyState title="Couldn’t load portfolio returns" tone="down"
             actions={<Button onClick={() => void periods.refetch()}>Retry</Button>} />
