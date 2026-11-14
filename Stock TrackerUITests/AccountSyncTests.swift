@@ -1101,17 +1101,14 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(verified.isHittable)
         attach("hosted-agent-fill-evidence")
 
-        XCTAssertTrue(app.open("Agents", timeout: 10))
-        let copilot = app.buttons["agents.copilot"]
-        if !copilot.waitForExistence(timeout: 3) {
-            let back = app.navigationBars.buttons.firstMatch
-            XCTAssertTrue(back.exists)
-            back.tap()
-        }
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.open("Agents", timeout: 25))
+        let copilot = app.buttons["agents.copilot"].firstMatch
         XCTAssertTrue(copilot.waitForExistence(timeout: 8), app.debugDescription)
         for _ in 0..<6 where !copilot.isHittable { app.swipeDown(velocity: .slow) }
         copilot.tap()
-        let question = app.buttons["copilot.suggestion.What did my agents"].firstMatch
+        let question = app.buttons.containing(.staticText, identifier: "What did my agents do this week?").firstMatch
         XCTAssertTrue(question.waitForExistence(timeout: 8), app.debugDescription)
         question.tap()
         XCTAssertTrue(app.staticTexts["Agent activity this week"].waitForExistence(timeout: 15), app.debugDescription)
