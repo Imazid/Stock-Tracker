@@ -32,7 +32,7 @@ struct CreateAgentFlow: View {
 
     private let examples = [
         "Watch technology stocks and trade moving-average crossovers with a $5,000 paper portfolio, 10% per position",
-        "Buy $100 of SPY every week with a $5,000 budget",
+        "Invest $150 each month in 60% VTI, 20% VXUS and 20% BND. Rebalance when allocations drift by 5 points, with a $5,000 budget.",
         "Buy ETH when RSI is below 30. Sell when RSI crosses above 65, with an 8% stop loss"
     ]
 
@@ -130,7 +130,11 @@ struct CreateAgentFlow: View {
         if let prefill, !result.draft.spec.followsLedgerPositions, !result.draft.spec.universe.contains(prefill) {
             if result.understood.contains(where: { $0.hasPrefix("Assets:") }) == false {
                 result.draft.spec.universe = [prefill]
-                if result.draft.spec.kind == .rebalance { result.draft.spec = AgentTemplates.etfRebalancing([prefill]) }
+                if result.draft.spec.monthlyInvestment != nil {
+                    result.draft.spec.monthlyInvestment?.allocation.targets = [prefill.id: 100]
+                } else if result.draft.spec.rebalance != nil {
+                    result.draft.spec.rebalance?.targets = [prefill.id: 100]
+                }
                 result.assumptions.removeAll { $0.hasPrefix("No assets were named") }
                 result.understood.append("Assets: \(prefill.symbol)")
             }
@@ -278,7 +282,15 @@ struct AgentDraftEditor: View {
 
                 if !needsPortfolio { assetsCard } else { guardCard }
 
-                if draft.spec.kind == .rebalance, let config = Binding($draft.spec.rebalance) {
+                if let monthly = Binding($draft.spec.monthlyInvestment) {
+                    TradingSection(title: "Monthly investing") {
+                        strategyNumber("Amount per month (\(currency))", value: monthly.amount, id: "monthlyAmount")
+                        Text("The purchase uses available practice cash and splits it across the target ETFs.")
+                            .font(.footnote)
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    rebalanceCard(monthly.allocation)
+                } else if let config = Binding($draft.spec.rebalance) {
                     rebalanceCard(config)
                 }
 
@@ -359,9 +371,13 @@ struct AgentDraftEditor: View {
             InstrumentPickerView(title: "Add an asset", currency: draft.spec.universe.isEmpty ? nil : currency,
                                  excluding: Set(draft.spec.universe.map(\.id))) { instrument in
                 draft.spec.universe.append(instrument)
-                if let config = draft.spec.rebalance {
+                if let config = draft.spec.allocation {
                     let remainder = 100 - config.targets.values.reduce(0, +)
-                    draft.spec.rebalance?.targets[instrument.id] = max(0, remainder)
+                    if draft.spec.monthlyInvestment != nil {
+                        draft.spec.monthlyInvestment?.allocation.targets[instrument.id] = max(0, remainder)
+                    } else {
+                        draft.spec.rebalance?.targets[instrument.id] = max(0, remainder)
+                    }
                 }
                 showPicker = false
             }
@@ -443,6 +459,7 @@ struct AgentDraftEditor: View {
                         Button {
                             draft.spec.universe.removeAll { $0.id == instrument.id }
                             draft.spec.rebalance?.targets.removeValue(forKey: instrument.id)
+                            draft.spec.monthlyInvestment?.allocation.targets.removeValue(forKey: instrument.id)
                         } label: {
                             Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                                 .frame(width: 22, height: 22)
@@ -477,7 +494,9 @@ struct AgentDraftEditor: View {
                 strategyNumber("\(instrument.symbol) target (%)", value: weight, id: "target.\(instrument.id)")
             }
             strategyNumber("Drift threshold (percentage points)", value: config.driftThresholdPct, id: "drift")
-            Text("Unallocated equity stays in cash.")
+            Text(draft.spec.monthlyInvestment != nil
+                 ? "Targets add up to 100% of invested value. Available practice cash is held separately."
+                 : "Unallocated equity stays in cash.")
                 .font(.footnote)
                 .foregroundStyle(theme.secondaryText)
         }

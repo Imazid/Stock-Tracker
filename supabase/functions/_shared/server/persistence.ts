@@ -247,6 +247,7 @@ async function load(tx: Tx, userID: string, now: number, allowFixtureData: boole
     setOptional(agent, "pauseReason", row.pause_reason);
     setOptional(agent, "ledgerID", row.ledger_id);
     setOptional(agent, "lastRunAt", ms(row.last_run_at));
+    setOptional(agent, "lastMonthlyInvestmentPeriod", row.last_monthly_investment_period);
     setOptional(agent, "nextRunAt", ms(row.next_run_at));
     setOptional(agent, "lastError", row.last_error);
     if (row.daily_loss_notified_day) state.dailyLossNotified[uuidString(agent.id)] = row.daily_loss_notified_day;
@@ -527,6 +528,7 @@ async function save(tx: Tx, userID: string, now: number, engine: TradingEngine, 
       name: agent.name, template_id: agent.templateID ?? null, mode: agent.mode, status: agent.status,
       pause_reason: agent.pauseReason ?? null, risk_policy: tx.json(agent.riskPolicy as never), ledger_id: agent.ledgerID ?? null,
       budget: agent.budget, review_each_paper_trade: agent.reviewEachPaperTrade, schedule_interval_minutes: agent.schedule.intervalMinutes,
+      last_monthly_investment_period: agent.lastMonthlyInvestmentPeriod ?? null,
       strategy_version: strategyVersion(agent), last_run_at: at(agent.lastRunAt), next_run_at: at(agent.nextRunAt),
       consecutive_errors: agent.consecutiveErrors, last_error: agent.lastError ?? null, daily_loss_notified_day: notified ?? null,
     };

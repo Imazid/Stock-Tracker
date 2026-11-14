@@ -19,6 +19,11 @@ public struct ParsedAgentRequest: Sendable {
 /// `StrategyValidator` and the engine's own checks before it can run.
 public enum StrategyParser {
 
+    private static let driftPatterns = [
+        #"\b(?:drift(?:s|ed)?(?:\s+by)?(?:\s+(?:beyond|above|over|exceeds?|more than|of))?|threshold(?:\s+of)?)\s+(\d+(?:\.\d+)?)\s*(?:%|percentage points?|percent|points?)"#,
+        #"\b(\d+(?:\.\d+)?)\s*(?:%|percentage points?|percent|points?)\s+drift(?:\s+threshold)?"#
+    ]
+
     public static func parse(_ text: String) -> ParsedAgentRequest {
         let lower = text.lowercased()
         var understood: [String] = []
@@ -46,6 +51,17 @@ public enum StrategyParser {
             assumptions += rules.notes
             if let buy = rules.entry { understood.append("Buy when \(buy.label(spec.timeframe))") }
             if let sell = rules.exit, !sell.leaves.isEmpty { understood.append("Sell when \(sell.label(spec.timeframe))") }
+        } else if has("rebalanc") && has("every month", "each month", "monthly") {
+            templateID = "etfRebalance"; name = "Monthly ETF Investing Agent"
+            let funds = pick ?? UniverseCatalog.balancedETFs
+            spec = AgentTemplates.monthlyInvesting(funds, amount: 0)
+            if let captured = firstMatch(#"\b(?:invest|buy|allocate|contribute|put)\s+(?:a\s+fixed\s+amount\s+of\s+)?((?:a?\$\s*[\d,]+(?:\.\d+)?\s*[km]?(?![a-z])|[\d,]+(?:\.\d+)?\s*[km]?\s*(?:usd|aud|dollars)\b))"#, in: lower),
+               let amount = dollarAmounts(in: captured).first {
+                spec.monthlyInvestment?.amount = amount
+                understood.append("Monthly investment: \(Self.money(amount, currency: funds.first?.currency ?? "USD")) total")
+            } else {
+                assumptions.append("Enter the fixed monthly amount before running the strategy.")
+            }
         } else if has("rebalanc") {
             templateID = "etfRebalance"; name = "ETF Rebalancing Agent"
             spec = AgentTemplates.etfRebalancing(pick ?? UniverseCatalog.balancedETFs)
@@ -87,6 +103,31 @@ public enum StrategyParser {
             spec = AgentTemplates.trendFollowing(pick ?? UniverseCatalog.broadETFs)
             assumptions.append("No strategy was named, so this uses trend following.")
         }
+        if spec.allocation != nil {
+            let drift = driftPatterns.lazy.compactMap { firstMatch($0, in: lower) }.first
+            if let drift, let threshold = Double(drift) {
+                if spec.monthlyInvestment != nil { spec.monthlyInvestment?.allocation.driftThresholdPct = threshold }
+                else { spec.rebalance?.driftThresholdPct = threshold }
+                understood.append("Rebalance at \(Operand.trim(threshold)) percentage points of drift")
+            } else if spec.monthlyInvestment != nil {
+                let requestedThreshold = has("threshold", "drift")
+                if requestedThreshold {
+                    spec.monthlyInvestment?.allocation.driftThresholdPct = 0
+                    assumptions.append("Enter the drift threshold before running the strategy.")
+                } else {
+                    assumptions.append("Used a 5 percentage point drift threshold.")
+                }
+            }
+            if spec.monthlyInvestment != nil {
+                let weights = fundsWeights(in: text, funds: spec.universe)
+                if !weights.isEmpty {
+                    spec.monthlyInvestment?.allocation.targets = weights
+                    understood.append("Used the ETF weights in your description.")
+                } else {
+                    assumptions.append("Used the default target weights. Review the ETF allocation before starting.")
+                }
+            }
+        }
         understood.append("Strategy: \(spec.title)")
 
         if spec.followsLedgerPositions {
@@ -103,7 +144,14 @@ public enum StrategyParser {
         if currency != "USD" {
             assumptions.append("These assets trade in \(currency), so the agent's practice money is held in \(currency).")
         }
-        let amounts = dollarAmounts(in: text)
+        let amounts: [Double]
+        if spec.monthlyInvestment != nil {
+            let budgetAmount = firstMatch(#"((?:a?\$\s*[\d,]+(?:\.\d+)?\s*[km]?|[\d,]+(?:\.\d+)?\s*(?:dollars|usd|aud)))\s+(?:starting\s+|paper\s+|practice\s+)?budget\b"#, in: lower)
+                ?? firstMatch(#"\bbudget(?:\s+of)?\s+((?:a?\$\s*[\d,]+(?:\.\d+)?\s*[km]?|[\d,]+(?:\.\d+)?\s*(?:dollars|usd|aud)))"#, in: lower)
+            amounts = budgetAmount.map { dollarAmounts(in: $0) } ?? []
+        } else {
+            amounts = dollarAmounts(in: text)
+        }
         var budget = Currencies.defaultBudget(currency)
         if let largest = amounts.max() {
             if spec.kind == .dca, amounts.count >= 2, let smallest = amounts.min(), smallest < largest {
@@ -126,7 +174,10 @@ public enum StrategyParser {
 
         var maxPositionPct = AgentTemplates.template(templateID)?.maxPositionPct ?? 10
         var policyEdits: [(inout RiskPolicy) -> Void] = []
-        for (value, meaning) in percentages(in: lower) {
+        let riskText = spec.monthlyInvestment == nil ? lower : driftPatterns.reduce(lower) { text, pattern in
+            text.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        }
+        for (value, meaning) in percentages(in: riskText) {
             switch meaning {
             case .trailingStop:
                 spec.protections.trailingStopPct = value
@@ -340,6 +391,17 @@ public enum StrategyParser {
         }
         if out.count > StrategyValidator.maxUniverse { out = Array(out.prefix(StrategyValidator.maxUniverse)) }
         return (out, unknown, labels.joined(separator: " "))
+    }
+
+    private static func fundsWeights(in text: String, funds: [Instrument]) -> [String: Double] {
+        var result: [String: Double] = [:]
+        for fund in funds {
+            let ticker = NSRegularExpression.escapedPattern(for: fund.symbol)
+            let weight = firstMatch(#"\b(\d+(?:\.\d+)?)\s*%\s*(?:in\s+|to\s+)?\$?"# + ticker + #"\b"#, in: text)
+                ?? firstMatch(#"\b"# + ticker + #"\s*(?:at|:|=)?\s*(\d+(?:\.\d+)?)\s*%"#, in: text)
+            if let weight, let value = Double(weight) { result[fund.id] = value }
+        }
+        return result
     }
 
     private static func containsWord(_ word: String, in text: String) -> Bool {

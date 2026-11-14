@@ -235,3 +235,17 @@ Deno.test("explicit incomplete and unsupported rules need review", () => {
   assertEquals(unsupported.draft.spec.exit, { op: "all", conditions: [] });
   assertEquals(parse("Buy ETH when RSI is below or equal to 30 and sell when RSI is above 65").draft.spec.entry, undefined);
 });
+
+Deno.test("monthly investing parses the total amount, allocation, drift and capital", () => {
+  const { draft } = parse("Invest $150 each month in 60% VTI, 20% VXUS and 20% BND. Rebalance when allocations drift by 5 points, with a $5,000 budget.");
+  assertEquals(draft.spec.monthlyInvestment, {
+    amount: 150, allocation: { targets: { "us:VTI": 60, "us:VXUS": 20, "us:BND": 20 }, driftThresholdPct: 5 },
+  });
+  assertEquals(draft.spec.rebalance, undefined);
+  assertEquals(draft.budget, 5_000);
+  assertEquals(StrategyValidator.validate(draft.spec).filter((issue) => issue.severity === "error"), []);
+  const incomplete = parse("Invest a fixed amount every month into a diversified ETF portfolio and rebalance when allocations drift beyond my threshold.").draft.spec;
+  assertEquals(incomplete.monthlyInvestment?.amount, 0);
+  assertEquals(incomplete.monthlyInvestment?.allocation.driftThresholdPct, 0);
+  assertEquals(StrategyValidator.validate(incomplete).filter((issue) => issue.severity === "error").length, 2);
+});

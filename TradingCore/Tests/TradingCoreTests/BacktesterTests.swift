@@ -19,6 +19,46 @@ final class BacktesterTests: XCTestCase {
         }
     }
 
+    func testMonthlyInvestingUsesOneBudgetPerCalendarMonthAndRebalances() throws {
+        let funds = [Instrument.usETF("VTI"), Instrument.usETF("BND")]
+        let spec = AgentTemplates.monthlyInvesting(funds, amount: 150)
+        var settings = config
+        settings.slippageBps = 0
+        settings.maxPositionPct = 100
+        let days = Fx.usTradingDays(count: 31)
+        let flat = Array(repeating: 100.0, count: days.count)
+        let inputs = funds.map { Fx.series($0, closes: flat, days: days) }
+        let result = try run(spec, inputs, config: settings)
+        let months = Set(days.dropLast().map { MarketCalendar.standard.dayKey(.us, $0).prefix(7) }).count
+        XCTAssertEqual(result.equityCurve.last?.cash ?? -1, 10_000 - Double(months) * 150, accuracy: 0.01)
+        XCTAssertEqual(result.trades.map(\.entryTime), Array(repeating: days[1], count: 2))
+        XCTAssertThrowsError(try run(spec, [inputs[0]], config: settings))
+        let trending = Fx.series(funds[0], closes: flat.enumerated().map { index, value in value + Double(index) * 4 }, days: days)
+        let withDrift = try run(spec, [trending, inputs[1]], config: settings)
+        XCTAssertTrue(withDrift.trades.contains { $0.instrument.symbol == "VTI" && $0.exitReason == "rebalance" })
+    }
+
+    func testMonthlyPracticeAgentPersistsPeriodAndAvoidsDuplicateProposals() throws {
+        let funds = [Instrument.usETF("VTI"), Instrument.usETF("BND")]
+        let spec = AgentTemplates.monthlyInvesting(funds, amount: 150)
+        var engine = Fx.engine()
+        let agent = try engine.createAgent(AgentDraft(name: "Monthly", spec: spec, reviewEachPaperTrade: true), now: Fx.now)
+        let flat = Array(repeating: 100.0, count: 60)
+        let snapshot = Fx.snapshot(funds.map { ($0, flat, 100) })
+        let run = engine.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: Fx.now)
+        XCTAssertEqual(run?.proposalIDs.count, 2)
+        XCTAssertEqual(engine.state.agents.first?.lastMonthlyInvestmentPeriod, "2026-11")
+        for proposal in engine.state.proposals {
+            XCTAssertEqual(proposal.status, .pending)
+            XCTAssertEqual(proposal.notional, 75, accuracy: 0.01)
+            _ = try engine.approveProposal(id: proposal.id, now: Fx.now)
+        }
+        XCTAssertEqual(engine.state.fills.count, 2)
+        XCTAssertEqual(engine.runAgent(id: agent.id, snapshot: snapshot, trigger: .manual, now: Fx.now)?.proposalIDs.count, 0)
+        let recovered = try JSONDecoder().decode(TradingAgent.self, from: JSONEncoder().encode(engine.state.agents[0]))
+        XCTAssertEqual(recovered.lastMonthlyInvestmentPeriod, "2026-11")
+    }
+
     func testSyntheticAndUnapprovedFixtureDataAreRefused() {
         let spec = Fx.aboveAverageSpec([Fx.aapl])
         let synthetic = Fx.series(Fx.aapl, closes: wave(), provenance: .synthetic)

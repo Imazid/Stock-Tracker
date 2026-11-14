@@ -327,6 +327,35 @@ public enum StrategyEvaluator {
         public var targetPct: Double
     }
 
+    /// Allocate a single monthly budget by weight, then measure drift against
+    /// the invested portion. One net order per ETF prevents a buy and sell on
+    /// the same decision bar. Unused practice cash stays uninvested.
+    public static func monthlyRebalanceTrades(config: RebalanceConfig, values: [String: Double],
+                                               contribution: Double) -> [RebalanceTrade] {
+        let ids = config.targets.keys.sorted()
+        let invested = ids.reduce(0.0) { $0 + (values[$1] ?? 0) }
+        let total = invested + contribution
+        guard total > 0 else { return [] }
+        // Once a weight breaches the threshold, restore the full allocation,
+        // including smaller counterpart trades that fund the breached weight.
+        let triggered = ids.contains { id in
+            invested > 0 && abs((values[id] ?? 0) / invested * 100 - (config.targets[id] ?? 0))
+                >= config.driftThresholdPct
+        }
+        if triggered {
+            let rebalance = RebalanceConfig(targets: config.targets, driftThresholdPct: 0)
+            return rebalanceTrades(config: rebalance, values: values, equity: total).filter { $0.notional > 0 }
+        }
+        return ids.compactMap { id in
+            let target = config.targets[id] ?? 0
+            let amount = Rounding.money(contribution * target / 100)
+            guard amount > 0 else { return nil }
+            return RebalanceTrade(instrumentID: id, side: .buy, notional: amount,
+                                  currentPct: invested > 0 ? (values[id] ?? 0) / invested * 100 : 0,
+                                  targetPct: target)
+        }
+    }
+
     /// Trades that bring holdings back to target. Sells come first so their proceeds fund the buys.
     /// `values` is the market value of each holding by instrument id.
     public static func rebalanceTrades(config: RebalanceConfig, values: [String: Double], equity: Double) -> [RebalanceTrade] {

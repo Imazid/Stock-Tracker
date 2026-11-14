@@ -337,6 +337,25 @@ export function rebalanceTrades(config: RebalanceConfig, values: Record<string, 
   });
 }
 
+/** Split monthly practice cash across target weights and restore all weights if one breaches the threshold. */
+export function monthlyRebalanceTrades(config: RebalanceConfig, values: Record<string, number>, contribution: number): RebalanceTrade[] {
+  const ids = sortedStrings(Object.keys(config.targets));
+  const invested = ids.reduce((total, id) => total + (values[id] ?? 0), 0);
+  if (!(invested + contribution > 0)) return [];
+  const triggered = invested > 0 && ids.some((id) =>
+    Math.abs((values[id] ?? 0) / invested * 100 - config.targets[id]) >= config.driftThresholdPct
+  );
+  if (triggered) {
+    return rebalanceTrades({ ...config, driftThresholdPct: 0 }, values, invested + contribution).filter((trade) => trade.notional > 0);
+  }
+  return ids.flatMap((id) => {
+    const targetPct = config.targets[id];
+    const notional = money(contribution * targetPct / 100);
+    return notional > 0 ? [{ instrumentID: id, side: "buy" as const, notional,
+      currentPct: invested > 0 ? (values[id] ?? 0) / invested * 100 : 0, targetPct }] : [];
+  });
+}
+
 /** Plain facts about a series, for research-only agents and the copilot. No opinion, no order. */
 export function researchFacts(bars: Bar[], timeframe: Timeframe = "day"): Evidence[] {
   if (bars.length === 0) return [];
@@ -369,6 +388,6 @@ export function researchFacts(bars: Bar[], timeframe: Timeframe = "day"): Eviden
   return facts;
 }
 
-export const StrategyEvaluator = { decide, decideAt, decideDCA, rebalanceTrades, researchFacts, evaluateCondition, marginScore };
+export const StrategyEvaluator = { decide, decideAt, decideDCA, rebalanceTrades, monthlyRebalanceTrades, researchFacts, evaluateCondition, marginScore };
 
 export { capitalized };

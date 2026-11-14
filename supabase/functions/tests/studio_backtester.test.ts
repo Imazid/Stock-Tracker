@@ -12,6 +12,7 @@ import { makeDraft } from "../_shared/trading/state.ts";
 import type { StrategySpec } from "../_shared/trading/strategy.ts";
 import * as Templates from "../_shared/trading/templates.ts";
 import { Fx } from "./fixtures.ts";
+import { dayKey } from "../_shared/trading/calendar.ts";
 
 const config = makeBacktestConfig({ startingCash: 10_000, slippageBps: 5, maxPositionPct: 10, allowFixtureData: true });
 const DAY = 86_400_000;
@@ -261,4 +262,43 @@ Deno.test("unfinished bars cannot produce signals or fills, and repeated runs ar
   assertEquals(filled, Backtester.run(spec, input, config, later));
   assertEquals(new Set(filled.trades.map((t) => t.id)).size, filled.trades.length);
   assertEquals(JSON.stringify({ spec, series, config }), original);
+});
+
+Deno.test("monthly investing uses one cash budget per calendar month and rebalances", () => {
+  const funds = [usETF("VTI"), usETF("BND")];
+  const spec = Templates.monthlyInvesting(funds, 150);
+  const free = { ...config, slippageBps: 0, maxPositionPct: 100 };
+  const days = Fx.usTradingDays(31);
+  const flat = days.map(() => 100);
+  const inputs = funds.map((asset) => Fx.series(asset, flat, { days }));
+  const report = run(spec, inputs, undefined, free);
+  const months = new Set(days.slice(0, -1).map((day) => dayKey("us", day).slice(0, 7))).size;
+  assertAlmostEquals(report.equityCurve.at(-1)!.cash, 10_000 - months * 150, 0.01);
+  assertEquals(report.trades.map((trade) => trade.entryTime), [days[1], days[1]]);
+  assertThrows(() => run(spec, [inputs[0]], undefined, free), BacktestError);
+  const trending = Fx.series(funds[0], flat.map((price, index) => price + index * 4), { days });
+  assert(run(spec, [trending, inputs[1]], undefined, free).trades.some((trade) =>
+    trade.instrument.symbol === "VTI" && trade.exitReason === "rebalance"
+  ));
+});
+
+Deno.test("approved monthly practice purchases do not repeat after persisted state reload", () => {
+  const funds = [usETF("VTI"), usETF("BND")];
+  const spec = Templates.monthlyInvesting(funds, 150);
+  const engine = Fx.engine();
+  const agent = engine.createAgent(makeDraft({ name: "Monthly", spec, reviewEachPaperTrade: true }), Fx.now);
+  const flat = Array(60).fill(100);
+  const snapshot = Fx.snapshot(funds.map((asset) => [asset, flat, 100] as [typeof asset, number[], number]));
+  const result = engine.runAgent(agent.id, snapshot, "manual", Fx.now);
+  assertEquals(result?.proposalIDs.length, 2);
+  assertEquals(agent.lastMonthlyInvestmentPeriod, "2026-11");
+  for (const proposal of [...engine.state.proposals]) {
+    assertEquals(proposal.status, "pending");
+    assertAlmostEquals(proposal.notional, 75, 0.01);
+    engine.approveProposal(proposal.id, Fx.now);
+  }
+  assertEquals(engine.state.fills.length, 2);
+  const restored = Fx.engine();
+  restored.state = JSON.parse(JSON.stringify(engine.state));
+  assertEquals(restored.runAgent(agent.id, snapshot, "manual", Fx.now)?.proposalIDs.length, 0);
 });
