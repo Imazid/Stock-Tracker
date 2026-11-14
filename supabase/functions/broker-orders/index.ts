@@ -30,7 +30,7 @@ import { canTransition } from "../_shared/oms/lifecycle.ts";
 import { engineInstrument, evaluateProviderRisk, type ProviderQuote } from "../_shared/oms/risk.ts";
 import {
   accountPolicyFor, type ConnectionRow, database, insertIntent, intentView, knownClientOrderIDs, listIntents, loadConnection, loadGates,
-  loadIntent, openCredentials, PgOmsStore, providerPolicy, remember, remembered, reservingOrders, serializeFor, type Sql,
+  loadIntent, openCredentials, orderExecutions, PgOmsStore, providerPolicy, remember, remembered, reservingOrders, serializeFor, type Sql,
 } from "../_shared/oms/store_pg.ts";
 import { keyRingFromEnv, VaultError } from "../_shared/vault/envelope.ts";
 
@@ -170,6 +170,19 @@ const actions: Record<OrdersRequest["action"], (ctx: Ctx) => Promise<Result>> = 
   },
 
   get: async (ctx) => done({ intent: await intentView(ctx.sql, await ownedIntent(ctx)) }),
+
+  executions: async (ctx) => {
+    const intent = await ownedIntent(ctx);
+    const raw = ctx.body.before;
+    if (raw === undefined) return done(await orderExecutions(ctx.sql, ctx.caller.userID, intent.id));
+    const cursor = raw as Record<string, unknown> | null;
+    const time = cursor?.executedAt;
+    if (typeof time !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(time) ||
+        !Number.isFinite(Date.parse(time)) || new Date(time).toISOString().slice(0, 19) !== time.slice(0, 19) ||
+        time.startsWith("0000")) throw new HttpError(422, "invalid", "The execution cursor has an invalid timestamp.");
+    const id = uuidField(cursor?.id, "before.id");
+    return done(await orderExecutions(ctx.sql, ctx.caller.userID, intent.id, { executedAt: time, id }));
+  },
 
   draft: async (ctx) => {
     const input = ctx.body.intent as OrderIntentInput;

@@ -7,6 +7,8 @@
 
 import type {
   ApiErrorCode,
+  BrokerExecutionCursor,
+  BrokerExecutionPage,
   ConnectionsRequest,
   ConnectionsResponse,
   ConnectionView,
@@ -27,7 +29,7 @@ export class OmsError extends Error {
   }
 }
 
-const READ_ACTIONS = new Set(["list", "get"]);
+const READ_ACTIONS = new Set(["list", "get", "executions"]);
 
 export function newIdempotencyKey(): string {
   return uuid();
@@ -78,7 +80,9 @@ export const Connections = {
 export const Orders = {
   list: (status: "open" | "closed" | "all" = "all", userId?: string) => call<{ intents: OrderIntentView[] }>("broker-orders", { action: "list", status } satisfies OrdersRequest, undefined, userId),
   get: (intentID: string, userId?: string) => call<{ intent: OrderIntentView }>("broker-orders", { action: "get", intentID } satisfies OrdersRequest, undefined, userId),
-  act: (request: Exclude<OrdersRequest, { action: "list" } | { action: "get" }>, key?: string, userId?: string) =>
+  executions: (intentID: string, before: BrokerExecutionCursor | undefined, userId: string) =>
+    call<BrokerExecutionPage>("broker-orders", { action: "executions", intentID, before }, undefined, userId),
+  act: (request: Exclude<OrdersRequest, { action: "list" | "get" | "executions" }>, key?: string, userId?: string) =>
     call<Extract<OrdersResponse, { intent: unknown }>>("broker-orders", request, key, userId),
 };
 

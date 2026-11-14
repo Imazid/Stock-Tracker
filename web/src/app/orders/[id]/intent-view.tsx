@@ -1,8 +1,8 @@
 "use client";
 
-import type { OrderIntentView } from "@oms/api.ts";
+import type { BrokerExecutionCursor, OrderIntentView } from "@oms/api.ts";
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CheckCircle2, CircleAlert, MinusCircle, XCircle } from "lucide-react";
 import { useRef } from "react";
 import { Badge } from "@/components/ui/Badge";
@@ -176,6 +176,7 @@ function SignedInIntent({ id, userId }: { id: string; userId: string }) {
               </dl>
             </Card>
           ) : null}
+          {v.brokerOrder && /[1-9]/.test(v.brokerOrder.filledQuantity) ? <BrokerExecutions id={id} userId={userId} currency={ccy} /> : null}
           <Card>
             <CardHeader title="History" />
             <ol className="space-y-2 border-t border-border px-4 py-3">
@@ -187,5 +188,42 @@ function SignedInIntent({ id, userId }: { id: string; userId: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+
+function BrokerExecutions({ id, userId, currency }: { id: string; userId: string; currency: string }) {
+  const fills = useInfiniteQuery({
+    queryKey: ["order-executions", userId, id],
+    initialPageParam: undefined as BrokerExecutionCursor | undefined,
+    queryFn: ({ pageParam }) => Orders.executions(id, pageParam, userId),
+    getNextPageParam: (page) => page.next,
+    retry: false,
+    refetchInterval: 30_000,
+  });
+  const rows = fills.data?.pages.flatMap((page) => page.executions) ?? [];
+  return (
+    <Card>
+      <CardHeader title="Broker executions" />
+      {rows.length > 0 ? <ul aria-label="Broker executions" className="divide-y divide-border border-t border-border">
+        {rows.map((fill) => (
+          <li key={fill.id} className="space-y-1 px-4 py-3 text-xs">
+            <p className="font-medium tabular">{fill.quantity} units at {fill.price} {currency}</p>
+            <time className="block text-text-2" dateTime={fill.executedAt}>{dateTime(fill.executedAt)}</time>
+            <p className="text-text-2">{fill.fee !== undefined ? `Fee ${fill.fee}${fill.feeCurrency ? ` ${fill.feeCurrency}` : ""}` : "Fee unavailable"}</p>
+            <p className="break-all font-mono text-text-3"><span className="sr-only">Broker execution ID </span>{fill.providerFillID}</p>
+          </li>
+        ))}
+      </ul> : !fills.isError ? <p className="border-t border-border px-4 py-3 text-xs text-text-2">
+        {fills.isPending ? "Loading broker executions…" : "Individual executions will appear after the broker fill history syncs."}
+      </p> : null}
+      {fills.isError ? <p role="status" className="px-4 py-3 text-xs text-down">Couldn’t load broker executions.</p> : null}
+      {(fills.hasNextPage || fills.isError) ? <div className="px-4 py-3">
+        <Button size="sm" disabled={fills.isFetching}
+          onClick={() => void (fills.isError && !fills.isFetchNextPageError ? fills.refetch() : fills.fetchNextPage())}>
+          {fills.isError ? "Retry executions" : "Load older executions"}
+        </Button>
+      </div> : null}
+    </Card>
   );
 }

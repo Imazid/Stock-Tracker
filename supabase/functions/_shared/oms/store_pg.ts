@@ -5,7 +5,7 @@
 import postgres from "npm:postgres@3.4.5";
 import type { BrokerOrder, ProviderCredentials, ProviderID, TradingEnvironment } from "../brokers/types.ts";
 import { defaultAccountPolicy, type AccountPolicy, standardPolicy } from "../trading/risk.ts";
-import type { GateID, IntentStatus, OrderIntentInput, OrderIntentView, RiskEvaluationView } from "./api.ts";
+import type { BrokerExecutionCursor, BrokerExecutionPage, GateID, IntentStatus, OrderIntentInput, OrderIntentView, RiskEvaluationView } from "./api.ts";
 import type { ApprovalRecord } from "./approval.ts";
 import * as D from "../decimal.ts";
 import type { ConnectionState, IntentRecord, OmsStore } from "./execute.ts";
@@ -199,6 +199,34 @@ export async function intentView(sql: Sql, intent: IntentRecord): Promise<OrderI
     createdAt: new Date(intent.createdAt).toISOString(),
     expiresAt: new Date(intent.expiresAt).toISOString(),
   };
+}
+
+const EXECUTIONS_PER_PAGE = 20;
+
+export async function orderExecutions(
+  sql: Sql,
+  userID: string,
+  intentID: string,
+  before?: BrokerExecutionCursor,
+): Promise<BrokerExecutionPage> {
+  const rows = await sql`
+    select f.id, f.provider_fill_id, f.quantity, f.price, f.fee, f.fee_currency,
+      to_char(f.executed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as execution_time
+    from public.order_intents i
+    join public.broker_orders b on b.intent_id = i.id and b.user_id = i.user_id
+      and b.connection_id = i.connection_id and b.provider_order_id = i.provider_order_id
+    join public.broker_fills f on f.user_id = b.user_id and f.connection_id = b.connection_id
+      and f.provider_order_id = b.provider_order_id
+    where i.id = ${intentID} and i.user_id = ${userID}
+      ${before ? sql`and (f.executed_at, f.id) < (${before.executedAt}::text::timestamptz, ${before.id}::uuid)` : sql``}
+    order by f.executed_at desc, f.id desc limit ${EXECUTIONS_PER_PAGE + 1}`;
+  const executions = rows.slice(0, EXECUTIONS_PER_PAGE).map((row) => ({
+    id: String(row.id), providerFillID: String(row.provider_fill_id), executedAt: String(row.execution_time),
+    quantity: dec(row.quantity)!, price: dec(row.price)!, fee: dec(row.fee), feeCurrency: row.fee_currency ?? undefined,
+  }));
+  const last = executions.at(-1);
+  const next = rows.length > EXECUTIONS_PER_PAGE && last ? { executedAt: last.executedAt, id: last.id } : undefined;
+  return { executions, next };
 }
 
 export async function reservingOrders(sql: Sql, userID: string, connectionID: string): Promise<ReservingOrder[]> {
