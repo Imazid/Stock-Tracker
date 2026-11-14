@@ -785,10 +785,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         openPrivateMarkets()
         let destination = app.buttons["private.destination.sparkles"]
         let saved = app.buttons["Review earlier financing assumptions"]
-        for _ in 0..<3 where !saved.exists {
+        for _ in 0..<3 where !saved.isHittable {
             if destination.exists && destination.isHittable { destination.tap() }
-            for _ in 0..<2 where !saved.exists { app.swipeUp() }
-            if saved.waitForExistence(timeout: 4) { break }
+            for _ in 0..<3 where !saved.isHittable { app.swipeUp() }
         }
         XCTAssertTrue(saved.isHittable, app.debugDescription)
         saved.tap()
