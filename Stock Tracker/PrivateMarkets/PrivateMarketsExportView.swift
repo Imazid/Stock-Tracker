@@ -217,6 +217,7 @@ private struct PrivateMarketsExportDocument: FileDocument {
                 ("sales", "Sales"), ("monitor_preferences", "Monitoring preferences"),
                 ("monitoring_alerts", "Monitoring alerts"), ("research_history", "Research history"),
                 ("excerpts", "Document excerpts"), ("reports", "Saved reports"),
+                ("manual_portfolio", "Published self-reported holdings"),
             ]
         }
         var result: [String: Any] = [:]

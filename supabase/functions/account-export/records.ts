@@ -117,6 +117,7 @@ export async function accountRecords(
         keys ??= parseKeyring(Deno.env.get("CREDENTIAL_KEKS"), Deno.env.get("CREDENTIAL_ACTIVE_KEK"));
         const decoded = await open(await keys, sealed, `private_${kind}:${owner}:${id}`);
         if (kind === "document") return decoded;
+        if (kind === "manual_portfolio") return JSON.parse(decoded);
         const { source_refs, ...report } = JSON.parse(decoded);
         return { ...report, refresh_available: source_refs !== undefined };
       });

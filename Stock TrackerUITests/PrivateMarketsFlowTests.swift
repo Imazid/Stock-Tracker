@@ -451,6 +451,39 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testManualHoldingCanPublishToWeb() throws {
+        try launchWithLocalSession("PRIVATE_MANUAL_PUBLICATION_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let add = app.buttons["private.holding.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.tap()
+        let name = app.textFields["private.holding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Published iPhone holding")
+        app.buttons["private.holding.save"].tap()
+
+        let publish = app.buttons["private.portfolio.publish"]
+        for _ in 0..<4 where !publish.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(publish.isHittable)
+        publish.tap()
+        let current = app.buttons["private.portfolio.publish.current"]
+        XCTAssertTrue(current.waitForExistence(timeout: 10))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: current)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 15), .completed)
+        current.tap()
+        let confirm = app.buttons["Publish to web"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Remove web snapshot"].waitForExistence(timeout: 20), app.debugDescription)
+        app.navigationBars["Publish Portfolio"].buttons["BackButton"].tap()
+        let holding = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(holding.waitForExistence(timeout: 8))
+        XCTAssertTrue(holding.label.contains("Published iPhone holding"))
+    }
+
+    @MainActor
     func testOwnershipExcerptCanBeReviewedAndLinked() async throws {
         let environment = ProcessInfo.processInfo.environment
         let port = environment["PRIVATE_TEST_BACKEND_PORT"].flatMap(UInt16.init) ?? 58531

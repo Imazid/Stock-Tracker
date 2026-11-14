@@ -13,6 +13,7 @@ const services = {
 const privateMarketActions = new Set([
   "catalog", "discover", "research", "research_status", "research_runs", "reports", "report", "delete_report", "research_refresh",
   "confirmed_holdings", "capital_activity", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
+  "manual_portfolio", "remove_manual_portfolio",
   "profile", "save_profile", "handoff_check", "handoff",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
 ]);

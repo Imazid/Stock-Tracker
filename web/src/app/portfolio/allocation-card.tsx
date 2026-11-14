@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { privateMarkets, dateLabel } from "@/app/private-markets/private-data";
+import { manualPortfolioQuery, manualValuationIsStale } from "@/app/private-markets/manual-portfolio";
+import { privateMarkets, dateLabel, dayInSydney } from "@/app/private-markets/private-data";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -26,21 +27,32 @@ export function AllocationCard({ owner, holdings, quoteFor, loading, truncated }
     queryKey: ["private-markets", owner, "allocation"], gcTime: 0, retry: false,
     queryFn: ({ signal }) => privateMarkets<{ buckets: PrivateAllocationBucket[] }>("allocation", { owner, signal }),
   });
-  const buckets = privatePositions.data?.buckets ?? [];
+  const manual = useQuery(manualPortfolioQuery(owner));
+  const manualBuckets: PrivateAllocationBucket[] = (manual.error ? [] : manual.data?.snapshot?.holdings ?? [])
+    .filter((holding) => !holding.exitedOn).map(({ currency, assetClass, valuation }) => ({
+      asset_class: assetClass, currency, position_count: 1, valued_count: valuation ? 1 : 0,
+      carrying_value: valuation?.value ?? null,
+      stale_count: valuation && manualValuationIsStale(valuation.date, manual.dataUpdatedAt) ? 1 : 0,
+      oldest_valuation: valuation ? dayInSydney(Date.parse(valuation.date)) : null,
+    }));
+  const buckets = [...(privatePositions.data?.buckets ?? []), ...manualBuckets];
   const needsRates = holdings.some(({ instrument }) => instrument && instrument.currency !== currency) ||
     buckets.some((bucket) => bucket.currency !== currency && bucket.carrying_value !== null && Number(bucket.carrying_value) !== 0);
   const rates = usePortfolioRates(needsRates);
   const listed = portfolioExposure(holdings, quoteFor, currency, needsRates ? rates.data : undefined);
   const allocation = unifiedAllocation(listed, buckets, currency, needsRates ? rates.data : undefined);
-  const partial = truncated || listed.priced < holdings.length || allocation.valued < allocation.positions || privatePositions.isError;
-  const waiting = loading || privatePositions.isPending || (needsRates && rates.isPending);
+  const partial = truncated || listed.priced < holdings.length || allocation.valued < allocation.positions || privatePositions.isError || manual.isError;
+  const waiting = loading || privatePositions.isPending || manual.isPending || (needsRates && rates.isPending);
   const covered = listed.priced + allocation.valued;
 
   return <Card id="unified-allocation">
-    <CardHeader title="Unified allocation" subtitle="Synced listed holdings and provider-confirmed private positions." />
+    <CardHeader title="Unified allocation" subtitle="Synced listed holdings, provider records and published self-reported positions." />
     <div className="space-y-3 border-t border-border p-4">
       {privatePositions.error && <Notice tone="down">
         Private valuations are temporarily unavailable. <Button size="sm" onClick={() => void privatePositions.refetch()}>Retry valuations</Button>
+      </Notice>}
+      {manual.error && <Notice tone="down">
+        Self-reported valuations are temporarily unavailable. <Button size="sm" onClick={() => void manual.refetch()}>Retry snapshot</Button>
       </Notice>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <dl>
@@ -85,7 +97,7 @@ export function AllocationCard({ owner, holdings, quoteFor, loading, truncated }
         </ul>}
       <div className="space-y-2 border-t border-border pt-3">
         <p className="text-xs text-text-3">
-          Private carrying values come from dated provider statements and may be illiquid. Manual private holdings and AngelList imports stay on iPhone. Cash is excluded.
+          Private carrying values use dated provider statements or published self-reported marks. Self-reported values reflect the latest iPhone snapshot. Cash is excluded.
           {listed.oldestQuote && ` Oldest included listing quote ${dateTime(listed.oldestQuote)}.`}
           {allocation.oldestValuation && ` Oldest included private valuation ${dateLabel(allocation.oldestValuation)}.`}
           {allocation.fxDates.length > 0 && ` ECB reference rates observed ${allocation.fxDates.join(", ")}.`}

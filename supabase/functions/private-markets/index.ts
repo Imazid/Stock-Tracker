@@ -1,6 +1,7 @@
+import { validManualSnapshot } from "../_shared/private-markets/manual-snapshot.ts";
 import { exportOffset, exportSection, privateExportPage } from "../_shared/private-markets/export.ts";
 import { AI_LIMITS, type AiProxyDeps } from "../_shared/ai/proxy.ts";
-import { authenticatedUserId, errorResponse, jsonResponse, readJson, serviceClient } from "../_shared/secure/edge.ts";
+import { authenticatedUserId, errorResponse, jsonResponse, serviceClient } from "../_shared/secure/edge.ts";
 import { fromBase64, fromUtf8, timingSafeEqual, utf8 } from "../_shared/secure/encoding.ts";
 import { open, parseKeyring, seal, type SealedSecret } from "../_shared/secure/envelope.ts";
 import { buildResearch, type Evidence, ResearchError } from "../_shared/private-markets/research.ts";
@@ -20,6 +21,7 @@ const activeSessionActions = new Set([
   "profile", "save_profile", "applications", "confirmed_holdings", "capital_activity",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
+  "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -451,11 +453,14 @@ Deno.serve(async (req) => {
     // and write below derives the user ID from that session.
     let body: Record<string, unknown>;
     try {
-      const raw = await readJson(req, 24_000);
+      const input = await req.text();
+      if (input.length > 120_000) throw new Error();
+      const raw = input ? JSON.parse(input) : {};
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error();
       body = raw as Record<string, unknown>;
+      if (body.action !== "save_manual_portfolio" && input.length > 24_000) throw new Error();
     } catch {
-      return errorResponse(400, "INVALID_REQUEST", "Send a JSON object under 24 KB.");
+      return errorResponse(400, "INVALID_REQUEST", "Send a valid JSON request within the size limit.");
     }
 
     if (body.action === "scheduled_digest" || body.action === "scheduled_push" || body.action === "scheduled_issuer_news") {
@@ -507,7 +512,8 @@ Deno.serve(async (req) => {
         if (!active.data) return errorResponse(401, "UNAUTHENTICATED", "Your session ended. Sign in again.");
         const page = await privateExportPage(admin, userId, section, offset, async (kind, id, sealed) => {
           const plaintext = await open(await keys(), sealed, context(kind, userId, id));
-          return kind === "report" ? publicReport(JSON.parse(plaintext) as StoredReport) : plaintext;
+          return kind === "report" ? publicReport(JSON.parse(plaintext) as StoredReport)
+            : kind === "manual_portfolio" ? JSON.parse(plaintext) : plaintext;
         });
         return jsonResponse(200, page);
       }
@@ -664,6 +670,38 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.rpc("private_portfolio_allocation", { p_user: userId });
         if (error) throw error;
         return jsonResponse(200, { buckets: data });
+      }
+      case "manual_portfolio": {
+        if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_REQUEST", "Send only the portfolio action.");
+        const { data, error } = await admin.from("private_manual_portfolio_snapshots")
+          .select("revision,updated_at,sealed").eq("user_id", userId).maybeSingle();
+        if (error) throw error;
+        if (!data) return jsonResponse(200, { revision: null, snapshot: null });
+        const snapshot = data.sealed ? {
+          updated_at: data.updated_at,
+          holdings: JSON.parse(await open(await keys(), data.sealed, context("manual_portfolio", userId, data.revision))),
+        } : null;
+        return jsonResponse(200, { revision: data.revision, snapshot });
+      }
+      case "save_manual_portfolio":
+      case "remove_manual_portfolio": {
+        const saving = body.action === "save_manual_portfolio";
+        const expected = body.expected_revision;
+        if (Object.keys(body).some((key) => !["action", "expected_revision", ...(saving ? ["holdings"] : [])].includes(key)) ||
+          (expected !== null && (typeof expected !== "string" || !uuid.test(expected))) ||
+          (saving && !validManualSnapshot(body.holdings))) {
+          return errorResponse(400, "INVALID_PORTFOLIO", "Review the portfolio snapshot and try again.");
+        }
+        const revision = crypto.randomUUID();
+        const payload = saving ? JSON.stringify(body.holdings) : "";
+        if (utf8(payload).byteLength > 110_000) return errorResponse(413, "PORTFOLIO_TOO_LARGE", "The snapshot is too large to publish.");
+        const sealed = saving ? await seal(await keys(), payload, context("manual_portfolio", userId, revision)) : null;
+        const { data, error } = await admin.rpc("write_private_manual_portfolio_snapshot", {
+          p_user: userId, p_expected: expected, p_revision: revision, p_sealed: sealed,
+        }).maybeSingle();
+        if (error) throw error;
+        if (!data) return errorResponse(409, "PORTFOLIO_CHANGED", "The web snapshot changed. Refresh it and review before continuing.");
+        return jsonResponse(200, data);
       }
       case "capital_activity": {
         const section = body.section;

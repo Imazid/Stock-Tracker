@@ -8,6 +8,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { SourceLink } from "./catalog";
+import { ManualPortfolioPanel } from "./manual-portfolio";
 import { InvestorProfileCard } from "./investor-profile";
 import {
   amount, dateLabel, privateMarkets, providerName, dayInSydney, type Application, type PortfolioHolding, type PortfolioPage,
@@ -166,7 +167,7 @@ export function Positions({ owner }: { owner: string }) {
     <section className="min-w-0 space-y-3">
       <div>
         <h2 className="font-semibold text-text">My Private Portfolio</h2>
-        <p className="text-[13px] text-text-2">Provider-confirmed holdings. Manual holdings and imported AngelList statements are stored on the iPhone.</p>
+        <p className="text-[13px] text-text-2">Provider-confirmed holdings and published self-reported snapshots.</p>
       </div>
       {holdings.isPending && <p className="text-sm text-text-2" role="status">Loading holdings…</p>}
       {holdings.error && <Notice tone="down">{holdings.error.message} <Button size="sm" onClick={() => void holdings.refetch()}>Retry holdings</Button></Notice>}
@@ -175,6 +176,7 @@ export function Positions({ owner }: { owner: string }) {
       {holdings.hasNextPage && <Button size="sm" disabled={holdings.isFetchingNextPage} onClick={() => void holdings.fetchNextPage()}>
         {holdings.isFetchingNextPage ? "Loading…" : "Load more holdings"}
       </Button>}
+      <ManualPortfolioPanel owner={owner} />
     </section>
     <section className="min-w-0 space-y-3">
       <InvestorProfileCard owner={owner} />

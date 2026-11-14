@@ -90,6 +90,10 @@ struct PrivateHoldingsView: View {
                 }
             }
             if let owner = auth.userId {
+                Section {
+                    NavigationLink("Publish self-reported holdings to web") { PrivateManualPortfolioPublication(owner: owner) }
+                        .accessibilityIdentifier("private.portfolio.publish")
+                }
                 Section("AngelList statements") {
                     ForEach(store.angelListSnapshots) { statement in
                         NavigationLink {
@@ -126,6 +130,145 @@ struct PrivateHoldingsView: View {
 
     private func refresh() async {
         if let owner = auth.userId { await store.refreshProviderHoldings(for: owner) }
+    }
+}
+
+private struct PrivateManualPortfolioPublication: View {
+    private struct Remote: Decodable {
+        struct Snapshot: Decodable { let updatedAt: Date }
+        let revision: UUID?
+        let snapshot: Snapshot?
+    }
+
+    let owner: UUID
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @State private var remote: Remote?
+    @State private var busy = false
+    @State private var confirmPublish = false
+    @State private var confirmRemoval = false
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Publish a dated view of your self-reported holdings to your signed-in web portfolio. Publish again after changes to update the web copy.")
+                Text("The snapshot includes holding names, ownership, carrying values, valuation sources and calculated performance.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let published = remote?.snapshot?.updatedAt {
+                    LabeledContent("Last published", value: published.formatted(date: .abbreviated, time: .shortened))
+                }
+            }
+            Section {
+                Button("Publish current holdings") { confirmPublish = true }
+                    .disabled(busy || remote == nil || store.independentManualHoldings.isEmpty)
+                    .accessibilityIdentifier("private.portfolio.publish.current")
+                if remote?.snapshot != nil {
+                    Button("Remove web snapshot", role: .destructive) { confirmRemoval = true }
+                        .disabled(busy)
+                }
+                Button("Refresh web status") { Task { await load() } }.disabled(busy)
+                if busy { ProgressView("Contacting Stock Tracker") }
+                if let error { Text(error).foregroundStyle(.secondary) }
+            }
+        }
+        .navigationTitle("Publish Portfolio")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .confirmationDialog("Publish these holdings to your web portfolio?", isPresented: $confirmPublish, titleVisibility: .visible) {
+            Button("Publish to web") { Task { await write(removing: false) } }
+        } message: {
+            Text("This replaces any existing web snapshot for this account. Holdings linked to a provider record are left out.")
+        }
+        .confirmationDialog("Remove this snapshot from the web?", isPresented: $confirmRemoval, titleVisibility: .visible) {
+            Button("Remove web snapshot", role: .destructive) { Task { await write(removing: true) } }
+        }
+    }
+
+    private func readRemote() async throws -> Remote {
+        try await PrivateMarketsAPI.request("manual_portfolio", expectedUserID: owner)
+    }
+
+    private func load() async {
+        guard !busy, auth.userId == owner else { return }
+        busy = true
+        defer { busy = false }
+        error = nil
+        do {
+            let response = try await readRemote()
+            try Task.checkCancellation()
+            if auth.userId == owner { remote = response }
+        } catch is CancellationError {
+        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
+    }
+
+    private func write(removing: Bool) async {
+        guard !busy, auth.userId == owner, let remote else { return }
+        busy = true
+        defer { busy = false }
+        error = nil
+        do {
+            var fields: [String: Any] = ["expected_revision": remote.revision.map { $0.uuidString as Any } ?? NSNull()]
+            if !removing {
+                let ledger = try store.exportDeviceRecords(for: owner)
+                let date = Date.now
+                let holdings = ledger.holdings.filter { $0.matchingProviderHoldingID == nil }
+                guard (1...150).contains(holdings.count) else {
+                    error = "A web snapshot can contain between 1 and 150 holdings."
+                    return
+                }
+                fields["holdings"] = holdings.map { holding in
+                    let linked = PrivateFundSnapshot.linkedValuation(for: holding, snapshots: ledger.angelListSnapshots ?? [])
+                    return snapshot(linked?.holding ?? holding, asOf: date)
+                }
+            }
+            try await PrivateMarketsAPI.send(removing ? "remove_manual_portfolio" : "save_manual_portfolio",
+                                             fields, expectedUserID: owner)
+            let response = try await readRemote()
+            try Task.checkCancellation()
+            if auth.userId == owner { self.remote = response }
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.code == "PORTFOLIO_CHANGED" {
+            if auth.userId == owner {
+                self.remote = nil
+                error = failure.localizedDescription
+            }
+        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
+    }
+
+    private func snapshot(_ holding: PrivateHolding, asOf: Date) -> [String: Any] {
+        let iso = ISO8601DateFormatter()
+        func number(_ value: Decimal) -> String {
+            var amount = value
+            var rounded = Decimal()
+            NSDecimalRound(&rounded, &amount, 16, .plain)
+            return NSDecimalNumber(decimal: rounded).stringValue
+        }
+        let metrics = holding.metrics(asOf: asOf)
+        var fields: [String: Any] = [
+            "id": holding.id.uuidString, "name": holding.name, "assetClass": holding.assetClass.rawValue,
+            "currency": holding.currency, "paid": number(metrics.paid), "returned": number(metrics.returned),
+            "pendingCalls": number(metrics.pendingCalls),
+        ]
+        fields["units"] = holding.remainingUnits(asOf: asOf).map(number)
+        fields["ownership"] = holding.latestManualSale == nil ? holding.ownershipPercent.map(number) : nil
+        fields["shareClass"] = holding.shareClass.isEmpty ? nil : holding.shareClass
+        fields["lockupUntil"] = holding.lockupUntil.map(iso.string(from:))
+        fields["commitment"] = holding.commitment.map(number)
+        fields["exitedOn"] = holding.closedOn(asOf: asOf).map(iso.string(from:))
+        fields["netGain"] = metrics.netGain.map(number)
+        fields["realizedGain"] = metrics.realizedGain.map(number)
+        fields["unrealizedGain"] = metrics.unrealizedGain.map(number)
+        fields["multiple"] = metrics.multiple.map(number)
+        fields["dpi"] = metrics.dpi.map(number)
+        if let rate = metrics.xirr {
+            fields["xirr"] = String(format: "%.12f", locale: Locale(identifier: "en_US_POSIX"), rate)
+        }
+        if let mark = holding.valuation(asOf: asOf) {
+            fields["valuation"] = ["value": number(mark.value), "date": iso.string(from: mark.date),
+                                   "source": mark.source, "method": mark.method]
+        }
+        return fields
     }
 }
 
