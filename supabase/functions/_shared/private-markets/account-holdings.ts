@@ -1,6 +1,37 @@
-import { validManualSnapshot } from "./manual-snapshot.ts";
+import { type SnapshotValuation, validManualSnapshot, validSnapshotValuation } from "./manual-snapshot.ts";
 
 const sydneyDay = new Intl.DateTimeFormat("sv-SE", { dateStyle: "short", timeZone: "Australia/Sydney" });
+
+const calendarLimit = (now: Date) => Date.parse(`${sydneyDay.format(now)}T00:00:00Z`);
+
+export function accountValuation(mark: unknown, now: Date): SnapshotValuation | null {
+  return validSnapshotValuation(mark, calendarLimit(now)) ? mark : null;
+}
+
+export function accountValuationDate(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T00:00:00Z$/.test(value);
+}
+
+export type SavedAccountHolding = Record<string, unknown> & {
+  valuation?: SnapshotValuation; valuationHistory?: SnapshotValuation[];
+};
+
+export function accountValuations(holding?: SavedAccountHolding) {
+  if (holding?.valuationHistory) return holding.valuationHistory;
+  if (!holding?.valuation) return [];
+  const mark = holding.valuation;
+  const date = accountValuationDate(mark.date) ? mark.date : `${sydneyDay.format(new Date(mark.date))}T00:00:00Z`;
+  return [{ ...mark, date }];
+}
+
+export function withAccountValuations(holding: SavedAccountHolding, marks: SnapshotValuation[],
+  change?: SnapshotValuation | string): SavedAccountHolding {
+  const changing = typeof change === "string" ? change : change?.date;
+  const history = marks.filter((mark) => mark.date !== changing);
+  if (change && typeof change !== "string") history.push(change);
+  history.sort((a, b) => b.date.localeCompare(a.date));
+  return { ...holding, valuation: history[0], valuationHistory: history };
+}
 
 export function accountHolding(value: unknown, now: Date) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -9,14 +40,17 @@ export function accountHolding(value: unknown, now: Date) {
     "id", "name", "assetClass", "currency", "units", "ownership", "shareClass", "lockupUntil",
     "commitment", "valuation", "excerptID",
   ].includes(key))) return null;
-  const { excerptID, id, ...fields } = holding;
-  if (excerptID !== undefined && typeof excerptID !== "string") return null;
+  const { excerptID, id, currency, ...fields } = holding;
+  if (typeof id !== "string" || typeof currency !== "string" ||
+    (excerptID !== undefined && typeof excerptID !== "string")) return null;
   const canonical = {
-    ...fields, id: typeof id === "string" ? id.toLowerCase() : id, valuation: fields.valuation, paid: "0", returned: "0", pendingCalls: "0",
+    ...fields, id: id.toLowerCase(), currency, valuation: fields.valuation, paid: "0", returned: "0", pendingCalls: "0",
     ...(excerptID !== undefined ? {
       ownershipEvidence: { excerptID, reviewedOn: now.toISOString().replace(/\.\d{3}Z$/, "Z") },
     } : {}),
   };
-  const today = Date.parse(`${sydneyDay.format(now)}T00:00:00Z`);
-  return validManualSnapshot([canonical], today) ? canonical : null;
+  if (!validManualSnapshot([canonical], calendarLimit(now))) return null;
+  const valuation = accountValuation(fields.valuation, now);
+  if (fields.valuation !== undefined && !accountValuationDate(valuation?.date)) return null;
+  return { ...canonical, valuation: valuation ?? undefined };
 }

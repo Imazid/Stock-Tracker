@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { accountHolding } from "../_shared/private-markets/account-holdings.ts";
+import { accountHolding, accountValuations, withAccountValuations } from "../_shared/private-markets/account-holdings.ts";
 
 const now = new Date("2026-11-14T14:05:00Z"); // 15 November in Sydney.
 const input = {
@@ -23,4 +23,22 @@ Deno.test("web holdings reject foreign fields, incorrect dates and invalid decim
     { ownership: "110" }, { valuation: { ...input.valuation, date: "2026-02-29T00:00:00Z" } },
     { ownershipEvidence: { excerptID: input.excerptID } }, { excerptID: "https://example.test" },
   ]) assertEquals(accountHolding({ ...input, ...extra }, now), null);
+});
+
+Deno.test("an account retains earlier valuations and uses the newest date independently of write order", () => {
+  const latest = input.valuation;
+  const earlier = { ...latest, date: "2026-10-01T00:00:00Z", value: "1000.123456789", source: "Prior statement" };
+  const legacy = { valuation: latest };
+  assertEquals(accountValuations(legacy), [latest]);
+  const legacyWithTime = { valuation: { ...earlier, date: "2026-09-30T17:00:00Z" } };
+  assertEquals(accountValuations(legacyWithTime), [earlier]);
+  const backfilled = withAccountValuations(legacy, accountValuations(legacy), earlier);
+  assertEquals(backfilled.valuation, latest);
+  assertEquals(backfilled.valuationHistory, [latest, earlier]);
+  const revised = { ...earlier, value: "1050.123456789" };
+  const corrected = withAccountValuations(backfilled, accountValuations(backfilled), revised);
+  assertEquals(corrected.valuationHistory, [latest, revised]);
+  const removed = withAccountValuations(corrected, accountValuations(corrected), latest.date);
+  assertEquals(removed.valuation, revised);
+  assertEquals(withAccountValuations(removed, accountValuations(removed), earlier.date).valuation, undefined);
 });

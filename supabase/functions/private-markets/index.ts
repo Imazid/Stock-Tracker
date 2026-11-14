@@ -1,4 +1,7 @@
-import { accountHolding } from "../_shared/private-markets/account-holdings.ts";
+import {
+  accountHolding, accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
+  withAccountValuations,
+} from "../_shared/private-markets/account-holdings.ts";
 import { validManualSnapshot } from "../_shared/private-markets/manual-snapshot.ts";
 import { exportOffset, exportSection, privateExportPage } from "../_shared/private-markets/export.ts";
 import { AI_LIMITS, type AiProxyDeps } from "../_shared/ai/proxy.ts";
@@ -24,7 +27,7 @@ const activeSessionActions = new Set([
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
-  "account_holdings", "save_account_holding", "remove_account_holding",
+  "account_holdings", "save_account_holding", "remove_account_holding", "save_account_valuation", "remove_account_valuation",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -712,11 +715,16 @@ Deno.serve(async (req) => {
       }
       case "account_holdings":
       case "save_account_holding":
-      case "remove_account_holding": {
+      case "remove_account_holding":
+      case "save_account_valuation":
+      case "remove_account_valuation": {
         const reading = body.action === "account_holdings";
         const saving = body.action === "save_account_holding";
+        const savingMark = body.action === "save_account_valuation";
+        const removingMark = body.action === "remove_account_valuation";
         const expected = body.expected_revision;
-        const allowed = reading ? ["action"] : ["action", "expected_revision", saving ? "holding" : "id"];
+        const allowed = reading ? ["action"] : ["action", "expected_revision", saving ? "holding" : "id",
+          ...(savingMark ? ["valuation"] : removingMark ? ["date"] : [])];
         if (Object.keys(body).some((key) => !allowed.includes(key)) ||
           (!reading && expected !== null && (typeof expected !== "string" || !uuid.test(expected)))) {
           return errorResponse(400, "INVALID_HOLDING", "Review the holding and try again.");
@@ -726,9 +734,10 @@ Deno.serve(async (req) => {
         if (error) throw error;
         const conflict = () => errorResponse(409, "HOLDINGS_CHANGED", "Your account holdings changed. Refresh and review before saving.");
         if (!reading && (current?.revision ?? null) !== expected) return conflict();
-        const holdings: Record<string, unknown>[] = current?.sealed
+        const holdings: SavedAccountHolding[] = current?.sealed
           ? JSON.parse(await open(await keys(), current.sealed, context("account_holdings", userId, current.revision))) : [];
-        if (reading) return jsonResponse(200, { revision: current?.revision ?? null, updated_at: current?.updated_at ?? null, holdings });
+        if (reading) return jsonResponse(200, { revision: current?.revision ?? null, updated_at: current?.updated_at ?? null,
+          holdings: holdings.map((holding) => withAccountValuations(holding, accountValuations(holding))) });
         if (saving) {
           const holding = accountHolding(body.holding, new Date());
           if (!holding) return errorResponse(400, "INVALID_HOLDING", "Enter a valid name, amount and valuation source.");
@@ -742,9 +751,14 @@ Deno.serve(async (req) => {
             evidence.excerptID = verified.data.id;
           }
           const existing = holdings.findIndex((item) => item.id === id);
-          const saved = { ...holding, id };
+          const prior = holdings[existing];
+          const marks = accountValuations(prior);
+          if (prior && marks.length && prior.currency !== holding.currency) {
+            return errorResponse(422, "VALUATION_CURRENCY", "Recorded valuations use the holding currency. Remove them before changing it.");
+          }
+          const saved = withAccountValuations(holding, marks, holding.valuation);
           if (existing < 0) {
-            if (holdings.length >= 100) return errorResponse(422, "HOLDING_LIMIT", "This account already has 100 web holdings.");
+            if (holdings.length >= 100) return errorResponse(422, "HOLDING_LIMIT", "This account already has 100 account holdings.");
             holdings.push(saved);
           } else {
             holdings[existing] = saved;
@@ -752,7 +766,24 @@ Deno.serve(async (req) => {
         } else {
           const index = typeof body.id === "string" && uuid.test(body.id) ? holdings.findIndex((item) => item.id === body.id) : -1;
           if (index < 0) return errorResponse(404, "NOT_FOUND", "Holding unavailable.");
-          holdings.splice(index, 1);
+          if (savingMark || removingMark) {
+            const holding = holdings[index];
+            const marks = accountValuations(holding);
+            if (savingMark) {
+              const mark = accountValuation(body.valuation, new Date());
+              if (!mark || !accountValuationDate(mark.date)) {
+                return errorResponse(400, "INVALID_VALUATION", "Enter a valid valuation date, amount, source and method.");
+              }
+              holdings[index] = withAccountValuations(holding, marks, mark);
+            } else {
+              if (!accountValuationDate(body.date) || !marks.some((mark) => mark.date === body.date)) {
+                return errorResponse(404, "NOT_FOUND", "Valuation unavailable.");
+              }
+              holdings[index] = withAccountValuations(holding, marks, body.date);
+            }
+          } else {
+            holdings.splice(index, 1);
+          }
         }
         const payload = JSON.stringify(holdings);
         if (utf8(payload).byteLength > 110_000) return errorResponse(413, "PORTFOLIO_TOO_LARGE", "Your account holdings are too large to save.");

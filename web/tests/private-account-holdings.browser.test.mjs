@@ -67,6 +67,28 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
     if (excerptTitle && excerptText) await page.getByLabel("I reviewed the selected excerpt.").check();
     await page.getByRole("button", { name: "Save holding", exact: true }).click();
     await article.getByText("AUD 1,250.4567", { exact: true }).waitFor();
+    if (process.env.PRIVATE_ACCOUNT_MARK_HISTORY === "1") {
+      await article.getByText("Valuation history", { exact: true }).click();
+      await article.getByRole("button", { name: "Add valuation", exact: true }).click();
+      await article.getByLabel("Carrying value").fill("1500.123456789");
+      await article.getByLabel("Valuation date").fill("2026-07-01");
+      await article.getByLabel("Valuation source").fill("July fund statement");
+      await article.getByLabel("Valuation method").fill("Reported NAV");
+      await article.getByRole("button", { name: "Save valuation", exact: true }).click();
+      const july = article.getByRole("listitem").filter({ hasText: "July fund statement" });
+      const june = article.getByRole("listitem").filter({ hasText: "June statement" });
+      await july.getByText("Used for carrying value", { exact: true }).waitFor();
+      await june.getByText("AUD 1,250.4567", { exact: true }).waitFor();
+      await june.getByRole("button", { name: "Edit valuation", exact: true }).click();
+      await article.getByLabel("Carrying value").fill("1251.987654321");
+      await article.getByRole("button", { name: "Save valuation", exact: true }).click();
+      await june.getByText("AUD 1,251.987654321", { exact: true }).waitFor();
+      await july.getByText("Used for carrying value", { exact: true }).waitFor();
+      await july.getByRole("button", { name: "Remove valuation", exact: true }).click();
+      await article.getByRole("button", { name: "Confirm valuation removal", exact: true }).click();
+      await july.waitFor({ state: "detached" });
+      await june.getByText("Used for carrying value", { exact: true }).waitFor();
+    }
     if (process.env.PRIVATE_ACCOUNT_KEEP_HOLDING !== "1") {
       await article.getByRole("button", { name: "Remove holding", exact: true }).click();
       await article.getByRole("button", { name: "Confirm removal", exact: true }).click();

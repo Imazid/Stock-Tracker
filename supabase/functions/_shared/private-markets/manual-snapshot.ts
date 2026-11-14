@@ -37,6 +37,13 @@ function validCapitalActivity(value: unknown): boolean {
   return true;
 }
 
+export type SnapshotValuation = { value: string; date: string; source: string; method: string };
+
+export function validSnapshotValuation(mark: unknown, latestValuation: number): mark is SnapshotValuation {
+  return fields(mark, ["value", "date", "source", "method"]) && reading(mark.value) && date(mark.date) &&
+    text(mark.source, 400) && text(mark.method, 400) && Date.parse(mark.date) <= latestValuation;
+}
+
 type OwnershipEvidence = { excerptID: string; reviewedOn: string };
 type SnapshotHolding = Record<string, unknown> & { ownershipEvidence?: OwnershipEvidence };
 
@@ -62,11 +69,7 @@ export function validManualSnapshot(value: unknown, latestValuation = Date.now()
       if (!fields(evidence, ["excerptID", "reviewedOn"]) || typeof evidence.excerptID !== "string" ||
         !uuid.test(evidence.excerptID) || !date(evidence.reviewedOn) || Date.parse(evidence.reviewedOn) > Date.now()) return false;
     }
-    if (item.valuation !== undefined) {
-      const mark = item.valuation;
-      if (!fields(mark, ["value", "date", "source", "method"]) || !reading(mark.value) || !date(mark.date) ||
-        !text(mark.source, 400) || !text(mark.method, 400) || Date.parse(mark.date) > latestValuation) return false;
-    }
+    if (item.valuation !== undefined && !validSnapshotValuation(item.valuation, latestValuation)) return false;
     seen.add(item.id.toLowerCase());
   }
   return true;

@@ -11,6 +11,12 @@ enum PrivateInput {
         return Decimal(string: normalized, locale: Locale(identifier: "en_US_POSIX"))
     }
 
+    static func accountAmount(_ value: String) -> String? {
+        let separator = Locale.current.decimalSeparator ?? "."
+        let normalized = value.replacingOccurrences(of: separator, with: ".")
+        return normalized.range(of: #"^[0-9]{1,22}(\.[0-9]{1,16})?$"#, options: .regularExpression) == nil ? nil : normalized
+    }
+
     static func money(_ value: Decimal?, currency: String) -> String {
         value?.formatted(.currency(code: currency)) ?? "Unavailable"
     }
@@ -186,6 +192,10 @@ private struct AccountPrivateHoldingDetail: View {
     @State private var removal: AccountHoldingEdit?
     @State private var removing = false
     @State private var editError: String?
+    @State private var markEditor: AccountValuationEdit?
+    @State private var removeMark: AccountValuationEdit?
+    @State private var updatingMark = false
+    @State private var markError: String?
     @State private var opened: (owner: UUID, excerptID: UUID, text: String)?
     @State private var excerptError: String?
 
@@ -211,6 +221,35 @@ private struct AccountPrivateHoldingDetail: View {
                         LabeledContent("Method", value: mark.method)
                     }
                 }
+                Section("Valuation history") {
+                    ForEach(current.marks) { mark in
+                        VStack(alignment: .leading, spacing: 6) {
+                            LabeledContent(current.currency + " " + mark.value,
+                                           value: PrivateDeal.Round.Listing.formattedDay(CashIncomeDay.string(mark.date)))
+                            Text(mark.method + " · " + mark.source).font(.footnote).foregroundStyle(.secondary)
+                            if mark.date == current.valuation?.date {
+                                Text("Used for carrying value").font(.footnote).foregroundStyle(.secondary)
+                            }
+                            HStack {
+                                Button("Edit valuation") {
+                                    markEditor = .init(revision: store.accountHoldingsRevision, mark: mark)
+                                }
+                                Button("Remove valuation", role: .destructive) {
+                                    removeMark = .init(revision: store.accountHoldingsRevision, mark: mark)
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("private.accountValuation.row")
+                    }
+                    Button("Add valuation") {
+                        markEditor = .init(revision: store.accountHoldingsRevision, mark: nil)
+                    }
+                    .accessibilityIdentifier("private.accountValuation.add")
+                    if let markError { Text(markError).foregroundStyle(.orange) }
+                }
+                .disabled(updatingMark || removing)
                 if let evidence = current.ownershipEvidence {
                     let excerpt = opened?.owner == owner && opened?.excerptID == evidence.excerptID ? opened?.text : nil
                     Section("Reviewed ownership excerpt") {
@@ -256,11 +295,36 @@ private struct AccountPrivateHoldingDetail: View {
             ), titleVisibility: .visible, presenting: removal) { edit in
                 Button("Remove holding", role: .destructive) { Task { await remove(edit) } }
             }
+            .sheet(item: $markEditor) { edit in
+                AccountValuationEditor(owner: owner, holding: id, edit: edit, existingDates: current.marks.map(\.date))
+            }
+            .confirmationDialog("Remove this dated valuation?", isPresented: Binding(
+                get: { removeMark != nil }, set: { if !$0 { removeMark = nil } }
+            ), titleVisibility: .visible, presenting: removeMark) { edit in
+                Button("Remove valuation", role: .destructive) { Task { await deleteValuation(edit) } }
+            }
             .refreshable { await store.refreshAccountHoldings(for: owner) }
         } else {
             ContentUnavailableView("Holding unavailable", systemImage: "briefcase")
         }
     }
+    private func deleteValuation(_ edit: AccountValuationEdit) async {
+        guard auth.userId == owner, let mark = edit.mark, !updatingMark else { return }
+        updatingMark = true
+        markError = nil
+        defer { updatingMark = false }
+        do {
+            try await store.removeAccountValuation(CashIncomeDay.string(mark.date) + "T00:00:00Z", holding: id,
+                                                   owner: owner, revision: edit.revision)
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
+            await store.refreshAccountHoldings(for: owner)
+            if auth.userId == owner { markError = failure.localizedDescription }
+        } catch {
+            if auth.userId == owner { markError = error.localizedDescription }
+        }
+    }
+
     private func remove(_ edit: AccountHoldingEdit) async {
         guard auth.userId == owner, !removing else { return }
         removing = true
@@ -275,6 +339,104 @@ private struct AccountPrivateHoldingDetail: View {
             if auth.userId == owner { editError = failure.localizedDescription }
         } catch {
             if auth.userId == owner { editError = error.localizedDescription }
+        }
+    }
+}
+
+private struct AccountValuationEdit: Identifiable {
+    let id = UUID()
+    let revision: UUID?
+    let mark: PrivateMarketsAPI.AccountHolding.Mark?
+}
+
+private struct AccountValuationEditor: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @Environment(\.dismiss) private var dismiss
+    let owner: UUID
+    let holding: UUID
+    let edit: AccountValuationEdit
+    let existingDates: [Date]
+    @State private var date: Date
+    @State private var value: String
+    @State private var source: String
+    @State private var method: String
+    @State private var error: String?
+    @State private var changed = false
+    @State private var saving = false
+
+    init(owner: UUID, holding: UUID, edit: AccountValuationEdit, existingDates: [Date]) {
+        self.owner = owner
+        self.holding = holding
+        self.edit = edit
+        self.existingDates = existingDates
+        _date = State(initialValue: edit.mark?.date ?? .now)
+        _value = State(initialValue: edit.mark?.value ?? "")
+        _source = State(initialValue: edit.mark?.source ?? "")
+        _method = State(initialValue: edit.mark?.method ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Valuation date", selection: $date, in: ...Date.now, displayedComponents: .date)
+                    .environment(\.timeZone, CashIncomeDay.timeZone)
+                    .disabled(edit.mark != nil)
+                TextField("Carrying value", text: $value).keyboardType(.decimalPad)
+                    .accessibilityIdentifier("private.accountValuation.value")
+                TextField("Valuation source", text: $source)
+                    .accessibilityIdentifier("private.accountValuation.source")
+                TextField("Valuation method", text: $method)
+                    .accessibilityIdentifier("private.accountValuation.method")
+                if let error { Text(error).foregroundStyle(.orange) }
+            }
+            .disabled(saving || auth.userId != owner)
+            .navigationTitle(edit.mark == nil ? "Add Valuation" : "Edit Valuation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }
+                        .disabled(saving || changed || auth.userId != owner)
+                        .accessibilityIdentifier("private.accountValuation.save")
+                }
+            }
+            .interactiveDismissDisabled(saving)
+            .onChange(of: auth.userId) { _, _ in if auth.userId != owner { dismiss() } }
+        }
+    }
+
+    private func save() async {
+        guard auth.userId == owner, !saving, !changed else { return }
+        let source = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let method = method.trimmingCharacters(in: .whitespacesAndNewlines)
+        let day = CashIncomeDay.string(date)
+        guard let amount = PrivateInput.accountAmount(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              !source.isEmpty, source.utf16.count <= 400, !method.isEmpty, method.utf16.count <= 400,
+              day <= CashIncomeDay.string(.now) else {
+            error = "Enter an amount, a date through today, a source and a method."
+            return
+        }
+        if edit.mark == nil && existingDates.contains(where: { CashIncomeDay.string($0) == day }) {
+            error = "A valuation already exists for this date. Use Edit valuation to correct it."
+            return
+        }
+        saving = true
+        error = nil
+        defer { saving = false }
+        do {
+            try await store.saveAccountValuation(["value": amount, "date": day + "T00:00:00Z", "source": source, "method": method],
+                                                 holding: holding, owner: owner, revision: edit.revision)
+            if auth.userId == owner { dismiss() }
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
+            await store.refreshAccountHoldings(for: owner)
+            if auth.userId == owner {
+                changed = true
+                error = failure.localizedDescription + " Close this editor and reopen the latest valuation."
+            }
+        } catch {
+            if auth.userId == owner { self.error = error.localizedDescription }
         }
     }
 }
@@ -343,6 +505,7 @@ private struct AccountPrivateHoldingEditor: View {
                     }
                     TextField("Currency", text: $currency)
                         .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        .disabled(edit.holding?.valuation != nil)
                     TextField("Shares or units", text: $units).keyboardType(.decimalPad)
                     TextField("Ownership percentage", text: $ownership).keyboardType(.decimalPad)
                     TextField("Committed capital", text: $commitment).keyboardType(.decimalPad)
@@ -360,6 +523,11 @@ private struct AccountPrivateHoldingEditor: View {
                 Section("Dated valuation") {
                     Toggle("Include a valuation", isOn: $includesMark)
                         .accessibilityIdentifier("private.accountHolding.includeMark")
+                        .disabled(edit.holding?.valuation != nil)
+                    if edit.holding?.valuation != nil {
+                        Text("A new valuation date keeps earlier values. Remove recorded values from Valuation history.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     if includesMark {
                         TextField("Carrying value", text: $markValue).keyboardType(.decimalPad)
                             .accessibilityIdentifier("private.accountHolding.value")
@@ -494,11 +662,7 @@ private struct AccountPrivateHoldingEditor: View {
     }
 
     private func clean(_ value: String) -> String { value.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private func parse(_ value: String) -> String? {
-        let separator = Locale.current.decimalSeparator ?? "."
-        let normalized = value.replacingOccurrences(of: separator, with: ".")
-        return normalized.range(of: #"^[0-9]{1,22}(\.[0-9]{1,16})?$"#, options: .regularExpression) == nil ? nil : normalized
-    }
+    private func parse(_ value: String) -> String? { PrivateInput.accountAmount(value) }
 }
 
 private struct PrivateManualPortfolioPublication: View {

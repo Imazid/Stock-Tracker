@@ -7,9 +7,12 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { ManualHoldingCard, type ManualHolding } from "./manual-portfolio";
-import { dayInSydney, privateMarkets } from "./private-data";
+import { dateLabel, dayInSydney, groupedDecimal, privateMarkets } from "./private-data";
 
-type AccountHoldings = { revision: string | null; updated_at: string | null; holdings: ManualHolding[] };
+type Mark = NonNullable<ManualHolding["valuation"]>;
+type AccountHolding = ManualHolding & { valuationHistory?: Mark[] };
+type AccountHoldings = { revision: string | null; updated_at: string | null; holdings: AccountHolding[] };
+type ValuationChange = { id: string; valuation: Mark } | { id: string; date: string };
 type EditableHolding = Pick<ManualHolding, "id" | "name" | "assetClass" | "currency" |
   "units" | "ownership" | "commitment" | "shareClass" | "lockupUntil" | "valuation"> & { excerptID?: string };
 
@@ -40,7 +43,8 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
   ] as const;
 
   return <Card as="div">
-    <CardHeader title={holding ? "Edit private holding" : "Add private holding"} />
+    <CardHeader title={holding ? "Edit private holding" : "Add private holding"} subtitle={holding?.valuation
+      ? "Use Valuation history to remove an existing mark. Saving a new valuation date keeps the previous value." : undefined} />
     <form className="space-y-3 border-t border-border p-4" onSubmit={(event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -78,7 +82,7 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
       <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
         <Field label="Company or fund name" htmlFor={field("name")}><Input id={field("name")} name="name" required maxLength={160} defaultValue={holding?.name} /></Field>
         <Field label="Asset class" htmlFor={field("assetClass")}><Select id={field("assetClass")} name="assetClass" defaultValue={holding?.assetClass}>{classes.map((name) => <option key={name}>{name}</option>)}</Select></Field>
-        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} defaultValue={holding?.currency ?? "AUD"} /></Field>
+        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} readOnly={!!holding?.valuation} defaultValue={holding?.currency ?? "AUD"} /></Field>
         {numeric.map(([key, label, value]) => <Field key={key} label={label} htmlFor={field(key)}><Input id={field(key)} name={key} inputMode="decimal" maxLength={39} defaultValue={value} /></Field>)}
         <Field label="Share class" htmlFor={field("shareClass")}><Input id={field("shareClass")} name="shareClass" maxLength={160} defaultValue={holding?.shareClass} /></Field>
         <Field label="Lock-up ends" htmlFor={field("lockup")}><Input id={field("lockup")} type="date" name="lockup" defaultValue={holding?.lockupUntil?.slice(0, 10)} /></Field>
@@ -102,6 +106,76 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
   </Card>;
 }
 
+function AccountValuationHistory({ holding, revision, now, busy, save }: {
+  holding: AccountHolding; revision: string | null; now: number; busy: boolean;
+  save: (change: ValuationChange, revision: string | null) => void;
+}) {
+  const formID = useId();
+  const [draft, setDraft] = useState<{ mark?: Mark; revision: string | null }>();
+  const [removing, setRemoving] = useState<{ date: string; revision: string | null }>();
+  const [error, setError] = useState("");
+  const marks = holding.valuationHistory ?? (holding.valuation ? [holding.valuation] : []);
+  const existing = draft?.mark;
+
+  return <details className="border-t border-border p-4 text-sm">
+    <summary className="cursor-pointer font-medium">Valuation history</summary>
+    <div className="mt-3 space-y-3">
+      <Button size="sm" disabled={busy || !!draft} onClick={() => { setError(""); setRemoving(undefined); setDraft({ revision }); }}>
+        Add valuation
+      </Button>
+      {draft && <form className="space-y-3" onSubmit={(event) => {
+        event.preventDefault();
+        const values = new FormData(event.currentTarget);
+        const field = (key: string) => String(values.get(key) ?? "").trim();
+        const date = existing?.date ?? `${field("date")}T00:00:00Z`;
+        const value = field("value");
+        const source = field("source");
+        const method = field("method");
+        if (!/^\d{1,22}(?:\.\d{1,16})?$/.test(value) || !source || !method || !field("date") || date.slice(0, 10) > dayInSydney(now)) {
+          setError("Enter an amount, a date through today, a source and a method.");
+          return;
+        }
+        if (!existing && marks.some((mark) => mark.date === date)) {
+          setError("A valuation already exists for this date. Use Edit valuation to correct it.");
+          return;
+        }
+        save({ id: holding.id, valuation: { value, date, source, method } }, draft.revision);
+        setError("");
+        setDraft(undefined);
+      }}>
+        <fieldset disabled={busy} className="grid gap-2 sm:grid-cols-2">
+          <Field label="Carrying value" htmlFor={formID + "-value"}><Input id={formID + "-value"} name="value" inputMode="decimal" required maxLength={39} defaultValue={existing?.value} /></Field>
+          <Field label="Valuation date" htmlFor={formID + "-date"}><Input id={formID + "-date"} name="date" type="date" required readOnly={!!existing} max={dayInSydney(now)} defaultValue={existing?.date.slice(0, 10)} /></Field>
+          <Field label="Valuation source" htmlFor={formID + "-source"}><Input id={formID + "-source"} name="source" required maxLength={400} defaultValue={existing?.source} /></Field>
+          <Field label="Valuation method" htmlFor={formID + "-method"}><Input id={formID + "-method"} name="method" required maxLength={400} defaultValue={existing?.method} /></Field>
+        </fieldset>
+        {error && <Notice tone="down">{error}</Notice>}
+        <div className="flex gap-2"><Button size="sm" type="submit" disabled={busy}>Save valuation</Button>
+          <Button size="sm" type="button" onClick={() => setDraft(undefined)}>Cancel</Button></div>
+      </form>}
+      {!marks.length && <p>No valuations recorded.</p>}
+      <ul className="divide-y divide-border">
+        {marks.map((mark, index) => <li key={mark.date} className="space-y-2 py-2.5">
+          <p><strong>{holding.currency} {groupedDecimal(mark.value)}</strong> · {dateLabel(mark.date)}</p>
+          <p>{mark.method} · {mark.source}</p>
+          {index === 0 && <p className="text-xs text-text-3">Used for carrying value</p>}
+          {removing?.date === mark.date ? <div className="flex flex-wrap items-center gap-2">
+            <span>Remove this dated valuation?</span>
+            <Button size="sm" variant="danger" disabled={busy} onClick={() => {
+              save({ id: holding.id, date: mark.date }, removing.revision);
+              setRemoving(undefined);
+            }}>Confirm valuation removal</Button>
+            <Button size="sm" onClick={() => setRemoving(undefined)}>Cancel</Button>
+          </div> : <div className="flex gap-2">
+            <Button size="sm" disabled={busy || !!draft} onClick={() => { setError(""); setRemoving(undefined); setDraft({ mark, revision }); }}>Edit valuation</Button>
+            <Button size="sm" disabled={busy || !!draft} onClick={() => setRemoving({ date: mark.date, revision })}>Remove valuation</Button>
+          </div>}
+        </li>)}
+      </ul>
+    </div>
+  </details>;
+}
+
 export function AccountHoldingsPanel({ owner }: { owner: string }) {
   const cache = useQueryClient();
   const options = accountHoldingsQuery(owner);
@@ -109,10 +183,11 @@ export function AccountHoldingsPanel({ owner }: { owner: string }) {
   const [editor, setEditor] = useState<{ holding: ManualHolding | null; revision: string | null }>();
   const [deleting, setDeleting] = useState<{ id: string; revision: string | null }>();
   const mutation = useMutation({
-    mutationFn: (change: { holding: EditableHolding; revision: string | null } | { id: string; revision: string | null }) =>
-      privateMarkets<AccountHoldings>("holding" in change ? "save_account_holding" : "remove_account_holding", {
-        owner, expected_revision: change.revision, ...("holding" in change ? { holding: change.holding } : { id: change.id }),
-      }),
+    mutationFn: ({ revision, ...change }: ({ holding: EditableHolding } | { id: string } | ValuationChange) & { revision: string | null }) => {
+      const action = "holding" in change ? "save_account_holding" : "valuation" in change ? "save_account_valuation"
+        : "date" in change ? "remove_account_valuation" : "remove_account_holding";
+      return privateMarkets<AccountHoldings>(action, { owner, expected_revision: revision, ...change });
+    },
     onMutate: () => cache.cancelQueries({ queryKey: options.queryKey }),
     onSuccess: (value) => {
       cache.setQueryData(options.queryKey, value);
@@ -142,7 +217,13 @@ export function AccountHoldingsPanel({ owner }: { owner: string }) {
       now={result.dataUpdatedAt} busy={mutation.isPending} save={(holding) => mutation.mutate({ holding, revision: editor.revision })}
       cancel={() => { mutation.reset(); setEditor(undefined); }} />}
     {current?.holdings.map((holding) => <ManualHoldingCard key={holding.id} owner={owner} holding={holding} now={result.dataUpdatedAt} published={false}
-      controls={<div className="flex flex-wrap items-center gap-2 border-t border-border p-4">
+      controls={<>
+        <AccountValuationHistory holding={holding} revision={current.revision} now={result.dataUpdatedAt}
+          busy={!!editor || mutation.isPending} save={(change, revision) => {
+          mutation.reset();
+          mutation.mutate({ ...change, revision });
+        }} />
+        <div className="flex flex-wrap items-center gap-2 border-t border-border p-4">
         {deleting?.id === holding.id ? <>
           <span className="text-sm">Remove this holding from your account?</span>
           <Button size="sm" variant="danger" disabled={mutation.isPending} onClick={() => mutation.mutate(deleting)}>Confirm removal</Button>
@@ -155,6 +236,6 @@ export function AccountHoldingsPanel({ owner }: { owner: string }) {
             mutation.reset(); setDeleting({ id: holding.id, revision: current.revision });
           }}>Remove holding</Button>
         </>}
-      </div>} />)}
+      </div></>} />)}
   </section>;
 }

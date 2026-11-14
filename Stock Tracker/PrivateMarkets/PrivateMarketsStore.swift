@@ -399,11 +399,12 @@ enum PrivateMarketsAPI {
     }
     struct DocumentList: Decodable { let items: [DocumentSummary] }
     struct AccountHolding: Decodable, Identifiable {
-        struct Mark: Decodable {
+        struct Mark: Decodable, Identifiable {
             let value: String
             let date: Date
             let source: String
             let method: String
+            var id: Date { date }
         }
         struct OwnershipEvidence: Decodable { let excerptID: UUID; let reviewedOn: Date }
 
@@ -417,6 +418,8 @@ enum PrivateMarketsAPI {
         let shareClass: String?
         let lockupUntil: Date?
         let valuation: Mark?
+        let valuationHistory: [Mark]?
+        var marks: [Mark] { valuationHistory ?? valuation.map { [$0] } ?? [] }
         let ownershipEvidence: OwnershipEvidence?
 
         var holding: PrivateHolding {
@@ -619,6 +622,16 @@ final class PrivateMarketsStore: ObservableObject {
 
     func removeAccountHolding(_ id: UUID, owner: UUID, revision: UUID?) async throws {
         try await updateAccountHoldings("remove_account_holding", fields: ["id": id.uuidString], owner: owner, revision: revision)
+    }
+
+    func saveAccountValuation(_ valuation: [String: String], holding: UUID, owner: UUID, revision: UUID?) async throws {
+        try await updateAccountHoldings("save_account_valuation", fields: ["id": holding.uuidString, "valuation": valuation],
+                                        owner: owner, revision: revision)
+    }
+
+    func removeAccountValuation(_ day: String, holding: UUID, owner: UUID, revision: UUID?) async throws {
+        try await updateAccountHoldings("remove_account_valuation", fields: ["id": holding.uuidString, "date": day],
+                                        owner: owner, revision: revision)
     }
 
     private func updateAccountHoldings(_ action: String, fields: [String: Any], owner: UUID, revision: UUID?) async throws {
