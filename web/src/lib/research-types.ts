@@ -19,6 +19,8 @@ export interface ResearchProfile {
   kind?: string;
   industry?: string;
   sector?: string;
+  sic?: string;
+  incorporationCode?: string;
   headquarters?: string;
   incorporation?: string;
   description?: string;

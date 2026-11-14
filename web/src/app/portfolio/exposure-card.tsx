@@ -1,16 +1,18 @@
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getJSON } from "@/lib/api";
 import { dateTime, money, percent } from "@/lib/format";
+import { ISSUER_LOOKUP_LIMIT, type IssuerClassificationResponse } from "@/lib/issuer-classification";
 import type { InstrumentView, QuoteResponse } from "@/lib/market-types";
 import { portfolioExposure, type ExposureCurrency, type PortfolioReferenceRates } from "@/lib/portfolio-exposure";
 
 const breakdowns = {
-  assets: "Asset type", countries: "Listing country", currencies: "Quote currency", listings: "Largest positions",
+  assets: "Asset type", sectors: "SIC sector", countries: "Listing country", incorporations: "Issuer incorporation",
+  currencies: "Quote currency", listings: "Largest positions",
 } as const;
 
 type Breakdown = keyof typeof breakdowns;
@@ -32,12 +34,36 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
     staleTime: 15 * 60_000,
     refetchInterval: 30 * 60_000,
   });
-  const exposure = portfolioExposure(holdings, quoteFor, base, rates.data);
+  const issuerDimension = breakdown === "sectors" || breakdown === "incorporations" ? breakdown : undefined;
+  const issuerIds = [...new Set(holdings.flatMap(({ instrument }) => {
+    if (!instrument || instrument.venue === "crypto") return [];
+    const data = quoteFor(instrument.id);
+    return data?.instrument.id === instrument.id && data.instrument.assetClass === "equity" ? [instrument.id] : [];
+  }))].sort();
+  const issuerQueries = useQueries({
+    queries: Array.from({ length: Math.ceil(issuerIds.length / ISSUER_LOOKUP_LIMIT) }, (_, index) => {
+      const ids = issuerIds.slice(index * ISSUER_LOOKUP_LIMIT, (index + 1) * ISSUER_LOOKUP_LIMIT);
+      const params = new URLSearchParams(ids.map((id) => ["id", id]));
+      return {
+        queryKey: ["portfolio-issuer-classifications", ids],
+        queryFn: ({ signal }: { signal: AbortSignal }) =>
+          getJSON<IssuerClassificationResponse>(`/api/portfolio/issuer-classifications?${params}`, signal),
+        enabled: Boolean(issuerDimension) && !loading,
+        staleTime: 5 * 60_000,
+        retry: 1,
+      };
+    }),
+  });
+  const issuers = Object.assign({}, ...issuerQueries.map((query) => query.data?.issuers));
+  const failedLookups = issuerQueries.filter((query) => query.isError || query.data?.limited);
+  const exposure = portfolioExposure(holdings, quoteFor, base, rates.data, issuers);
   const partial = truncated || exposure.priced < holdings.length;
   const waiting = loading || (needsRates && rates.isPending);
   const visible = breakdown === "listings" ? exposure.listings.slice(0, 5) : exposure[breakdown];
   const largest = exposure.listings[0];
   const topThree = exposure.listings.slice(0, 3).reduce((sum, item) => sum + item.weight, 0);
+  const issuerSources = exposure.issuerSources.filter(([, { classification }]) =>
+    issuerDimension === "sectors" ? classification.sector : classification.country);
 
   return <Card>
     <CardHeader title="Portfolio exposure" subtitle="Weights use open holdings with usable quotes and exchange rates. Cash balances are excluded." />
@@ -79,6 +105,16 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
               aria-pressed={key === breakdown} onClick={() => setBreakdown(key)}>{breakdowns[key]}</Button>
           ))}
         </div>
+        {issuerDimension && <>
+          <p role="status" className="text-xs text-text-2">
+            {percent(exposure.classifiedWeight[issuerDimension], { signed: false, decimals: 1 })} of valued holdings classified.
+            {issuerQueries.some((query) => query.isFetching) ? " Checking issuer filings…" : ""}
+            {failedLookups.length > 0 ? " Some issuer lookups are temporarily unavailable." : ""}
+          </p>
+          {failedLookups.length > 0 && <Button size="sm" onClick={() => {
+            for (const query of failedLookups) void query.refetch();
+          }}>Retry issuer lookups</Button>}
+        </>}
         <ul aria-label={breakdowns[breakdown]} className="space-y-3">
           {visible.map((item) => (
             <li key={item.id} className="space-y-1.5">
@@ -101,7 +137,33 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
           {breakdown === "assets" && " ETF classifications use the market catalog."}
           {breakdown === "countries" && " Countries reflect the listing venue."}
           {breakdown === "currencies" && " Crypto is priced in USD."}
+          {breakdown === "sectors" && " Sectors group SEC Standard Industrial Classification codes by SIC division."}
+          {breakdown === "incorporations" && " Countries reflect the issuer’s legal incorporation. Revenue by country can differ."}
+          {issuerDimension && " ETFs and crypto have their own rows."}
         </p>
+        {issuerDimension && issuerSources.length > 0 && <details className="border-t border-border pt-3 text-sm">
+          <summary className="cursor-pointer text-primary-fg">Issuer filing sources</summary>
+          <ul className="mt-2 space-y-2">
+            {issuerSources.map(([id, { listing, classification }]) => (
+              <li key={id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                <span>
+                  <a href={classification.evidence.url} target="_blank" rel="noreferrer" className="text-primary-fg underline">
+                    {classification.issuer} · {listing}
+                  </a>
+                  <span className="text-xs text-text-2">
+                    {" · "}{issuerDimension === "sectors"
+                      ? `${classification.sector} (SIC ${classification.sic})` : classification.country}
+                  </span>
+                </span>
+                <span className="text-xs text-text-3">
+                  {classification.evidence.filedOn
+                    ? `SEC filing ${classification.evidence.filedOn}`
+                    : `SEC record retrieved ${dateTime(classification.evidence.retrievedAt)}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>}
       </>}
     </div>
   </Card>;

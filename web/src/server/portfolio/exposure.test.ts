@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { portfolioExposure, portfolioInstrument, type PortfolioReferenceRates } from "../../lib/portfolio-exposure.ts";
 import type { InstrumentView, QuoteResponse } from "../../lib/market-types.ts";
+import { issuerClassifications } from "./issuer-classifications.ts";
 import { portfolioReferenceRates } from "./reference-rates.ts";
 
 function instrument(venue: InstrumentView["venue"], symbol: string, currency: string): InstrumentView {
@@ -66,6 +67,35 @@ test("leaves unusable prices and missing conversions out of the denominator", ()
     : { ...quote(usd, 10), quote: { ...quote(usd, 10).quote, stale: true } }, "USD", rates);
   assert.equal(excluded.priced, 0);
   assert.deepEqual(excluded.listings, []);
+});
+
+test("separates listing country from legal incorporation and retains the full valued denominator", async () => {
+  const instruments = [
+    instrument("asx", "BHP", "AUD"), instrument("us", "BHP", "USD"), instrument("us", "TSM", "USD"),
+    instrument("asx", "UNLISTED", "AUD"), { ...instrument("us", "SPY", "USD"), assetClass: "etf" as const },
+    instrument("crypto", "BTC", "USD"),
+  ];
+  const { issuers } = await issuerClassifications(instruments.map(({ id }) => id), {
+    configured: () => false,
+    directory: async () => { throw new Error("Unexpected directory request"); },
+    submissions: async () => { throw new Error("Unexpected submissions request"); },
+  });
+  const holdings = instruments.map((instrument) => ({ instrument, shares: 1 }));
+  const result = portfolioExposure(holdings, (id) => quote(instruments.find((item) => item.id === id)!, 20),
+    "AUD", rates, { ...issuers, "us:SPY": issuers["us:TSM"] });
+  assert.equal(result.total, 160);
+  assert.equal(result.classifiedWeight.sectors, 50);
+  assert.equal(result.classifiedWeight.incorporations, 50);
+  assert.equal(result.countries.find(({ id }) => id === "United States")?.value, 90);
+  assert.equal(result.incorporations.find(({ id }) => id === "Australia")?.value, 50);
+  assert.equal(result.incorporations.find(({ id }) => id === "Taiwan")?.weight, 18.75);
+  assert.equal(result.sectors.find(({ id }) => id === "Mining and extraction")?.value, 50);
+  assert.equal(result.sectors.find(({ id }) => id === "unknown")?.value, 20);
+  assert.equal(result.sectors.find(({ id }) => id === "etf")?.value, 30);
+  assert.equal(result.sectors.find(({ id }) => id === "crypto")?.value, 30);
+  assert.equal(result.sectors.reduce((sum, row) => sum + row.weight, 0), 100);
+  assert.equal(result.incorporations.reduce((sum, row) => sum + row.weight, 0), 100);
+  assert.equal(result.issuerSources.length, 3);
 });
 
 test("uses the latest shared ECB observation for each rate and omits unsupported data", async () => {
