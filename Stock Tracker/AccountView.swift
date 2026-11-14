@@ -398,6 +398,15 @@ struct AccountView: View {
                     VStack(spacing: 0) {
                         if let owner = supabaseAuthManager.userId {
                             NavigationLink {
+                                PrivateMarketsExportView(owner: owner, accountArchive: true)
+                            } label: {
+                                flatRow("square.and.arrow.up", "Export Account Data")
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("account.export.open")
+                            divider()
+                            NavigationLink {
                                 PrivateMarketsExportView(owner: owner)
                             } label: {
                                 flatRow("square.and.arrow.up", "Export Private Markets")

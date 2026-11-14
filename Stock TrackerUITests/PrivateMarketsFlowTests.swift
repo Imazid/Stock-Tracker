@@ -95,6 +95,24 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Save"].firstMatch.waitForExistence(timeout: 25), app.debugDescription)
     }
 
+    @MainActor
+    func testCompleteAccountExportOpensFiles() throws {
+        try launchWithLocalSession("ACCOUNT_DATA_EXPORT_TEST_SESSION")
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 12))
+        settings.tap()
+        let account = app.buttons["settings.account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 12))
+        account.tap()
+        let entry = app.buttons["account.export.open"]
+        for _ in 0..<5 where !entry.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(entry.isHittable, app.debugDescription)
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["Export Account Data"].waitForExistence(timeout: 8))
+        app.buttons["account.export.save"].tap()
+        XCTAssertTrue(app.buttons["Save"].firstMatch.waitForExistence(timeout: 30), app.debugDescription)
+    }
+
     func testManualHoldingRecordsAndCorrectsSales() {
         openPrivateMarkets()
         app.buttons["private.destination.briefcase"].tap()

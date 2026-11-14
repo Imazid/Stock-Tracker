@@ -29,6 +29,14 @@ const exportSections = {
   reports: ["research_reports", "id,title,kind,created_at,sealed", "id"],
 } as const;
 
+export const privateExportSections = {
+  investor_profile: "Investor profile", eligibility: "Investor eligibility", provider_connections: "Private provider connections",
+  applications: "Private applications", provider_holdings: "Private holdings", valuations: "Private valuations",
+  capital_calls: "Capital calls", distributions: "Private distributions", sales: "Private sales",
+  monitor_preferences: "Company monitoring preferences", monitoring_alerts: "Company monitoring alerts",
+  research_history: "Private research history", excerpts: "Saved document excerpts", reports: "Saved research reports",
+} satisfies Record<keyof typeof exportSections, string>;
+
 type ExportSection = keyof typeof exportSections;
 type ExportRow = Record<string, unknown>;
 

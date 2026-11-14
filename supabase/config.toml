@@ -418,6 +418,9 @@ verify_jwt = false
 [functions.account-deletion]
 verify_jwt = false
 
+[functions.account-export]
+verify_jwt = false
+
 [functions.market-data-proxy]
 verify_jwt = false
 

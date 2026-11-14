@@ -29,7 +29,7 @@ export default function PrivacyPage() {
       </section>
       <section>
         <h2>Retention and your choices</h2>
-        <p>Stock Tracker keeps active account records so you can use the features you enable. On the iPhone, open Account to export Private Markets records or delete your account. The Portfolio tab also offers exports for selected listed records. You can export Private Markets records from My Private Portfolio, including device records and, if you choose, cloud records. Account deletion removes active Stock Tracker account records and clears this account’s app data from the iPhone used to delete it. Exported copies, Apple subscriptions and records held by an external broker or investment provider are managed separately.</p>
+        <p>Stock Tracker keeps active account records so you can use the features you enable. On the iPhone, open Account to export your account data, including synced portfolio and Private Markets records, or delete your account. The Portfolio tab also offers exports for selected listed records. You can export Private Markets records from My Private Portfolio, including device records and, if you choose, cloud records. Account deletion removes active Stock Tracker account records and clears this account’s app data from the iPhone used to delete it. Exported copies, Apple subscriptions and records held by an external broker or investment provider are managed separately.</p>
       </section>
       <section>
         <h2>Access, correction and complaints</h2>

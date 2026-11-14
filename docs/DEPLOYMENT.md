@@ -14,7 +14,7 @@ The provisioning steps below apply when setting up a separate environment.
 | `provider-maintenance` | Supabase Edge Functions and Cron | provider order reconciliation and fill imports |
 | `market-data-proxy`, `snaptrade-proxy`, `ai-proxy` | Supabase Edge Functions | signed-in iOS data, broker aggregation and model access |
 | `market-workspace` | Supabase Edge Functions | workspace market data, fundamentals and shared backtesting |
-| `account-deletion` | Supabase Edge Functions | authenticated account deletion and provider token revocation |
+| `account-deletion`, `account-export` | Supabase Edge Functions | account deletion, provider token revocation and account data export |
 | Web app | Vercel (Sydney functions) | `web/` |
 
 ## 1. Create the backend (one time)
@@ -117,6 +117,12 @@ email limits apply until a custom SMTP sender is configured.
 Copy `Stock Tracker/SecretsConfig.swift.template` to `Stock Tracker/SecretsConfig.swift` and copy the plist example to `Stock Tracker/Config/Secrets.plist`. Set `SupabaseURL` and `SupabaseAnonKey` to the target project's URL and public client key. The build copies only those two values into release bundles. A clean checkout can build with no plist. Debug builds can use local keys for development with no backend.
 
 Set the SnapTrade partner credentials, AI credentials and optional market provider keys in Supabase. The complete names are in `supabase/functions/.env.example`. Use distinct encryption key rings for the SnapTrade and provider-order vaults. The hosted project has Keychain recovery copies in `stock-tracker-credential-kek` and `stock-tracker-broker-credential-kek`.
+
+### Account data export
+
+On iPhone, open Settings → Account → Export Account Data. Save the JSON file to Files. The export covers account identity, synced portfolios, watchlists, price alerts, brokerage and trading records, and Private Markets records in the account and on the current iPhone. It omits authentication credentials, provider secrets and other users’ identities. Unlinked files and records held only by an external provider are outside the export. The file contains readable personal and financial information.
+
+The `account-export` function returns an allowlisted section manifest and reads pages for the verified account. Every page checks the signed-in identity and active session. Accounts with a verified authenticator require the verification step. Cloud sections are read while the export runs. For other personal information, corrections, or an export in another format, use the release privacy contact. [OAIC access guidance](https://www.oaic.gov.au/privacy/australian-privacy-principles/australian-privacy-principles-guidelines/chapter-12-app-12-access-to-personal-information)
 
 ### Privacy policy and App Store details
 

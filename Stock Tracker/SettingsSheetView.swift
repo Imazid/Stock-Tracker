@@ -663,7 +663,7 @@ struct BuiltInPrivacyPolicyView: View {
                 LegalSection(title: "Notifications and permissions",
                     text: "You choose which alerts and summaries to enable. When remote Private Markets notifications are available and enabled, Stock Tracker stores an encrypted device token for delivery. Voice search uses Apple speech recognition when you grant access. Face ID for app lock is optional and Stock Tracker receives the authentication result.")
                 LegalSection(title: "Access, correction and deletion",
-                    text: "Use Settings → Account to export Private Markets records. The Portfolio tab offers separate exports for selected listed records. The app also offers Delete Account for signed-in users. Deletion removes active account records and clears this account’s app data on this iPhone. Files you exported, records held by external providers and Apple subscriptions are managed separately.")
+                    text: "Use Settings → Account to export your account data, including synced portfolio and Private Markets records. The Portfolio tab also offers separate exports for selected listed records. The app also offers Delete Account for signed-in users. Deletion removes active account records and clears this account’s app data on this iPhone. Files you exported, records held by external providers and Apple subscriptions are managed separately.")
                 LegalSection(title: "Children’s privacy",
                     text: "Stock Tracker is intended for people aged 13 and older.")
                 LegalSection(title: "Privacy questions and complaints",
