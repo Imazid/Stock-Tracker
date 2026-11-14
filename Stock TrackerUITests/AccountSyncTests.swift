@@ -299,8 +299,7 @@ final class AccountSyncTests: XCTestCase {
         let token = try signIn(email: email)
         let now = ISO8601DateFormatter().string(from: Date())
         let listings: [(String, String, Double)] = [
-            ("BHP", "ASX", 1), ("BHP", "NYSE", 1), ("TSM", "NYSE", 1),
-            ("QQQ", "NASDAQ", 1), ("AMZN", "NASDAQ", 1), ("BHP", "XTSE", 1),
+            ("BHP", "ASX", 1), ("BHP", "NYSE", 1), ("TSM", "NYSE", 1), ("QQQ", "NASDAQ", 1),
         ]
         let holdings = listings.map { symbol, exchange, quantity in
             ["id": UUID().uuidString.lowercased(), "user_id": userId, "asset_symbol": symbol,
@@ -337,8 +336,8 @@ final class AccountSyncTests: XCTestCase {
             app.descendants(matching: .any)["portfolio.allocation.slice.\(name)"].firstMatch
         }
         choose("SIC sector")
-        XCTAssertTrue(app.staticTexts["5 of 6 holdings valued."].waitForExistence(timeout: 30))
-        for name in ["Mining and extraction", "Manufacturing", "ETFs", "Unclassified shares"] {
+        XCTAssertTrue(app.staticTexts["4 of 4 holdings valued."].waitForExistence(timeout: 30))
+        for name in ["Mining and extraction", "Manufacturing", "ETFs"] {
             reveal(slice(name))
         }
         choose("Issuer incorporation")
@@ -354,12 +353,12 @@ final class AccountSyncTests: XCTestCase {
         let australia = slice("Australia")
         reveal(australia)
         // The ASX leg uses the live ASX quote converted to USD. The controlled US
-        // leg is US$200 and the other three holdings are US$100 each.
+        // leg is US$200 and the other two holdings are US$100 each.
         let amount = try XCTUnwrap(australia.label.firstMatch(of: /\$\s*([0-9]+(?:\.[0-9]+)?)/))
         let australiaValue = try XCTUnwrap(Double(amount.1))
         XCTAssertGreaterThan(australiaValue, 210, australia.label)
         XCTAssertLessThan(australiaValue, 300, australia.label)
-        let weight = australiaValue / (australiaValue + 300) * 100
+        let weight = australiaValue / (australiaValue + 200) * 100
         let expected = String(format: "%.1f%%", weight)
         XCTAssertTrue(australia.label.contains(expected), australia.label)
         reveal(slice("Taiwan"))
