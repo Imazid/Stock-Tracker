@@ -312,25 +312,21 @@ final class AccountSyncTests: XCTestCase {
 
         app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
             "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
-            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light"]
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light", "-portfolioSegment", "allocation"]
         app.launch()
         XCTAssertTrue(app.open("Portfolio"))
-        let allocation = app.buttons["portfolio.segment.allocation"]
         func reveal(_ element: XCUIElement) {
-            for _ in 0..<12 {
-                if element.exists, !element.frame.isEmpty, app.frame.insetBy(dx: 0, dy: 70).contains(element.frame) { return }
-                if element.exists, element.frame.midY < app.frame.midY {
-                    app.swipeDown(velocity: .slow)
-                } else {
-                    app.swipeUp(velocity: .slow)
-                }
+            for _ in 0..<18 {
+                let frame = element.exists ? element.frame : .zero
+                if !frame.isEmpty, app.frame.insetBy(dx: 0, dy: 65).contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
+                let movingDown = !frame.isEmpty && frame.midY < app.frame.midY
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.37 : 0.66))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.63 : 0.40))
+                start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
             }
             XCTAssertTrue(element.isHittable, "Expected \(element)")
         }
         XCTAssertTrue(app.buttons["portfolio.privacy"].waitForExistence(timeout: 30))
-        app.swipeDown(velocity: .slow)
-        reveal(allocation)
-        allocation.tap()
         let grouping = app.buttons["portfolio.allocation.grouping"]
         func choose(_ name: String) {
             reveal(grouping)
