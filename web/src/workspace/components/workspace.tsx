@@ -272,7 +272,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled, logosEnabled }:
             openConnections={() => navigate("settings")} />
         </>}
         {marketPage && <Market key={page} asset={asset} onAsset={setAsset} signedIn={signedIn} watch={journal.watch} onWatch={item => void toggleWatch(item)} onTrade={showOrder} onSignIn={signIn} full={page === "markets"}/>}
-        {page === "overview" && <div className="overview-bottom">{!signedIn && <div className="overview-callout"><span className="callout-icon"><Wallet size={19}/></span><div><h2>Your investment workspace</h2><p>Open your portfolios, watchlist and paper trades with your Stock Tracker account.</p></div><button className="button secondary small" onClick={signIn}>Connect account<ArrowRight size={15}/></button></div>}<span className="data-note"><Radio size={14}/> Market quotes may be delayed. Check the source timestamp.</span></div>}
+        {page === "overview" && <div className="overview-bottom">{!signedIn && <div className="overview-callout"><span className="callout-icon"><Wallet size={19}/></span><div><h2>Your investment workspace</h2><p>Explore a demo portfolio, then set up your watchlist and connect a brokerage when you’re ready.</p></div><Link className="button secondary small" href="/get-started">Get started<ArrowRight size={15}/></Link></div>}<span className="data-note"><Radio size={14}/> Market quotes may be delayed. Check the source timestamp.</span></div>}
         {!marketPage && page !== "settings" && !signedIn && <section className="panel"><Empty icon={<KeyRound size={22}/>} title={ready ? "Sign in to open this workspace" : "Checking your account…"} text={ready ? "Use the same Stock Tracker account you use on iOS." : undefined}>{ready && <button className="button primary" onClick={signIn}>Sign in <ArrowRight size={15}/></button>}</Empty></section>}
         {signedIn && (journalError && ["portfolio","watchlist"].includes(page)) && <p role="alert" className="notice error">{journalError}</p>}
         {userID && page === "portfolio" && <>
@@ -289,7 +289,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled, logosEnabled }:
           <div className="list-row"><span><strong>{signedIn ? user?.email : "Signed out"}</strong><small>{signedIn ? "Synced with Stock Tracker" : "Your account is required to access synced data."}</small></span>{signedIn ?
             <button className="button secondary" onClick={async () => {const result = await backend?.auth.signOut({scope:"local"}); if (result?.error) setNotice({text:message(result.error),error:true}); else {++sessionCheck.current; privateOwner.current = undefined; setUser(null); setVerified(false); setJournal(emptyJournal); setTrading(undefined); setDialog(null);} }}><LogOut size={16}/> Sign out</button> :
             <button className="button primary" onClick={signIn}>Sign in</button>}</div>
-        </section>{signedIn && <><Connections enabled={brokerageEnabled}/><div className="data-note"><Link className="text-button" href="/connections">Provider account settings <ExternalLink size={13}/></Link></div></>}</>}
+        </section>{userID && <><Connections key={userID} enabled={brokerageEnabled} userId={userID}/><div className="data-note"><Link className="text-button" href="/get-started">Setup guide <ExternalLink size={13}/></Link> <Link className="text-button" href="/connections">Provider account settings <ExternalLink size={13}/></Link></div></>}</>}
       </main>
     </div>
 

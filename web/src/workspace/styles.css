@@ -21,7 +21,9 @@
 * { box-sizing: border-box; }
 
 :scope { min-width: 320px; min-height: 100dvh; background: var(--bg); margin: 0; font: 14px/1.45 "Inter Variable", system-ui, sans-serif; color: var(--text); }
-:scope.portfolio-history-embed { min-width: 0; min-height: 0; background: transparent; font-family: inherit; color-scheme: inherit; --heading: var(--font-sans); }
+:scope.portfolio-history-embed, :scope.onboarding-brokerage { min-width: 0; min-height: 0; background: transparent; font-family: inherit; color-scheme: inherit; --heading: var(--font-sans); }
+:scope.onboarding-brokerage { --border: var(--history-border); --surface: var(--history-surface); --text: var(--history-text); --muted: var(--history-muted); }
+:scope.onboarding-brokerage .panel-heading { flex-wrap: wrap; }
 :scope.portfolio-history-embed .portfolio-history { --border: var(--history-border); --surface: var(--history-surface); --line: var(--history-border); --text: var(--history-text); --muted: var(--history-muted); --accent: var(--history-accent); }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }

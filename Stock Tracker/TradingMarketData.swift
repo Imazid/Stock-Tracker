@@ -97,6 +97,11 @@ nonisolated struct LiveMarketData: MarketDataProviding {
         return quote
     }
 
+    /// Public daily bars for the demo when an account-scoped feed is unavailable.
+    func publicDailyBars(for instrument: Instrument, count: Int) async throws -> BarSeries {
+        try await exchangeDailyBars(instrument, count: count)
+    }
+
     /// Market-wide traded value for crypto. Alpaca's crypto bars only count its own small
     /// venue, so the figure comes from CoinGecko's 24-hour volume and is kept for a day.
     func averageDollarVolume(for instrument: Instrument) async -> Double? {
@@ -311,7 +316,7 @@ nonisolated struct LiveMarketData: MarketDataProviding {
     /// minor units where needed — and refused if that isn't the currency we trade it in
     /// (a dollar-quoted fund on the LSE, say), rather than silently mixed.
     private func exchangeChart(_ instrument: Instrument, range: String) async throws -> (result: [String: Any], factor: Double) {
-        let symbol = Self.clean(instrument.yahooSymbol)
+        let symbol = Self.clean(instrument.venue == .crypto ? "\(instrument.symbol)-USD" : instrument.yahooSymbol)
         guard let url = URL(string: "\(Self.yahoo)/v8/finance/chart/\(symbol)?interval=1d&range=\(range)") else {
             throw TradingDataError.empty(instrument.symbol)
         }

@@ -16,14 +16,16 @@ struct OnboardingPortfolioStep: View {
     @EnvironmentObject private var viewModel: OnboardingViewModel
     @EnvironmentObject private var marketData: MarketData
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    @EnvironmentObject private var supabaseAuth: SupabaseAuthManager
 
     @State private var sheet: Source?
+    @State private var openBrokerAfterSignIn = false
 
     /// CSV import is a Black-plan feature everywhere else in the app.
     private var offersCSV: Bool { subscriptionManager.currentTier == .black }
 
     enum Source: String, Identifiable {
-        case broker, csv, manual
+        case broker, csv, manual, account, demo
         var id: String { rawValue }
     }
 
@@ -32,19 +34,32 @@ struct OnboardingPortfolioStep: View {
     var body: some View {
         OnboardingPage(
             title: "Add what you already own",
-            subtitle: "See your real returns in one place. It's read-only — Stock Tracker can never trade or move your money."
+            subtitle: "Explore with sample holdings or bring your investments together. Brokerage connections here are read-only."
         ) {
             VStack(spacing: DS.Space.m) {
                 OnboardingChoiceRow(
+                    title: "Explore a demo portfolio",
+                    subtitle: "Sample holdings with market prices",
+                    showsCheck: false,
+                    trailingChevron: true
+                ) {
+                    Image(systemName: "graduationcap").font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                } action: {
+                    Haptics.tap()
+                    sheet = .demo
+                }
+                .accessibilityIdentifier("onboarding.portfolio.demo")
+
+                OnboardingChoiceRow(
                     title: "Connect a broker",
-                    subtitle: "CommSec, Interactive Brokers, Robinhood, Coinbase and more",
-                    badge: "Fastest",
+                    subtitle: "Review holdings and balances from a linked account",
                     showsCheck: false,
                     trailingChevron: true
                 ) {
                     Image(systemName: "link").font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
                 } action: {
-                    Haptics.tap(); sheet = .broker
+                    Haptics.tap()
+                    sheet = needsBrokerSignIn ? .account : .broker
                 }
                 .accessibilityIdentifier("onboarding.portfolio.broker")
 
@@ -91,16 +106,35 @@ struct OnboardingPortfolioStep: View {
             }
         }
         .motionSafeAnimation(DS.spring, value: holdings.count)
-        .sheet(item: $sheet) { source in
+        .sheet(item: $sheet, onDismiss: {
+            if openBrokerAfterSignIn {
+                openBrokerAfterSignIn = false
+                if supabaseAuth.isSignedIn { sheet = .broker }
+            }
+        }) { source in
             Group {
                 switch source {
                 case .broker: SnapTradeConnectionView()
                 case .csv:    CSVImportSheet()
                 case .manual: ManualPositionSheet()
+                case .demo: OnboardingDemoPortfolio()
+                case .account:
+                    OnboardingSignInSheet(defaultMode: .signUp, forBroker: true) {
+                        openBrokerAfterSignIn = true
+                        sheet = nil
+                    }
+                    .presentationDetents([.large])
                 }
             }
             .environmentObject(marketData)
         }
+    }
+
+    private var needsBrokerSignIn: Bool {
+        #if DEBUG
+        if SnapTradeViewModel.usesFixture { return false }
+        #endif
+        return SecureBackend.shouldUseServer && !supabaseAuth.isSignedIn
     }
 }
 
@@ -835,10 +869,13 @@ struct ReferralField: View {
 // MARK: - Returning-user sign in
 
 struct OnboardingSignInSheet: View {
+    var defaultMode: EmailAuthForm.Mode = .signIn
+    var forBroker = false
     let onSignedIn: () -> Void
     @EnvironmentObject private var supabaseAuth: SupabaseAuthManager
     @ObservedObject private var accountService = AccountService.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var referral = ReferralField.State()
 
     var body: some View {
         ZStack {
@@ -860,10 +897,14 @@ struct OnboardingSignInSheet: View {
                     }
 
                     VStack(alignment: .leading, spacing: DS.Space.m) {
-                        Text("Welcome back")
+                        Text(defaultMode == .signUp ? "Create your Stock Tracker account" : "Welcome back")
                             .font(DS.display(.largeTitle))
                             .foregroundStyle(.white)
-                        Text("Sign in and your watchlist, portfolio and alerts come with you.")
+                        Text(forBroker
+                             ? "Create an account or sign in to connect a brokerage and sync your holdings."
+                             : defaultMode == .signUp
+                             ? "Save your watchlist, portfolio and alerts across devices."
+                             : "Sign in and your watchlist, portfolio and alerts come with you.")
                             .foregroundStyle(.white.opacity(0.64))
                     }
 
@@ -874,6 +915,7 @@ struct OnboardingSignInSheet: View {
                             .accessibilityIdentifier("account.continueWithout")
                     } else {
                         AppleSignInButton {
+                            if defaultMode == .signUp { referral.saveIfNeeded() }
                             await supabaseAuth.signInWithApple()
                             if supabaseAuth.authState == .signedIn { onSignedIn() }
                         }
@@ -884,7 +926,8 @@ struct OnboardingSignInSheet: View {
                             Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
                         }
 
-                        EmailAuthForm(defaultMode: .signIn) { _ in onSignedIn() }
+                        EmailAuthForm(defaultMode: defaultMode) { _ in onSignedIn() }
+                        if defaultMode == .signUp { ReferralField(state: $referral) }
                     }
                 }
                 .padding(DS.Space.gutter)

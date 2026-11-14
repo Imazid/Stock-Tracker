@@ -12,6 +12,7 @@
 //  is removed without asking.
 //
 
+import Auth
 import SwiftUI
 import SafariServices
 
@@ -274,6 +275,21 @@ struct SnapTradeConnectionView: View {
                 institutionCard(name).staggeredAppear(index + 1)
             }
             positionsSection
+            if let owner = SupabaseManager.auth.currentUser?.id {
+                NavigationLink {
+                    let now = Date()
+                    let calendar = Calendar(identifier: .gregorian)
+                    let start = calendar.date(byAdding: .day, value: -29, to: now) ?? now
+                    let day = Date.ISO8601FormatStyle().year().month().day().dateSeparator(.dash)
+                    List { PortfolioBrokerActivity(userId: owner, start: start.formatted(day), end: now.formatted(day)) }
+                        .navigationTitle("Recent broker activity")
+                } label: {
+                    Label("Review recent broker activity", systemImage: "clock.arrow.circlepath")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(SecondaryPillButtonStyle())
+                .accessibilityIdentifier("broker.activity")
+            }
             Button("Connect another broker") {
                 Haptics.tap()
                 showPicker = true

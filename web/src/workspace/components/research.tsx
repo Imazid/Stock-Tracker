@@ -24,11 +24,13 @@ const positionsStatusLabels = {
   unavailable: "Positions unavailable",
 } as const;
 type Account = { id: string; name?: string | null; institution_name?: string; number?: string;
-  positions_status?: "available" | keyof typeof positionsStatusLabels };
+  positions_status?: "available" | keyof typeof positionsStatusLabels; balance?: { total?: { amount: number; currency: string } } };
 type Position = {
   instrument: { id?: string; symbol?: string; description?: string; kind: string };
   units?: string | null; price?: string | null; currency?: string | null; cash_equivalent?: boolean;
 };
+type Activity = { id: string; date: string; label: string; symbol: string | null; units: number | null; amount: number | null; currency: string | null };
+type ActivityPage = { activities: Activity[]; omitted: number; nextOffset: number | null };
 
 export function Research({ asset, journal, enabled }: { asset: Instrument; journal: Journal; enabled: boolean }) {
   const [history,setHistory] = useState<Series>();
@@ -122,18 +124,23 @@ export function Research({ asset, journal, enabled }: { asset: Instrument; journ
   </>;
 }
 
-export function Connections({ enabled }: { enabled: boolean }) {
+export function Connections({ enabled, userId }: { enabled: boolean; userId: string }) {
   const [accounts,setAccounts] = useState<Account[]>([]);
+  const [loaded,setLoaded] = useState(false);
   const [positions,setPositions] = useState<Position[]>();
+  const [activity,setActivity] = useState<ActivityPage>();
+  const [observedAt,setObservedAt] = useState("");
   const [selected,setSelected] = useState("");
   const [link,setLink] = useState("");
   const [error,setError] = useState("");
   const [busy,setBusy] = useState(false);
   async function fetchAccounts() {
-    const {registered} = await service<{registered:boolean}>("brokerage",{operation:"status"});
-    setAccounts(registered ? await service<Account[]>("brokerage",{operation:"listAccounts"}) : []);
+    const {registered} = await service<{registered:boolean}>("brokerage",{operation:"status"}, undefined, userId);
+    setAccounts(registered ? await service<Account[]>("brokerage",{operation:"listAccounts"}, undefined, userId) : []);
+    setLoaded(true);
     setSelected("");
     setPositions(undefined);
+    setActivity(undefined);
   }
   async function refresh() {
     setBusy(true); setError("");
@@ -142,34 +149,56 @@ export function Connections({ enabled }: { enabled: boolean }) {
   async function connect() {
     setBusy(true); setError(""); setLink("");
     try {
-      await service("brokerage",{operation:"registerUser"});
-      const result = await service<{redirectURI?:string}>("brokerage",{operation:"loginLink",params:{connectionType:"read",connectionPortalVersion:"v4",immediateRedirect:false}});
+      await service("brokerage",{operation:"registerUser"}, undefined, userId);
+      const result = await service<{redirectURI?:string}>("brokerage",{operation:"loginLink",params:{connectionType:"read",connectionPortalVersion:"v4",immediateRedirect:false}}, undefined, userId);
       const url = new URL(result.redirectURI ?? "");
       if (url.protocol !== "https:") throw new Error("The connection link is invalid.");
       setLink(url.href);
     } catch (error) { setError(message(error)); } finally { setBusy(false); }
   }
   async function load(id: string) {
-    setSelected(id); setPositions(undefined); setError(""); setBusy(true);
+    setSelected(id); setPositions(undefined); setActivity(undefined); setObservedAt(""); setError(""); setBusy(true);
     try {
-      const response = await service<{ results: Position[] }>("brokerage", {operation:"accountAllPositions",params:{accountId:id}});
+      const response = await service<{ results: Position[]; data_freshness?: { as_of?: string } }>("brokerage",
+        {operation:"accountAllPositions",params:{accountId:id}}, undefined, userId);
       setPositions(response.results.filter(position => position.instrument.kind !== "cash" && !position.cash_equivalent));
+      const stamp = response.data_freshness?.as_of;
+      setObservedAt(stamp && Number.isFinite(Date.parse(stamp)) ? stamp : "");
     }
     catch (error) { setError(message(error)); } finally { setBusy(false); }
   }
+  async function loadActivity(id: string) {
+    setSelected(id); setPositions(undefined); setActivity(undefined); setError(""); setBusy(true);
+    const end = new Date();
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - 29);
+    try {
+      setActivity(await service<ActivityPage>("brokerage", {operation:"accountActivities",params:{
+        accountId:id, startDate:start.toISOString().slice(0,10), endDate:end.toISOString().slice(0,10), preferCached:true,
+      }}, undefined, userId));
+    } catch (error) { setError(message(error)); } finally { setBusy(false); }
+  }
   return <section className="panel table-panel"><div className="panel-heading"><h2><Landmark size={18}/> Brokerage connections</h2>{enabled && <div className="inline-actions"><button className="button secondary small" disabled={busy} onClick={() => void refresh()}>Refresh accounts</button><button className="button primary small" disabled={busy} onClick={() => void connect()}>Connect brokerage</button></div>}</div>
     {!enabled ? <Empty icon={<Landmark size={20}/>} title="Brokerage provider awaiting configuration" text="Your manually tracked portfolio remains available from your account."/> :
-      <>{link && <p className="notice"><a href={link} target="_blank" rel="noreferrer">Open the secure read-only connection portal <ExternalLink size={15}/></a></p>}
+      <>{link && <p className="notice"><a href={link} target="_blank" rel="noreferrer">Open the secure read-only connection portal <ExternalLink size={15}/></a> Return here and refresh accounts after connecting.</p>}
+        {busy && <p className="notice" role="status">Checking brokerage data…</p>}
         {error && <p className="notice error" role="alert">{error}</p>}
-        {!accounts.length && <Empty title="No accounts loaded" text="Refresh your linked accounts or connect a brokerage."/>}
+        {!accounts.length && <Empty title={loaded ? "No brokerage accounts found" : "Review linked holdings and activity"}
+          text={loaded && link ? "Your broker may still be syncing. Refresh accounts again after the portal confirms the connection." : "Refresh your linked accounts or connect a brokerage."}/>}
         {accounts.map(account => {
           const status = account.positions_status;
           const restriction = status && status !== "available" ? positionsStatusLabels[status] : undefined;
           return <div key={account.id}><div className="list-row">
             <span><strong>{account.name ?? account.institution_name ?? "Brokerage account"}</strong>
-              <small>{[account.institution_name, account.number, restriction].filter(Boolean).join(" · ")}</small></span>
-            <button className="button secondary small" disabled={busy || Boolean(restriction)} onClick={() => void load(account.id)}>View positions</button>
+              <small>{[account.institution_name, account.number, restriction].filter(Boolean).join(" · ")}</small>
+              {account.balance?.total && <small>Reported net value {money(account.balance.total.amount, account.balance.total.currency)}</small>}
+            </span>
+            <div className="inline-actions flex-wrap">
+              <button className="button secondary small" disabled={busy || Boolean(restriction)} onClick={() => void load(account.id)}>View positions</button>
+              <button className="button secondary small" disabled={busy || Boolean(restriction)} onClick={() => void loadActivity(account.id)}>View recent activity</button>
+            </div>
           </div>
+          {selected === account.id && positions && <p className="notice">Broker-reported positions {observedAt && `· As of ${dateText(observedAt, true)}`}</p>}
           {selected === account.id && positions && (positions.length ? positions.map((position, index) => {
             const price = position.price == null ? NaN : Number(position.price);
             const currency = position.currency;
@@ -179,7 +208,17 @@ export function Connections({ enabled }: { enabled: boolean }) {
                 Number.isFinite(price) && currency && /^[A-Z]{3}$/.test(currency) ? money(price, currency) : "—"
               }</span>
             </div>;
-          }) : <Empty title="No reported positions"/>)}</div>;
+          }) : <Empty title="No reported positions"/>)}
+          {selected === account.id && activity && <div>
+            <p className="notice">Broker activity for the past 30 days{activity.nextOffset !== null ? " · First page" : ""}</p>
+            {activity.omitted > 0 && <p className="notice">{activity.omitted} records had missing or unsupported data.</p>}
+            {activity.activities.length ? <ul>{activity.activities.map((item) => <li className="list-row child-row" key={item.id}>
+              <span><strong>{item.label}{item.symbol && ` · ${item.symbol}`}</strong><small>{item.date}</small></span>
+              <span>{item.amount != null && item.currency ? money(item.amount, item.currency) : item.units != null ? `${item.units} units` : "—"}</span>
+            </li>)}</ul> : <Empty title="No reported activity on this page"/>}
+            <div className="list-row child-row"><Link className="text-button" href="/portfolio#portfolio-returns">Review statement cash flows <ExternalLink size={14}/></Link></div>
+          </div>}
+          </div>;
         })}
       </>}
   </section>;
