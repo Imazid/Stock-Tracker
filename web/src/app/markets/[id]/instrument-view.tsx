@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChangeText } from "@/components/market/Change";
 import { MarketChip, SourceLine, StatusChip } from "@/components/market/DataChips";
 import { type ChartType, DEFAULT_INDICATORS, type IndicatorSet, PriceChart } from "@/components/market/PriceChart";
+import { CryptoResearch } from "@/components/research/CryptoResearch";
 import { CompanyResearch, useCompanyProfile } from "@/components/research/CompanyResearch";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -22,7 +23,7 @@ import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { isMarketIndex } from "@/lib/market-indexes";
 import { compact, dateTime, money, plainNumber } from "@/lib/format";
-import { CHART_RANGES, type ChartRange } from "@/lib/market-types";
+import { CHART_RANGES, COINGECKO_SOURCE, type ChartRange } from "@/lib/market-types";
 import { pushRecent } from "@/lib/recent";
 import { useSession } from "@/lib/session";
 
@@ -225,7 +226,8 @@ export function InstrumentView({ id }: { id: string }) {
             {q ? (
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border px-4 py-3">
                 <Stat label={instrument?.venue === "crypto" ? "24h ago" : "Previous close"} value={display(q.previousClose, q.currency)} />
-                {index ? null : <Stat label="Volume" value={compact(q.volume)} hint={SCOPE_LABEL[q.volumeScope]} />}
+                {index ? null : <Stat label={q.source === COINGECKO_SOURCE ? "24h traded value (USD)" : "Volume"}
+                  value={compact(q.volume)} hint={SCOPE_LABEL[q.volumeScope]} />}
                 <Stat wide label="Day range" value={q.dayLow !== undefined && q.dayHigh !== undefined ? `${display(q.dayLow, q.currency)} – ${display(q.dayHigh, q.currency)}` : "—"} />
                 {index ? null : <><Stat label="Bid" value={money(q.bid, q.currency)} /><Stat label="Ask" value={money(q.ask, q.currency)} /></>}
                 <Stat wide label="Observed" value={dateTime(q.observedAt)} />
@@ -250,6 +252,7 @@ export function InstrumentView({ id }: { id: string }) {
           ) : null}
         </div>
       </div>
+      {instrument?.venue === "crypto" ? <CryptoResearch key={id} id={instrument.id} /> : null}
       {instrument && !index && instrument.venue !== "crypto" ? <CompanyResearch key={id} id={id} symbol={instrument.symbol} overview={profile.data} overviewError={profile.isError} retryOverview={() => { void profile.refetch(); }} /> : null}
     </div>
   );

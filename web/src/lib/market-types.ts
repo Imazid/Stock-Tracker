@@ -123,3 +123,5 @@ export interface SearchResponse {
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
 }
+
+export const COINGECKO_SOURCE = "CoinGecko aggregate";

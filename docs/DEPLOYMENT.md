@@ -114,6 +114,12 @@ email limits apply until a custom SMTP sender is configured.
   Never remove a key while rows still reference it (`select kek_id, count(*) from
   public.broker_credentials group by 1`).
 
+### Crypto token research
+
+Web asset pages and the iPhone crypto detail use `market-workspace` for the CoinGecko supply, market data and network profiles. This public read accepts only catalog symbols with fixed CoinGecko IDs and keeps the provider’s own market timestamp. A five-minute cache shares requests for each token within the function instance. A missing timestamp or supply cap stays unavailable. The UI points to the original listing and keeps network contracts separate from the trade ticket.
+
+For protected development, the shared read can use the public endpoint or the optional `COINGECKO_API_KEY` Demo key. For licensed commercial display of this profile, set `COINGECKO_PRO_API_KEY` as an Edge Function secret. Its value selects the paid API host. Confirm commercial display rights for the other market feeds before opening either client publicly. [CoinGecko commercial display terms](https://support.coingecko.com/articles/1043089972-what-are-the-differences-between-commercial-and-custom-licenses)
+
 ### Account practice limits
 
 The signed-in onboarding guide and Settings call `trading-api` to read and save account limits. The existing risk policy and audit tables store the changes. Both limits apply when agents buy. The daily limit counts the value of filled buys and sells across practice portfolios in the same currency. Manual buys show a concentration warning. Reductions use an ordinary signed-in session. Accounts with an enrolled authenticator require a verified session to increase either value. The server records the previous and saved values in the trading audit and uses the new values during subsequent order checks. No schema migration is needed.
