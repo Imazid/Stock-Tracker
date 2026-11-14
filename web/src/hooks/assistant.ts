@@ -3,7 +3,7 @@
 // Conversation state for the research assistant. One turn = POST /api/agents/runs with the
 // plain-text history, read back as NDJSON events (see server/agent/run.ts AgentEvent).
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentEvent } from "@/server/agent/run";
 
 export interface AssistantTool {
@@ -47,6 +47,7 @@ export function useAssistant(instrumentId?: string, section?: string) {
   const [turns, setTurns] = useState<AssistantTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const update = (fn: (turn: AssistantTurn) => AssistantTurn) =>
     setTurns((all) => (all.length === 0 ? all : [...all.slice(0, -1), fn(all[all.length - 1])]));

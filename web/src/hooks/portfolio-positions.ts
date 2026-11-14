@@ -13,7 +13,7 @@ type HoldingRow = Omit<PortfolioHolding, "instrument">;
 async function readPortfolio(userId: string, signal: AbortSignal) {
   const db = browserSupabase();
   if (!db) throw new Error("Accounts are unavailable.");
-  const holdings = await db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account")
+  const holdings = await db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account,updated_at")
     .eq("user_id", userId).is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(201).abortSignal(signal);
   if (holdings.error) throw new Error("Couldn’t load your synced portfolio.");
   return {

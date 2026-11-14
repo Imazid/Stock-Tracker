@@ -6,7 +6,13 @@ type Contribution = {
   value: number;
   currency: string;
   quote: QuoteView;
+  changePct: number;
 };
+
+export function portfolioUnusualMoves(contributions: readonly Contribution[], threshold = 5) {
+  return contributions.filter(({ changePct }) => Math.abs(changePct) >= threshold)
+    .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct) || a.id.localeCompare(b.id));
+}
 
 export function portfolioMovement(holdings: readonly Holding[], quoteFor: (id: string) => QuoteView | undefined) {
   const byInstrument = new Map<string, Contribution>();
@@ -18,9 +24,11 @@ export function portfolioMovement(holdings: readonly Holding[], quoteFor: (id: s
         !Number.isFinite(Date.parse(quote.observedAt)) || !Number.isFinite(shares) || shares <= 0 ||
         !Number.isFinite(quote.last) || quote.last <= 0 || baseline === undefined || !Number.isFinite(baseline) || baseline <= 0) continue;
     const value = (quote.last - baseline) * shares;
-    if (!Number.isFinite(value)) continue;
     const prior = byInstrument.get(instrument.id);
-    byInstrument.set(instrument.id, { id: instrument.id, value: value + (prior?.value ?? 0), currency: quote.currency, quote });
+    const combined = value + (prior?.value ?? 0);
+    const changePct = (quote.last - baseline) / baseline * 100;
+    if (!Number.isFinite(combined) || !Number.isFinite(changePct)) continue;
+    byInstrument.set(instrument.id, { id: instrument.id, value: combined, currency: quote.currency, quote, changePct });
     covered++;
   }
   const totals = new Map<string, number>();

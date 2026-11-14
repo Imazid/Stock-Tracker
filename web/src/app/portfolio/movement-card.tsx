@@ -1,18 +1,22 @@
 import Link from "next/link";
 import { SourceLine, StatusChip } from "@/components/market/DataChips";
 import { Card, CardHeader } from "@/components/ui/Card";
+import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { signedMoney } from "@/lib/format";
 import type { portfolioMovement } from "@/lib/portfolio-movement";
+import { portfolioQuestionHref } from "@/lib/portfolio-question";
 
-export function MovementCard({ movement, holdingCount, loading }: {
+export function MovementCard({ movement, holdingCount, loading, aiEnabled }: {
   movement: ReturnType<typeof portfolioMovement>;
   holdingCount: number;
   loading: boolean;
+  aiEnabled: boolean;
 }) {
   return (
     <Card>
-      <CardHeader title="Your Portfolio Intelligence" subtitle="Market moves applied to your current quantities. Equity quotes use the previous close and crypto quotes use the provider’s reference price." />
+      <CardHeader title="Your Portfolio Intelligence" subtitle="Market moves applied to your current quantities. Equity quotes use the previous close and crypto quotes use the provider’s reference price."
+        className="flex-wrap" actions={aiEnabled && <ButtonLink href={portfolioQuestionHref} size="sm">Ask what moved my portfolio</ButtonLink>} />
       {movement.covered === 0 ? (
         <EmptyState title={loading ? "Loading position prices" : "Position moves are unavailable"} />
       ) : (

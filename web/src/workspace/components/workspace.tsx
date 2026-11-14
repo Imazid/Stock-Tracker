@@ -193,6 +193,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled, logosEnabled }:
       queryClient.invalidateQueries({ queryKey: ["portfolio", userID] }),
       queryClient.invalidateQueries({ queryKey: ["portfolio-gains", userID] }),
       queryClient.invalidateQueries({ queryKey: ["portfolio-history", userID] }),
+      queryClient.invalidateQueries({ queryKey: ["portfolio-events", userID] }),
     ]);
   }
   function saved(text: string) { setNotice({text}); setDialog(null); sync(); }
