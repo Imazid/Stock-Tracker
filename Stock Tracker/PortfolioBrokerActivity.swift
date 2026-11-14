@@ -61,11 +61,21 @@ struct PortfolioBrokerActivity: View {
     let imported: Set<String>
     let canInclude: Bool
     private enum Review {
+        case browse
         case transfer((PerformanceFlow) -> Void)
         case income(selected: String?, review: (CashIncomeBrokerPayment) -> Void)
         case reinvestments((BrokerReinvestment) -> Void)
     }
     private let review: Review
+
+    init(userId: UUID, start: String, end: String) {
+        self.userId = userId
+        self.start = start
+        self.end = end
+        imported = []
+        canInclude = false
+        review = .browse
+    }
 
     init(userId: UUID, start: String, end: String, imported: Set<String>, canInclude: Bool,
          include: @escaping (PerformanceFlow) -> Void) {
@@ -99,7 +109,7 @@ struct PortfolioBrokerActivity: View {
 
     private var activityTitle: String {
         switch review {
-        case .transfer: "Broker activity"
+        case .browse, .transfer: "Broker activity"
         case .income: "Broker-reported payments"
         case .reinvestments: "Broker-reported reinvestments"
         }
@@ -107,6 +117,7 @@ struct PortfolioBrokerActivity: View {
 
     private var emptyActivityTitle: String {
         switch review {
+        case .browse: "activity"
         case .transfer: "cash or corporate activity"
         case .income: "payments"
         case .reinvestments: "reinvestments"
@@ -115,7 +126,7 @@ struct PortfolioBrokerActivity: View {
 
     private func matchesReview(_ activity: Activity) -> Bool {
         switch review {
-        case .transfer: true
+        case .browse, .transfer: true
         case .income: CashIncomeKind(brokerLabel: activity.label) != nil
         case .reinvestments: activity.label == BrokerReinvestment.label
         }
@@ -175,6 +186,7 @@ struct PortfolioBrokerActivity: View {
                 }
                 ForEach(activities) { activity in
                     switch review {
+                    case .browse: activityDetails(activity)
                     case .transfer(let include): activityRow(activity, include: include)
                     case .income(let selected, let review): incomeRow(activity, selected: selected, review: review)
                     case .reinvestments(let review): reinvestmentRow(activity, review: review)
@@ -188,6 +200,8 @@ struct PortfolioBrokerActivity: View {
             Text(activityTitle)
         } footer: {
             switch review {
+            case .browse:
+                Text("Recent transactions reported by your brokerage. Check your statement for complete activity.")
             case .income:
                 Text("Review the reported payment and enter the cash received from your statement. Check for any previous manual entry for the same payment.")
             case .reinvestments:
@@ -200,13 +214,7 @@ struct PortfolioBrokerActivity: View {
 
     private func activityRow(_ activity: Activity, include: @escaping (PerformanceFlow) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text([activity.label, activity.symbol].compactMap { $0 }.joined(separator: " · "))
-            let amount = activity.amount.map { "\($0.formatted()) \(activity.currency ?? "")" }
-            let units = activity.units.flatMap { $0 == 0 ? nil : "\($0.formatted()) units" }
-            let fee = activity.fee.flatMap { $0 == 0 ? nil : "Fee \($0.formatted()) \(activity.currency ?? "")" }
-            Text([activity.date, amount, units, fee].compactMap { $0 }.joined(separator: " · "))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            activityDetails(activity)
             let internalTransfer = activity.isInternalCashTransfer
             let converted = internalTransfer ? nil : conversions[activity.id]
             let included = imported.contains(activity.id)
@@ -246,6 +254,17 @@ struct PortfolioBrokerActivity: View {
                 .disabled(included || !canInclude)
                 .accessibilityLabel(included ? "Already included" : "Include \(activity.label) on \(activity.date)")
             }
+        }
+    }
+
+    private func activityDetails(_ activity: Activity) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text([activity.label, activity.symbol].compactMap { $0 }.joined(separator: " · "))
+            let amount = activity.amount.map { "\($0.formatted()) \(activity.currency ?? "")" }
+            let units = activity.units.flatMap { $0 == 0 ? nil : "\($0.formatted()) units" }
+            let fee = activity.fee.flatMap { $0 == 0 ? nil : "Fee \($0.formatted()) \(activity.currency ?? "")" }
+            Text([activity.date, amount, units, fee].compactMap { $0 }.joined(separator: " · "))
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

@@ -61,6 +61,6 @@ export default function Auth({ mode, onDone }: { mode: "login" | "mfa"; onDone: 
     {!backend && <p className="error">Account services are awaiting configuration.</p>}
     <button className="button primary" disabled={busy || !backend}>{busy ? "Please wait…" : mode === "mfa" ? "Verify" : flow === "password" ? "Sign in" : sent ? "Verify code" : "Email me a sign-in link"}</button>
     {mode === "login" && <button type="button" disabled={busy} className="text-button" onClick={() => { setFlow(flow === "password" ? "email" : "password"); setError(""); setSent(false); setCode(""); }}>{flow === "password" ? "Use an email sign-in link" : "Use my password"}</button>}
-    {mode === "login" && <Link className="text-button" href="/login?mode=signup">Create a Stock Tracker account</Link>}
+    {mode === "login" && <Link className="text-button" href="/login?mode=signup&next=/get-started">Create a Stock Tracker account</Link>}
   </form>;
 }

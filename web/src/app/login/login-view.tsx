@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/Button";
+import { useEffect, useRef, useState } from "react";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
@@ -16,7 +16,8 @@ export function LoginView() {
   const session = useSession();
   const router = useRouter();
   const params = useSearchParams();
-  const next = safeReturnPath(params.get("next"));
+  const explicitNext = params.get("next");
+  const next = safeReturnPath(explicitNext);
   const [mode, setMode] = useState<"signin" | "signup">(params.get("mode") === "signup" ? "signup" : "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,16 +25,18 @@ export function LoginView() {
   const [error, setError] = useState<string | null>(params.get("error") === "confirm" ? "That confirmation link didn't work. It may have expired — sign in or request a new one." : null);
   const [info, setInfo] = useState<string | null>(null);
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
+  const destination = useRef(next);
 
   useEffect(() => {
-    if (session.status === "signedIn") router.replace(next);
+    if (session.status === "signedIn") router.replace(destination.current);
   }, [session.status, router, next]);
 
   if (session.status === "unconfigured") {
     return <div className="mx-auto max-w-md pt-10"><Card><EmptyState title="Accounts aren't configured" body="This deployment has no Supabase project. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then reload. Market data works without an account." /></Card></div>;
   }
 
-  const confirmationURL = () => `${window.location.origin}/auth/confirm?next=${encodeURIComponent(next)}`;
+  const afterSignup = explicitNext ? next : "/get-started";
+  const confirmationURL = () => `${window.location.origin}/auth/confirm?next=${encodeURIComponent(afterSignup)}`;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +45,7 @@ export function LoginView() {
     setBusy(true);
     setError(null);
     setInfo(null);
+    destination.current = mode === "signup" ? afterSignup : next;
     try {
       if (mode === "signin") {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
@@ -50,7 +54,7 @@ export function LoginView() {
       } else {
         const { data, error: err } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: confirmationURL() } });
         if (err) throw err;
-        if (data.session) router.replace(next);
+        if (data.session) router.replace(afterSignup);
         else {
           setConfirmationEmail(email);
           setInfo("Open the confirmation link in this browser to finish creating your account.");
@@ -97,6 +101,7 @@ export function LoginView() {
           <Button type="submit" variant="primary" disabled={busy} className="mt-1">{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</Button>
         </form>
       </Card>
+      <ButtonLink href="/get-started" variant="ghost" className="mt-3">Explore the portfolio demo</ButtonLink>
     </div>
   );
 }

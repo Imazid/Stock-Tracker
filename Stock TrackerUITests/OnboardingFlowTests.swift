@@ -49,7 +49,20 @@ final class OnboardingFlowTests: XCTestCase {
         attach("03-follow")
         tapContinue()
 
-        // Portfolio — skip.
+        // The demo changes sample value and leaves the user's portfolio empty.
+        waitForStep("Add what you already own")
+        app.buttons["onboarding.portfolio.demo"].tap()
+        XCTAssertTrue(app.navigationBars["Portfolio demo"].waitForExistence(timeout: 8))
+        let value = app.descendants(matching: .any)["onboarding.demo.value"].firstMatch
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Sample portfolio value'"), object: value)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 25), .completed)
+        let initialValue = value.value as? String
+        let increase = app.buttons["onboarding.demo.quantity-Increment"]
+        XCTAssertTrue(increase.exists, app.debugDescription)
+        increase.tap()
+        XCTAssertNotEqual(value.value as? String, initialValue)
+        attach("04-portfolio-demo")
+        app.buttons["onboarding.demo.done"].tap()
         waitForStep("Add what you already own")
         attach("04-portfolio")
         tapContinue()
