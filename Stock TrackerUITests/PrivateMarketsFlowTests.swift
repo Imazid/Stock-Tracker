@@ -321,6 +321,39 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFundingRoundsShowsDisclosedIPOMilestones() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
+                          "Run this test with the hosted Private Markets configuration.")
+        if let rawPort = ProcessInfo.processInfo.environment["PRIVATE_TEST_BACKEND_PORT"], let port = UInt16(rawPort) {
+            let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+            app.terminate()
+            app.launchArguments += ["-SupabaseURLOverride", "http://127.0.0.1:\(port)", "-SupabaseAnonKeyOverride", key]
+            app.launch()
+        }
+        openPrivateMarkets()
+        app.buttons["private.destination.clock.arrow.circlepath"].tap()
+        let proposed = app.buttons["private.funding.listing.ATW"]
+        XCTAssertTrue(proposed.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(proposed.label.contains("first quotation") || proposed.label.contains("confirmation pending"))
+        proposed.tap()
+        let listingSource = app.buttons["Read listing source"]
+        for _ in 0..<3 where !listingSource.isHittable { app.swipeUp() }
+        XCTAssertTrue(listingSource.isHittable, app.debugDescription)
+        let expectedClose = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Expected offer close,")).firstMatch
+        let quotation = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Proposed first quotation,")).firstMatch
+        XCTAssertTrue(expectedClose.exists && quotation.exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["Provider application readiness"].exists)
+
+        let back = app.navigationBars["Alvear Tungsten Limited"].buttons["BackButton"]
+        XCTAssertTrue(back.waitForExistence(timeout: 6))
+        back.tap()
+        let confirmed = app.buttons["private.funding.listing.CX8"]
+        for _ in 0..<3 where !confirmed.isHittable { app.swipeUp() }
+        XCTAssertTrue(confirmed.isHittable, app.debugDescription)
+        XCTAssertTrue(confirmed.label.contains("First quotation confirmed"))
+    }
+
+    @MainActor
     func testCompanyUpdatesShowsPublishedFinancing() async throws {
         try launchWithLocalSession("PRIVATE_FINANCING_TEST_SESSION")
         openPrivateMarkets()

@@ -11,7 +11,8 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
   "round:funding_rounds!inner(id,stage,raised,target,valuation,valuation_method,currency,announced_on,closes_at,source_url,verified_at,traction," +
   "company:private_companies!inner(id,name,sector,country,location,description,logo_url,founders,investors,source_url,verified_at)," +
-  "share_classes(name,rights,source_url))";
+  "share_classes(name,rights,source_url)," +
+  "listing:private_listing_milestones(exchange,symbol,quotation_status,expected_offer_close_on,quotation_on,source_url,verified_at))";
 
 type CatalogDeal = {
   id: string;
@@ -36,6 +37,10 @@ type CatalogDeal = {
     traction: string | null;
     company: { id: string; name: string; description: string | null; country: string; sector: string };
     share_classes: { name: string; rights: string }[];
+    listing: {
+      exchange: string; symbol: string; quotation_status: "proposed" | "anticipated" | "listed" | "withdrawn";
+      expected_offer_close_on: string | null; quotation_on: string | null; source_url: string; verified_at: string;
+    } | null;
   };
 };
 
@@ -59,6 +64,8 @@ function dealEvidence(deal: CatalogDeal): string {
     ...round.share_classes.map((item) => `${item.name}: ${item.rights}`),
   ].filter(Boolean).join("\n").slice(0, 2_800);
 }
+
+const listingDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
 const context = (kind: string, userId: string, id: string) => `private_${kind}:${userId}:${id}`;
 const keys = () => parseKeyring(Deno.env.get("CREDENTIAL_KEKS"), Deno.env.get("CREDENTIAL_ACTIVE_KEK"));
@@ -101,7 +108,9 @@ function aiDependencies(admin: ReturnType<typeof serviceClient>, documentProvide
 function catalogue(admin: ReturnType<typeof serviceClient>) {
   return admin.from("investment_opportunities").select(publicDealFields)
     .eq("published", true).eq("round.published", true).eq("round.company.published", true)
-    .eq("round.share_classes.published", true).order("verified_at", { ascending: false }).order("id");
+    .eq("round.share_classes.published", true)
+    .eq("round.listing.published", true).lte("round.listing.verified_at", new Date().toISOString())
+    .order("verified_at", { ascending: false }).order("id");
 }
 
 type Announcement = {
@@ -671,6 +680,22 @@ Deno.serve(async (req) => {
             const company = deal.round.company.name;
             evidence.push({ id, title: company, text: dealEvidence(deal) });
             sources.push({ id, title: company, url: deal.source_url });
+            if (deal.round.listing) {
+              const { exchange, symbol, quotation_status, expected_offer_close_on, quotation_on, source_url, verified_at } = deal.round.listing;
+              const id = `O${sources.length + 1}`;
+              const title = `${company} listing milestone`;
+              const quotationLabels = { proposed: "Proposed first quotation", anticipated: "Exchange-anticipated first quotation",
+                listed: "Confirmed first quotation", withdrawn: "Listing application withdrawn" };
+              const text = [
+                `Exchange: ${exchange}; ${quotation_status === "listed" ? "Listed symbol" : "Proposed symbol"}: ${symbol}`,
+                quotation_on ? `${quotationLabels[quotation_status]}: ${listingDate.format(new Date(quotation_on))}` : quotationLabels[quotation_status],
+                expected_offer_close_on && `Expected offer close (date only): ${listingDate.format(new Date(expected_offer_close_on))}`,
+                `Listing source verified: ${verified_at}`,
+                "The listing milestone alone does not establish offer availability, investor eligibility, or a trading route.",
+              ].filter(Boolean).join("\n");
+              evidence.push({ id, title, text });
+              sources.push({ id, title, url: source_url });
+            }
           }
         }
         if (announcementIDs.length) {

@@ -205,7 +205,7 @@ private struct PrivateDiscoveryView: View {
         deals.filter { deal in
             let matchesSearch = search.isEmpty || [
                 deal.company.name, deal.company.sector, deal.company.country, deal.company.location ?? "",
-                deal.company.description ?? "", deal.round.stage, deal.sourceName
+                deal.company.description ?? "", deal.round.stage, deal.sourceName, deal.round.listing?.symbol ?? ""
             ].contains { $0.localizedCaseInsensitiveContains(search) }
             return matchesSearch && (category.isEmpty || deal.category == category) &&
                 (country.isEmpty || deal.company.country == country) && (sector.isEmpty || deal.company.sector == sector) &&
@@ -231,6 +231,17 @@ private struct PrivateDiscoveryView: View {
                 if auth.userId != nil {
                     NavigationLink { PrivateDiscoverySearchView() } label: {
                         Label("Search the catalogue with AI", systemImage: "sparkle.magnifyingglass")
+                    }
+                }
+            }
+            if showFundingHistory, !loading, error == nil {
+                let listings = filtered.filter { $0.round.listing != nil }.sorted(by: listingOrder)
+                if !listings.isEmpty {
+                    Section("IPO milestones") {
+                        ForEach(listings) { deal in
+                            NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateFundingRoundRow(deal: deal) }
+                                .accessibilityIdentifier("private.funding.listing.\(deal.round.listing?.symbol ?? "")")
+                        }
                     }
                 }
             }
@@ -265,7 +276,8 @@ private struct PrivateDiscoveryView: View {
                         }
                     }
                 } else if showFundingHistory {
-                    ForEach(filtered.sorted(by: fundingRoundOrder)) { deal in
+                    let rounds = filtered.filter { $0.round.listing == nil }.sorted(by: fundingRoundOrder)
+                    ForEach(rounds) { deal in
                         NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateFundingRoundRow(deal: deal) }
                     }
                 } else {
@@ -305,7 +317,7 @@ private struct PrivateDiscoveryView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $search, prompt: "Company, sector or provider")
+        .searchable(text: $search, prompt: "Company, symbol, sector or provider")
         .refreshable { await refresh() }
         .onChange(of: currency) { _, value in if value.isEmpty { maxMinimum = ""; maxValuation = "" } }
         .sheet(isPresented: $showFilters) {
@@ -480,6 +492,15 @@ private func fundingRoundOrder(_ lhs: PrivateDeal, _ rhs: PrivateDeal) -> Bool {
     return lhs.id.uuidString < rhs.id.uuidString
 }
 
+private func listingOrder(_ lhs: PrivateDeal, _ rhs: PrivateDeal) -> Bool {
+    guard let left = lhs.round.listing, let right = rhs.round.listing else { return fundingRoundOrder(lhs, rhs) }
+    if left.hasUpcomingQuotation != right.hasUpcomingQuotation { return left.hasUpcomingQuotation }
+    let leftDay = left.quotationOn ?? ""
+    let rightDay = right.quotationOn ?? ""
+    if leftDay != rightDay { return left.hasUpcomingQuotation ? leftDay < rightDay : leftDay > rightDay }
+    return lhs.id.uuidString < rhs.id.uuidString
+}
+
 private struct PrivateFundingRoundRow: View {
     let deal: PrivateDeal
 
@@ -488,6 +509,12 @@ private struct PrivateFundingRoundRow: View {
             Text(deal.round.stage).font(.headline)
             Text(deal.company.name).font(.subheadline)
             Text(deal.displayedStatus).font(.footnote).foregroundStyle(.secondary)
+            if let listing = deal.round.listing {
+                Text("\(listing.exchange) \(listing.symbol) · \(listing.displayStatus)")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                if let date = listing.quotationOn { Text(PrivateDeal.Round.Listing.formattedDay(date)).font(.footnote) }
+            }
             if let date = deal.round.announcedOn {
                 LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
                     .font(.footnote).foregroundStyle(.secondary)
@@ -578,6 +605,23 @@ private struct PrivateDealDetail: View {
                         Text(share.rights)
                         if share.sourceUrl.privateSourceIsSafe { Link("Share-class source", destination: share.sourceUrl) }
                     }
+                }
+            }
+            if let listing = deal.round.listing {
+                Section("IPO milestones") {
+                    LabeledContent(listing.quotationStatus == .listed ? "Listed symbol" : "Proposed symbol",
+                                   value: "\(listing.exchange) \(listing.symbol)")
+                    if let expectedClose = listing.expectedOfferCloseOn {
+                        LabeledContent("Expected offer close", value: PrivateDeal.Round.Listing.formattedDay(expectedClose))
+                    }
+                    if let date = listing.quotationOn {
+                        LabeledContent(listing.quotationStatus.label, value: PrivateDeal.Round.Listing.formattedDay(date))
+                    }
+                    if listing.displayStatus != listing.quotationStatus.label || listing.quotationOn == nil {
+                        Text(listing.displayStatus).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Listing source verified", value: listing.verifiedAt.formatted(date: .abbreviated, time: .shortened))
+                    if listing.sourceUrl.privateSourceIsSafe { Link("Read listing source", destination: listing.sourceUrl) }
                 }
             }
             Section("Sources") {

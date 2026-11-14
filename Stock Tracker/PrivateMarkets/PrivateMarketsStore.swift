@@ -43,6 +43,51 @@ struct PrivateDeal: Codable, Identifiable {
         let verifiedAt: Date
     }
     struct Round: Codable {
+        struct Listing: Codable {
+            enum QuotationStatus: String, Codable {
+                case proposed, anticipated, listed, withdrawn
+
+                var label: String {
+                    switch self {
+                    case .proposed: "Proposed first quotation"
+                    case .anticipated: "Anticipated first quotation"
+                    case .listed: "First quotation confirmed"
+                    case .withdrawn: "Listing application withdrawn"
+                    }
+                }
+            }
+
+            let exchange: String
+            let symbol: String
+            let quotationStatus: QuotationStatus
+            let expectedOfferCloseOn: String?
+            let quotationOn: String?
+            let sourceUrl: URL
+            let verifiedAt: Date
+
+            var hasUpcomingQuotation: Bool {
+                guard quotationStatus == .proposed || quotationStatus == .anticipated, let quotationOn else { return false }
+                return quotationOn >= CashIncomeDay.string(.now)
+            }
+
+            static func formattedDay(_ day: String) -> String {
+                guard let date = CashIncomeDay.date(day) else { return day }
+                var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
+                style.timeZone = CashIncomeDay.timeZone
+                return date.formatted(style)
+            }
+
+            var displayStatus: String {
+                switch quotationStatus {
+                case .proposed, .anticipated:
+                    guard hasUpcomingQuotation else { return "Quotation confirmation pending" }
+                    return quotationStatus.label
+                case .listed, .withdrawn:
+                    return quotationStatus.label
+                }
+            }
+        }
+
         struct ShareClass: Codable {
             let name: String
             let rights: String
@@ -62,6 +107,7 @@ struct PrivateDeal: Codable, Identifiable {
         let traction: String?
         let company: Company
         let shareClasses: [ShareClass]
+        let listing: Listing?
     }
     let id: UUID
     let provider: String
