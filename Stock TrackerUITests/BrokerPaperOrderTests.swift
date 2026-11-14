@@ -11,7 +11,7 @@ final class BrokerPaperOrderTests: XCTestCase {
         search.typeText("AAPL")
         tap(app.buttons["search.result.us.AAPL"], in: app, timeout: 30)
         XCTAssertTrue(app.descendants(matching: .any)["detail.screen"].firstMatch.waitForExistence(timeout: 10))
-        tap(app.buttons["brokerPaper.trade"], in: app, timeout: 30)
+        tap(app.buttons["Trade with Alpaca Paper"], in: app, timeout: 30)
         tap(app.buttons["brokerPaper.connect"], in: app)
 
         let key = app.secureTextFields["brokerPaper.keyID"]
