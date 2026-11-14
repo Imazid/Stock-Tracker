@@ -527,7 +527,7 @@ struct PrivacyView: View {
                 DataProcessorRow(name: "Google Gemini · OpenAI", purpose: "AI insights, the assistant and Private Markets research", dataSent: "Your question and relevant evidence. Selected private excerpts require separate permission.", link: "https://policies.google.com/privacy")
                 DataProcessorRow(name: "SnapTrade", purpose: "Connecting a brokerage account", dataSent: "Read-only holdings you choose to connect", link: "https://snaptrade.com/privacy")
                 DataProcessorRow(name: "Supabase", purpose: "Account, sync and signed-in Private Markets features", dataSent: "Email, synced records and the research, alerts or provider records you use", link: "https://supabase.com/privacy")
-                DataProcessorRow(name: "Google AdMob", purpose: "Ads on the Free plan", dataSent: "Device, approximate location, ad interaction and diagnostics. Tracking requires your permission.", link: "https://policies.google.com/privacy")
+                DataProcessorRow(name: "Google AdMob", purpose: "Ads on the Free plan when enabled", dataSent: "Device, approximate location, ad interaction and diagnostics. Tracking requires your permission.", link: "https://policies.google.com/privacy")
             } header: { Text("Services we use") } footer: { Text("Tap a service to read its privacy policy.") }
 
             Section {
@@ -659,7 +659,7 @@ struct BuiltInPrivacyPolicyView: View {
                 LegalSection(title: "Services and overseas processing",
                     text: "We send symbols, search text and currency codes to the services that supply market data. SnapTrade handles the broker connections you authorise. Apple handles subscriptions, optional speech recognition and push delivery. AI, advertising, brokerage and market-data services can process information outside Australia, including in the United States. See Privacy & data in Settings for service links.")
                 LegalSection(title: "Advertising & Tracking",
-                    text: "Google AdMob serves ads on the Free plan and can use device, approximate location, interaction and diagnostic data to deliver and measure ads. Tracking requires your permission. You can change it in iPhone Settings under Privacy & Security, then Tracking.")
+                    text: "When ads are enabled on the Free plan, Google AdMob can use device, approximate location, interaction and diagnostic data to deliver and measure them. Tracking requires your permission. You can change it in iPhone Settings under Privacy & Security, then Tracking.")
                 LegalSection(title: "Notifications and permissions",
                     text: "You choose which alerts and summaries to enable. When remote Private Markets notifications are available and enabled, Stock Tracker stores an encrypted device token for delivery. Voice search uses Apple speech recognition when you grant access. Face ID for app lock is optional and Stock Tracker receives the authentication result.")
                 LegalSection(title: "Access, correction and deletion",

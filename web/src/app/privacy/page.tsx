@@ -25,7 +25,7 @@ export default function PrivacyPage() {
       </section>
       <section>
         <h2>Ads and tracking</h2>
-        <p>The iPhone Free plan uses Google AdMob to serve ads. AdMob may use device identifiers, approximate location, ad interactions and diagnostics for delivery and measurement. Tracking requires your permission, which you can change under Privacy &amp; Security, then Tracking, in iPhone Settings.</p>
+        <p>When ads are enabled on the iPhone Free plan, Google AdMob can use device identifiers, approximate location, ad interactions and diagnostics for delivery and measurement. Tracking requires your permission, which you can change under Privacy &amp; Security, then Tracking, in iPhone Settings.</p>
       </section>
       <section>
         <h2>Retention and your choices</h2>
