@@ -3,7 +3,7 @@
 // No clock, randomness, I/O, or runtime-specific APIs are used here.
 
 import { defaultPaperConfig, PaperBroker, type PaperBrokerConfig } from "../trading/broker.ts";
-import { MarketCalendar } from "../trading/calendar.ts";
+import { dayKey, MarketCalendar } from "../trading/calendar.ts";
 import { PreparedSeries, StrategyEvaluator } from "../trading/evaluator.ts";
 import type { EquityPoint } from "../trading/ledger.ts";
 import { type Bar, type BarSeries, barName, type Instrument, instrumentID, isRealMarketData } from "../trading/market.ts";
@@ -201,8 +201,9 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
 
   const warnings: string[] = [];
   const missing = spec.universe.filter((i) => !bars.has(instrumentID(i))).map((i) => i.symbol);
+  if (spec.monthlyInvestment !== undefined) warnings.push("Monthly purchases use available starting cash and sale proceeds. No external deposits are simulated.");
   if (missing.length > 0) warnings.push(`No history for ${missing.join(", ")}; tested without ${missing.length === 1 ? "it" : "them"}.`);
-  if (spec.kind === "rebalance" && missing.length > 0) {
+  if ((spec.rebalance || spec.monthlyInvestment) && missing.length > 0) {
     throw BacktestError.unsupported(`Rebalancing needs history for every fund. Missing: ${missing.join(", ")}.`);
   }
 
@@ -216,6 +217,7 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
   const lastClose = new Map<string, number>();
   const lastExit = new Map<string, number>();
   const lastBuyIndex = new Map<string, number>();
+  let lastMonthlyInvestmentPeriod: string | undefined;
   const trades: BacktestTrade[] = [];
   const curve: EquityPoint[] = [];
   const invested: boolean[] = [];
@@ -255,6 +257,11 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
       if (order.side === "buy") {
         const price = open * (1 + slip);
         let notional = Math.min(order.notional ?? 0, config.maxOrderNotional);
+        if (spec.monthlyInvestment !== undefined) {
+          const held = (holdings.get(id)?.quantity ?? 0) * open;
+          notional = Math.min(notional, Math.max(equity() * config.maxPositionPct / 100 - held, 0));
+          if (!holdings.has(id) && holdings.size >= config.maxOpenPositions) continue;
+        }
         const feeRate = (instrument.assetClass === "crypto" ? config.cryptoFeeBps : config.equityFeeBps) / 10_000
           + PaperBroker.taxBps(instrument, "buy") / 10_000;
         const flat = instrument.assetClass === "crypto" ? 0 : config.equityFeePerOrder;
@@ -334,12 +341,24 @@ function run(spec: StrategySpec, series: Record<string, BarSeries>, config: Back
         break;
       }
       case "rebalance": {
-        if (!spec.rebalance || pending.size > 0 || !Object.keys(spec.rebalance.targets).every((id) => lastClose.has(id))) break;
+        const allocation = spec.monthlyInvestment?.allocation ?? spec.rebalance;
+        if (!allocation || pending.size > 0 || !Object.keys(allocation.targets).every((id) => lastClose.has(id))) break;
         const values: Record<string, number> = {};
-        for (const id of Object.keys(spec.rebalance.targets)) values[id] = (holdings.get(id)?.quantity ?? 0) * (lastClose.get(id) ?? 0);
-        for (const trade of StrategyEvaluator.rebalanceTrades(spec.rebalance, values, equityNow)) {
-          pending.set(trade.instrumentID, { side: trade.side, notional: trade.notional, reason: "rebalance" });
+        for (const id of Object.keys(allocation.targets)) values[id] = (holdings.get(id)?.quantity ?? 0) * (lastClose.get(id) ?? 0);
+        const monthly = spec.monthlyInvestment !== undefined;
+        let contribution = 0;
+        if (monthly) {
+          const activeIDs = new Set(active.map(({ id }) => id));
+          if (!Object.keys(allocation.targets).every((id) => activeIDs.has(id))) break;
+          const period = dayKey(spec.universe[0].venue, time).slice(0, 7);
+          if (period > (lastMonthlyInvestmentPeriod ?? "") && spec.monthlyInvestment !== undefined) {
+            contribution = Math.min(spec.monthlyInvestment.amount, Math.max(cash, 0));
+            lastMonthlyInvestmentPeriod = period;
+          }
         }
+        const orders = monthly ? StrategyEvaluator.monthlyRebalanceTrades(allocation, values, contribution)
+          : StrategyEvaluator.rebalanceTrades(allocation, values, equityNow);
+        for (const trade of orders) pending.set(trade.instrumentID, { side: trade.side, notional: trade.notional, reason: "rebalance" });
         break;
       }
     }

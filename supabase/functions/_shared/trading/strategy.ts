@@ -3,7 +3,7 @@
 // server. A port of TradingCore/Sources/TradingCore/StrategySpec.swift.
 
 import { decodeInstrument, type Instrument, instrumentID, type Timeframe, TIMEFRAMES } from "./market.ts";
-import { capitalized, compareStrings, sortedStrings, swiftTrim, trimNumber } from "./text.ts";
+import { NumberText, capitalized, compareStrings, sortedStrings, swiftTrim, trimNumber } from "./text.ts";
 
 export type PriceField = "open" | "high" | "low" | "close";
 const PRICE_FIELDS: PriceField[] = ["open", "high", "low", "close"];
@@ -193,6 +193,7 @@ export interface StrategySpec {
   sizing: Sizing;
   dca?: DCAConfig;
   rebalance?: RebalanceConfig;
+  monthlyInvestment?: { amount: number; allocation: RebalanceConfig };
   /** Bars to wait after an exit before the same instrument can be bought again. */
   reentryCooldownBars: number;
   /** Watch whatever the ledger holds instead of a fixed list. */
@@ -238,13 +239,20 @@ export function ruleLines(spec: StrategySpec): string[] {
       }
       break;
     case "rebalance":
-      if (spec.rebalance) {
+      if (spec.monthlyInvestment && spec.monthlyInvestment.amount > 0) {
+        const currency = spec.universe[0]?.currency ?? "USD";
+        lines.push(`Invest ${NumberText.money(spec.monthlyInvestment.amount, currency)} of available practice cash each month, split by target weight.`);
+      }
+      {
+        const allocation = spec.monthlyInvestment?.allocation ?? spec.rebalance;
+        if (!allocation) break;
         // Swift orders equal weights arbitrarily; here ties go by id so the text is stable.
-        const parts = Object.entries(spec.rebalance.targets)
+        const parts = Object.entries(allocation.targets)
           .sort((a, b) => b[1] - a[1] || compareStrings(a[0], b[0]))
           .map(([id, weight]) => `${id.split(":").pop() ?? id} ${trimNumber(weight)}%`);
         lines.push(`Hold ${parts.join(", ")}.`);
-        lines.push(`Trade back to target when a holding drifts ${trimNumber(spec.rebalance.driftThresholdPct)} points.`);
+        const scope = spec.monthlyInvestment !== undefined ? " of invested value" : "";
+        lines.push(`Trade back to target when a holding drifts ${trimNumber(allocation.driftThresholdPct)} percentage points${scope}.`);
       }
       break;
     case "research":
@@ -374,7 +382,7 @@ export function validate(spec: StrategySpec): StrategyIssue[] {
       break;
     }
     case "rebalance": {
-      const rebalance = spec.rebalance;
+      const rebalance = spec.monthlyInvestment?.allocation ?? spec.rebalance;
       if (!rebalance) { error("A rebalancing strategy needs target weights."); break; }
       const ids = new Set(spec.universe.map(instrumentID));
       // Targets are checked in id order, as Swift's validator does. (Swift still sums the total in
@@ -389,6 +397,19 @@ export function validate(spec: StrategySpec): StrategyIssue[] {
         total += weight;
       }
       if (total > 100.0001) error(`Target weights add up to ${trimNumber(total)}% — they can't exceed 100%.`);
+      if (spec.monthlyInvestment !== undefined) {
+        if (spec.rebalance) error("Use one allocation configuration for monthly investing.");
+        if (spec.timeframe !== "day") error("Monthly investing needs daily bars.");
+        if (new Set(spec.universe.map((asset) => asset.venue)).size > 1) error("Monthly investing needs assets traded on the same market.");
+        if (spec.universe.some((asset) => asset.assetClass !== "etf")) error("Choose ETFs for monthly investing and rebalancing.");
+        if (targets.length !== ids.size || targets.some((id) => !ids.has(id)) || Math.abs(total - 100) > 0.0001) {
+          error("Set a target for every ETF. The weights must add up to 100%.");
+        }
+        if (!(Number.isFinite(spec.monthlyInvestment.amount) && spec.monthlyInvestment.amount > 0)) error("Enter a monthly investment above zero.");
+        if (Object.values(spec.protections).some((value) => value !== undefined)) {
+          error("This strategy supports allocation drift exits. Remove the separate price-based exits.");
+        }
+      }
       const drift = rebalance.driftThresholdPct;
       if (!(Number.isFinite(drift) && drift >= 0.5 && drift <= 50)) error("The drift threshold must be between 0.5 and 50 points.");
       break;
@@ -398,6 +419,7 @@ export function validate(spec: StrategySpec): StrategyIssue[] {
       break;
   }
 
+  if (spec.monthlyInvestment !== undefined && spec.kind !== "rebalance") error("Monthly investing requires a rebalancing strategy.");
   const p = spec.protections;
   if (p.stopLossPct !== undefined && !(Number.isFinite(p.stopLossPct) && p.stopLossPct > 0 && p.stopLossPct < 100)) error("Stop loss must be between 0 and 100%.");
   if (p.takeProfitPct !== undefined && !(Number.isFinite(p.takeProfitPct) && p.takeProfitPct > 0 && p.takeProfitPct <= 1_000)) error("Take profit must be between 0 and 1000%.");
@@ -446,13 +468,19 @@ export function decodeStrategySpec(raw: unknown): StrategySpec {
     const d = object(o.dca, "dca");
     spec.dca = { amountPerBuy: number(d.amountPerBuy, "dca.amountPerBuy"), intervalBars: integer(d.intervalBars, "dca.intervalBars") };
   }
-  if (present(o.rebalance)) {
-    const r = object(o.rebalance, "rebalance");
-    const targets: Record<string, number> = {};
-    for (const [id, weight] of Object.entries(object(r.targets, "rebalance.targets"))) targets[id] = number(weight, `rebalance.targets.${id}`);
-    spec.rebalance = { targets, driftThresholdPct: number(r.driftThresholdPct, "rebalance.driftThresholdPct") };
+  if (present(o.monthlyInvestment)) {
+    const monthly = object(o.monthlyInvestment, "monthlyInvestment");
+    spec.monthlyInvestment = { amount: number(monthly.amount, "monthlyInvestment.amount"), allocation: decodeAllocation(monthly.allocation) };
   }
+  if (present(o.rebalance)) spec.rebalance = decodeAllocation(o.rebalance);
   return spec;
+}
+
+function decodeAllocation(raw: unknown): RebalanceConfig {
+  const r = object(raw, "allocation");
+  const targets: Record<string, number> = {};
+  for (const [id, weight] of Object.entries(object(r.targets, "allocation.targets"))) targets[id] = number(weight, `allocation.targets.${id}`);
+  return { targets, driftThresholdPct: number(r.driftThresholdPct, "allocation.driftThresholdPct") };
 }
 
 function decodeProtections(raw: unknown): Protections {

@@ -76,6 +76,20 @@ final class StrategyEvaluatorTests: XCTestCase {
                      protections: Protections(stopLossPct: 8), reentryCooldownBars: 0)
     }
 
+    func testMonthlyInvestmentDraftPreservesAmountWeightsDriftAndBudget() {
+        let draft = StrategyParser.parse("Invest $150 each month in 60% VTI, 20% VXUS and 20% BND. Rebalance when allocations drift by 5 points, with a $5,000 budget.").draft
+        XCTAssertEqual(draft.spec.monthlyInvestment?.amount, 150)
+        XCTAssertEqual(draft.spec.allocation?.driftThresholdPct, 5)
+        XCTAssertEqual(draft.spec.allocation?.targets, ["us:VTI": 60, "us:VXUS": 20, "us:BND": 20])
+        XCTAssertNil(draft.spec.rebalance)
+        XCTAssertEqual(draft.budget, 5_000)
+        XCTAssertTrue(StrategyValidator.isValid(draft.spec))
+        let incomplete = StrategyParser.parse("Invest a fixed amount every month into a diversified ETF portfolio and rebalance when allocations drift beyond my threshold.").draft.spec
+        XCTAssertEqual(incomplete.monthlyInvestment?.amount, 0)
+        XCTAssertEqual(incomplete.allocation?.driftThresholdPct, 0)
+        XCTAssertFalse(StrategyValidator.isValid(incomplete))
+    }
+
     func testExplicitConditionsPreserveThresholdsDirectionsAndGrouping() {
         let parsed = StrategyParser.parse("Buy ETH when RSI(7) drops below 28.5 and price is above its 20-day EMA, or RSI(7) crosses above 35. Sell when RSI rises above 65, with a $5,000 budget, 8% per position and an 18% max drawdown.")
         XCTAssertEqual(parsed.draft.spec.universe.map(\.id), ["crypto:ETH"])

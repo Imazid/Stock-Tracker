@@ -57,6 +57,11 @@ function money(x: number, currency = "USD"): string {
   return Currencies.symbol(currency) + new Intl.NumberFormat("en-US", options).format(x);
 }
 
+const driftPatterns = [
+  String.raw`\b(?:drift(?:s|ed)?(?:\s+by)?(?:\s+(?:beyond|above|over|exceeds?|more than|of))?|threshold(?:\s+of)?)\s+(\d+(?:\.\d+)?)\s*(?:%|percentage points?|percent|points?)`,
+  String.raw`\b(\d+(?:\.\d+)?)\s*(?:%|percentage points?|percent|points?)\s+drift(?:\s+threshold)?`,
+];
+
 export function parse(text: string): ParsedAgentRequest {
   const lower = text.toLowerCase();
   const understood: string[] = [];
@@ -80,6 +85,17 @@ export function parse(text: string): ParsedAgentRequest {
     assumptions.push(...explicit.notes);
     if (spec.entry) understood.push(`Buy when ${conditionLabel(spec.entry, timeframe)}`);
     if (spec.exit && spec.exit.conditions?.length !== 0) understood.push(`Sell when ${conditionLabel(spec.exit, timeframe)}`);
+  } else if (has("rebalanc") && has("every month", "each month", "monthly")) {
+    templateID = "etfRebalance"; name = "Monthly ETF Investing Agent";
+    const funds = pick ?? UniverseCatalog.balancedETFs;
+    spec = Templates.monthlyInvesting(funds, 0);
+    const captured = firstMatch(String.raw`\b(?:invest|buy|allocate|contribute|put)\s+(?:a\s+fixed\s+amount\s+of\s+)?((?:a?\$\s*[\d,]+(?:\.\d+)?\s*[km]?(?![a-z])|[\d,]+(?:\.\d+)?\s*[km]?\s*(?:usd|aud|dollars)\b))`, lower);
+    const amount = captured === undefined ? undefined : dollarAmounts(captured)[0];
+    if (amount === undefined) assumptions.push("Enter the fixed monthly amount before running the strategy.");
+    else {
+      if (spec.monthlyInvestment) spec.monthlyInvestment.amount = amount;
+      understood.push(`Monthly investment: ${money(amount, funds[0]?.currency)} total`);
+    }
   } else if (has("rebalanc")) {
     templateID = "etfRebalance"; name = "ETF Rebalancing Agent";
     spec = Templates.etfRebalancing(pick ?? UniverseCatalog.balancedETFs);
@@ -119,6 +135,26 @@ export function parse(text: string): ParsedAgentRequest {
     spec = Templates.trendFollowing(pick ?? UniverseCatalog.broadETFs);
     assumptions.push("No strategy was named, so this uses trend following.");
   }
+  const allocation = spec.monthlyInvestment?.allocation ?? spec.rebalance;
+  if (allocation) {
+    const drift = driftPatterns.map((pattern) => firstMatch(pattern, lower)).find((value) => value !== undefined);
+    if (drift !== undefined) {
+      allocation.driftThresholdPct = Number(drift);
+      understood.push(`Rebalance at ${trimNumber(Number(drift))} percentage points of drift`);
+    } else if (spec.monthlyInvestment !== undefined) {
+      if (has("threshold", "drift")) {
+        allocation.driftThresholdPct = 0;
+        assumptions.push("Enter the drift threshold before running the strategy.");
+      } else assumptions.push("Used a 5 percentage point drift threshold.");
+    }
+    if (spec.monthlyInvestment !== undefined) {
+      const weights = fundsWeights(text, spec.universe);
+      if (Object.keys(weights).length) {
+        allocation.targets = weights;
+        understood.push("Used the ETF weights in your description.");
+      } else assumptions.push("Used the default target weights. Review the ETF allocation before starting.");
+    }
+  }
   understood.push(`Strategy: ${spec.title}`);
   if (spec.followsLedgerPositions) {
     understood.push("Assets: the positions in the portfolio it guards");
@@ -131,7 +167,11 @@ export function parse(text: string): ParsedAgentRequest {
   const currency = spec.universe[0]?.currency ?? "USD";
   const formattedMoney = (x: number): string => money(x, currency);
   if (currency !== "USD") assumptions.push(`These assets trade in ${currency}, so the agent's practice money is held in ${currency}.`);
-  const amounts = dollarAmounts(text);
+  const budgetAmount = spec.monthlyInvestment !== undefined ? (
+    firstMatch(String.raw`((?:a?\$\s*[\d,]+(?:\.\d+)?\s*[km]?|[\d,]+(?:\.\d+)?\s*(?:dollars|usd|aud)))\s+(?:starting\s+|paper\s+|practice\s+)?budget\b`, lower) ??
+    firstMatch(String.raw`\bbudget(?:\s+of)?\s+((?:a?\$\s*[\d,]+(?:\.\d+)?\s*[km]?|[\d,]+(?:\.\d+)?\s*(?:dollars|usd|aud)))`, lower)
+  ) : text;
+  const amounts = budgetAmount ? dollarAmounts(budgetAmount) : [];
   let budget = Currencies.defaultBudget(currency);
   if (amounts.length > 0) {
     const largest = Math.max(...amounts);
@@ -156,7 +196,9 @@ export function parse(text: string): ParsedAgentRequest {
 
   let maxPositionPct = templateDefaults[templateID]?.maxPositionPct ?? 10;
   const policyEdits: ((policy: RiskPolicy) => void)[] = [];
-  for (const { value, meaning } of percentages(lower)) {
+  const riskText = spec.monthlyInvestment === undefined ? lower :
+    driftPatterns.reduce((text, pattern) => text.replace(new RegExp(pattern, "g"), ""), lower);
+  for (const { value, meaning } of percentages(riskText)) {
     switch (meaning) {
       case "trailingStop":
         spec.protections.trailingStopPct = value;
@@ -377,6 +419,17 @@ function universe(text: string): { instruments: Instrument[]; unknown: string[];
   }
   if (out.length > StrategyValidator.maxUniverse) out = out.slice(0, StrategyValidator.maxUniverse);
   return { instruments: out, unknown, note: labels.join(" ") };
+}
+
+function fundsWeights(text: string, funds: Instrument[]): Record<string, number> {
+  const targets: Record<string, number> = {};
+  for (const fund of funds) {
+    const ticker = fund.symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const weight = firstMatch(String.raw`\b(\d+(?:\.\d+)?)\s*%\s*(?:in\s+|to\s+)?\$?` + ticker + String.raw`\b`, text) ??
+      firstMatch(String.raw`\b` + ticker + String.raw`\s*(?:at|:|=)?\s*(\d+(?:\.\d+)?)\s*%`, text);
+    if (weight !== undefined) targets[instrumentID(fund)] = Number(weight);
+  }
+  return targets;
 }
 
 function dollarAmounts(text: string): number[] {

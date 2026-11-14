@@ -261,6 +261,15 @@ public enum AgentTemplates {
             rebalance: RebalanceConfig(targets: targets, driftThresholdPct: 5), reentryCooldownBars: 0)
     }
 
+    public static func monthlyInvesting(_ universe: [Instrument], amount: Double = 100) -> StrategySpec {
+        var spec = etfRebalancing(universe)
+        spec.title = "Monthly ETF investing"
+        spec.summary = "Invests practice cash monthly and restores the target ETF mix when weights drift."
+        spec.monthlyInvestment = spec.rebalance.map { MonthlyInvestment(amount: amount, allocation: $0) }
+        spec.rebalance = nil
+        return spec
+    }
+
     public static func cryptoMonitor(_ universe: [Instrument]) -> StrategySpec {
         StrategySpec(
             kind: .rules, title: "Crypto trend monitor",

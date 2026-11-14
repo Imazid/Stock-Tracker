@@ -388,7 +388,7 @@ public extension TradingEngine {
     internal mutating func rebalance(prepared: [(Instrument, [Bar], DataProvenance)], agentIndex: Int,
                                      run: inout AgentRun, now: Date) {
         let agent = state.agents[agentIndex]
-        guard let config = agent.spec.rebalance else { return }
+        guard let config = agent.spec.allocation else { return }
         guard agent.mode == .paper, let ledger = state.ledger(agent.ledgerID) else {
             run.steps.append(RunStep(kind: .note, outcome: .info, title: "Rebalancing needs a paper portfolio",
                                      detail: "Switch this agent to Paper trading to see its rebalancing trades."))
@@ -404,27 +404,65 @@ public extension TradingEngine {
         }
         var values: [String: Double] = [:]
         for id in config.targets.keys { values[id] = ledger.position(id)?.marketValue ?? 0 }
-        let trades = StrategyEvaluator.rebalanceTrades(config: config, values: values, equity: ledger.equity)
+        let monthly = agent.spec.monthlyInvestment != nil
+        var period: String?
+        var contribution = 0.0
+        if monthly {
+            let sessions = Set(config.targets.keys.compactMap { id in
+                available[id].flatMap { instrument, bars, _ in bars.last.map { calendar.dayKey(instrument.venue, $0.time) } }
+            })
+            let hasPending = state.proposals.contains { $0.agentID == agent.id && $0.status == .pending }
+                || state.orders.contains { $0.source.agentID == agent.id && $0.status.isOpen }
+            guard sessions.count == 1, let session = sessions.first, !hasPending else {
+                run.steps.append(RunStep(kind: .note, outcome: .info, title: "Monthly investing and rebalancing are waiting",
+                                         detail: "Wait for matching completed sessions and for open proposals or orders to resolve."))
+                return
+            }
+            let month = String(session.prefix(7))
+            period = month
+            let currentMonth = agent.spec.universe.first.map { String(calendar.dayKey($0.venue, now).prefix(7)) }
+            if month == currentMonth, month > (agent.lastMonthlyInvestmentPeriod ?? ""),
+               let amount = agent.spec.monthlyInvestment?.amount {
+                contribution = min(amount, max(ledger.cash, 0))
+                if contribution < amount {
+                    run.steps.append(RunStep(kind: .sizing, outcome: .warning, title: "Monthly amount limited by practice cash",
+                                             detail: "Available cash for this month's purchases is \(NumberText.money(contribution, currency: ledger.currency))."))
+                }
+            }
+        }
+        let invested = values.values.reduce(0, +)
+        let denominator = monthly ? invested : ledger.equity
+        let trades = monthly ? StrategyEvaluator.monthlyRebalanceTrades(config: config, values: values, contribution: contribution)
+            : StrategyEvaluator.rebalanceTrades(config: config, values: values, equity: ledger.equity)
         if trades.isEmpty {
             run.steps.append(RunStep(kind: .signal, outcome: .info, title: "Holdings are on target",
                                      detail: "Nothing has drifted more than \(Operand.trim(config.driftThresholdPct)) points from its target.",
                                      evidence: config.targets.sorted { $0.key < $1.key }.map { id, target in
                                          Evidence(label: id.split(separator: ":").last.map(String.init) ?? id,
-                                                  value: String(format: "%.1f%% (target %.1f%%)", (values[id] ?? 0) / max(ledger.equity, 0.01) * 100, target))
+                                                  value: String(format: "%.1f%% (target %.1f%%)", (values[id] ?? 0) / max(denominator, 0.01) * 100, target))
                                      }))
             return
         }
+        let proposalsBefore = run.proposalIDs.count
         for trade in trades {
             guard let (instrument, bars, provenance) = available[trade.instrumentID], let last = bars.last else { continue }
+            let headline = contribution > 0 ? "Monthly investment and allocation check" : "Rebalance"
+            let weight = monthly ? (values[instrument.id] ?? 0) / max(denominator, 0.01) * 100 : trade.currentPct
             let decision = SignalDecision(
                 action: trade.side == .buy ? .buy : .sell,
-                headline: String(format: "Rebalance: %@ is %.1f%% of the portfolio; the target is %.1f%%.", instrument.symbol, trade.currentPct, trade.targetPct),
-                evidence: [Evidence(label: "Current weight", value: String(format: "%.1f%%", trade.currentPct)),
+                headline: String(format: "%@: %@ is %.1f%% of the portfolio; the target is %.1f%%.", headline, instrument.symbol, weight, trade.targetPct),
+                evidence: [Evidence(label: "Current weight", value: String(format: "%.1f%%", weight)),
                            Evidence(label: "Target weight", value: String(format: "%.1f%%", trade.targetPct)),
                            Evidence(label: "Trade", value: "\(trade.side.rawValue.capitalized) \(NumberText.money(trade.notional, currency: ledger.currency))")],
                 barTime: last.time, close: last.close, exitReason: trade.side == .sell ? .rebalance : nil)
             handle(decision, instrument: instrument, provenance: provenance, targetNotional: trade.notional,
                    agentIndex: agentIndex, run: &run, now: now)
+        }
+        if contribution > 0, let period {
+            let created = Set(run.proposalIDs.dropFirst(proposalsBefore))
+            if state.proposals.contains(where: { created.contains($0.id) && $0.side == .buy && [.pending, .submitted].contains($0.status) }) {
+                state.agents[agentIndex].lastMonthlyInvestmentPeriod = period
+            }
         }
     }
 

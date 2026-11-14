@@ -327,6 +327,41 @@ public enum StrategyEvaluator {
         public var targetPct: Double
     }
 
+    /// Allocate a single monthly budget by weight, then measure drift against
+    /// the invested portion. One net order per ETF prevents a buy and sell on
+    /// the same decision bar. Unused practice cash stays uninvested.
+    public static func monthlyRebalanceTrades(config: RebalanceConfig, values: [String: Double],
+                                               contribution: Double) -> [RebalanceTrade] {
+        let ids = config.targets.keys.sorted()
+        let invested = ids.reduce(0.0) { $0 + (values[$1] ?? 0) }
+        let total = invested + contribution
+        guard total > 0 else { return [] }
+        // Once a weight breaches the threshold, restore the full allocation,
+        // including smaller counterpart trades that fund the breached weight.
+        let triggered = ids.contains { id in
+            invested > 0 && abs((values[id] ?? 0) / invested * 100 - (config.targets[id] ?? 0))
+                >= config.driftThresholdPct
+        }
+        let deltas = ids.map { id in
+            let current = values[id] ?? 0
+            let weight = config.targets[id] ?? 0
+            let delta = triggered ? total * weight / 100 - current : contribution * weight / 100
+            return RebalanceTrade(instrumentID: id, side: delta < 0 ? .sell : .buy,
+                                  notional: Rounding.floor(abs(delta), increment: 0.01),
+                                  currentPct: invested > 0 ? current / invested * 100 : 0, targetPct: weight)
+        }
+        let sells = deltas.filter { $0.side == .sell && $0.notional > 0 }
+        var available = Rounding.floor(contribution, increment: 0.01) + sells.reduce(0) { $0 + $1.notional }
+        let buys = deltas.filter { $0.side == .buy }.compactMap { trade -> RebalanceTrade? in
+            var order = trade
+            order.notional = min(order.notional, Rounding.money(available))
+            guard order.notional > 0 else { return nil }
+            available -= order.notional
+            return order
+        }
+        return sells + buys
+    }
+
     /// Trades that bring holdings back to target. Sells come first so their proceeds fund the buys.
     /// `values` is the market value of each holding by instrument id.
     public static func rebalanceTrades(config: RebalanceConfig, values: [String: Double], equity: Double) -> [RebalanceTrade] {

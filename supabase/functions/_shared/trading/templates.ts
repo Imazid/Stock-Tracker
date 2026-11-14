@@ -105,6 +105,13 @@ export function etfRebalancing(universe: Instrument[]): StrategySpec {
   });
 }
 
+export function monthlyInvesting(universe: Instrument[], amount = 100): StrategySpec {
+  const { rebalance, ...spec } = etfRebalancing(universe);
+  return { ...spec, title: "Monthly ETF investing",
+    summary: "Invests practice cash monthly and restores the target ETF mix when weights drift.",
+    monthlyInvestment: { amount, allocation: rebalance! } };
+}
+
 export function cryptoMonitor(universe: Instrument[]): StrategySpec {
   return makeSpec({
     kind: "rules", title: "Crypto trend monitor",

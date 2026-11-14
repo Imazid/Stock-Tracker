@@ -25,7 +25,7 @@ import { appendAudit, archiveAudit, type AuditActor, type AuditInput, uuidString
 import { LiveVenues, PaperBroker } from "./broker.ts";
 import * as Calendar from "./calendar.ts";
 import { Currencies } from "./currencies.ts";
-import { decide, decideDCA, type Evidence, rebalanceTrades, researchFacts, type SignalDecision } from "./evaluator.ts";
+import { decide, decideDCA, type Evidence, monthlyRebalanceTrades, rebalanceTrades, researchFacts, type SignalDecision } from "./evaluator.ts";
 import {
   applyFill, drawdownPct, equity as ledgerEquity, type Ledger, ledgerDayKey, makeLedger, mark as markLedger, marketValue,
   averageCost, position as ledgerPosition, rolledCopy,
@@ -1309,7 +1309,8 @@ export class TradingEngine {
   private rebalance(prepared: { instrument: Instrument; bars: Bar[]; provenance: DataProvenance }[], agentID: string, run: AgentRun, now: number): void {
     const agent = this.agent(agentID);
     if (!agent) return;
-    const config = agentSpec(agent).rebalance;
+    const spec = agentSpec(agent);
+    const config = spec.monthlyInvestment?.allocation ?? spec.rebalance;
     if (!config) return;
     const ledger = this.ledger(agent.ledgerID);
     if (agent.mode !== "paper" || !ledger) {
@@ -1331,26 +1332,57 @@ export class TradingEngine {
     }
     const equity = ledgerEquity(ledger);
     const currency = ledger.currency;
-    const trades = rebalanceTrades(config, values, equity);
+    const monthly = spec.monthlyInvestment !== undefined;
+    let contribution = 0;
+    let period: string | undefined;
+    if (monthly) {
+      const sessions = new Set(targetIDs.map((id) => {
+        const { instrument, bars } = available.get(id)!;
+        return Calendar.dayKey(instrument.venue, bars[bars.length - 1].time);
+      }));
+      const hasPending = this.state.proposals.some((proposal) => proposal.agentID === agent.id && proposal.status === "pending") ||
+        this.state.orders.some((order) => order.source.agentID === agent.id && isOpenStatus(order.status));
+      if (sessions.size !== 1 || hasPending) {
+        run.steps.push(this.step("note", "info", "Monthly investing and rebalancing are waiting", {
+          detail: "Wait for matching completed sessions and for open proposals or orders to resolve.",
+        }));
+        return;
+      }
+      period = [...sessions][0].slice(0, 7);
+      const currentMonth = Calendar.dayKey(spec.universe[0].venue, now).slice(0, 7);
+      if (period === currentMonth && period > (agent.lastMonthlyInvestmentPeriod ?? "") && spec.monthlyInvestment !== undefined) {
+        contribution = Math.min(spec.monthlyInvestment.amount, Math.max(ledger.cash, 0));
+        if (contribution < spec.monthlyInvestment.amount) {
+          run.steps.push(this.step("sizing", "warning", "Monthly amount limited by practice cash", {
+            detail: `Available cash for this month's purchases is ${NumberText.money(contribution, currency)}.`,
+          }));
+        }
+      }
+    }
+    const denominator = monthly ? Object.values(values).reduce((sum, value) => sum + value, 0) : equity;
+    const trades = monthly ? monthlyRebalanceTrades(config, values, contribution) : rebalanceTrades(config, values, equity);
     if (trades.length === 0) {
       run.steps.push(this.step("signal", "info", "Holdings are on target", {
         detail: `Nothing has drifted more than ${trimNumber(config.driftThresholdPct)} points from its target.`,
         evidence: targetIDs.map((id) => ({
           label: id.split(":").pop() ?? id,
-          value: `${cFixed((values[id] ?? 0) / Math.max(equity, 0.01) * 100, 1)}% (target ${cFixed(config.targets[id], 1)}%)`,
+          value: `${cFixed((values[id] ?? 0) / Math.max(denominator, 0.01) * 100, 1)}% (target ${cFixed(config.targets[id], 1)}%)`,
         })),
       }));
       return;
     }
+    const proposalsBefore = run.proposalIDs.length;
     for (const trade of trades) {
       const entry = available.get(trade.instrumentID);
       const last = entry?.bars[entry.bars.length - 1];
       if (!entry || !last) continue;
+      const headline = contribution > 0 ? "Monthly investment and allocation check" : "Rebalance";
+      const weight = monthly ? (values[trade.instrumentID] ?? 0) / Math.max(denominator, 0.01) * 100 : trade.currentPct;
       const decision: SignalDecision = {
         action: trade.side === "buy" ? "buy" : "sell",
-        headline: `Rebalance: ${entry.instrument.symbol} is ${cFixed(trade.currentPct, 1)}% of the portfolio; the target is ${cFixed(trade.targetPct, 1)}%.`,
+        headline: `${headline}: ${entry.instrument.symbol} is ${cFixed(weight, 1)}% of the portfolio; the target is ${cFixed(trade.targetPct, 1)}%.`,
         evidence: [
-          { label: "Current weight", value: `${cFixed(trade.currentPct, 1)}%` },
+          { label: "Current weight", value: `${cFixed(weight, 1)}%` },
           { label: "Target weight", value: `${cFixed(trade.targetPct, 1)}%` },
           { label: "Trade", value: `${capitalized(trade.side)} ${NumberText.money(trade.notional, currency)}` },
         ],
@@ -1358,6 +1390,11 @@ export class TradingEngine {
       };
       if (trade.side === "sell") decision.exitReason = "rebalance";
       this.handle(decision, entry.instrument, entry.provenance, trade.notional, agentID, run, now);
+    }
+    if (contribution > 0 && period) {
+      const created = new Set(run.proposalIDs.slice(proposalsBefore));
+      if (this.state.proposals.some((proposal) => created.has(proposal.id) && proposal.side === "buy" &&
+        (proposal.status === "pending" || proposal.status === "submitted"))) agent.lastMonthlyInvestmentPeriod = period;
     }
   }
 
