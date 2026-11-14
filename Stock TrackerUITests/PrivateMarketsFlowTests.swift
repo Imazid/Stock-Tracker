@@ -245,17 +245,21 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testProviderDistributionAppearsInMonitoringInbox() throws {
+    func testProviderDistributionAppearsInMonitoringInbox() async throws {
         try launchWithLocalSession("PRIVATE_DISTRIBUTION_TEST_SESSION")
         openPrivateMarkets()
         let updates = app.buttons["private.companyUpdates"]
         let monitor = app.switches["private.monitor.enable"]
-        for _ in 0..<3 where !monitor.isEnabled {
-            if updates.isHittable { updates.tap() }
+        for _ in 0..<3 {
+            if updates.exists && updates.isHittable { updates.tap() }
             if monitor.waitForExistence(timeout: 4), monitor.isEnabled { break }
         }
+        XCTAssertTrue(monitor.exists, app.debugDescription)
         XCTAssertTrue(monitor.isEnabled, app.debugDescription)
-        if monitor.value as? String != "1" { monitor.tap() }
+        if monitor.value as? String != "1" {
+            let control = monitor.switches.firstMatch
+            if control.exists { control.tap() } else { monitor.tap() }
+        }
         let alert = app.descendants(matching: .any)["private.monitor.alert.distribution"].firstMatch
         for _ in 0..<3 where !alert.exists {
             app.swipeUp()
