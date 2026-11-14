@@ -17,7 +17,7 @@ final class TradingFlowTests: XCTestCase {
         app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
                                "-app_theme_mode", "Light"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Agents"].waitForExistence(timeout: 30), "The app should open on the tabs")
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 30), "The app should open on the tabs")
     }
 
     // MARK: - Helpers
@@ -87,12 +87,10 @@ final class TradingFlowTests: XCTestCase {
 
     // MARK: - Tests
 
-    /// The tab bar has exactly the five places, labelled.
-    func testFiveLabelledTabs() {
-        for name in ["Home", "Markets", "Portfolio", "Agents", "Activity"] {
-            XCTAssertTrue(app.tabBars.buttons[name].exists, "\(name) tab")
+    func testWorkspaceTabsAndSearchAreReachable() {
+        for name in ["Home", "Markets", "Portfolio", "Private Markets", "Agents", "Activity"] {
+            XCTAssertTrue(app.open(name), "\(name) is reachable")
         }
-        XCTAssertFalse(app.tabBars.buttons["More"].exists, "No overflow tab")
         XCTAssertTrue(app.open("Search"), "Search lives in Markets")
         XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 5))
         attach("tabs-search")
@@ -195,8 +193,20 @@ final class TradingFlowTests: XCTestCase {
         card.tap()
         XCTAssertTrue(element("agent.detail").waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["agent.resume"].isEnabled, "Resume is blocked while pause-all is on")
-        app.navigationBars.buttons.firstMatch.tap()
-        tap("trading.pausedAllBanner.review")
+        let agentsBar = app.navigationBars.matching(NSPredicate(format: "identifier != %@", "More"))
+        let backToAgents = agentsBar.buttons["Agents"].firstMatch
+        if backToAgents.exists {
+            backToAgents.tap()
+        } else {
+            app.swipeRight(velocity: .slow)
+        }
+        if !element("trading.pausedAllBanner").exists {
+            XCTAssertTrue(app.open("Agents"))
+        }
+        let review = app.buttons["Review pause-all"]
+        for _ in 0..<6 where !review.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(review.isHittable, app.debugDescription)
+        review.tap()
         tap("pauseAll.release")
         XCTAssertTrue(app.buttons["agents.card.Trend Following Agent"].label.contains("Paused"))
         app.buttons["agents.card.Trend Following Agent"].tap()
