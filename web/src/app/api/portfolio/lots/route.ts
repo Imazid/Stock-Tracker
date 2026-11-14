@@ -27,6 +27,9 @@ const transferColumns = [
   "Sending account", "Receiving account", "Transfer statement reference", "Receiving snapshot ID",
   "Acquisition transfer IDs", "Original purchase date (Sydney)",
 ];
+const brokerTransferColumns = ["Transfer SnapTrade sending reference", "Transfer SnapTrade receiving reference",
+  "Transfer SnapTrade reported sent date", "Transfer SnapTrade reported received date", "Transfer SnapTrade reported symbol",
+  "Transfer SnapTrade reported exchange", "Transfer SnapTrade reported shares"];
 const audColumns = [
   "Purchase cost (AUD)", "Purchase fees (AUD)", "Sale proceeds (AUD)", "Sale fees (AUD)", "Estimated FIFO result (AUD)",
   "Purchase input currency", "Purchase FX (AUD per input currency unit)", "Purchase FX observation date", "Purchase FX source",
@@ -144,9 +147,10 @@ export async function GET(request: Request) {
     ...(splits.some((split) => split.snaptrade_activity_id) ? brokerSplitColumns : [])];
   const hasReinvestments = acquisitions.length > 0;
   const hasBrokerReinvestments = acquisitions.some((acquisition) => acquisition.reinvestment?.snaptrade_activity_id);
+  const hasBrokerTransfers = transfers.some((transfer) => transfer.snaptrade_reference);
   const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...actionColumns,
     ...(hasReinvestments ? reinvestmentColumns : []), ...(hasBrokerReinvestments ? brokerReinvestmentColumns : []),
-    ...(transfers.length ? transferColumns : [])];
+    ...(transfers.length ? transferColumns : []), ...(hasBrokerTransfers ? brokerTransferColumns : [])];
   const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
   const ordering = hasReinvestments ? " Date-only reinvestment acquisitions follow timestamped trades on the same Sydney day. Check same-day sales against the actual allotment records." : "";
   const transferOrdering = transfers.length
@@ -161,6 +165,7 @@ export async function GET(request: Request) {
   for (const row of rows) {
     if ("transfer" in row) {
       const { transfer } = row;
+      const broker = transfer.snaptrade_reference;
       const fields: Record<string, string | null> = {
         "Record type": row.kind,
         "Holding ID": transfer.from_holding_id,
@@ -184,6 +189,13 @@ export async function GET(request: Request) {
         "Receiving account": transfer.to_account,
         "Transfer statement reference": transfer.statement_reference || null,
         "Receiving snapshot ID": transfer.receiving_snapshot_id,
+        "Transfer SnapTrade sending reference": broker?.sentId ?? null,
+        "Transfer SnapTrade receiving reference": broker?.receivedId ?? null,
+        "Transfer SnapTrade reported sent date": broker?.sentOn ?? null,
+        "Transfer SnapTrade reported received date": broker?.receivedOn ?? null,
+        "Transfer SnapTrade reported symbol": broker?.symbol ?? null,
+        "Transfer SnapTrade reported exchange": broker?.exchange ?? null,
+        "Transfer SnapTrade reported shares": broker?.shares ?? null,
       };
       records.push(reportColumns.map((column) => csvField(fields[column] ?? null)).join(","));
       continue;
@@ -253,6 +265,7 @@ export async function GET(request: Request) {
         if (column === "Original purchase date (Sydney)") return csvField(purchaseDay ?? null);
         return "";
       }));
+      if (hasBrokerTransfers) cells.push(...brokerTransferColumns.map(() => ""));
     }
     records.push(cells.join(","));
   }

@@ -317,6 +317,34 @@ Deno.test("activity uses the signed root endpoint and offers only eligible dated
   assertFalse(JSON.stringify(res.body).includes("broker-transaction"));
 });
 
+Deno.test("filtered stock transfer activity uses broker direction, account, listing and precise shares", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });
+  const day = "2026-07-01";
+  const row = { id: "transfer", trade_date: day, units: -2.125, symbol: { symbol: "BHP.AX", exchange: { mic_code: "XASX" } } };
+  const { deps, calls } = harness(() => json(200, { data: [
+    { ...row, type: "INTERNAL_ASSET_TRANSFER_OUT" },
+    { ...row, id: "incoming", type: "INTERNAL_ASSET_TRANSFER_IN", units: 2.125 },
+    { ...row, id: "reversal", type: "INTERNAL_ASSET_TRANSFER_IN" },
+    { ...row, id: "option", type: "INTERNAL_ASSET_TRANSFER_OUT", option_symbol: { ticker: "BHP option" } },
+    { ...row, id: "external", type: "EXTERNAL_ASSET_TRANSFER_OUT" },
+    { ...row, id: "missing-listing", type: "INTERNAL_ASSET_TRANSFER_OUT", symbol: { symbol: "BHP.AX" } },
+  ], pagination: { offset: 0, total: 6 } }), store);
+  deps.readActivityCache = () => { throw new Error("Filtered reads must use live provider pagination"); };
+  const result = await handleSnapTradeRequest(USER, { operation: "accountActivities",
+    params: { accountId: ACCOUNT, startDate: day, endDate: day, stockTransfersOnly: true, preferCached: true },
+  }, deps);
+  assertEquals(calls[0].url.searchParams.get("type"), "INTERNAL_ASSET_TRANSFER_IN,INTERNAL_ASSET_TRANSFER_OUT");
+  assertEquals(result.status, 200);
+  const { activities, omitted, nextOffset } = result.body as { activities: Record<string, unknown>[]; omitted: number; nextOffset: number | null };
+  assertEquals(omitted, 1);
+  assertEquals(nextOffset, null);
+  assertEquals(activities.map((activity) => activity.stockTransfer), [
+    { accountId: ACCOUNT, direction: "sent", symbol: "BHP.AX", exchange: "XASX", shares: "2.125" },
+    { accountId: ACCOUNT, direction: "received", symbol: "BHP.AX", exchange: "XASX", shares: "2.125" },
+  ]);
+});
+
 Deno.test("dividend reinvestment preserves the reported date, signed amount and units as reference data", async () => {
   const store = new MemoryStore();
   store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });

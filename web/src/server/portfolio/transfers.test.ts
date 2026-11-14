@@ -2,6 +2,31 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { StockSplit } from "../../lib/portfolio-splits.ts";
 import type { StockTransfer, TransferHolding } from "../../lib/portfolio-transfers.ts";
+import { matchBrokerStockTransfers, type BrokerStockMovement } from "../../lib/broker-stock-transfers.ts";
+
+test("matches unique broker legs to separate holdings and skips ambiguous, reversed and unlisted pairs", () => {
+  const holding = (id: string, exchange = "ASX"): TransferHolding => ({
+    id, asset_symbol: "BHP", asset_exchange: exchange, asset_kind: "Stock", date_added: "2026-01-01", deleted_at: null,
+    broker_account: { account_id: id, label: id, institution: id, observed_at: "2026-07-03", tracking: true },
+  });
+  const movement = (accountId: string, direction: "sent" | "received", date: string): BrokerStockMovement => ({
+    id: accountId + direction, date, stockTransfer: { accountId, direction, symbol: "BHP.AX", exchange: "XASX", shares: "2.25" },
+  });
+  const source = holding("source");
+  const destination = holding("destination");
+  const sent = movement(source.id, "sent", "2026-07-01");
+  const received = movement(destination.id, "received", "2026-07-03");
+  const holdings = [source, destination];
+  const [match] = matchBrokerStockTransfers([sent, sent, received], holdings);
+  assert.deepEqual(match.reference, { sentId: sent.id, receivedId: received.id, sentOn: sent.date, receivedOn: received.date,
+    fromAccountId: source.id, toAccountId: destination.id, symbol: "BHP.AX", exchange: "XASX", shares: "2.25" });
+  assert.deepEqual(matchBrokerStockTransfers([sent, received, movement("untracked", "received", "2026-07-04")], holdings), []);
+  assert.deepEqual(matchBrokerStockTransfers([sent, received, movement("untracked", "sent", "2026-07-02")], holdings), []);
+  assert.deepEqual(matchBrokerStockTransfers([sent, { ...received, date: "2026-06-30" }], holdings), []);
+  assert.deepEqual(matchBrokerStockTransfers([sent, { ...received, date: "2026-07-09" }], holdings), []);
+  assert.deepEqual(matchBrokerStockTransfers([sent, received], [source, holding("destination", "NYSE")]), []);
+  assert.deepEqual(matchBrokerStockTransfers([sent, received], [...holdings, { ...source, id: "duplicate" }]), []);
+});
 import { calculateLots, lotNumber, UNIT_DECIMALS } from "./lots.ts";
 import type { TransactionRow } from "./transactions.ts";
 
