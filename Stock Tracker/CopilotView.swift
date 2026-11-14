@@ -364,7 +364,7 @@ private struct CopilotScreen: View {
             }
             .accessibilityIdentifier("copilot.card.privateScenario")
 
-        case .privateUpdates(_, let response):
+        case .privateUpdates(let id, let response):
             if cloudAuth.userId == response.owner {
                 TradingSection(title: LocalizedStringKey(response.scope.title)) {
                     if let report = response.report, let finding = report.findings.first {
@@ -375,6 +375,17 @@ private struct CopilotScreen: View {
                             PrivateSavedReportView(id: report.id, owner: response.owner, cachedReport: report)
                         }
                         .accessibilityIdentifier("copilot.privateUpdates.report")
+                    } else if response.offerSummary && !response.updates.isEmpty {
+                        Text("A summary sends these published updates to OpenAI or Google Gemini.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("Send sources and summarise") {
+                            Task { await engine.summarisePrivateUpdates(card: id) }
+                        }
+                        .disabled(engine.isWorking)
+                        .accessibilityIdentifier("copilot.privateUpdates.send")
+                        if let error = response.summaryError {
+                            Text(error).font(.footnote).foregroundStyle(.secondary)
+                        }
                     }
                     ForEach(response.updates) { item in
                         VStack(alignment: .leading, spacing: DS.Space.xs) {

@@ -440,6 +440,9 @@ Deno.serve(async (req) => {
     }
     const userId = await authenticatedUserId(req, admin);
     if (!userId) return errorResponse(401, "UNAUTHENTICATED", "Sign in first.");
+    if ((body.action === "discover" || body.action === "research") && body.model_consent !== true) {
+      return errorResponse(403, "AI_CONSENT_REQUIRED", "Allow Stock Tracker to send this request to the AI provider.");
+    }
     // PostgreSQL UUIDs are case-insensitive. The encryption context is case-sensitive.
     for (const key of ["id", "opportunity_id"]) {
       const value = body[key];

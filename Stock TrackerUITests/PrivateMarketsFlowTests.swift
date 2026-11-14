@@ -350,6 +350,13 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(suggestion.waitForExistence(timeout: 5))
         suggestion.tap()
 
+        let sendSources = app.buttons["copilot.privateUpdates.send"]
+        for _ in 0..<4 where !sendSources.isHittable {
+            if !sendSources.waitForExistence(timeout: 5) || !sendSources.isHittable { app.swipeUp() }
+        }
+        XCTAssertTrue(sendSources.isHittable, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["copilot.privateUpdates.ai"].firstMatch.exists)
+        sendSources.tap()
         let summary = app.descendants(matching: .any)["copilot.privateUpdates.ai"].firstMatch
         XCTAssertTrue(summary.waitForExistence(timeout: 25), app.debugDescription)
         let source = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Capability X began trading on ASX")).firstMatch
@@ -766,7 +773,13 @@ final class PrivateMarketsFlowTests: XCTestCase {
         }
         let run = app.buttons["Ask a question"]
         for _ in 0..<4 where !run.isHittable { app.swipeUp() }
-        XCTAssertTrue(run.isHittable && run.isEnabled, app.debugDescription)
+        XCTAssertTrue(run.isHittable, app.debugDescription)
+        XCTAssertFalse(run.isEnabled)
+        let consentRow = app.descendants(matching: .any)["private.research.modelConsent"].firstMatch
+        let consent = consentRow.switches.firstMatch
+        XCTAssertTrue(consentRow.exists, app.debugDescription)
+        (consent.exists ? consent : consentRow).tap()
+        XCTAssertTrue(run.isEnabled, app.debugDescription)
     }
 
     @MainActor
@@ -864,6 +877,32 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(error.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(error.label.contains("awaiting approval"))
         XCTAssertFalse(open.exists)
+    }
+
+    @MainActor
+    func testCatalogueAISearchRequiresConsentForEachSubmission() throws {
+        try launchWithLocalSession("PRIVATE_DISCOVERY_CONSENT_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.magnifyingglass"].tap()
+        let entry = app.buttons["Search the catalogue with AI"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 8))
+        entry.tap()
+
+        let query = app.descendants(matching: .any)["private.discover.question"].firstMatch
+        XCTAssertTrue(query.waitForExistence(timeout: 8))
+        query.tap()
+        query.typeText("Find published healthcare funding rounds")
+        let submit = app.buttons["Search published opportunities"]
+        XCTAssertTrue(submit.exists)
+        XCTAssertFalse(submit.isEnabled)
+        let consentRow = app.descendants(matching: .any)["private.discover.modelConsent"].firstMatch
+        let consent = consentRow.switches.firstMatch
+        XCTAssertTrue(consentRow.exists)
+        (consent.exists ? consent : consentRow).tap()
+        XCTAssertTrue(submit.isEnabled)
+        submit.tap()
+        XCTAssertTrue(app.staticTexts["No published opportunities match these filters."].waitForExistence(timeout: 8))
+        XCTAssertFalse(submit.isEnabled)
     }
 
     @MainActor

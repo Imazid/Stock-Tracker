@@ -428,6 +428,7 @@ private struct PrivateDiscoverySearchView: View {
 
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var question = ""
+    @State private var modelConsent = false
     @State private var answer: Results?
     @State private var submitted: String?
     @State private var error: String?
@@ -440,8 +441,11 @@ private struct PrivateDiscoverySearchView: View {
                           prompt: Text("Find closed Australian healthcare rounds"), axis: .vertical)
                     .lineLimit(2...4)
                     .accessibilityIdentifier("private.discover.question")
+                Toggle("Send my search to OpenAI or Google Gemini", isOn: $modelConsent)
+                    .disabled(searchTask != nil)
+                    .accessibilityIdentifier("private.discover.modelConsent")
                 Button("Search published opportunities", action: search)
-                    .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || question.utf16.count > 600 || searchTask != nil)
+                    .disabled(!canSearch)
                 if searchTask != nil { ProgressView("Checking published opportunities") }
                 if let error { Text(error).foregroundStyle(.secondary) }
             }
@@ -469,6 +473,19 @@ private struct PrivateDiscoverySearchView: View {
         .navigationTitle("Catalogue Search")
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { searchTask?.cancel() }
+        .onChange(of: auth.userId) { _, _ in
+            searchTask?.cancel()
+            question = ""
+            modelConsent = false
+            answer = nil
+            submitted = nil
+            error = nil
+        }
+    }
+
+    private var canSearch: Bool {
+        modelConsent && !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            question.utf16.count <= 600 && searchTask == nil
     }
 
     @ViewBuilder
@@ -492,14 +509,16 @@ private struct PrivateDiscoverySearchView: View {
     }
 
     private func search() {
-        guard let owner = auth.userId, searchTask == nil else { return }
+        guard let owner = auth.userId, canSearch else { return }
         let query = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fields: [String: Any] = ["question": query, "model_consent": modelConsent]
+        modelConsent = false
         answer = nil
         error = nil
         searchTask = Task {
             defer { searchTask = nil }
             do {
-                let result: Results = try await PrivateMarketsAPI.request("discover", ["question": query], expectedUserID: owner)
+                let result: Results = try await PrivateMarketsAPI.request("discover", fields, expectedUserID: owner)
                 try Task.checkCancellation()
                 guard auth.userId == owner else { return }
                 submitted = query

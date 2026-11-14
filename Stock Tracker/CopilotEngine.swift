@@ -64,8 +64,10 @@ struct PrivateUpdatesAnswer {
     let owner: UUID
     let scope: PrivateUpdateScope
     let updates: [PrivateCompanyUpdate]
-    let report: PrivateResearchReport?
+    let offerSummary: Bool
+    var report: PrivateResearchReport?
     var notice: String?
+    var summaryError: String?
 }
 
 @MainActor
@@ -146,6 +148,36 @@ final class CopilotEngine: ObservableObject {
     }
 
     func dismiss(card: UUID) { resolvedCards[card] = "Cancelled" }
+
+    func summarisePrivateUpdates(card: UUID) async {
+        guard !isWorking,
+              let message = messages.firstIndex(where: { $0.cards.contains(where: { $0.id == card }) }),
+              let cardIndex = messages[message].cards.firstIndex(where: { $0.id == card }),
+              case .privateUpdates(_, var response) = messages[message].cards[cardIndex],
+              auth.userId == response.owner, response.offerSummary, response.report == nil, !response.updates.isEmpty else { return }
+
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let summary: PrivateResearchReport = try await PrivateMarketsAPI.request("research", [
+                "mode": "question", "question": "Summarise these public company disclosures. Explain what changed and identify uncertainties in the sources.",
+                "model_consent": true, "document_ids": [], "opportunity_ids": [],
+                "announcement_ids": response.updates.map { $0.id.uuidString }
+            ], expectedUserID: response.owner)
+            if summary.findings.first?.evidence.isEmpty == false {
+                response.report = summary
+                response.summaryError = nil
+            } else {
+                response.summaryError = "The AI summary returned no citations. You can still read the published sources."
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            response.summaryError = "The AI summary is unavailable. You can still read the published sources."
+        }
+        guard auth.userId == response.owner, !Task.isCancelled else { return }
+        messages[message].cards[cardIndex] = .privateUpdates(id: card, response: response)
+    }
 
     // MARK: - Rules
 
@@ -243,33 +275,12 @@ final class CopilotEngine: ObservableObject {
                 .filter { $0.isResearchSource && $0.activityAt >= recent && $0.activityAt <= now }
             let selected = Array(updates.prefix(3))
             guard auth.userId == owner, !Task.isCancelled else { throw CancellationError() }
-            var report: PrivateResearchReport?
-            var notices: [String] = []
-            if scope != .followed, privateMarkets.providerError != nil {
-                notices.append("Some provider holdings could not be refreshed.")
-            }
-            if summarise && !selected.isEmpty {
-                do {
-                    let summary: PrivateResearchReport = try await PrivateMarketsAPI.request("research", [
-                        "mode": "question", "question": "Summarise these public company disclosures. Explain what changed and identify uncertainties in the sources.",
-                        "document_ids": [], "opportunity_ids": [], "announcement_ids": selected.map { $0.id.uuidString }
-                    ], expectedUserID: owner)
-                    if summary.findings.first?.evidence.isEmpty == false {
-                        report = summary
-                    } else {
-                        notices.append("The AI summary returned no citations. You can still read the published sources.")
-                    }
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    notices.append("The AI summary is unavailable. You can still read the published sources.")
-                }
-            }
-            guard auth.userId == owner, !Task.isCancelled else { throw CancellationError() }
+            let notice = scope != .followed && privateMarkets.providerError != nil
+                ? "Some provider holdings could not be refreshed." : nil
             return .init(isUser: false, text: selected.isEmpty ? "I found no published updates in the last 30 days." :
                 "Here are the latest published updates from the last 30 days.",
-                cards: [.privateUpdates(id: UUID(), response: .init(owner: owner, scope: scope, updates: selected, report: report,
-                                                                  notice: notices.isEmpty ? nil : notices.joined(separator: " ")))])
+                cards: [.privateUpdates(id: UUID(), response: .init(owner: owner, scope: scope, updates: selected,
+                                                                  offerSummary: summarise, notice: notice))])
         } catch is CancellationError {
             return .init(isUser: false, text: "The company update request ended.")
         } catch {

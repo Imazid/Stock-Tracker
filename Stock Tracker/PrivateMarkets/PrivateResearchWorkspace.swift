@@ -23,7 +23,8 @@ struct PrivateResearchWorkspace: View {
     @State private var selectedDocuments: Set<UUID> = []
     @State private var selectedAnnouncements: Set<UUID> = []
     @State private var question = ""
-    @State private var consent = false
+    @State private var modelConsent = false
+    @State private var excerptPermission = false
     @State private var busy = false
     @State private var loading = false
     @State private var result: PrivateResearchReport?
@@ -117,10 +118,14 @@ struct PrivateResearchWorkspace: View {
                         Toggle(item.title, isOn: selection(item.id, in: $selectedDocuments))
                     }
                     if !selectedDocuments.isEmpty {
-                        Toggle("I have permission to send these excerpts to Stock Tracker’s configured AI provider", isOn: $consent)
+                        Toggle("I have permission to send these private excerpts to the approved AI provider", isOn: $excerptPermission)
+                            .accessibilityIdentifier("private.research.excerptPermission")
                     }
                 }
                 Section {
+                    Toggle("Send my question and selected sources to OpenAI or Google Gemini", isOn: $modelConsent)
+                        .disabled(busy)
+                        .accessibilityIdentifier("private.research.modelConsent")
                     Button("Ask a question") { run("question") }.disabled(!canRun)
                     Button("Run Investment Committee") { run("committee") }.disabled(!canRun)
                     if busy { SkeletonBlock(height: 12).privateLoadingLabel("Analyzing sources") }
@@ -172,6 +177,7 @@ struct PrivateResearchWorkspace: View {
             }
         }
         .onDisappear { runTask?.cancel() }
+        .onChange(of: selectedDocuments) { _, _ in excerptPermission = false }
         .navigationTitle("AI Investment Research")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: auth.userId) {
@@ -186,7 +192,8 @@ struct PrivateResearchWorkspace: View {
                 selectedDocuments = []
                 selectedAnnouncements = []
                 question = ""
-                consent = false
+                modelConsent = false
+                excerptPermission = false
                 result = nil
                 busy = false
                 loading = false
@@ -231,8 +238,9 @@ struct PrivateResearchWorkspace: View {
     }
 
     private var canRun: Bool {
-        !busy && sourceCount > 0 && sourceCount <= 3 && !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            question.utf16.count <= 1_000 && (selectedDocuments.isEmpty || consent)
+        !busy && modelConsent && sourceCount > 0 && sourceCount <= 3 &&
+            !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && question.utf16.count <= 1_000 &&
+            (selectedDocuments.isEmpty || excerptPermission)
     }
 
     private func selection(_ id: UUID, in set: Binding<Set<UUID>>) -> Binding<Bool> {
@@ -280,13 +288,15 @@ struct PrivateResearchWorkspace: View {
     }
 
     private func run(_ mode: String) {
-        guard let owner = auth.userId else { return }
+        guard let owner = auth.userId, canRun else { return }
         var fields: [String: Any] = [
             "mode": mode, "question": question, "document_ids": selectedDocuments.map(\.uuidString),
-            "opportunity_ids": selectedDeals.map(\.uuidString), "ai_consent": consent,
+            "opportunity_ids": selectedDeals.map(\.uuidString), "model_consent": modelConsent, "ai_consent": excerptPermission,
             "announcement_ids": selectedAnnouncements.map(\.uuidString)
         ]
         if let previousReportID { fields["previous_report_id"] = previousReportID.uuidString }
+        modelConsent = false
+        excerptPermission = false
         let requestID = UUID()
         runRequestID = requestID
         error = nil
