@@ -1,6 +1,7 @@
 import { accountCashFlow } from "../_shared/private-markets/account-cash-flow.ts";
 import {
-  accountCashFlows, accountHolding, type AccountProviderMatch, accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
+  accountCashFlows, accountHolding, type AccountProviderMatch, type AccountProviderPosition, accountProviderView,
+  accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
   withAccountCashFlows, withAccountValuations,
 } from "../_shared/private-markets/account-holdings.ts";
 import { validManualSnapshot } from "../_shared/private-markets/manual-snapshot.ts";
@@ -231,19 +232,38 @@ function publishedAnnouncements(admin: ReturnType<typeof serviceClient>) {
 
 type ConfirmedAccountPosition = {
   id: string; name: string; currency: string; company_id: string | null;
+  remaining_units: number | null; last_disposition_on: string | null; exit_source: string | null;
   commitment: { provider: string; provider_reference: string | null };
 };
 
 function confirmedAccountPositions(admin: ReturnType<typeof serviceClient>, userId: string) {
-  return admin.from("private_holdings").select("id,name,currency,company_id," +
+  return admin.from("private_holdings").select("id,name,currency,company_id,remaining_units,last_disposition_on,exit_source," +
     "commitment:investment_commitments!inner(provider,provider_reference)")
     .eq("user_id", userId).eq("commitment.user_id", userId).eq("commitment.status", "confirmed")
-    .not("confirmed_at", "is", null).not("settled_amount", "is", null);
+    .lte("confirmed_at", new Date().toISOString()).not("settled_amount", "is", null);
 }
 
 function accountProviderMatch(position: ConfirmedAccountPosition): AccountProviderMatch {
   return { id: position.id, name: position.name, companyId: position.company_id ?? undefined,
     provider: position.commitment.provider, reference: position.commitment.provider_reference ?? undefined };
+}
+
+async function accountHoldingViews(admin: ReturnType<typeof serviceClient>, userId: string, holdings: SavedAccountHolding[]) {
+  const linked = holdings.flatMap(({ providerMatch }) => providerMatch ? [providerMatch.id] : []);
+  const positions = new Map<string, AccountProviderPosition>();
+  if (linked.length) {
+    const { data, error } = await confirmedAccountPositions(admin, userId).in("id", linked).returns<ConfirmedAccountPosition[]>();
+    if (error) throw error;
+    for (const row of data) {
+      positions.set(row.id, { match: accountProviderMatch(row), currency: row.currency,
+        remainingUnits: row.remaining_units, lastDispositionOn: row.last_disposition_on, exitSource: row.exit_source });
+    }
+  }
+  const now = new Date();
+  return holdings.map((holding) => ({
+    ...withAccountValuations(holding, accountValuations(holding)),
+    ...accountProviderView(holding, positions.get(holding.providerMatch?.id ?? ""), now),
+  }));
 }
 
 function companyUpdate(item: PublishedUpdate) {
@@ -771,20 +791,8 @@ Deno.serve(async (req) => {
         if (!reading && !listingProviders && (current?.revision ?? null) !== expected) return conflict();
         const holdings: SavedAccountHolding[] = current?.sealed
           ? JSON.parse(await open(await keys(), current.sealed, context("account_holdings", userId, current.revision))) : [];
-        if (reading) {
-          const linked = holdings.flatMap((holding) => holding.providerMatch ? [holding.providerMatch.id] : []);
-          const available = new Set<string>();
-          if (linked.length) {
-            const { data, error } = await confirmedAccountPositions(admin, userId).in("id", linked).returns<ConfirmedAccountPosition[]>();
-            if (error) throw error;
-            for (const row of data) available.add(row.id);
-          }
-          return jsonResponse(200, { revision: current?.revision ?? null, updated_at: current?.updated_at ?? null,
-            holdings: holdings.map((holding) => ({
-              ...withAccountValuations(holding, accountValuations(holding)),
-              providerMatchUnavailable: holding.providerMatch && !available.has(holding.providerMatch.id) ? true : undefined,
-            })) });
-        }
+        if (reading) return jsonResponse(200, { revision: current?.revision ?? null, updated_at: current?.updated_at ?? null,
+          holdings: await accountHoldingViews(admin, userId, holdings) });
         if (saving) {
           const holding = accountHolding(body.holding, new Date());
           if (!holding) return errorResponse(400, "INVALID_HOLDING", "Enter a valid name, amount and valuation source.");
@@ -911,6 +919,8 @@ Deno.serve(async (req) => {
         }
         const payload = JSON.stringify(holdings);
         if (utf8(payload).byteLength > 110_000) return errorResponse(413, "PORTFOLIO_TOO_LARGE", "Your account holdings are too large to save.");
+        // Resolve the response before committing so a failed provider read cannot mask a successful account edit.
+        const views = await accountHoldingViews(admin, userId, holdings);
         const revision = crypto.randomUUID();
         const sealed = holdings.length ? await seal(await keys(), payload, context("account_holdings", userId, revision)) : null;
         const result = await admin.rpc("write_private_account_holdings", {
@@ -918,7 +928,7 @@ Deno.serve(async (req) => {
         }).maybeSingle();
         if (result.error) throw result.error;
         if (!result.data) return conflict();
-        return jsonResponse(200, { ...result.data, holdings });
+        return jsonResponse(200, { ...result.data, holdings: views });
       }
       case "manual_portfolio": {
         if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_REQUEST", "Send only the portfolio action.");

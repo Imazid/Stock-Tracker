@@ -134,8 +134,16 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
     queryFn: ({ signal }) => privateMarkets<{ items: SavedReport[] }>("monitor_digests", { owner, signal }),
   });
   const account = useQuery(accountHoldingsQuery(owner));
-  const owned = (account.error ? [] : account.data?.holdings ?? [])
-    .flatMap((holding) => holding.company && !holding.exitedOn ? [holding.company.id] : []);
+  const holdings = account.error ? [] : account.data?.holdings ?? [];
+  const canShowHoldingScope = holdings.some((holding) => holding.company || holding.providerMatch?.companyId);
+  const owned = holdings.flatMap((holding) => {
+    if (holding.providerMatch) {
+      if (holding.providerStatus?.kind !== "active") return [];
+      const issuer = holding.providerMatch.companyId ?? holding.company?.id;
+      return issuer ? [issuer] : [];
+    }
+    return holding.company && !holding.exitedOn ? [holding.company.id] : [];
+  });
   const tracked = [...(preferences?.company_ids ?? []), ...owned];
   const companyIDs = [...new Set(companyScope === "holdings" ? owned : tracked)].sort();
   const updates = useQuery({
@@ -191,9 +199,9 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
           significance={item.significance} date={item.occurred_at} revised={item.revised_at} url={item.source_url}
           label={item.source_label} kind={item.kind} />)}</ul>
       </Card>
-      {(tracked.length > 0 || companyScope === "holdings" || account.error) && <Card>
+      {(tracked.length > 0 || canShowHoldingScope || companyScope === "holdings" || account.error) && <Card>
         <CardHeader title="Company updates" />
-        {(owned.length > 0 || companyScope === "holdings") &&
+        {(canShowHoldingScope || companyScope === "holdings") &&
           <div role="group" aria-label="Company update scope" className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
             {(["tracked", "holdings"] as const).map((scope) =>
               <Button size="sm" key={scope} aria-pressed={companyScope === scope} onClick={() => {

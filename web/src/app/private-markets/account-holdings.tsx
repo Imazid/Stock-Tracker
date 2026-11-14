@@ -14,9 +14,10 @@ type Mark = NonNullable<ManualHolding["valuation"]>;
 type AccountHolding = ManualHolding & {
   valuationHistory?: Mark[]; cashFlows?: AccountCashFlow[]; company?: CompanyLink;
   providerMatch?: ProviderMatch; providerMatchUnavailable?: true;
+  providerStatus?: { kind: "active" | "unavailable" } | { kind: "exited"; date: string };
 };
 type CompanyLink = { id: string; name: string };
-type ProviderMatch = { id: string; name: string; provider: string; reference?: string };
+type ProviderMatch = { id: string; name: string; provider: string; reference?: string; companyId?: string };
 type CompanyChange = { id: string; company_id: string | null };
 type ProviderChange = { id: string; provider_holding_id: string | null };
 type AccountHoldings = { revision: string | null; updated_at: string | null; holdings: AccountHolding[] };
@@ -236,13 +237,16 @@ function AccountProviderLink({ owner, holding, visibleProviders, revision, busy,
   });
   const choices = options.error ? [] : options.data?.pages.flatMap((page) => page.providers) ?? [];
   const label = (provider: ProviderMatch) => [provider.name, providerName(provider.provider), provider.reference].filter(Boolean).join(" · ");
+  const status = holding.providerStatus;
+  const providerUnavailable = status?.kind === "unavailable" || holding.providerMatchUnavailable;
   return <div className="space-y-2 border-t border-border p-4 text-sm">
     {match && <div className="space-y-1">
       <p>Linked provider record · {label(match)}</p>
-      <p className="text-text-2">{holding.providerMatchUnavailable
+      <p className="text-text-2">{providerUnavailable
         ? "This provider record is unavailable. Remove the link to use this holding in allocation."
+        : status?.kind === "exited" ? `Provider confirmed exit on ${dateLabel(status.date)}.`
         : "Allocation uses the linked provider record."}</p>
-      {!holding.providerMatchUnavailable && visibleProviders.has(match.id) &&
+      {!providerUnavailable && visibleProviders.has(match.id) &&
         <a className="text-primary-fg hover:underline" href={`#provider-holding-${match.id}`}>Open linked provider record</a>}
     </div>}
     {!draft && <Button size="sm" disabled={busy} onClick={() => setDraft({ revision, providerID: match?.id ?? "" })}>

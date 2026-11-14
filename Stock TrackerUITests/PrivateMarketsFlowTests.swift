@@ -705,6 +705,19 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testLinkedProviderExitShowsDatedHistoryOnIPhone() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_PROVIDER_EXIT_TEST_SESSION")
+        openSharedAccountHolding()
+        let status = app.staticTexts["private.accountProvider.status"]
+        for _ in 0..<5 where !status.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(status.isHittable, app.debugDescription)
+        XCTAssertTrue(status.label.hasPrefix("Provider confirmed exit on "), app.debugDescription)
+        let match = app.buttons["Open linked provider record"]
+        for _ in 0..<3 where !match.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(match.isHittable, app.debugDescription)
+    }
+
+    @MainActor
     func testAccountProviderLinkCanBeRemovedOnIPhone() throws {
         try launchWithLocalSession("PRIVATE_ACCOUNT_PROVIDER_TEST_SESSION")
         openSharedAccountHolding()

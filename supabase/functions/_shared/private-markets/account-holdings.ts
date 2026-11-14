@@ -21,12 +21,40 @@ export type AccountProviderMatch = {
   reference?: string;
 };
 
+export type AccountProviderPosition = {
+  match: AccountProviderMatch;
+  currency: string;
+  remainingUnits: number | null;
+  lastDispositionOn: string | null;
+  exitSource: string | null;
+};
+
+type AccountProviderStatus = { kind: "active" | "unavailable" } | { kind: "exited"; date: string };
+
 export type SavedAccountHolding = Record<string, unknown> & {
   valuation?: SnapshotValuation; valuationHistory?: SnapshotValuation[]; cashFlows?: AccountCashFlow[];
   sales?: AccountCashFlow[]; lastSaleOn?: string; exitedOn?: string;
   company?: { id: string; name: string };
   providerMatch?: AccountProviderMatch;
 };
+
+export function accountProviderView(holding: SavedAccountHolding, position: AccountProviderPosition | undefined, now: Date): {
+  providerMatch?: AccountProviderMatch; providerMatchUnavailable?: true; providerStatus?: AccountProviderStatus;
+} {
+  const saved = holding.providerMatch;
+  if (!saved) return {};
+  const issuer = holding.company?.id ?? saved.companyId;
+  if (!position || position.match.id !== saved.id || position.currency !== holding.currency ||
+    (issuer && position.match.companyId && issuer !== position.match.companyId)) {
+    return { providerMatch: saved, providerMatchUnavailable: true, providerStatus: { kind: "unavailable" } };
+  }
+  const exit = position.lastDispositionOn;
+  const providerStatus: AccountProviderStatus = position.remainingUnits === 0 && position.exitSource !== null &&
+      exit && exit <= sydneyDay.format(now)
+    ? { kind: "exited", date: exit }
+    : { kind: "active" };
+  return { providerMatch: position.match, providerStatus };
+}
 
 export function accountValuations(holding?: SavedAccountHolding) {
   if (holding?.valuationHistory) return holding.valuationHistory;

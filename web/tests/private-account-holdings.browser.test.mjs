@@ -8,9 +8,11 @@ const {
   PRIVATE_MARKETS_OTHER_EMAIL: otherEmail, PRIVATE_MARKETS_OTHER_PASSWORD: otherPassword,
   PRIVATE_ACCOUNT_HOLDING_PREFIX: prefix, PRIVATE_ACCOUNT_EXCERPT_TITLE: excerptTitle,
   PRIVATE_ACCOUNT_EXCERPT_TEXT: excerptText, VERCEL_OIDC_TOKEN: previewToken,
+  PRIVATE_ACCOUNT_PROVIDER_STATE: providerState, PRIVATE_ACCOUNT_PROVIDER_ISSUER: providerIssuer,
 } = process.env;
 
-test("manual web holdings appear in portfolio with account-scoped evidence", {
+test(providerState ? `provider ${providerState} status governs linked account holdings and updates`
+  : "manual web holdings appear in portfolio with account-scoped evidence", {
   skip: !origin || !executablePath || !email || !password || !otherEmail || !otherPassword || !prefix,
   timeout: 120_000,
 }, async () => {
@@ -31,6 +33,30 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
   }
   try {
     const page = await signedIn(email, password);
+    if (providerState) {
+      assert.ok(providerIssuer);
+      const holding = page.getByRole("article").filter({ has: page.getByRole("heading", { name, exact: true }) });
+      const expected = providerState === "exited" ? /^Provider confirmed exit on / : /^Allocation uses the linked provider record\.$/;
+      await holding.getByText(expected).waitFor();
+      await holding.getByText("Self-reported value", { exact: true }).waitFor();
+      await holding.locator("dd").getByText("AUD 1,250.4567", { exact: true }).waitFor();
+      if (providerState === "exited") {
+        await page.goto(new URL("/portfolio", origin).href);
+        await page.locator("#unified-allocation").getByRole("status")
+          .filter({ hasText: /0 of 0 private positions valued/ }).waitFor();
+        await page.goto(new URL(portfolio, origin).href);
+      }
+      await page.getByRole("radio", { name: "Updates", exact: true }).click();
+      const updates = page.getByRole("heading", { name: "Company updates", exact: true }).locator("xpath=ancestor::section");
+      await updates.getByRole("button", { name: "Account holdings", exact: true }).click();
+      if (providerState === "exited") {
+        await updates.getByText("No published updates for these companies", { exact: true }).waitFor();
+        assert.equal(await updates.getByText(providerIssuer, { exact: false }).count(), 0);
+      } else {
+        await updates.getByText(providerIssuer + " · ", { exact: false }).first().waitFor();
+      }
+      return;
+    }
     await page.getByRole("button", { name: "Add private holding", exact: true }).click();
     await page.getByLabel("Company or fund name").fill(name);
     await page.getByLabel("Asset class").selectOption("Venture fund");

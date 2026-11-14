@@ -79,7 +79,8 @@ struct PrivateHoldingsView: View {
                                 Text(record.assetClass.rawValue + " · Self-reported")
                                     .font(.footnote).foregroundStyle(.secondary)
                                 if let match = record.providerMatch {
-                                    Text("Linked to " + match.name).font(.subheadline)
+                                    Text(record.providerStatus?.kind == .exited ? "Provider confirmed exit" : "Linked to " + match.name)
+                                        .font(.subheadline)
                                 } else if let closed = record.exitedOn {
                                     Text("Exited " + PrivateDeal.Round.Listing.formattedDay(closed))
                                         .font(.subheadline)
@@ -224,7 +225,7 @@ private struct AccountPrivateHoldingDetail: View {
                     }
                 }
                 if let exit = current.exitedOn {
-                    Section("Exited position") {
+                    Section(current.providerMatch == nil ? "Exited position" : "Self-reported exit") {
                         LabeledContent("Carrying value", value: current.currency + " 0")
                         LabeledContent("Exit date", value: PrivateDeal.Round.Listing.formattedDay(exit))
                     }
@@ -286,10 +287,9 @@ private struct AccountPrivateHoldingDetail: View {
                     if let match = current.providerMatch {
                         Text(match.name)
                         Text(match.sourceLabel).font(.footnote).foregroundStyle(.secondary)
-                        Text(store.providerMatchIsUnavailable(current)
-                             ? "This provider record is unavailable. Remove the link to use this holding in allocation."
-                             : "Allocation uses the linked provider record.")
+                        Text(providerLinkStatus(current))
                             .font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("private.accountProvider.status")
                         if !store.providerMatchIsUnavailable(current), store.providerHoldings.contains(where: { $0.id == match.id }) {
                             NavigationLink("Open linked provider record") {
                                 PrivateHoldingDetail(id: match.id, providerRecord: true)
@@ -361,6 +361,17 @@ private struct AccountPrivateHoldingDetail: View {
             ContentUnavailableView("Holding unavailable", systemImage: "briefcase")
         }
     }
+
+    private func providerLinkStatus(_ holding: PrivateMarketsAPI.AccountHolding) -> String {
+        if store.providerMatchIsUnavailable(holding) {
+            return "This provider record is unavailable. Remove the link to use this holding in allocation."
+        }
+        if holding.providerStatus?.kind == .exited, let date = holding.providerStatus?.date {
+            return "Provider confirmed exit on " + PrivateDeal.Round.Listing.formattedDay(date) + "."
+        }
+        return "Allocation uses the linked provider record."
+    }
+
     private func deleteValuation(_ edit: AccountValuationEdit) async {
         guard auth.userId == owner, let mark = edit.mark, !updatingMark else { return }
         updatingMark = true

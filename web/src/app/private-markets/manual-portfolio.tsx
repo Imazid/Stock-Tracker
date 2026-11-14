@@ -117,7 +117,7 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
           <dt className="text-xs text-text-3">{label}</dt><dd className="font-medium tabular-nums">{value}</dd>
         </div>)}
       </dl>
-      {holding.exitedOn ? <p className="text-xs text-text-2">Exited {dateLabel(holding.exitedOn)}</p> : <>
+      {holding.exitedOn ? <p className="text-xs text-text-2">{reconciled ? "Self-reported exit" : "Exited"} {dateLabel(holding.exitedOn)}</p> : <>
         <p className="text-xs text-text-2">
           {holding.ownership !== undefined && `${holding.lastSaleOn ? "Opening ownership" : "Ownership"} ${groupedDecimal(holding.ownership)}% · `}
           {holding.shareClass && `${holding.shareClass} · `}

@@ -415,6 +415,7 @@ enum PrivateMarketsAPI {
         struct ProviderMatch: Decodable, Identifiable {
             let id: UUID
             let name: String
+            let companyId: UUID?
             let provider: String
             let reference: String?
 
@@ -422,6 +423,11 @@ enum PrivateMarketsAPI {
                 let providerName = PrivateProvider.directory.first { $0.id == provider }?.name ?? provider
                 return [providerName, reference].compactMap { $0 }.joined(separator: " · ")
             }
+        }
+        struct ProviderStatus: Decodable {
+            enum Kind: String, Decodable { case active, exited, unavailable }
+            let kind: Kind
+            let date: String?
         }
         struct Mark: Decodable, Identifiable {
             let value: String
@@ -491,6 +497,7 @@ enum PrivateMarketsAPI {
         let company: Company?
         let providerMatch: ProviderMatch?
         let providerMatchUnavailable: Bool?
+        let providerStatus: ProviderStatus?
         let cashFlows: [CashFlow]?
         let sales: [CashFlow]?
         let remainingUnits: String?
@@ -616,7 +623,13 @@ final class PrivateMarketsStore: ObservableObject {
     var activeManualHoldings: [PrivateHolding] { independentManualHoldings.filter { $0.closedOn() == nil } }
     var independentAccountHoldings: [PrivateMarketsAPI.AccountHolding] { accountHoldings.filter { $0.providerMatch == nil } }
     private var accountCompanyIDs: [UUID] {
-        accountHoldings.filter { $0.exitedOn == nil }.compactMap { $0.company?.id }
+        accountHoldings.compactMap { holding in
+            if let match = holding.providerMatch {
+                guard holding.providerStatus?.kind == .active else { return nil }
+                return match.companyId ?? holding.company?.id
+            }
+            return holding.exitedOn == nil ? holding.company?.id : nil
+        }
     }
 
     var unavailableLinkedProviderCount: Int {
@@ -627,6 +640,7 @@ final class PrivateMarketsStore: ObservableObject {
 
     func providerMatchIsUnavailable(_ account: PrivateMarketsAPI.AccountHolding) -> Bool {
         guard let match = account.providerMatch else { return false }
+        if let status = account.providerStatus { return status.kind == .unavailable }
         return account.providerMatchUnavailable == true ||
             (hasLoadedProviderHoldings && !providerHoldings.contains { $0.id == match.id })
     }

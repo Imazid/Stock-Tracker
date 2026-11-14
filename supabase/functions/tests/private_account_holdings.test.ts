@@ -1,5 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { accountHolding, accountValuations, withAccountValuations } from "../_shared/private-markets/account-holdings.ts";
+import {
+  accountHolding, type AccountProviderPosition, accountProviderView, accountValuations, withAccountValuations,
+} from "../_shared/private-markets/account-holdings.ts";
 
 const now = new Date("2026-11-14T14:05:00Z"); // 15 November in Sydney.
 const input = {
@@ -22,7 +24,26 @@ Deno.test("web holdings reject foreign fields, incorrect dates and invalid decim
     { user_id: input.id }, { provider_verified: true }, { paid: "500" }, { xirr: "2" }, { units: 0.5 },
     { ownership: "110" }, { valuation: { ...input.valuation, date: "2026-02-29T00:00:00Z" } },
     { ownershipEvidence: { excerptID: input.excerptID } }, { excerptID: "https://example.test" },
+    { providerStatus: { kind: "exited", date: "2026-11-15" } },
   ]) assertEquals(accountHolding({ ...input, ...extra }, now), null);
+});
+
+Deno.test("linked provider status follows evidence, Sydney dates and corrections without rewriting history", () => {
+  const match = { id: "ed000000-0000-4000-8000-000000000013", name: "Issuer", provider: "birchal", companyId: input.id };
+  const linked = { ...input, providerMatch: match };
+  const confirmed: AccountProviderPosition = { match, currency: "AUD", remainingUnits: 0,
+    lastDispositionOn: "2026-11-15", exitSource: "Settlement statement" };
+  assertEquals(accountProviderView(linked, confirmed, now).providerStatus, { kind: "exited", date: "2026-11-15" });
+  assertEquals(accountProviderView(linked, confirmed, new Date("2026-11-14T12:59:59Z")).providerStatus, { kind: "active" });
+  assertEquals(accountProviderView(linked, { ...confirmed, remainingUnits: 0.25 }, now).providerStatus, { kind: "active" });
+  assertEquals(accountProviderView(linked, { ...confirmed, exitSource: null }, now).providerStatus, { kind: "active" });
+  assertEquals(accountProviderView(linked, { ...confirmed, currency: "USD" }, now).providerMatchUnavailable, true);
+  assertEquals(accountProviderView(linked, { ...confirmed, match: { ...match, companyId: input.excerptID } }, now).providerStatus,
+    { kind: "unavailable" });
+  assertEquals(accountProviderView(linked, undefined, now),
+    { providerMatch: match, providerMatchUnavailable: true, providerStatus: { kind: "unavailable" } });
+  assertEquals(accountProviderView(input, confirmed, now), {});
+  assertEquals(linked.valuation, input.valuation);
 });
 
 Deno.test("an account retains earlier valuations and uses the newest date independently of write order", () => {
