@@ -16,7 +16,12 @@ final class BrokerPaperOrderTests: XCTestCase {
         let quantity = app.textFields["brokerPaper.size"]
         tap(quantity, in: app)
         quantity.typeText("1")
-        tap(app.buttons["brokerPaper.draft"], in: app)
+        XCTAssertEqual(quantity.value as? String, "1", app.debugDescription)
+        let keyboardDone = app.buttons["brokerPaper.keyboardDone"]
+        if keyboardDone.waitForExistence(timeout: 5) { keyboardDone.tap() }
+        let draft = app.buttons["brokerPaper.draft"]
+        XCTAssertTrue(draft.isEnabled, app.debugDescription)
+        tap(draft, in: app)
         let fees = app.descendants(matching: .any)["brokerPaper.fees"].firstMatch
         XCTAssertTrue(fees.waitForExistence(timeout: 20))
         XCTAssertTrue(fees.label.contains("0 USD"), fees.label)
@@ -87,7 +92,7 @@ final class BrokerPaperOrderTests: XCTestCase {
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: above ? 0.66 : 0.36))
             start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
         }
-        XCTAssertTrue(element.isHittable, file: file, line: line)
+        XCTAssertTrue(element.isHittable, app.debugDescription, file: file, line: line)
         element.tap()
     }
 }
