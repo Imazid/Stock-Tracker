@@ -727,6 +727,54 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
     }
 
+    func testSignedInHoldingOpensCompanyReport() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_COMPANY_REPORT"] == "1",
+                          "Start the signed-in company report relay")
+        let email = "holdings-comparison-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userID = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let position: [String: Any] = [
+            "id": UUID().uuidString.lowercased(), "user_id": userID,
+            "asset_symbol": "AAPL", "asset_name": "Apple", "asset_kind": "Stock", "asset_exchange": "NASDAQ",
+            "shares": 2, "avg_cost": 40, "date_added": ISO8601DateFormatter().string(from: Date()),
+        ]
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: [position]), token: token).status, 201)
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-portfolioSegment", "holdings"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        let holding = app.buttons["portfolio.holding.AAPL"].firstMatch
+        for _ in 0..<12 where !holding.isHittable {
+            let frame = holding.exists ? holding.frame : .zero
+            let direction = !frame.isEmpty && frame.midY < app.frame.midY
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: direction ? 0.36 : 0.64))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: direction ? 0.65 : 0.35))
+            start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        XCTAssertTrue(holding.isHittable, app.debugDescription)
+        holding.tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
+        let research = app.buttons["holding.companyResearch"]
+        for _ in 0..<6 where !research.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(research.isHittable)
+        research.tap()
+        XCTAssertTrue(app.navigationBars["AAPL Research"].waitForExistence(timeout: 8))
+        let filing = app.descendants(matching: .any)["companyResearch.eventSource"].firstMatch
+        XCTAssertTrue(filing.waitForExistence(timeout: 35))
+        XCTAssertTrue(filing.label.contains("issuer filing"), filing.label)
+        XCTAssertTrue(app.staticTexts["Last price"].firstMatch.exists)
+        attach("company-research-from-holding")
+        app.buttons["companyResearch.done"].tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].exists)
+    }
+
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ISSUER_EXPOSURE"] == "1",
                           "Start the issuer allocation quote fixture relay")

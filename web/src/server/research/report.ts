@@ -1,7 +1,8 @@
 import { type Instrument, instrumentID } from "@engine/market.ts";
-import type { CompanyReport } from "@/lib/research-types";
+import type { CompanyReport, ResearchEvent } from "@/lib/research-types";
 import { getCandles, getQuote } from "@/server/market/service";
 import { getResearch, parseFilters } from "./service";
+import { bundledIssuerFiling } from "../portfolio/issuer-classifications";
 
 export async function companyReport(instrument: Instrument, publicOnly = false): Promise<CompanyReport> {
   const filters = { ...parseFilters(new URLSearchParams({ limit: "8" })), publicOnly };
@@ -27,12 +28,28 @@ export async function companyReport(instrument: Instrument, publicOnly = false):
     { dataset: "Price history", status: history ? "historical" : "unavailable",
       detail: history ? `${history.source} · ${history.adjustment}` : "The market feeds returned insufficient history for a one-year comparison.", refreshedAt: chart?.fetchedAt },
   ] as const;
+  const id = instrumentID(instrument);
+  const filing = bundledIssuerFiling(id);
+  const selected = filing?.evidence.filedOn && filing.evidence.filedOn <= filters.asOf ? filing : undefined;
+  const bundled: ResearchEvent[] = selected && selected.evidence.filedOn ? [{
+    id: `${id}:issuer-filing`, title: `${selected.issuer} issuer filing`, category: "Issuer filing",
+    date: selected.evidence.filedOn,
+    evidence: { provider: "SEC EDGAR", url: selected.evidence.url, license: "public_filing",
+      publishedAt: selected.evidence.filedOn, retrievedAt: selected.evidence.filedOn },
+  }] : [];
+  const recentEvents = events.events ?? [];
+  const reportEvents = recentEvents.some((event) => event.evidence.license === "public_filing")
+    ? recentEvents : [...recentEvents, ...bundled];
   return {
-    instrumentId: instrumentID(instrument), asOf: filters.asOf,
-    profile: overview.profile, facts: valuation.facts ?? [], multiples: valuation.records ?? [], events: events.events ?? [], ownership: ownership.events ?? [],
+    instrumentId: id, asOf: filters.asOf,
+    profile: overview.profile ?? (selected && bundled[0] ? { name: selected.issuer, sic: selected.sic,
+      sector: selected.sector, incorporation: selected.country, evidence: bundled[0].evidence } : undefined),
+    facts: valuation.facts ?? [], multiples: valuation.records ?? [], events: reportEvents, ownership: ownership.events ?? [],
     earnings: (earnings.records ?? []).slice(0, 10), peers: (peers.records ?? []).slice(0, 10),
     quote, history, links: events.links,
-    coverage: [...new Map([...overview.coverage, ...valuation.coverage, ...events.coverage, ...ownership.coverage, ...earnings.coverage, ...peers.coverage, ...marketCoverage]
+    coverage: [...new Map([...overview.coverage, ...valuation.coverage, ...events.coverage, ...ownership.coverage, ...earnings.coverage, ...peers.coverage, ...marketCoverage,
+      ...(bundled.length ? [{ dataset: "Issuer filing reference", status: "historical" as const,
+        detail: "Dated SEC filing from the bundled issuer catalog." }] : [])]
       .map((item) => [item.dataset, item])).values()],
   };
 }

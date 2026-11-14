@@ -10,6 +10,7 @@ import { catalogInstruments } from "../_shared/trading/catalog.ts";
 import { decodeInstrument, instrumentID, parseYahooSymbol, venueCurrency, VENUES } from "../_shared/trading/market.ts";
 import { validate } from "../_shared/trading/strategy.ts";
 import { companyResearch } from "./company.ts";
+import { mobileResearchReport } from "./research_report.ts";
 import { prepareStrategy, runHistory } from "./strategy.ts";
 
 const env = (name: string) => Deno.env.get(name);
@@ -52,6 +53,11 @@ Deno.serve(async (request) => {
       if (!allowed) throw new HttpError(429, "rate_limit", "Market data request limit reached. Wait a minute and retry.");
     }
     const now = Date.now();
+    if (body.action === "companyReport") {
+      return ok(await mobileResearchReport(
+        Field.string(body.instrumentId, "instrumentId", 42), env("RESEARCH_WEB_ORIGIN"), env("RESEARCH_WEB_BYPASS_SECRET"),
+      ));
+    }
     if (body.action === "historicalFx") return ok(await historicalCashConversion(body, now));
     if (body.action === "portfolioBenchmark") {
       const id = Field.oneOf(body.benchmark, Object.keys(PORTFOLIO_BENCHMARKS) as PortfolioBenchmark[], "benchmark");
