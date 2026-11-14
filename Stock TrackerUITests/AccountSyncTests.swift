@@ -240,6 +240,64 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(Set(refreshed.compactMap { $0["id"] as? String }), Set(original.compactMap { $0["id"] as? String }))
     }
 
+    func testInternalBrokerCashStaysOutOfPortfolioReturns() throws {
+        // Run scripts/snaptrade-positions-fixture.py and set STOCK_TRACKER_UI_TEST_API to its loopback URL.
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_INTERNAL_CASH"] == "1",
+                          "Start the brokerage cash activity fixture relay")
+        let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        let add = app.buttons["portfolio.returns.add"]
+        for _ in 0..<6 where !add.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(add.isHittable)
+        add.tap()
+        for (field, amount) in [("opening", "1000"), ("closing", "1700")] {
+            let input = app.textFields["portfolio.returns.\(field)"]
+            XCTAssertTrue(input.waitForExistence(timeout: 8))
+            input.tap()
+            input.typeText(amount)
+        }
+        app.swipeUp(velocity: .slow)
+        let find = app.buttons["Find linked accounts"]
+        for _ in 0..<6 where !find.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(find.isHittable)
+        find.tap()
+        let load = app.buttons["Load broker activity"]
+        XCTAssertTrue(load.waitForExistence(timeout: 8))
+        load.tap()
+        let outgoing = app.staticTexts["Outgoing cash transfer between accounts"]
+        for _ in 0..<5 where !outgoing.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(outgoing.isHittable)
+        XCTAssertTrue(app.staticTexts["Incoming cash transfer between accounts"].exists)
+        XCTAssertFalse(app.buttons["Look up USD value"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Include Outgoing cash transfer")).firstMatch.exists)
+        let contribution = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Include Cash contribution")).firstMatch
+        for _ in 0..<4 where !contribution.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(contribution.isHittable)
+        contribution.tap()
+        app.buttons["portfolio.returns.save"].tap()
+        var saved: [[String: Any]] = []
+        for _ in 0..<10 {
+            saved = try rows("portfolio_performance_results", select: "external_flows,deposits_usd,withdrawals_usd,investment_change_usd", token: token)
+            if !saved.isEmpty { break }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        let period = try XCTUnwrap(saved.first)
+        let flows = try XCTUnwrap(period["external_flows"] as? [[String: Any]])
+        XCTAssertEqual(flows.count, 1)
+        XCTAssertEqual(flows.first?["snaptrade_id"] as? String, String(repeating: "a", count: 64))
+        XCTAssertEqual((period["deposits_usd"] as? NSNumber)?.doubleValue, 600)
+        XCTAssertEqual((period["withdrawals_usd"] as? NSNumber)?.doubleValue, 0)
+        XCTAssertEqual((period["investment_change_usd"] as? NSNumber)?.doubleValue, 100)
+    }
+
     func testCashIncomeSyncsBetweenAccountAndPhone() throws {
         let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
         let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [

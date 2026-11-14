@@ -30,6 +30,7 @@ const KINDS: Record<string, string> = {
 export const activityTypes = Object.keys(KINDS).join(",");
 export const activityPageSize = 50;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const internalCashLabels = new Set([KINDS.INTERNAL_CASH_TRANSFER_IN, KINDS.INTERNAL_CASH_TRANSFER_OUT]);
 
 export function validActivityDay(value: unknown): value is string {
   if (typeof value !== "string" || !DAY.test(value) || value < "1900-01-01") return false;
@@ -47,6 +48,21 @@ function boundedNumber(value: unknown): number | null {
 
 function text(value: unknown, limit: number): string | null {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, limit) : null;
+}
+
+/** Previously published snapshots can still carry a suggested flow for an internal movement. */
+export function protectCachedCashFlows(payload: unknown) {
+  const page = record(payload);
+  if (!page || !Array.isArray(page.activities)) return null;
+  return {
+    ...page,
+    activities: page.activities.map((value: unknown) => {
+      const activity = record(value);
+      return typeof activity?.label === "string" && internalCashLabels.has(activity.label)
+        ? { ...activity, cashFlow: null, foreignCashFlow: null }
+        : value;
+    }),
+  };
 }
 
 export async function normalizeActivityPage(
@@ -79,8 +95,8 @@ export async function normalizeActivityPage(
     const option = record(row.option_symbol);
     const cashOnly = row.symbol === null && (row.option_symbol === null || row.option_symbol === undefined) &&
       (row.units === null || row.units === undefined || row.units === 0);
-    const isDeposit = kind === "CONTRIBUTION" || kind === "INTERNAL_CASH_TRANSFER_IN";
-    const isWithdrawal = kind === "WITHDRAWAL" || kind === "INTERNAL_CASH_TRANSFER_OUT";
+    const isDeposit = kind === "CONTRIBUTION";
+    const isWithdrawal = kind === "WITHDRAWAL";
     const kindMatchesAmount = amount !== null && (isDeposit && amount > 0 || isWithdrawal && amount < 0);
     const cents = amount === null ? 0 : Math.round(Math.abs(amount) * 100);
     const cashFlow = cashOnly && kindMatchesAmount && currency === "USD" && cents > 0 && cents <= 999999999999999 &&

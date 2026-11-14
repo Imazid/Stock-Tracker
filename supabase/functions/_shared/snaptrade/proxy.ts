@@ -13,7 +13,7 @@
 //     and connection portals default to read-only.
 
 import { canonicalJson, fromUtf8, toBase64, utf8 } from "../secure/encoding.ts";
-import { activityPageSize, activityTypes, normalizeActivityPage, validActivityDay } from "./activities.ts";
+import { activityPageSize, activityTypes, normalizeActivityPage, protectCachedCashFlows, validActivityDay } from "./activities.ts";
 
 export const SNAPTRADE_DEFAULT_BASE = "https://api.snaptrade.com";
 const API_PREFIX = "/api/v1";
@@ -199,7 +199,8 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
       if (preferCached === true && (offset === 0 || snapshot !== null)) {
         const cached = await deps.readActivityCache?.(userId, { accountId, startDate, endDate, offset, snapshot })
           .catch(() => null);
-        if (cached) return { status: 200, body: cached };
+        const safePage = protectCachedCashFlows(cached);
+        if (safePage) return { status: 200, body: safePage };
         if (snapshot !== null) return fail(409, "ACTIVITY_SNAPSHOT_CHANGED", "Broker activity changed. Reload from the first page.");
       }
       return withUser(userId, deps, async (user) => {
