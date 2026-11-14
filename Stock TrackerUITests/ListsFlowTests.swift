@@ -374,7 +374,7 @@ final class ListsFlowTests: XCTestCase {
         openSettings()
 
         open("settings.terms", expect: "the licensed provider manages the application")
-        open("settings.privacyPolicy", expect: "imported AngelList statements stay on this iPhone")
+        open("settings.privacyPolicy", expect: "saved AngelList statements stay on this iPhone")
     }
 
     func testSettingsRowsAllDoSomething() {
