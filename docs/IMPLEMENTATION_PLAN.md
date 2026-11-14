@@ -134,7 +134,7 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 - **Provider maintenance** checks pending orders and imports fills using leased, bounded jobs. Manual sync shares the fill checkpoint. Provider event streaming remains pending.
 - **Web market-data adapters** (`web/src/server/market`) duplicate part of `_shared/market`; merge into one.
 - **Assistant runs aren't persisted** (no AgentRun/AgentToolEvent tables for the web assistant); turns are logged only in the browser.
-- **The ported strategy parser** maps "buy ETH when RSI drops below 30" to the crypto trend template rather than RSI rules (Swift behaviour, carried over; the screen lists the assumption).
+- The Swift and web parsers preserve explicit RSI and directed moving-average comparisons, including grouped entry and exit rules. Incomplete or unsupported comparisons stay in an editable draft that requires a valid rule before it can run.
 
 ## 8. Externally blocked
 

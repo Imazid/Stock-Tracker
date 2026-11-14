@@ -1113,6 +1113,82 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(left["period"] as? Int, 15)
     }
 
+    func testExplicitRSIStrategyEditsBacktestsAndStartsPaperAgent() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STRATEGY_STUDIO"] == "1",
+                          "Start the signed-in strategy relay with historical market data")
+        let email = "strategy-studio-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        app.launchArguments = ["-UITestFreshInstall", "-hasCompletedOnboarding", "YES",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.open("Agents"))
+        app.buttons["agents.new"].tap()
+        let prompt = app.descendants(matching: .any)["agent.new.prompt"].firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.tap()
+        prompt.typeText("Buy AAPL when RSI(7) drops below 30. Sell when RSI(7) crosses above 65, with a $5,000 budget.")
+        app.buttons["agent.new.draft"].tap()
+
+        let buy = app.buttons["agent.draft.rule.entry"]
+        XCTAssertTrue(buy.waitForExistence(timeout: 10))
+        XCTAssertTrue(buy.label.contains("RSI (7) is below 30"), buy.label)
+        buy.tap()
+        let period = app.textFields["strategy.rule.left.period"]
+        XCTAssertTrue(period.waitForExistence(timeout: 10))
+        app.buttons["strategy.rule.left.period.clear"].tap()
+        period.tap()
+        period.typeText("9")
+        app.buttons["strategy.rule.apply"].tap()
+        XCTAssertTrue(buy.waitForExistence(timeout: 8))
+        XCTAssertTrue(buy.label.contains("RSI (9) is below 30"), buy.label)
+
+        let backtest = app.buttons["agent.draft.backtest"]
+        for _ in 0..<10 where !backtest.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(backtest.isHittable && backtest.isEnabled)
+        backtest.tap()
+        XCTAssertTrue(app.navigationBars["Backtest"].waitForExistence(timeout: 90), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["backtest.testData"].exists)
+        let provider = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Prices: Alpaca")).firstMatch
+        XCTAssertTrue(provider.exists, app.debugDescription)
+        let assumptions = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "at the next bar's open")).firstMatch
+        for _ in 0..<8 where !assumptions.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(assumptions.isHittable)
+        XCTAssertTrue(app.staticTexts["Buy when RSI (9) is below 30."].exists)
+        attach("strategy-backtest-assumptions")
+        app.buttons["backtest.done"].tap()
+
+        let start = app.buttons["agent.draft.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 8))
+        XCTAssertEqual(start.label, "Start in practice")
+        start.tap()
+        let agentCard = app.buttons["agents.card.Custom Strategy"]
+        XCTAssertTrue(agentCard.waitForExistence(timeout: 25), app.debugDescription)
+        let saved = try request("POST", "/functions/v1/trading-api",
+                                body: JSONSerialization.data(withJSONObject: ["action": "state"]), token: token)
+        XCTAssertEqual(saved.status, 200)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: saved.data) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        let state = try XCTUnwrap(data["state"] as? [String: Any])
+        let agents = try XCTUnwrap(state["agents"] as? [[String: Any]])
+        let agent = try XCTUnwrap(agents.first { $0["name"] as? String == "Custom Strategy" })
+        XCTAssertEqual(agent["mode"] as? String, "paper")
+        XCTAssertEqual(agent["status"] as? String, "active")
+        let versions = try XCTUnwrap(agent["versions"] as? [[String: Any]])
+        let spec = try XCTUnwrap(versions.last?["spec"] as? [String: Any])
+        let entry = try XCTUnwrap(spec["entry"] as? [String: Any])
+        let left = try XCTUnwrap(entry["left"] as? [String: Any])
+        XCTAssertEqual(left["period"] as? Int, 9)
+        XCTAssertEqual(entry["op"] as? String, "below")
+        let exit = try XCTUnwrap(spec["exit"] as? [String: Any])
+        XCTAssertEqual(exit["op"] as? String, "crossesAbove")
+    }
+
     func testSignedInAssetResearchSearchChartEvidenceAIAndWatchlist() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_RESEARCH_JOURNEY"] == "1",
                           "Start the signed-in research journey relay")
