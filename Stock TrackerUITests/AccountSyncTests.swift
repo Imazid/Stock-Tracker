@@ -38,7 +38,7 @@ final class AccountSyncTests: XCTestCase {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ONBOARDING_BROKER"] == "1",
                           "Start the signed-in onboarding brokerage relay")
         let email = "investor-onboarding-ios-\(UUID().uuidString.lowercased())@example.com"
-        launch(extraArguments: ["-UITestTypeOwnPassword"])
+        launch(extraArguments: ["-UITestTypeOwnPassword", "-AppleLocale", "en_US"])
         app.buttons["onboarding.welcome.create"].tap()
         waitForStep("Create your Stock Tracker account")
         fillCredentials(email: email)
@@ -47,11 +47,21 @@ final class AccountSyncTests: XCTestCase {
         app.secureTextFields["auth.password"].typeText("\n")
         waitForStep("What do you want to track?", timeout: 25)
         declineSavePassword()
+        let continueButton = app.buttons["onboarding.continue"]
+        XCTAssertTrue(continueButton.wait(for: \.isHittable, toEqual: true, timeout: 8), app.debugDescription)
         let us = app.buttons["onboarding.market.us"]
-        if !us.isSelected { us.tap() }
-        tapContinue()
+        if !us.isSelected {
+            for _ in 0..<3 where !us.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(us.isHittable, app.debugDescription)
+            us.tap()
+        }
+        XCTAssertTrue(us.isSelected)
+        continueButton.tap()
         waitForStep("Pick a few to follow")
-        app.buttons["onboarding.pick.AAPL"].tap()
+        let apple = app.buttons["onboarding.pick.AAPL"]
+        if !apple.exists { app.buttons["US"].firstMatch.tap() }
+        XCTAssertTrue(apple.waitForExistence(timeout: 8))
+        apple.tap()
         tapContinue()
         waitForStep("Add what you already own")
         let connectBroker = app.buttons["onboarding.portfolio.broker"]
