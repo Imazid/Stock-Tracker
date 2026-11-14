@@ -1,8 +1,21 @@
 import { Field, HttpError } from "../_shared/server/http.ts";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.49.4";
 import { researchListing, researchOrigin } from "./research_report.ts";
 
 const unavailable = () => new HttpError(503, "alerts_unavailable", "Company alerts are temporarily unavailable.");
 const methods = { read: "GET", create: "POST", remove: "DELETE" } as const;
+
+export async function mobileCompanyAlertActivity(db: SupabaseClient, userID: string) {
+  const events = await db.from("company_research_alert_events")
+    .select("id,title,url,occurred_at,company_research_alerts(instrument_id)")
+    .eq("user_id", userID)
+    .order("occurred_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(50)
+    .abortSignal(AbortSignal.timeout(12_000));
+  if (events.error) throw unavailable();
+  return events.data;
+}
 
 export async function mobileCompanyAlerts(
   body: Record<string, unknown>,
