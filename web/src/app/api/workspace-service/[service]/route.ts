@@ -17,6 +17,7 @@ const privateMarketActions = new Set([
   "confirmed_holdings", "capital_activity", "valuation_history", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
   "manual_portfolio", "remove_manual_portfolio",
   "profile", "save_profile", "issue_provider_link", "disconnect_provider", "handoff_check", "handoff",
+  "handoff_review", "handoff_resume_check", "handoff_resume",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
 ]);
 

@@ -390,6 +390,11 @@ enum PrivateMarketsAPI {
     }
     struct Handoff: Decodable { let commitmentId: UUID; let handoffUrl: URL }
     struct HandoffReadiness: Decodable { let ready: Bool }
+    struct HandoffReview: Decodable {
+        let deal: PrivateDeal
+        let requestedAmount: String
+        let currency: String
+    }
 
     static func request<Response: Decodable>(_ action: String, _ fields: [String: Any] = [:],
                                               expectedUserID: UUID? = nil) async throws -> Response {
@@ -1086,5 +1091,14 @@ final class PrivateMarketsStore: ObservableObject {
 extension URL {
     var privateSourceIsSafe: Bool {
         scheme == "https" && host?.isEmpty == false && user == nil && password == nil
+    }
+
+    func isPrivateHandoffURL(for provider: String) -> Bool {
+        guard privateSourceIsSafe, port == nil, let host = host?.lowercased() else { return false }
+        switch provider {
+        case "birchal": return ["birchal.com", "www.birchal.com"].contains(host)
+        case "onmarket": return ["onmarket.com.au", "www.onmarket.com.au", "crowd.onmarket.com.au"].contains(host)
+        default: return false
+        }
     }
 }

@@ -19,6 +19,7 @@ const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
   "profile", "save_profile", "issue_provider_link", "disconnect_provider", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
+  "handoff_review", "handoff_resume_check", "handoff_resume",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
@@ -840,6 +841,42 @@ Deno.serve(async (req) => {
           .eq("user_id", userId).order("acknowledged_at", { ascending: false }).limit(100);
         if (error) throw error;
         return jsonResponse(200, { applications: data });
+      }
+      case "handoff_review": {
+        if (Object.keys(body).length !== 2 || typeof body.id !== "string" || !uuid.test(body.id)) {
+          return errorResponse(400, "INVALID_REQUEST", "Choose a pending handoff.");
+        }
+        const { data: pending, error } = await admin.from("investment_commitments")
+          .select("opportunity_id,status,provider_reference,requested_amount::text,currency")
+          .eq("id", body.id).eq("user_id", userId).maybeSingle();
+        if (error) throw error;
+        if (!pending) return errorResponse(404, "NOT_FOUND", "Application unavailable.");
+        if (pending.status !== "handoff" || pending.provider_reference !== null) {
+          return errorResponse(409, "HANDOFF_UNAVAILABLE", "This handoff is no longer pending. Refresh your applications.");
+        }
+        const { data: deal, error: offerError } = await catalogue(admin).eq("id", pending.opportunity_id).maybeSingle();
+        if (offerError) throw offerError;
+        if (!deal) return errorResponse(404, "NOT_FOUND", "The current offer is unavailable. Check your provider account.");
+        return jsonResponse(200, { deal, requested_amount: pending.requested_amount, currency: pending.currency });
+      }
+      case "handoff_resume_check":
+      case "handoff_resume": {
+        const { id, currency, document_url, acknowledged } = body;
+        if (Object.keys(body).length !== 5 || typeof id !== "string" || !uuid.test(id) ||
+          typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency) || typeof document_url !== "string" ||
+          document_url.length > 2048 || acknowledged !== true) {
+          return errorResponse(400, "INVALID_REQUEST", "Review the offer document and acknowledge the risks first.");
+        }
+        const opening = body.action === "handoff_resume";
+        const { data, error } = await admin.rpc("resume_private_handoff", {
+          p_user: userId, p_commitment: id, p_document_url: document_url, p_currency: currency, p_open: opening,
+        }).single();
+        if (error) {
+          const status = { "42501": 403, "22023": 422, "23505": 409 }[error.code];
+          if (status) return errorResponse(status, "HANDOFF_UNAVAILABLE", error.message);
+          throw error;
+        }
+        return jsonResponse(200, opening ? data : { ready: true });
       }
       case "handoff_check":
       case "handoff": {

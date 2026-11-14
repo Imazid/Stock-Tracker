@@ -253,6 +253,28 @@ select case when handoff_url=:'tracked_url' and commitment_id=:'tracked_id'::uui
 from public.open_private_handoff('f3000000-0000-4000-8000-000000000002',
   'f3000000-0000-4000-8000-000000000031',500,'https://example.test/echo-offer','AUD');
 
+select case when not has_function_privilege('authenticated','public.resume_private_handoff(uuid,uuid,text,text,boolean)','execute')
+  then 'ok   handoff resumption is restricted to the authenticated service' else 'FAIL resume function privileges' end;
+select pg_temp.expect_delivery_error(format($q$select public.resume_private_handoff(
+  'f3000000-0000-4000-8000-000000000001',%L,'https://example.test/echo-offer','AUD',true)$q$,:'tracked_id'),
+  '42501','a second investor cannot reopen this handoff');
+select pg_temp.expect_delivery_error(format($q$select public.resume_private_handoff(
+  'f3000000-0000-4000-8000-000000000002',%L,'https://example.test/echo-offer','USD',false)$q$,:'tracked_id'),
+  '22023','reopening uses the recorded currency');
+select pg_temp.expect_delivery_error(format($q$select public.resume_private_handoff(
+  'f3000000-0000-4000-8000-000000000002',%L,'https://example.test/old-disclosure','AUD',false)$q$,:'tracked_id'),
+  '22023','resumption requires the current disclosure');
+select case when commitment_id is null and handoff_url is null
+  then 'ok   resumption readiness discloses no provider URL' else 'FAIL readiness returned provider URL' end
+from public.resume_private_handoff('f3000000-0000-4000-8000-000000000002',:'tracked_id',
+  'https://example.test/echo-offer','AUD',false);
+select case when commitment_id=:'tracked_id'::uuid and handoff_url=:'tracked_url'
+  then 'ok   resumption reuses the exact commitment and referral URL' else 'FAIL wrong resumed handoff' end
+from public.resume_private_handoff('f3000000-0000-4000-8000-000000000002',:'tracked_id',
+  'https://example.test/echo-offer','AUD',true);
+select case when count(*)=1 then 'ok   resuming does not create another application' else 'FAIL duplicate handoff' end
+from public.investment_commitments where opportunity_id='f3000000-0000-4000-8000-000000000031';
+
 select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
   'birchal','echo-receipt',repeat('a',64),'application','delivery-other',now(),
   '{"offer_reference":"echo-offer","reference":"echo-1","status":"application_received"}')$q$,
@@ -283,6 +305,9 @@ select case when public.accept_private_provider_reference_delivery(
 select case when status='application_received' and provider_reference='echo-1'
   then 'ok   the correlated receipt becomes the recorded application' else 'FAIL receipt did not bind' end
   from public.investment_commitments where id=:'tracked_id';
+select pg_temp.expect_delivery_error(format($q$select public.resume_private_handoff(
+  'f3000000-0000-4000-8000-000000000002',%L,'https://example.test/echo-offer','AUD',true)$q$,:'tracked_id'),
+  '23505','provider receipt between readiness and open blocks reopening');
 -- Move the recorded revision back to simulate a later transaction in this fixture.
 update public.investment_commitments set provider_event_at=now()-interval '1 second' where id=:'tracked_id';
 select case when public.accept_private_provider_reference_delivery(
@@ -293,6 +318,9 @@ select case when status='withdrawn' and withdrawn_at=now() and
   not exists (select from public.private_holdings where commitment_id=:'tracked_id')
   then 'ok   the withdrawal remains in history without creating ownership' else 'FAIL application withdrawal' end
   from public.investment_commitments where id=:'tracked_id';
+select pg_temp.expect_delivery_error(format($q$select public.resume_private_handoff(
+  'f3000000-0000-4000-8000-000000000002',%L,'https://example.test/echo-offer','AUD',true)$q$,:'tracked_id'),
+  '23505','a withdrawn handoff cannot be opened as a new application');
 reset role;
 
 delete from auth.users where id='f3000000-0000-4000-8000-000000000001';

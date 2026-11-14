@@ -7,14 +7,15 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
-import { SourceLink } from "./catalog";
+import { CompareRounds, SourceLink } from "./catalog";
 import { ManualPortfolioPanel } from "./manual-portfolio";
 import { InvestorProfileCard } from "./investor-profile";
 import {
-  amount, dateLabel, privateMarkets, providerName, dayInSydney, sourceHref, type Application, type PortfolioHolding, type PortfolioPage,
+  amount, dateLabel, privateMarkets, providerName, dayInSydney, sourceHref, type Application, type HandoffReview, type PortfolioHolding, type PortfolioPage,
 } from "./private-data";
 import { privatePositionPerformance } from "./private-performance";
 import { ValuationHistory } from "./valuation-history";
+import { ProviderApplication } from "./provider-application";
 
 const percent = new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 2 });
 const ratio = new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -129,7 +130,24 @@ const withdrawalHelp: Record<string, string> = {
   onmarket: "https://www.onmarket.com.au/help-faq/equity-crowdfunding-investing-and-allocations/how-do-i-cancel-my-application/",
 };
 
-function ApplicationCard({ item }: { item: Application }) {
+function ReviewPendingHandoff({ owner, id }: { owner: string; id: string }) {
+  const review = useQuery({
+    queryKey: ["private-markets", owner, "handoff-review", id], gcTime: 0, retry: false,
+    queryFn: ({ signal }) => privateMarkets<HandoffReview>("handoff_review", { owner, id, signal }),
+  });
+  const current = review.data;
+  if (review.isPending) return <p role="status">Loading current offer…</p>;
+  if (review.error) return <Notice tone="warn">{review.error.message} <Button size="sm" onClick={() => void review.refetch()}>Retry offer</Button></Notice>;
+  if (!current) return null;
+  return <>
+    <CompareRounds deals={[current.deal]} asOf={review.dataUpdatedAt} />
+    <ProviderApplication key={review.dataUpdatedAt} owner={owner} deal={current.deal}
+      handoff={{ id, amount: current.requested_amount, currency: current.currency, reviewedAt: review.dataUpdatedAt }} />
+  </>;
+}
+
+function ApplicationCard({ item, owner }: { item: Application; owner: string }) {
+  const [reviewing, setReviewing] = useState(false);
   const name = item.offer?.round?.company?.name ?? providerName(item.provider);
   const canReviewWithdrawal = item.status === "application_received" || item.status === "withdrawal_requested";
   const timeline = [
@@ -154,6 +172,13 @@ function ApplicationCard({ item }: { item: Application }) {
         </div>)}
       </dl>
       {item.supplementary_document_url && <SourceLink url={item.supplementary_document_url}>Supplementary disclosure</SourceLink>}
+      {item.status === "handoff" && !item.provider_reference && !item.connection?.revoked_at &&
+        <div className="space-y-2">
+          <Button size="sm" aria-expanded={reviewing} onClick={() => setReviewing(!reviewing)}>
+            {reviewing ? "Close offer review" : "Review and reopen handoff"}
+          </Button>
+          {reviewing && <ReviewPendingHandoff owner={owner} id={item.id} />}
+        </div>}
       {canReviewWithdrawal && <div className="space-y-1">
         {item.status === "withdrawal_requested" && <p>Awaiting the provider’s decision. Check your provider account for refund information.</p>}
         {!item.cooling_off_ends_at && !item.supplementary_withdrawal_ends_at && <p>Check your provider account for withdrawal deadlines.</p>}
@@ -200,7 +225,7 @@ export function Positions({ owner }: { owner: string }) {
       {applications.isPending && <p className="text-sm text-text-2" role="status">Loading applications…</p>}
       {applications.error && <Notice tone="down">{applications.error.message} <Button size="sm" onClick={() => void applications.refetch()}>Retry applications</Button></Notice>}
       {applications.data && !records.length && <Card><EmptyState title="No recorded applications" /></Card>}
-      {records.map((item) => <ApplicationCard key={item.id} item={item} />)}
+      {records.map((item) => <ApplicationCard key={item.id} item={item} owner={owner} />)}
     </section>
   </div>;
 }

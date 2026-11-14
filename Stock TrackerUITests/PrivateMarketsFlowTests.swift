@@ -1017,6 +1017,54 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPendingHandoffReopensFromHistoryAndChecksProviderAgain() throws {
+        try launchWithLocalSession("PRIVATE_HANDOFF_RESUME_TEST_SESSION")
+        openPrivateMarkets()
+        let profile = app.buttons["Investor profile & applications"]
+        for _ in 0..<4 where !profile.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(profile.isHittable)
+        profile.tap()
+        let application = app.buttons["private.application.row"].firstMatch
+        _ = application.waitForExistence(timeout: 8)
+        for _ in 0..<4 where !application.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(application.isHittable, app.debugDescription)
+        application.tap()
+        let resume = app.buttons["Review and reopen handoff"]
+        XCTAssertTrue(resume.waitForExistence(timeout: 8))
+        resume.tap()
+        let check = app.buttons["private.handoff.check"]
+        XCTAssertTrue(app.navigationBars["Provider Application"].waitForExistence(timeout: 8))
+        for _ in 0..<4 where !check.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(check.isHittable, app.debugDescription)
+        XCTAssertFalse(check.isEnabled)
+        let saved = app.descendants(matching: .any)["private.handoff.savedAmount"].firstMatch
+        XCTAssertTrue(saved.exists)
+        XCTAssertTrue(saved.label.contains("500.4321") || saved.value as? String == "AUD 500.4321")
+        XCTAssertFalse(app.textFields["private.handoff.amount"].exists)
+        let review = app.switches["private.handoff.reviewed"]
+        for _ in 0..<3 where !review.isHittable { app.swipeDown(velocity: .slow) }
+        let reviewSwitch = review.switches.firstMatch
+        (reviewSwitch.exists ? reviewSwitch : review).tap()
+        let risk = app.switches["private.handoff.risk"]
+        let riskSwitch = risk.switches.firstMatch
+        (riskSwitch.exists ? riskSwitch : risk).tap()
+        for _ in 0..<4 where !check.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(check.isEnabled)
+        check.tap()
+        let open = app.buttons["private.handoff.open"]
+        for _ in 0..<3 where !open.isHittable {
+            _ = open.waitForExistence(timeout: 3)
+            if !open.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(open.isHittable, app.debugDescription)
+        open.tap()
+        let error = app.staticTexts["private.handoff.error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 10))
+        XCTAssertTrue(error.label.contains("no longer pending"))
+        XCTAssertFalse(open.exists)
+    }
+
+    @MainActor
     func testCatalogueAISearchRequiresConsentForEachSubmission() throws {
         try launchWithLocalSession("PRIVATE_DISCOVERY_CONSENT_TEST_SESSION")
         openPrivateMarkets()

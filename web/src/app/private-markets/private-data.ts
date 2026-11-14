@@ -103,6 +103,7 @@ export type Application = {
   supplementary_withdrawal_ends_at: string | null; supplementary_document_url: string | null;
   offer: { round: { stage: string; company: { name: string } | null } | null } | null;
 };
+export type HandoffReview = { deal: PrivateDeal; requested_amount: string; currency: string };
 
 export type MonitorPreferences = {
   company_ids: string[]; eligible_opportunities: boolean; digest_enabled: boolean; refreshed_at: string;
@@ -122,6 +123,7 @@ export type MonitorAlert = {
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
   "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "capital_activity" | "valuation_history" | "manual_portfolio" | "remove_manual_portfolio" | "applications" | "allocation" | "updates" |
   "profile" | "save_profile" | "issue_provider_link" | "disconnect_provider" | "handoff_check" | "handoff" |
+  "handoff_review" | "handoff_resume_check" | "handoff_resume" |
   "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 

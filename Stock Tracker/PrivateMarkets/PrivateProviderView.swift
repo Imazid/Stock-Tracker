@@ -297,6 +297,11 @@ private struct PrivateApplicationDetail: View {
                     }
                     if let reference = record.providerReference { LabeledContent("Provider reference", value: reference) }
                     if let date = record.providerEventAt { dated("Latest provider update", date) }
+                    if record.status == "handoff", record.providerReference == nil, record.connection?.revokedAt == nil {
+                        NavigationLink("Review and reopen handoff") {
+                            PrivatePendingHandoff(owner: owner, applicationID: record.id)
+                        }
+                    }
                 }
                 Section("Timeline") {
                     dated("Handoff prepared", record.acknowledgedAt)
@@ -343,6 +348,7 @@ private struct PrivateApplicationDetail: View {
             }
             .navigationTitle(record.companyName)
             .navigationBarTitleDisplayMode(.inline)
+            .task(id: owner) { await refresh() }
             .refreshable { await refresh() }
         } else {
             ContentUnavailableView("Application unavailable", systemImage: "doc.text")
@@ -364,8 +370,56 @@ private struct PrivateApplicationDetail: View {
     }
 }
 
+private struct PrivatePendingHandoff: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    let owner: UUID
+    let applicationID: UUID
+    @State private var review: PrivateMarketsAPI.HandoffReview?
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if auth.userId != owner {
+                ContentUnavailableView("Application unavailable", systemImage: "doc.text")
+            } else if let review {
+                PrivateProviderHandoff(deal: review.deal, pending: .init(
+                    id: applicationID, amount: review.requestedAmount, currency: review.currency))
+            } else if let error {
+                ContentUnavailableView {
+                    Label("Offer unavailable", systemImage: "doc.text")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Retry offer") { Task { await load() } }
+                }
+            } else {
+                ProgressView("Loading current offer")
+            }
+        }
+        .task(id: auth.userId) { await load() }
+    }
+
+    private func load() async {
+        guard auth.userId == owner else { return }
+        error = nil
+        do {
+            let result: PrivateMarketsAPI.HandoffReview = try await PrivateMarketsAPI.request(
+                "handoff_review", ["id": applicationID.uuidString], expectedUserID: owner)
+            if auth.userId == owner, !Task.isCancelled { review = result }
+        } catch is CancellationError {
+        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
+    }
+}
+
 struct PrivateProviderHandoff: View {
+    struct Pending {
+        let id: UUID
+        let amount: String
+        let currency: String
+    }
+
     let deal: PrivateDeal
+    var pending: Pending? = nil
     @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.openURL) private var openURL
     @State private var amount = ""
@@ -377,7 +431,10 @@ struct PrivateProviderHandoff: View {
     @State private var readyAmount: Decimal?
 
     private var validAmount: Decimal? {
-        guard let value = PrivateInput.amount(amount), value > 0 else { return nil }
+        let entered = pending.flatMap { Decimal(string: $0.amount, locale: Locale(identifier: "en_US_POSIX")) }
+            ?? PrivateInput.amount(amount)
+        guard let value = entered, value > 0,
+              (pending?.currency ?? deal.round.currency) == deal.round.currency else { return nil }
         let parts = NSDecimalNumber(decimal: value).stringValue.split(separator: ".")
         if parts.count == 2 && parts[1].count > 4 { return nil }
         return value
@@ -386,22 +443,37 @@ struct PrivateProviderHandoff: View {
     var body: some View {
         Form {
             Section("Provider requirements") {
+                if pending != nil {
+                    LabeledContent("Company", value: deal.company.name)
+                    LabeledContent("Funding round", value: deal.round.stage)
+                }
                 LabeledContent("Provider", value: deal.sourceName)
                 LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
                 NavigationLink("Investor profile & applications") { PrivateInvestorView() }
                 if let url = deal.offerDocumentUrl, url.privateSourceIsSafe {
                     Link("Read the current offer document", destination: url)
+                    Toggle("I reviewed the offer document", isOn: $reviewed)
+                        .accessibilityIdentifier("private.handoff.reviewed")
+                } else {
+                    Text("The current offer document is unavailable.").foregroundStyle(.secondary)
                 }
-                Toggle("I reviewed the offer document", isOn: $reviewed)
-                    .accessibilityIdentifier("private.handoff.reviewed")
                 Toggle("I understand that I could lose the full investment and may be unable to sell", isOn: $acknowledged)
                     .accessibilityIdentifier("private.handoff.risk")
             }
             .disabled(request != nil)
             Section("Requested amount") {
-                TextField("Amount (\(deal.round.currency))", text: $amount).keyboardType(.decimalPad)
-                    .disabled(request != nil)
-                    .accessibilityIdentifier("private.handoff.amount")
+                if let pending {
+                    LabeledContent("Saved request", value: "\(pending.currency) \(pending.amount)")
+                        .accessibilityIdentifier("private.handoff.savedAmount")
+                    if validAmount == nil {
+                        Text("The current terms differ from this handoff. Check your application with the provider.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                } else {
+                    TextField("Amount (\(deal.round.currency))", text: $amount).keyboardType(.decimalPad)
+                        .disabled(request != nil)
+                        .accessibilityIdentifier("private.handoff.amount")
+                }
                 if !amount.isEmpty && validAmount == nil {
                     Text("Enter a positive amount with up to four decimal places.").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -456,10 +528,15 @@ struct PrivateProviderHandoff: View {
         guard request == nil, reviewed, acknowledged, deal.displayedStatus == "Open at verification",
               let owner = auth.userId, let value = validAmount, let document = deal.offerDocumentUrl,
               document.privateSourceIsSafe, !opening || readyAmount == value else { return }
-        let fields: [String: Any] = [
-            "opportunity_id": deal.id.uuidString, "amount": NSDecimalNumber(decimal: value).stringValue,
+        var fields: [String: Any] = [
             "currency": deal.round.currency, "document_url": document.absoluteString, "acknowledged": true,
         ]
+        if let pending {
+            fields["id"] = pending.id.uuidString
+        } else {
+            fields["opportunity_id"] = deal.id.uuidString
+            fields["amount"] = NSDecimalNumber(decimal: value).stringValue
+        }
         let id = UUID()
         requestID = id
         error = nil
@@ -467,10 +544,12 @@ struct PrivateProviderHandoff: View {
             defer { if requestID == id { request = nil } }
             do {
                 if opening {
-                    let result: PrivateMarketsAPI.Handoff = try await PrivateMarketsAPI.request("handoff", fields, expectedUserID: owner)
+                    let result: PrivateMarketsAPI.Handoff = try await PrivateMarketsAPI.request(
+                        pending == nil ? "handoff" : "handoff_resume", fields, expectedUserID: owner)
                     try Task.checkCancellation()
                     guard requestID == id, auth.userId == owner else { return }
-                    guard result.handoffUrl.privateSourceIsSafe else {
+                    guard result.handoffUrl.isPrivateHandoffURL(for: deal.provider),
+                          pending == nil || pending?.id == result.commitmentId else {
                         clearReadiness()
                         error = "The provider link could not be verified."
                         return
@@ -478,7 +557,7 @@ struct PrivateProviderHandoff: View {
                     openURL(result.handoffUrl)
                 } else {
                     let result: PrivateMarketsAPI.HandoffReadiness = try await PrivateMarketsAPI.request(
-                        "handoff_check", fields, expectedUserID: owner)
+                        pending == nil ? "handoff_check" : "handoff_resume_check", fields, expectedUserID: owner)
                     try Task.checkCancellation()
                     guard requestID == id, auth.userId == owner else { return }
                     if result.ready { readyAmount = value }
