@@ -2,7 +2,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQueries } from "@tanstack/react-query";
 import { usePortfolioRates } from "@/hooks/portfolio-metrics";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getJSON } from "@/lib/api";
@@ -20,11 +20,12 @@ type Breakdown = keyof typeof breakdowns;
 const breakdownKeys = Object.keys(breakdowns) as Breakdown[];
 const selectedButton = "aria-pressed:border-primary aria-pressed:bg-primary-soft aria-pressed:text-primary-fg";
 
-export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
+export function ExposureCard({ holdings, quoteFor, loading, truncated, showRisk }: {
   holdings: readonly { shares: number; instrument: InstrumentView | null }[];
   quoteFor: (id: string) => QuoteResponse | undefined;
   loading: boolean;
   truncated: boolean;
+  showRisk: boolean;
 }) {
   const [base, setBase] = useState<ExposureCurrency>("AUD");
   const [breakdown, setBreakdown] = useState<Breakdown>("assets");
@@ -63,7 +64,8 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
     issuerDimension === "sectors" ? classification.sector : classification.country);
 
   return <Card>
-    <CardHeader title="Portfolio exposure" subtitle="Weights use open holdings with usable quotes and exchange rates. Cash balances are excluded." />
+    <CardHeader title="Portfolio exposure" subtitle="Weights use open holdings with usable quotes and exchange rates. Cash balances are excluded."
+      className="flex-wrap" actions={showRisk && <ButtonLink href="/ai?topic=portfolio-risk" size="sm">Review portfolio risks</ButtonLink>} />
     <div className="space-y-3 border-t border-border px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <dl>

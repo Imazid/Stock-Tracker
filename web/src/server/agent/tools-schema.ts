@@ -21,6 +21,7 @@ export const TOOL_NAMES = [
   "get_watchlist",
   "get_portfolio",
   "explain_portfolio_movement",
+  "get_portfolio_risk",
   "get_agent_activity",
   "draft_strategy",
   "run_backtest",
@@ -97,6 +98,11 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: obj({}, []),
   },
   {
+    name: "get_portfolio_risk",
+    description: "Calculate listing, sector and quote-currency concentration from the signed-in person's synced holdings, including coverage and observed price history of leading positions. Requires account sharing.",
+    input_schema: obj({}, []),
+  },
+  {
     name: "get_agent_activity",
     description: "Summarize the signed-in person's recorded agent activity, with checks, practice proposals, explicit approvals and simulated fills for the selected period. Requires account sharing.",
     input_schema: obj({ period: { type: "string", enum: ["thisWeek", "lastWeek", "lastSevenDays"] } }, ["period"]),
@@ -158,6 +164,8 @@ export interface ToolContext {
   company?: { instrumentId: string; section: string };
   /** A Supabase client bound to the signed-in person's session, or undefined when signed out / unconfigured. */
   supabase?: SupabaseClient;
+  owner?: string;
+  signal?: AbortSignal;
   signedIn: boolean;
   timeZone?: string;
   now: number;
