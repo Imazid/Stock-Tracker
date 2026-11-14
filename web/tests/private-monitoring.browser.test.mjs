@@ -38,7 +38,8 @@ test("web monitoring saves account choices, shows sourced alerts, and removes it
 }, async () => {
   const browser = await chromium.launch({ executablePath, headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+    const page = await context.newPage();
     await permitPreview(page);
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -133,7 +134,7 @@ test("web monitoring saves account choices, shows sourced alerts, and removes it
     await page.getByRole("button", { name: "Save monitoring preferences" }).click();
     await page.getByRole("status").getByText("Monitoring preferences saved.").waitFor();
 
-    const concurrent = await page.context().newPage();
+    const concurrent = await context.newPage();
     await permitPreview(concurrent);
     await concurrent.goto(new URL(heidiCompany, origin).href);
     const concurrentFollow = concurrent.getByRole("button", { name: "Follow company", exact: true });
