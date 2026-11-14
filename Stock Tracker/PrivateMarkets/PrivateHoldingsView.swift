@@ -603,12 +603,12 @@ private struct PrivateManualPortfolioPublication: View {
                     error = "A web snapshot can contain between 1 and 150 holdings."
                     return
                 }
-                let snapshot = holdings.map { snapshot($0, asOf: date) }
-                if includeCapitalActivity, try JSONSerialization.data(withJSONObject: snapshot).count > 110_000 {
+                let publishedHoldings = holdings.map { snapshot($0, asOf: date) }
+                if includeCapitalActivity, try JSONSerialization.data(withJSONObject: publishedHoldings).count > 110_000 {
                     error = "This snapshot is too large. Turn off Include capital activity to publish holdings and balances."
                     return
                 }
-                fields["holdings"] = snapshot
+                fields["holdings"] = publishedHoldings
             }
             try await PrivateMarketsAPI.send(removing ? "remove_manual_portfolio" : "save_manual_portfolio",
                                              fields, expectedUserID: owner)
