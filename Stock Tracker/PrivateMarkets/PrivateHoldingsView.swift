@@ -39,12 +39,15 @@ struct PrivateHoldingsView: View {
                                 .font(.footnote).foregroundStyle(.secondary)
                             if holding.matchingProviderHoldingID != nil {
                                 Text("Linked to provider ownership").font(.footnote).foregroundStyle(.secondary)
+                            } else if holding.closedOn() != nil {
+                                Text("Exited · Self-reported").font(.subheadline)
                             } else if let mark = holding.valuation() {
                                 Text(PrivateInput.money(mark.value, currency: holding.currency) + (mark.isStale() ? " · Stale valuation" : " · Dated valuation"))
                                     .font(.subheadline.monospacedDigit())
                                     .foregroundStyle(mark.isStale() ? Color.orange : Color.primary)
                             } else {
-                                Text("No carrying value recorded").font(.footnote).foregroundStyle(.secondary)
+                                Text(holding.latestManualSale == nil ? "No carrying value recorded" : "Updated valuation needed")
+                                    .font(.footnote).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -304,6 +307,8 @@ private struct PrivateHoldingEditor: View {
                 Section("Ownership") {
                     TextField("Committed capital", text: $commitment).keyboardType(.decimalPad)
                     TextField("Shares or units", text: $units).keyboardType(.decimalPad)
+                        .disabled(holding?.latestManualSale != nil)
+                        .accessibilityIdentifier("private.holding.units.input")
                     TextField("Ownership percentage", text: $ownership).keyboardType(.decimalPad)
                     TextField("Share class", text: $shareClass)
                     Toggle("Has a lock-up date", isOn: $locked)
@@ -353,7 +358,7 @@ private struct PrivateHoldingEditor: View {
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let committed = PrivateInput.amount(commitment)
-        let parsedUnits = PrivateInput.amount(units)
+        let parsedUnits = holding?.latestManualSale == nil ? PrivateInput.amount(units) : holding?.units
         let percent = PrivateInput.amount(ownership)
         guard !trimmedName.isEmpty, trimmedName.count <= 160, shareClass.count <= 120,
               commitment.isEmpty || committed != nil,
@@ -389,10 +394,11 @@ struct PrivateHoldingDetail: View {
     @State private var editor: Editor?
     @State private var showDelete = false
     @State private var showProviderMatch = false
+    @State private var showRemoveSale = false
     @State private var error: String?
 
     private enum Editor: String, Identifiable {
-        case holding, valuation, cashFlow
+        case holding, valuation, cashFlow, sale
         var id: String { rawValue }
     }
 
@@ -450,7 +456,11 @@ struct PrivateHoldingDetail: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("private.valuation.record")
                     }
-                    if !providerRecord {
+                    if !providerRecord, holding.closedOn() == nil {
+                        if let sale = holding.latestManualSale, holding.valuation() == nil {
+                            Text("Record a valuation dated after the sale on \(sale.date.formatted(date: .abbreviated, time: .omitted)).")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                         Button("Record valuation") { editor = .valuation }.accessibilityIdentifier("private.valuation.add")
                     }
                 }
@@ -458,7 +468,21 @@ struct PrivateHoldingDetail: View {
                     ForEach(holding.cashFlows.sorted(by: { $0.date > $1.date }), id: \.id) { flow in
                         PrivateCashFlowRow(holding: holding, flow: flow, isEditable: !providerRecord)
                     }
-                    if !providerRecord { Button("Record cash flow") { editor = .cashFlow } }
+                    if !providerRecord {
+                        Button("Record cash flow") { editor = .cashFlow }
+                        if holding.closedOn() == nil, holding.matchingProviderHoldingID == nil {
+                            Button("Record settled sale") { editor = .sale }
+                                .accessibilityIdentifier("private.holding.sale.add")
+                        }
+                        if holding.matchingProviderHoldingID == nil, let latest = holding.latestManualSale {
+                            Button("Remove most recent sale", role: .destructive) { showRemoveSale = true }
+                                .accessibilityIdentifier("private.holding.sale.remove")
+                                .confirmationDialog("Remove the most recent sale?", isPresented: $showRemoveSale,
+                                                    titleVisibility: .visible, presenting: latest.id) { saleID in
+                                    Button("Remove sale", role: .destructive) { removeSale(saleID) }
+                                }
+                        }
+                    }
                 }
                 if let cancellations = providerPosition?.cancelledCalls, !cancellations.isEmpty {
                     Section("Cancelled capital calls") {
@@ -480,6 +504,7 @@ struct PrivateHoldingDetail: View {
                 case .holding: PrivateHoldingEditor(holding: holding)
                 case .valuation: PrivateLedgerEditor(holding: holding, isValuation: true)
                 case .cashFlow: PrivateLedgerEditor(holding: holding, isValuation: false)
+                case .sale: PrivateManualSaleEditor(holdingID: holding.id, owner: auth.userId)
                 }
             }
             .sheet(isPresented: $showProviderMatch) {
@@ -499,10 +524,22 @@ struct PrivateHoldingDetail: View {
         }
     }
 
+    private func removeSale(_ saleID: UUID) {
+        do {
+            try store.change { state in
+                guard let index = state.holdings.firstIndex(where: { $0.id == id }),
+                      state.holdings[index].removeLatestManualSale(saleID) else { throw PrivateLedgerError.holdingChanged }
+            }
+        } catch { self.error = "The sale could not be removed." }
+    }
+
     private func overview(_ holding: PrivateHolding) -> some View {
-        Section("Ownership") {
-            Text(providerPosition?.hasExited == true ? "Exited · Provider confirmed" :
-                 providerRecord ? "Provider-confirmed ownership · Illiquid" : "Self-reported holding · Illiquid")
+        let exited = providerPosition?.hasExited == true || holding.closedOn() != nil
+        let ownershipStatus = providerRecord
+            ? (exited ? "Exited · Provider confirmed" : "Provider-confirmed ownership · Illiquid")
+            : (exited ? "Exited · Self-reported" : "Self-reported holding · Illiquid")
+        return Section("Ownership") {
+            Text(ownershipStatus)
                 .font(.footnote).foregroundStyle(.secondary)
             LabeledContent("Asset class", value: holding.assetClass.rawValue)
             if let position = providerPosition {
@@ -524,27 +561,38 @@ struct PrivateHoldingDetail: View {
                     Text("Only recent provider activity is available.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if let units = holding.units {
-                LabeledContent(holding.latestDispositionOn == nil ? "Shares or units" : "Remaining shares or units",
-                               value: units.formatted())
+            if !providerRecord, let sale = holding.latestManualSale {
+                if let original = holding.units { LabeledContent("Original shares or units", value: original.formatted()) }
+                if sale.closesManualPosition == true {
+                    LabeledContent("Exit settled", value: sale.date.formatted(date: .abbreviated, time: .omitted))
+                    LabeledContent("Exit source", value: sale.source)
+                }
+            }
+            let unitsLabel = holding.latestDispositionOn == nil && holding.latestManualSale == nil ? "Shares or units" : "Remaining shares or units"
+            if let units = holding.remainingUnits() {
+                LabeledContent(unitsLabel, value: units.formatted())
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(holding.latestDispositionOn == nil ? "Shares or units" : "Remaining shares or units")
+                    .accessibilityLabel(unitsLabel)
                     .accessibilityValue(units.formatted())
                     .accessibilityIdentifier("private.holding.units")
             }
-            if let percent = holding.ownershipPercent { LabeledContent("Ownership", value: (percent / 100).formatted(.percent)) }
+            if holding.latestManualSale == nil, let percent = holding.ownershipPercent { LabeledContent("Ownership", value: (percent / 100).formatted(.percent)) }
             if !holding.shareClass.isEmpty { LabeledContent("Share class", value: holding.shareClass) }
             if let end = holding.lockupUntil { LabeledContent("Lock-up ends", value: end.formatted(date: .abbreviated, time: .omitted)) }
             if let mark = holding.valuation() {
                 LabeledContent("Latest carrying value", value: PrivateInput.money(mark.value, currency: holding.currency))
-                if providerPosition?.hasExited != true {
+                if holding.closedOn() == nil {
                     Text(mark.isStale() ? "Stale valuation · \(mark.date.formatted(date: .abbreviated, time: .omitted))" :
                             "As of \(mark.date.formatted(date: .abbreviated, time: .omitted))")
                         .font(.footnote).foregroundStyle(mark.isStale() ? Color.orange : Color.secondary)
                 }
             } else {
-                LabeledContent("Latest carrying value",
-                               value: holding.dispositionRevisionAt == nil ? "Unavailable" : "Updated valuation needed")
+                let markStatus = holding.dispositionRevisionAt == nil && holding.latestManualSale == nil ? "Unavailable" : "Updated valuation needed"
+                LabeledContent("Latest carrying value", value: markStatus)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Latest carrying value")
+                    .accessibilityValue(markStatus)
+                    .accessibilityIdentifier("private.holding.valuationStatus")
             }
         }
     }
@@ -635,6 +683,90 @@ private struct PrivateProviderMatchEditor: View {
     }
 }
 
+private enum PrivateLedgerError: Error { case holdingChanged, invalidSale, afterExit }
+
+private struct PrivateManualSaleEditor: View {
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @Environment(\.dismiss) private var dismiss
+    let holdingID: UUID
+    let owner: UUID?
+    @State private var closesPosition = false
+    @State private var date = Date.now
+    @State private var units = ""
+    @State private var proceeds = ""
+    @State private var basis = ""
+    @State private var source = ""
+    @State private var error: String?
+
+    private var holding: PrivateHolding? { store.state.holdings.first { $0.id == holdingID } }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if auth.userId == owner, let holding, holding.closedOn() == nil, holding.matchingProviderHoldingID == nil {
+                    Toggle("Close the entire position", isOn: $closesPosition)
+                        .accessibilityIdentifier("private.sale.full")
+                    if !closesPosition {
+                        if let remaining = holding.remainingUnits() {
+                            LabeledContent("Shares or units available", value: remaining.formatted())
+                            TextField("Shares or units sold", text: $units).keyboardType(.decimalPad)
+                                .accessibilityIdentifier("private.sale.units")
+                        } else {
+                            Text("Enter the original units in the holding before recording a partial sale.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    DatePicker("Settlement date", selection: $date, in: ...Date.now, displayedComponents: .date)
+                    TextField("Net proceeds (\(holding.currency))", text: $proceeds).keyboardType(.decimalPad)
+                        .accessibilityIdentifier("private.sale.proceeds")
+                    TextField("Cost basis of units sold", text: $basis).keyboardType(.decimalPad)
+                    TextField("Settlement source", text: $source)
+                        .accessibilityIdentifier("private.sale.source")
+                    if let error { Text(error).foregroundStyle(Color.orange) }
+                } else {
+                    Text("This holding is unavailable for recording a sale.")
+                }
+            }
+            .navigationTitle("Record Settled Sale")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: save).accessibilityIdentifier("private.sale.save")
+                        .disabled(auth.userId != owner || holding == nil || holding?.closedOn() != nil ||
+                                  holding?.matchingProviderHoldingID != nil || (!closesPosition && holding?.remainingUnits() == nil))
+                }
+            }
+        }
+        .onChange(of: auth.userId) { _, _ in dismiss() }
+    }
+
+    private func save() {
+        guard auth.userId == owner else { return }
+        let source = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedBasis = PrivateInput.amount(basis)
+        guard let amount = PrivateInput.amount(proceeds), !source.isEmpty, source.count <= 400,
+              basis.isEmpty || parsedBasis != nil else {
+            error = "Enter the net proceeds, settlement source and any known cost basis."
+            return
+        }
+        do {
+            try store.change { state in
+                guard let index = state.holdings.firstIndex(where: { $0.id == holdingID }),
+                      state.holdings[index].recordManualSale(amount: amount, date: Calendar.current.startOfDay(for: date),
+                                                            source: source, soldUnits: closesPosition ? nil : PrivateInput.amount(units),
+                                                            basis: parsedBasis, closesPosition: closesPosition) else {
+                    throw PrivateLedgerError.invalidSale
+                }
+            }
+            dismiss()
+        } catch PrivateLedgerError.invalidSale {
+            self.error = "Check the units and settlement date against the ledger. A partial sale must leave units in the holding."
+        } catch { self.error = "The sale could not be saved." }
+    }
+}
+
 private struct PrivateLedgerEditor: View {
     @EnvironmentObject private var store: PrivateMarketsStore
     @Environment(\.dismiss) private var dismiss
@@ -645,7 +777,6 @@ private struct PrivateLedgerEditor: View {
     @State private var amount = ""
     @State private var source = ""
     @State private var method = ""
-    @State private var disposedCost = ""
     @State private var pending = false
     @State private var error: String?
 
@@ -654,10 +785,9 @@ private struct PrivateLedgerEditor: View {
             Form {
                 if !isValuation {
                     Picker("Cash flow type", selection: $kind) {
-                        ForEach(PrivateCashFlow.Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        ForEach(PrivateCashFlow.Kind.allCases.filter { $0 != .sale }, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     if kind == .capitalCall { Toggle("Payment pending", isOn: $pending) }
-                    if kind == .sale { TextField("Cost basis of units sold", text: $disposedCost).keyboardType(.decimalPad) }
                 }
                 if !isValuation && kind == .capitalCall && pending {
                     DatePicker("Due date", selection: $date, displayedComponents: .date)
@@ -684,26 +814,34 @@ private struct PrivateLedgerEditor: View {
         let method = method.trimmingCharacters(in: .whitespacesAndNewlines)
         let day = Calendar.current.startOfDay(for: date)
         let settled = kind != .capitalCall || !pending
-        let parsedCost = PrivateInput.amount(disposedCost)
         guard let value = PrivateInput.amount(amount), isValuation || value > 0,
               !source.isEmpty, source.count <= 400, !isValuation || (!method.isEmpty && method.count <= 400),
-              isValuation || kind != .sale || disposedCost.isEmpty || parsedCost != nil,
               !settled || day <= .now else {
             error = "Enter an amount, source, and any required methodology."
             return
         }
         do {
             try store.change { state in
-                guard let index = state.holdings.firstIndex(where: { $0.id == holding.id }) else { return }
+                guard let index = state.holdings.firstIndex(where: { $0.id == holding.id }) else {
+                    throw PrivateLedgerError.holdingChanged
+                }
                 if isValuation {
+                    guard state.holdings[index].closedOn() == nil else { throw PrivateLedgerError.holdingChanged }
                     state.holdings[index].valuations.removeAll { $0.date == day }
-                    state.holdings[index].valuations.append(.init(value: value, date: day, source: source, method: method))
+                    let sale = state.holdings[index].latestManualSale
+                    state.holdings[index].valuations.append(.init(value: value, date: day, source: source, method: method,
+                                                                  manualSaleID: sale.flatMap { day > $0.date ? $0.id : nil }))
                 } else {
+                    if kind.isOutflow, let exit = state.holdings[index].closedOn(), day > exit {
+                        throw PrivateLedgerError.afterExit
+                    }
                     state.holdings[index].cashFlows.append(.init(kind: kind, amount: value, date: day, settled: settled,
-                                                               source: source, disposedCost: parsedCost))
+                                                               source: source))
                 }
             }
             dismiss()
+        } catch PrivateLedgerError.afterExit {
+            self.error = "New capital records must be dated on or before the exit. A previously recorded call can still be marked paid."
         } catch { self.error = "The record could not be saved." }
     }
 }
@@ -842,7 +980,9 @@ private struct PrivateCashFlowRow: View {
         do {
             try store.change { state in
                 guard let holdingIndex = state.holdings.firstIndex(where: { $0.id == holding.id }),
-                      let index = state.holdings[holdingIndex].cashFlows.firstIndex(where: { $0.id == flow.id }) else { return }
+                      let index = state.holdings[holdingIndex].cashFlows.firstIndex(where: { $0.id == flow.id && !$0.settled }) else {
+                    throw PrivateLedgerError.holdingChanged
+                }
                 state.holdings[holdingIndex].cashFlows[index].settled = true
                 state.holdings[holdingIndex].cashFlows[index].date = Calendar.current.startOfDay(for: paymentDate)
             }

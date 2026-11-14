@@ -412,6 +412,7 @@ final class PrivateMarketsStore: ObservableObject {
     var angelListSnapshots: [PrivateFundSnapshot] { state.angelListSnapshots ?? [] }
 
     var independentManualHoldings: [PrivateHolding] { state.holdings.filter { $0.matchingProviderHoldingID == nil } }
+    var activeManualHoldings: [PrivateHolding] { independentManualHoldings.filter { $0.closedOn() == nil } }
 
     var unavailableLinkedProviderCount: Int {
         let available = Set(providerHoldings.map(\.id))
@@ -513,10 +514,10 @@ final class PrivateMarketsStore: ObservableObject {
         selectAccount(scope)
     }
 
-    func change(_ edit: (inout State) -> Void) throws {
+    func change(_ edit: (inout State) throws -> Void) throws {
         guard storageError == nil else { throw CocoaError(.fileReadNoPermission) }
         var next = state
-        edit(&next)
+        try edit(&next)
         let data = try JSONEncoder().encode(next)
         try data.write(to: Self.file(for: scope), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         let monitorScopeChanged = monitoredCompanies(in: next) != monitoredCompanies(in: state)
@@ -536,7 +537,7 @@ final class PrivateMarketsStore: ObservableObject {
     }
 
     func availableProviderMatches(for holding: PrivateHolding) -> [ProviderPrivateHolding] {
-        guard !loadingProviderHoldings, providerError == nil,
+        guard holding.closedOn() == nil, !loadingProviderHoldings, providerError == nil,
               !angelListSnapshots.contains(where: { $0.replacesManualHoldingID == holding.id }) else { return [] }
         let linkedIDs = Set(state.holdings.filter { $0.id != holding.id }.compactMap(\.matchingProviderHoldingID))
         return providerHoldings.filter { !linkedIDs.contains($0.id) && holding.canLinkProviderHolding($0.holding) }
@@ -564,7 +565,7 @@ final class PrivateMarketsStore: ObservableObject {
             throw AngelListLink.Failure.disconnected
         }
         if let manual = snapshot.replacesManualHoldingID {
-            guard independentManualHoldings.contains(where: { $0.id == manual && $0.currency == snapshot.currency }),
+            guard activeManualHoldings.contains(where: { $0.id == manual && $0.currency == snapshot.currency }),
                   !angelListSnapshots.contains(where: { $0.reference != snapshot.reference && $0.replacesManualHoldingID == manual }) else {
                 throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_FUND_ALLOCATION",
                     message: "Choose an unlinked manual holding in the same currency.")
@@ -633,7 +634,7 @@ final class PrivateMarketsStore: ObservableObject {
         case .tracked:
             companyIDs = followed + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId)
         case .owned:
-            companyIDs = independentManualHoldings.compactMap(\.catalogueCompanyID) +
+            companyIDs = activeManualHoldings.compactMap(\.catalogueCompanyID) +
                 providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId)
         case .followed:
             companyIDs = followed

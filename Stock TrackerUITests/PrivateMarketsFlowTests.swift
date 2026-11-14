@@ -57,6 +57,81 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(holding.label.contains("Local test investment"))
     }
 
+    func testManualHoldingRecordsAndCorrectsSales() {
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let add = app.buttons["private.holding.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.tap()
+
+        let name = app.textFields["private.holding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Manual sale fixture")
+        let original = app.textFields["private.holding.units.input"]
+        if !original.isHittable { app.swipeUp() }
+        original.tap()
+        original.typeText("100")
+        app.buttons["private.holding.save"].tap()
+        let holding = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(holding.waitForExistence(timeout: 5))
+        holding.tap()
+
+        let openSale = app.buttons["private.holding.sale.add"]
+        for _ in 0..<4 where !openSale.isHittable { app.swipeUp() }
+        XCTAssertTrue(openSale.isHittable)
+        openSale.tap()
+        let units = app.textFields["private.sale.units"]
+        XCTAssertTrue(units.waitForExistence(timeout: 5))
+        units.tap()
+        units.typeText("40")
+        enterSaleProceeds("600", source: "Partial sale statement")
+
+        let remaining = app.descendants(matching: .any)["private.holding.units"].firstMatch
+        for _ in 0..<4 where !remaining.isHittable { app.swipeDown() }
+        XCTAssertEqual(remaining.value as? String, 60.formatted())
+        let valuation = app.descendants(matching: .any)["private.holding.valuationStatus"].firstMatch
+        if !valuation.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertEqual(valuation.value as? String, "Updated valuation needed")
+
+        for _ in 0..<4 where !openSale.isHittable { app.swipeUp() }
+        openSale.tap()
+        let full = app.switches["private.sale.full"]
+        XCTAssertTrue(full.waitForExistence(timeout: 5))
+        let toggle = full.switches.firstMatch
+        (toggle.exists ? toggle : full).tap()
+        XCTAssertTrue(units.waitForNonExistence(timeout: 5))
+        enterSaleProceeds("900", source: "Final sale statement")
+
+        let exited = app.staticTexts["Exited · Self-reported"]
+        for _ in 0..<4 where !remaining.isHittable || !exited.isHittable { app.swipeDown() }
+        XCTAssertTrue(exited.exists)
+        XCTAssertEqual(remaining.value as? String, 0.formatted())
+
+        let remove = app.buttons["private.holding.sale.remove"]
+        for _ in 0..<4 where !remove.isHittable { app.swipeUp() }
+        XCTAssertTrue(remove.isHittable)
+        remove.tap()
+        let confirm = app.buttons["Remove sale"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        for _ in 0..<4 where !remaining.isHittable { app.swipeDown() }
+        XCTAssertEqual(remaining.value as? String, 60.formatted())
+    }
+
+    private func enterSaleProceeds(_ amount: String, source: String) {
+        let proceeds = app.textFields["private.sale.proceeds"]
+        XCTAssertTrue(proceeds.waitForExistence(timeout: 5))
+        proceeds.tap()
+        proceeds.typeText(amount)
+        let statement = app.textFields["private.sale.source"]
+        if !statement.isHittable { app.swipeUp() }
+        statement.tap()
+        statement.typeText(source)
+        app.buttons["private.sale.save"].tap()
+        XCTAssertTrue(app.navigationBars["Record Settled Sale"].waitForNonExistence(timeout: 5))
+    }
+
     func testProviderDirectoryAndOfflineCalculatorAreReachable() {
         openPrivateMarkets()
         app.buttons["private.destination.magnifyingglass"].tap()

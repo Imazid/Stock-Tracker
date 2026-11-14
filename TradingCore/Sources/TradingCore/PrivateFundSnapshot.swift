@@ -130,14 +130,15 @@ public struct PrivateFundSnapshot: Codable, Equatable, Identifiable, Sendable {
         var replaced = Set<UUID>()
         let fundHoldings = snapshots.compactMap { snapshot -> PrivateHolding? in
             if let manualID = snapshot.replacesManualHoldingID, let holding = manualByID[manualID] {
-                guard holding.matchingProviderHoldingID == nil, snapshot.currency == holding.currency,
+                guard holding.closedOn(asOf: asOf) == nil, holding.matchingProviderHoldingID == nil, snapshot.currency == holding.currency,
                       snapshot.netAssetValue != nil, snapshot.asOf <= asOf,
+                      holding.latestManualSale(asOf: asOf).map({ snapshot.asOf > $0.date }) ?? true,
                       holding.valuation(asOf: asOf).map({ $0.date <= snapshot.asOf }) ?? true else { return nil }
                 replaced.insert(manualID)
             }
             return snapshot.allocationHolding
         }
-        return manual.filter { $0.matchingProviderHoldingID == nil && !replaced.contains($0.id) } + confirmed + fundHoldings
+        return manual.filter { $0.closedOn(asOf: asOf) == nil && $0.matchingProviderHoldingID == nil && !replaced.contains($0.id) } + confirmed + fundHoldings
     }
 
     private static func statementAmount(_ text: String) -> Decimal? {

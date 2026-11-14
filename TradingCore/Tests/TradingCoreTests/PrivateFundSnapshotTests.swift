@@ -103,6 +103,30 @@ final class PrivateFundSnapshotTests: XCTestCase {
         XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [manual], confirmed: [provider], snapshots: []), [manual, provider])
     }
 
+    func testLinkedFundStatementsRespectPartialSalesAndFullExitsAtTheAllocationDate() throws {
+        var holding = PrivateHolding(name: "Tracked fund", assetClass: .ventureFund, currency: "USD", units: 100)
+        let early = try XCTUnwrap(PrivateFundSnapshot.make(
+            reference: "fund", name: holding.name, assetClass: holding.assetClass, currency: holding.currency,
+            asOf: "2026-11-01", netAssetValue: "100", commitment: nil, paidIn: nil, distributions: nil,
+            replacesManualHoldingID: holding.id, retrievedAt: retrieved
+        ))
+        let updated = try XCTUnwrap(PrivateFundSnapshot.make(
+            reference: "fund", name: holding.name, assetClass: holding.assetClass, currency: holding.currency,
+            asOf: "2026-11-03", netAssetValue: "90", commitment: nil, paidIn: nil, distributions: nil,
+            replacesManualHoldingID: holding.id, retrievedAt: retrieved
+        ))
+        let partialDate = early.asOf.addingTimeInterval(86_400)
+        XCTAssertTrue(holding.recordManualSale(amount: 40, date: partialDate, source: "Partial sale statement",
+                                               soldUnits: 20, basis: nil, closesPosition: false, asOf: retrieved))
+        XCTAssertTrue(holding.recordManualSale(amount: 80, date: updated.asOf.addingTimeInterval(86_400), source: "Final sale statement",
+                                               soldUnits: nil, basis: nil, closesPosition: true, asOf: retrieved))
+
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [early], asOf: early.asOf).map(\.id), [early.id])
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [early], asOf: partialDate), [holding])
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [updated], asOf: updated.asOf).map(\.id), [updated.id])
+        XCTAssertTrue(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [updated], asOf: retrieved).isEmpty)
+    }
+
     private func make(date: String = "2026-11-01", currency: String = "USD",
                       netAssetValue: String? = "22000", paidIn: String? = nil, distributions: String? = nil) -> PrivateFundSnapshot? {
         PrivateFundSnapshot.make(reference: "capital-account-a", name: "Venture fund", assetClass: .ventureFund,

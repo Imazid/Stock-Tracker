@@ -29,10 +29,11 @@ public struct PrivateCashFlow: Codable, Sendable, Equatable {
     public var originalDueDate: Date?
     public var disposedCost: Decimal?
     public var disposedUnits: Decimal?
+    public private(set) var closesManualPosition: Bool?
     public var source: String
 
     public init(id: UUID = UUID(), kind: Kind, amount: Decimal, date: Date, settled: Bool, source: String,
-                disposedCost: Decimal? = nil, disposedUnits: Decimal? = nil) {
+                disposedCost: Decimal? = nil, disposedUnits: Decimal? = nil, closesManualPosition: Bool? = nil) {
         self.id = id
         self.kind = kind
         self.amount = amount
@@ -41,6 +42,7 @@ public struct PrivateCashFlow: Codable, Sendable, Equatable {
         self.originalDueDate = kind == .capitalCall && !settled ? date : nil
         self.disposedCost = kind == .sale ? disposedCost : nil
         self.disposedUnits = kind == .sale ? disposedUnits : nil
+        self.closesManualPosition = kind == .sale ? closesManualPosition : nil
         self.source = source
     }
 }
@@ -51,13 +53,15 @@ public struct PrivateValuation: Codable, Sendable, Equatable {
     public var source: String
     public var method: String
     public var providerEventAt: Date?
+    public var manualSaleID: UUID?
 
-    public init(value: Decimal, date: Date, source: String, method: String, providerEventAt: Date? = nil) {
+    public init(value: Decimal, date: Date, source: String, method: String, providerEventAt: Date? = nil, manualSaleID: UUID? = nil) {
         self.value = value
         self.date = date
         self.source = source
         self.method = method
         self.providerEventAt = providerEventAt
+        self.manualSaleID = manualSaleID
     }
 
     public func isStale(asOf: Date = .now) -> Bool { asOf.timeIntervalSince(date) > 90 * 86_400 }
@@ -127,12 +131,64 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
 
     public mutating func unlinkProviderHolding() { matchingProviderHoldingID = nil }
 
+    public var latestManualSale: PrivateCashFlow? {
+        latestManualSale(asOf: .now)
+    }
+
+    func latestManualSale(asOf: Date) -> PrivateCashFlow? {
+        cashFlows.last { $0.kind == .sale && $0.settled && $0.closesManualPosition != nil && $0.date <= asOf }
+    }
+
+    public func remainingUnits(asOf: Date = .now) -> Decimal? {
+        let sales = cashFlows.filter { $0.kind == .sale && $0.settled && $0.closesManualPosition != nil && $0.date <= asOf }
+        if sales.contains(where: { $0.closesManualPosition == true }) { return 0 }
+        return units.map { opening in opening - sales.compactMap(\.disposedUnits).reduce(0, +) }
+    }
+
+    public func closedOn(asOf: Date = .now) -> Date? {
+        if let manual = latestManualSale(asOf: asOf), manual.closesManualPosition == true {
+            return manual.date
+        }
+        guard units == 0, exitSource != nil, let latestDispositionOn, latestDispositionOn <= asOf else { return nil }
+        return latestDispositionOn
+    }
+
+    public mutating func recordManualSale(amount: Decimal, date: Date, source: String, soldUnits: Decimal?,
+                                          basis: Decimal?, closesPosition: Bool, asOf: Date = .now) -> Bool {
+        guard matchingProviderHoldingID == nil, latestDispositionOn == nil, dispositionRevisionAt == nil,
+              closedOn(asOf: asOf) == nil, date <= asOf, amount >= 0, amount > 0 || closesPosition,
+              !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, (basis ?? 0) >= 0,
+              cashFlows.filter({ $0.kind == .sale && $0.settled }).allSatisfy({ $0.date <= date }) else { return false }
+        let remaining = remainingUnits(asOf: date)
+        if closesPosition {
+            guard soldUnits == nil, remaining.map({ $0 > 0 }) ?? true,
+                  !cashFlows.contains(where: { $0.settled && $0.kind.isOutflow && $0.date > date }) else { return false }
+        } else {
+            guard let soldUnits, let remaining, soldUnits > 0, soldUnits < remaining else { return false }
+        }
+        cashFlows.append(.init(kind: .sale, amount: amount, date: date, settled: true, source: source,
+                               disposedCost: basis, disposedUnits: closesPosition ? remaining : soldUnits,
+                               closesManualPosition: closesPosition))
+        return true
+    }
+
+    @discardableResult
+    public mutating func removeLatestManualSale(_ id: UUID) -> Bool {
+        guard matchingProviderHoldingID == nil, let sale = latestManualSale, sale.id == id else { return false }
+        cashFlows.removeAll { $0.id == id }
+        return true
+    }
+
     public func valuation(asOf: Date = .now) -> PrivateValuation? {
-        if let disposition = latestDispositionOn, disposition <= asOf, units == 0, let exitSource {
-            return .init(value: 0, date: disposition, source: exitSource, method: "All units sold")
+        let manualSale = latestManualSale(asOf: asOf)
+        if let disposition = closedOn(asOf: asOf), let source = exitSource ?? manualSale?.source {
+            return .init(value: 0, date: disposition, source: source, method: "All units sold")
         }
         return valuations.filter { mark in
             guard mark.date <= asOf else { return false }
+            if let manualSale {
+                guard mark.date > manualSale.date, mark.manualSaleID == manualSale.id else { return false }
+            } else if mark.manualSaleID != nil { return false }
             if let disposition = latestDispositionOn, disposition <= asOf, mark.date <= disposition { return false }
             if let revision = dispositionRevisionAt, revision <= asOf {
                 return mark.providerEventAt.map { $0 > revision && $0 <= asOf } ?? false
@@ -147,7 +203,7 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
         let returned = settled.filter { !$0.kind.isOutflow }.reduce(Decimal.zero) { $0 + $1.amount }
         let valuation = valuation(asOf: asOf)
         let value = valuation?.value
-        let hasExited = latestDispositionOn.map { $0 <= asOf } == true && units == 0 && exitSource != nil
+        let hasExited = closedOn(asOf: asOf) != nil
         // Flows later than the valuation could already be included in a future mark.
         // Publish ratios and XIRR only when the mark covers all included flows.
         let comparable = valuation.map { mark in

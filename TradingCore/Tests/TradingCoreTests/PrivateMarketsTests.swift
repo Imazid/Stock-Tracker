@@ -120,4 +120,56 @@ final class PrivateMarketsTests: XCTestCase {
         XCTAssertNil(holding.metrics(asOf: later).xirr)
         XCTAssertEqual(holding.valuation(asOf: later)?.value, 500)
     }
+
+    func testManualDispositionsUpdateUnitsMarksAndPerformanceAndCanBeCorrected() throws {
+        let opened = Date(timeIntervalSince1970: 86_400)
+        let sold = opened.addingTimeInterval(86_400)
+        let marked = sold.addingTimeInterval(86_400)
+        let closed = marked.addingTimeInterval(86_400)
+        var holding = PrivateHolding(name: "Startup stake", assetClass: .startupEquity, currency: "AUD", units: 100,
+                                     valuations: [.init(value: 1_500, date: opened, source: "Statement", method: "NAV")],
+                                     cashFlows: [.init(kind: .contribution, amount: 1_000, date: opened, settled: true, source: "Receipt")])
+        XCTAssertFalse(holding.recordManualSale(amount: 800, date: sold, source: "Receipt", soldUnits: 100, basis: nil, closesPosition: false))
+        XCTAssertTrue(holding.recordManualSale(amount: 600, date: sold, source: "Partial receipt", soldUnits: 40, basis: 400, closesPosition: false))
+        let partialID = try XCTUnwrap(holding.latestManualSale?.id)
+        XCTAssertEqual(holding.remainingUnits(asOf: opened), 100)
+        XCTAssertEqual(holding.remainingUnits(asOf: sold), 60)
+        XCTAssertNil(holding.valuation(asOf: sold))
+        XCTAssertEqual(holding.metrics(asOf: sold).realizedGain, 200)
+        holding.valuations.append(.init(value: 900, date: marked, source: "Updated statement", method: "NAV", manualSaleID: partialID))
+        XCTAssertEqual(holding.valuation(asOf: marked)?.value, 900)
+        XCTAssertEqual(holding.metrics(asOf: marked).unrealizedGain, 300)
+        XCTAssertFalse(holding.recordManualSale(amount: 20, date: opened, source: "Old receipt", soldUnits: 1, basis: nil, closesPosition: false))
+        XCTAssertTrue(holding.recordManualSale(amount: 800, date: closed, source: "Exit receipt", soldUnits: nil, basis: 600, closesPosition: true))
+        let restored = try JSONDecoder().decode(PrivateHolding.self, from: JSONEncoder().encode(holding))
+        XCTAssertEqual(restored.closedOn(asOf: closed), closed)
+        XCTAssertEqual(restored.remainingUnits(asOf: closed), 0)
+        XCTAssertEqual(restored.latestManualSale?.disposedUnits, 60)
+        XCTAssertEqual(restored.valuation(asOf: closed)?.source, "Exit receipt")
+        XCTAssertEqual(restored.metrics(asOf: closed).netGain, 400)
+        XCTAssertEqual(restored.metrics(asOf: closed).unrealizedGain, 0)
+        XCTAssertTrue(PrivateFundSnapshot.allocation(manual: [restored], confirmed: [], snapshots: [], asOf: closed).isEmpty)
+        XCTAssertFalse(holding.recordManualSale(amount: 20, date: closed, source: "Second exit", soldUnits: nil, basis: nil, closesPosition: true))
+        XCTAssertFalse(holding.removeLatestManualSale(partialID))
+        XCTAssertTrue(holding.removeLatestManualSale(try XCTUnwrap(restored.latestManualSale?.id)))
+        XCTAssertEqual(holding.remainingUnits(), 60)
+        XCTAssertEqual(holding.valuation()?.value, 900)
+        XCTAssertTrue(holding.removeLatestManualSale(partialID))
+        XCTAssertEqual(holding.remainingUnits(), 100)
+        XCTAssertEqual(holding.valuation()?.value, 1_500)
+        XCTAssertEqual(holding.valuations.count, 2)
+    }
+
+    func testLegacySaleProceedsStayReadableAndUnknownUnitsAllowFullExit() {
+        let date = Date(timeIntervalSince1970: 86_400)
+        let old = PrivateCashFlow(kind: .sale, amount: 200, date: date, settled: true, source: "Legacy receipt")
+        var holding = PrivateHolding(name: "Legacy stake", assetClass: .startupEquity, currency: "AUD", cashFlows: [old])
+        XCTAssertNil(holding.latestManualSale)
+        XCTAssertNil(holding.closedOn())
+        XCTAssertEqual(holding.metrics().returned, 200)
+        XCTAssertTrue(holding.recordManualSale(amount: 0, date: date, source: "Final settlement", soldUnits: nil, basis: nil, closesPosition: true))
+        XCTAssertEqual(holding.closedOn(), date)
+        XCTAssertEqual(holding.remainingUnits(), 0)
+        XCTAssertEqual(holding.cashFlows.first, old)
+    }
 }
