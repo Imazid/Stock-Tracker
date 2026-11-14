@@ -77,5 +77,21 @@ begin
   exception when insufficient_privilege then null;
   end;
 end $$;
+reset role;
+-- Reproduce the Auth role's narrow permissions without granting the test
+-- runner membership in Supabase's managed role.
+create role ledger_auth_fixture nologin;
+grant usage on schema auth to ledger_auth_fixture;
+grant select(id), delete on auth.users to ledger_auth_fixture;
+grant ledger_auth_fixture to postgres;
+set local role ledger_auth_fixture;
+delete from auth.users where id = '92c00000-0000-4000-8000-000000000001';
+reset role;
+do $$ begin
+  assert not exists (select from public.portfolio_holdings where user_id='92c00000-0000-4000-8000-000000000001'),
+    'Deleting a user left their holding behind';
+  assert not exists (select from portfolio_sync.holding_change_receipts where user_id='92c00000-0000-4000-8000-000000000001'),
+    'Deleting a user left their receipts behind';
+end $$;
 select 'ok   holding revisions guard stale writes and safe purchases reconcile atomically with replay receipts';
 rollback;
