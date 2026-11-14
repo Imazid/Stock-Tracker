@@ -533,7 +533,8 @@ final class PrivateMarketsFlowTests: XCTestCase {
             if !add.isHittable { app.swipeUp(velocity: .slow) }
         }
         XCTAssertTrue(add.isHittable, app.debugDescription)
-        XCTAssertTrue(add.isEnabled)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: add)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed, app.debugDescription)
         add.tap()
         let name = app.textFields["private.accountHolding.name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
