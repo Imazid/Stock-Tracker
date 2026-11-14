@@ -1427,7 +1427,7 @@ final class MarketData: ObservableObject {
         }
 
         // --- Alerts data ---
-        let savedAlerts = DataPersistenceManager.shared.loadPriceAlerts()
+        let savedAlerts = DataPersistenceManager.shared.loadPriceAlerts(owner: portfolioOwner)
         let alertDicts: [[String: Any]] = savedAlerts.filter { $0.isActive }.map { alert in
             let currentPrice = watchlist.first(where: { $0.symbol == alert.symbol })?.price
                 ?? portfolio.first(where: { $0.asset.symbol == alert.symbol })?.asset.price
