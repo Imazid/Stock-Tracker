@@ -165,11 +165,15 @@ struct DraftBox: Identifiable, Hashable {
 
 /// A finished backtest on its way to the report screen.
 struct BacktestBox: Identifiable {
-    let id = UUID()
-    let result: BacktestResult
-    let title: String
-    let currency: String
-    let testedRuleLines: [String]
+    var id = UUID()
+    let archive: BacktestArchive
+    let owner: UUID?
+    var alreadySaved = false
+
+    var result: BacktestResult { archive.result }
+    var title: String { archive.title }
+    var currency: String { archive.inputs.spec.universe.first?.currency ?? "USD" }
+    var testedRuleLines: [String] { archive.inputs.spec.ruleLines }
 }
 
 // MARK: - Review and edit a draft
@@ -399,8 +403,7 @@ struct AgentDraftEditor: View {
         }
         .sheet(item: $backtest) { box in
             NavigationStack {
-                BacktestReportView(result: box.result, title: box.title,
-                                   currency: box.currency, testedRuleLines: box.testedRuleLines)
+                BacktestReportView(box: box)
             }
         }
         .alert("Live trading isn't available", isPresented: Binding(get: { lockedMode != nil }, set: { if !$0 { lockedMode = nil } })) {
@@ -721,8 +724,7 @@ struct AgentDraftEditor: View {
         let snapshot = resolved
         Task {
             do {
-                backtest = BacktestBox(result: try await trading.backtest(snapshot, years: 2), title: snapshot.name,
-                                       currency: snapshot.currency, testedRuleLines: snapshot.spec.ruleLines)
+                backtest = try await trading.backtest(snapshot, years: 2)
             } catch {
                 problem = "The backtest couldn't run: \(error.localizedDescription)"
             }
@@ -819,14 +821,17 @@ struct AgentLimitsEditor: View {
 /// missed: "Simulated" is in the title, the assumptions are always open, and the benchmark
 /// sits beside every headline number.
 struct BacktestReportView: View {
-    let result: BacktestResult
-    var title: String
-    let currency: String
-    let testedRuleLines: [String]
+    let box: BacktestBox
+    private var result: BacktestResult { box.result }
+    private var currency: String { box.currency }
 
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var saving = false
+    @State private var saved = false
+    @State private var saveProblem: String?
+    @State private var visibleTrades = 60
 
     var body: some View {
         let m = result.overall
@@ -837,13 +842,23 @@ struct BacktestReportView: View {
                         .font(.caption.weight(.bold))
                         .textCase(.uppercase)
                         .foregroundStyle(theme.secondaryText)
-                    Text(title).font(DS.display(.title))
+                    Text(box.title).font(DS.display(.title))
                     Text("\(m.start.formatted(date: .abbreviated, time: .omitted)) to \(m.end.formatted(date: .abbreviated, time: .omitted)) · \(result.strategyTitle)")
                         .font(.footnote)
                         .foregroundStyle(theme.secondaryText)
                     Text("Prices: \(result.dataSources.joined(separator: ", "))")
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
+                }
+
+                if let owner = box.owner, result.usedRealMarketData, !box.alreadySaved {
+                    Button(saved ? "Report saved" : saving ? "Saving report…" : "Save report") {
+                        Task { await save(owner: owner) }
+                    }
+                    .buttonStyle(SecondaryPillButtonStyle())
+                    .disabled(saving || saved)
+                    .accessibilityIdentifier("backtest.save")
+                    if let saveProblem { Text(saveProblem).font(.footnote).foregroundStyle(theme.warningColor) }
                 }
 
                 if !result.usedRealMarketData {
@@ -895,8 +910,8 @@ struct BacktestReportView: View {
                             .font(.footnote)
                             .foregroundStyle(theme.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
-                        TradingRow(label: "First 70% of the period", value: "\(TradingFormat.percent(first.totalReturnPct)) · fall \(String(format: "%.1f%%", first.maxDrawdownPct))")
-                        TradingRow(label: "Last 30% of the period", value: "\(TradingFormat.percent(last.totalReturnPct)) · fall \(String(format: "%.1f%%", last.maxDrawdownPct))")
+                        TradingRow(label: "Earlier sample", value: "\(TradingFormat.percent(first.totalReturnPct)) · fall \(String(format: "%.1f%%", first.maxDrawdownPct))")
+                        TradingRow(label: "Held-back sample", value: "\(TradingFormat.percent(last.totalReturnPct)) · fall \(String(format: "%.1f%%", last.maxDrawdownPct))")
                         if !result.windows.isEmpty {
                             Divider()
                             ForEach(result.windows) { window in
@@ -919,9 +934,9 @@ struct BacktestReportView: View {
                     .accessibilityIdentifier("backtest.warnings")
                 }
 
-                if !testedRuleLines.isEmpty {
+                if !box.testedRuleLines.isEmpty {
                     TradingSection(title: "Rules tested") {
-                        ForEach(Array(testedRuleLines.enumerated()), id: \.offset) { _, rule in
+                        ForEach(Array(box.testedRuleLines.enumerated()), id: \.offset) { _, rule in
                             Text(rule).font(.footnote).foregroundStyle(theme.secondaryText)
                         }
                     }
@@ -939,11 +954,24 @@ struct BacktestReportView: View {
                 }
                 .accessibilityIdentifier("backtest.assumptions")
 
+                TradingSection(title: "Price history used") {
+                    Text(box.archive.engine).font(.caption).foregroundStyle(theme.secondaryText)
+                    ForEach(box.archive.datasets, id: \.instrumentId) { dataset in
+                        Text("\(dataset.instrumentId) · \(dataset.source) · \(dataset.bars) bars").font(.footnote)
+                    }
+                    if let benchmark = box.archive.benchmarkDataset {
+                        Text("Benchmark \(benchmark.instrumentId) · \(benchmark.source) · \(benchmark.bars) bars").font(.footnote)
+                    }
+                    ForEach(Array(box.archive.failures.enumerated()), id: \.offset) { _, failure in
+                        Text("\(failure.instrumentId) · \(failure.reasons.joined(separator: ". "))").font(.caption).foregroundStyle(theme.warningColor)
+                    }
+                }
+
                 TradingSection(title: "Trades", trailing: "\(result.trades.count)") {
                     if result.trades.isEmpty {
                         Text("These rules never triggered in this period.").font(.subheadline).foregroundStyle(theme.secondaryText)
                     }
-                    ForEach(result.trades.suffix(60).reversed()) { trade in
+                    ForEach(result.trades.suffix(visibleTrades).reversed()) { trade in
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(trade.instrument.symbol) · \(trade.entryTime.formatted(date: .abbreviated, time: .omitted))")
@@ -958,8 +986,8 @@ struct BacktestReportView: View {
                         }
                         .accessibilityElement(children: .combine)
                     }
-                    if result.trades.count > 60 {
-                        Text("Showing the latest 60 of \(result.trades.count).").font(.caption).foregroundStyle(theme.secondaryText)
+                    if result.trades.count > visibleTrades {
+                        Button("Show earlier trades") { visibleTrades += 60 }.font(.footnote)
                     }
                 }
             }
@@ -971,6 +999,16 @@ struct BacktestReportView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.accessibilityIdentifier("backtest.done") } }
         .accessibilityIdentifier("backtest.screen")
+    }
+
+    private func save(owner: UUID) async {
+        saving = true
+        saveProblem = nil
+        defer { saving = false }
+        do {
+            try await BacktestRecords(owner: owner).save(id: box.id, archive: box.archive)
+            saved = true
+        } catch { saveProblem = "The report could not be saved. Try again." }
     }
 
     private func headline(_ label: String, value: Double) -> some View {

@@ -28,19 +28,13 @@ export interface DatasetReference {
   volumeIsMarketWide: boolean;
 }
 
-export interface HistoryResult {
-  series: BarSeries;
-  reference: DatasetReference;
-}
-
-async function yahooBars(instrument: Instrument, timeframe: Timeframe, window: HistoryWindow): Promise<{ bars: Bar[]; currency?: string }> {
+async function yahooBars(instrument: Instrument, timeframe: Timeframe, start: number, end: number): Promise<{ bars: Bar[]; currency?: string }> {
   // Hourly history is limited upstream to ~2 years.
-  const range = timeframe === "hour" ? (window === "1y" ? "1y" : "730d") : window;
   const interval = timeframe === "hour" ? "60m" : "1d";
   let lastError: unknown;
   for (const host of ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"]) {
     try {
-      const body = (await getJSON(`${host}/v8/finance/chart/${encodeURIComponent(yahooTicker(instrument))}?range=${range}&interval=${interval}&includePrePost=false&events=div%2Csplits`,
+      const body = (await getJSON(`${host}/v8/finance/chart/${encodeURIComponent(yahooTicker(instrument))}?period1=${Math.floor(start / 1000)}&period2=${Math.floor(end / 1000)}&interval=${interval}&includePrePost=false&events=div%2Csplits`,
         { label: "Yahoo Finance", timeoutMs: 15_000 })) as {
         chart?: { result?: { meta?: { currency?: string }; timestamp?: number[]; indicators?: { quote?: { open?: (number | null)[]; high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[]; volume?: (number | null)[] }[] } }[] | null };
       };
@@ -64,18 +58,17 @@ async function yahooBars(instrument: Instrument, timeframe: Timeframe, window: H
   throw lastError instanceof Error ? lastError : new UpstreamError("Yahoo Finance couldn't be reached");
 }
 
-async function alpacaDaily(instrument: Instrument, timeframe: Timeframe, window: HistoryWindow, now: number): Promise<Bar[]> {
-  const years = Number.parseInt(window, 10);
-  const start = new Date(now - years * 366 * 86_400_000).toISOString();
+async function alpacaBars(instrument: Instrument, timeframe: Timeframe, start: number, end: number): Promise<Bar[]> {
   const tf = timeframe === "hour" ? "1Hour" : "1Day";
   const headers = { "APCA-API-KEY-ID": process.env.ALPACA_DATA_KEY_ID ?? "", "APCA-API-SECRET-KEY": process.env.ALPACA_DATA_SECRET ?? "" };
   const out: Bar[] = [];
   let token: string | undefined;
   for (let page = 0; page < 20; page++) {
     const pair = `${instrument.symbol}/USD`;
+    const bounds = `start=${encodeURIComponent(new Date(start).toISOString())}&end=${encodeURIComponent(new Date(end).toISOString())}`;
     let url = instrument.venue === "crypto"
-      ? `https://data.alpaca.markets/v1beta3/crypto/us/bars?symbols=${encodeURIComponent(pair)}&timeframe=${tf}&start=${encodeURIComponent(start)}&limit=10000&sort=asc`
-      : `https://data.alpaca.markets/v2/stocks/${encodeURIComponent(instrument.symbol)}/bars?timeframe=${tf}&start=${encodeURIComponent(start)}&feed=iex&adjustment=all&limit=10000&sort=asc`;
+      ? `https://data.alpaca.markets/v1beta3/crypto/us/bars?symbols=${encodeURIComponent(pair)}&timeframe=${tf}&${bounds}&limit=10000&sort=asc`
+      : `https://data.alpaca.markets/v2/stocks/${encodeURIComponent(instrument.symbol)}/bars?timeframe=${tf}&${bounds}&feed=iex&adjustment=all&limit=10000&sort=asc`;
     if (token) url += `&page_token=${encodeURIComponent(token)}`;
     const body = (await getJSON(url, { label: "Alpaca", headers, timeoutMs: 15_000 })) as { bars?: { t: string; o: number; h: number; l: number; c: number; v: number }[] | Record<string, { t: string; o: number; h: number; l: number; c: number; v: number }[]> | null; next_page_token?: string | null };
     const list = Array.isArray(body.bars) ? body.bars : body.bars?.[pair] ?? [];
@@ -86,17 +79,17 @@ async function alpacaDaily(instrument: Instrument, timeframe: Timeframe, window:
   return out;
 }
 
-function reference(series: BarSeries, source: string, window: string, currency: string): DatasetReference {
+export function datasetReference(series: BarSeries, window: string): DatasetReference {
   const bars = series.bars;
   return {
     instrumentId: instrumentID(series.instrument),
-    source,
+    source: series.provenance.source,
     timeframe: series.timeframe,
     window,
     bars: bars.length,
     firstBar: bars[0] ? new Date(bars[0].time).toISOString() : undefined,
     lastBar: bars.length ? new Date(bars[bars.length - 1].time).toISOString() : undefined,
-    currency,
+    currency: series.instrument.currency,
     sha256: sha256Hex(JSON.stringify(bars.map((b) => [b.time, b.open, b.high, b.low, b.close, b.volume]))),
     fetchedAt: new Date(series.fetchedAt).toISOString(),
     volumeIsMarketWide: series.volumeIsMarketWide,
@@ -104,26 +97,32 @@ function reference(series: BarSeries, source: string, window: string, currency: 
 }
 
 /** Real history for one instrument, or an error with the reasons. Cached for 10 minutes. */
-export async function history(instrument: Instrument, timeframe: Timeframe, window: HistoryWindow, now: number): Promise<HistoryResult> {
-  return cached(`history:${instrumentID(instrument)}:${timeframe}:${window}`, 600_000, async () => {
+export async function history(instrument: Instrument, timeframe: Timeframe, window: HistoryWindow, asOf: number, now: number): Promise<BarSeries> {
+  const day = 86_400_000;
+  const start = Math.floor(asOf / day) * day - Number.parseInt(window, 10) * 366 * day;
+  const end = Math.ceil(asOf / 60_000) * 60_000;
+  return cached(`backtest-history:${instrumentID(instrument)}:${timeframe}:${start}:${end}`, 600_000, async () => {
     const reasons: string[] = [];
     try {
-      const { bars, currency } = await yahooBars(instrument, timeframe, window);
+      const earliestYahooHour = now - 729 * day;
+      const yahooStart = timeframe === "hour" ? Math.max(start, earliestYahooHour) : start;
+      if (yahooStart >= end) throw new UpstreamError("Yahoo no longer serves hourly prices for this period");
+      const { bars, currency } = await yahooBars(instrument, timeframe, yahooStart, Math.min(end, now));
       const ccy = currency ?? instrument.currency;
       if (ccy !== instrument.currency) throw new UpstreamError(`Yahoo prices this in ${ccy}, not ${instrument.currency}`);
       const series = makeBarSeries(instrument, timeframe, bars, marketProvenance(YAHOO_SOURCE, instrument.venue === "crypto" ? 0 : 900), now,
         instrument.venue !== "crypto");
       if (series.bars.length === 0) throw new UpstreamError("Yahoo Finance returned no bars", 404);
-      return { series, reference: reference(series, YAHOO_SOURCE, window, ccy) };
+      return series;
     } catch (error) {
       reasons.push(`Yahoo: ${error instanceof UpstreamError ? error.message : "request failed"}`);
     }
     if (alpacaSupports(instrument)) {
       try {
         const source = instrument.venue === "crypto" ? ALPACA_CRYPTO_SOURCE : ALPACA_IEX_SOURCE;
-        const series = makeBarSeries(instrument, timeframe, await alpacaDaily(instrument, timeframe, window, now), marketProvenance(source, 0), now, false);
+        const series = makeBarSeries(instrument, timeframe, await alpacaBars(instrument, timeframe, start, Math.min(end, now)), marketProvenance(source, 0), now, false);
         if (series.bars.length === 0) throw new UpstreamError("Alpaca returned no bars", 404);
-        return { series, reference: reference(series, source, window, "USD") };
+        return series;
       } catch (error) {
         reasons.push(`Alpaca: ${error instanceof UpstreamError ? error.message : "request failed"}`);
       }
