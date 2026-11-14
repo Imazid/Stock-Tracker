@@ -148,7 +148,13 @@ final class BrokerFlowTests: XCTestCase {
             let numbers = app.textFields.matching(identifier: "0.00")
             numbers.element(boundBy: 0).tap(); numbers.element(boundBy: 0).typeText(h.shares)
             numbers.element(boundBy: 1).tap(); numbers.element(boundBy: 1).typeText(h.cost)
-            app.buttons["Add to Portfolio"].tap()
+            let done = app.buttons["keyboard.done"]
+            XCTAssertTrue(done.waitForExistence(timeout: 3), "Dismiss the decimal keyboard before submitting")
+            done.tap()
+            let add = app.buttons["Add to Portfolio"]
+            reveal(add)
+            XCTAssertTrue(add.isHittable, "The holding form can be submitted")
+            add.tap()
             XCTAssertTrue(app.staticTexts["1 holding added"].waitForExistence(timeout: 5))
         }
         tapContinue()
