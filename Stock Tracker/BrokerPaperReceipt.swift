@@ -8,6 +8,7 @@ struct BrokerPaperReceipt: View {
     let account: String?
     let gate: BrokerPaperGate
 
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.theme) private var theme
     @State private var intent: BrokerPaperIntent?
     @State private var busy = false
@@ -65,7 +66,13 @@ struct BrokerPaperReceipt: View {
         }
         .navigationTitle(intent?.title ?? "Paper order")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: id) { await refresh() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await refresh()
+            await api.watchOrderUpdates {
+                await refresh(automatically: true)
+            }
+        }
         .refreshable { await refresh() }
         .confirmationDialog("Request cancellation at Alpaca?", isPresented: $confirmCancel, titleVisibility: .visible) {
             Button("Request cancellation", role: .destructive) { Task { await act(.cancel) } }
@@ -227,7 +234,7 @@ struct BrokerPaperReceipt: View {
         }
     }
 
-    private func refresh() async {
+    private func refresh(automatically: Bool = false) async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
@@ -237,7 +244,7 @@ struct BrokerPaperReceipt: View {
         } catch is CancellationError {
             return
         } catch {
-            problem = error.localizedDescription
+            if !automatically || intent == nil { problem = error.localizedDescription }
         }
     }
 
