@@ -732,7 +732,7 @@ Deno.serve(async (req) => {
         if (saving) {
           const holding = accountHolding(body.holding, new Date());
           if (!holding) return errorResponse(400, "INVALID_HOLDING", "Enter a valid name, amount and valuation source.");
-          const id = String((body.holding as Record<string, unknown>).id).toLowerCase();
+          const id = holding.id;
           const evidence = holding.ownershipEvidence;
           if (evidence) {
             const verified = await admin.from("deal_documents").select("id").eq("user_id", userId)

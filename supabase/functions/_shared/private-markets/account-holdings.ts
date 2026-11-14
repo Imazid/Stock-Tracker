@@ -9,9 +9,10 @@ export function accountHolding(value: unknown, now: Date) {
     "id", "name", "assetClass", "currency", "units", "ownership", "shareClass", "lockupUntil",
     "commitment", "valuation", "excerptID",
   ].includes(key))) return null;
-  const { excerptID, ...fields } = holding;
+  const { excerptID, id, ...fields } = holding;
+  if (excerptID !== undefined && typeof excerptID !== "string") return null;
   const canonical = {
-    ...fields, paid: "0", returned: "0", pendingCalls: "0",
+    ...fields, id: typeof id === "string" ? id.toLowerCase() : id, valuation: fields.valuation, paid: "0", returned: "0", pendingCalls: "0",
     ...(excerptID !== undefined ? {
       ownershipEvidence: { excerptID, reviewedOn: now.toISOString().replace(/\.\d{3}Z$/, "Z") },
     } : {}),
