@@ -65,7 +65,7 @@ function ManualCapitalActivity({ owner }: { owner: string }) {
   const activity = useQuery(manualPortfolioQuery(owner));
   const [limit, setLimit] = useState(25);
   const snapshot = activity.error ? null : activity.data?.snapshot;
-  const today = dayInSydney(Date.now());
+  const today = dayInSydney(activity.dataUpdatedAt);
   const records = snapshot?.holdings.flatMap((holding) => (holding.capitalActivity ?? []).map((record) => ({
     ...record, holdingId: holding.id, name: holding.name, currency: holding.currency,
   }))) ?? [];
