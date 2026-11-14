@@ -87,24 +87,33 @@ export function privatePositionPerformance(holding: PortfolioHolding, today: str
 
 
 export function accountPositionPerformance(holding: {
-  paid: string; returned: string; assetClass: string;
-  valuation?: { date: string; value: string }; cashFlows?: AccountCashFlow[];
+  paid: string; returned: string; assetClass: string; exitedOn?: string; saleProceeds?: string;
+  valuation?: { date: string; value: string }; cashFlows?: AccountCashFlow[]; sales?: AccountCashFlow[];
 }) {
   const settled = (holding.cashFlows ?? []).filter((flow) => ["contribution", "paid", "distribution"].includes(flow.status));
+  const sales = holding.sales ?? [];
   const paid = Number(holding.paid);
-  const returned = Number(holding.returned);
-  const day = holding.valuation?.date.slice(0, 10);
-  const comparable = paid > 0 && day !== undefined && settled.every((flow) => flow.date <= day);
-  const carrying = Number(holding.valuation?.value);
+  const distributed = Number(holding.returned);
+  const proceeds = Number(holding.saleProceeds ?? 0);
+  const returned = distributed + proceeds;
+  const day = holding.exitedOn ?? holding.valuation?.date.slice(0, 10);
+  const comparable = paid > 0 && day !== undefined && (holding.exitedOn !== undefined || settled.every((flow) => flow.date <= day));
+  const carrying = holding.exitedOn ? 0 : Number(holding.valuation?.value);
+  const disposed = sales.reduce((sum, sale) => sum + Number(sale.disposedCost ?? 0), 0);
+  const hasBasis = paid > 0 && sales.every((sale) => sale.disposedCost !== undefined) && disposed <= paid;
   const fund = isFund(holding.assetClass);
   return {
     fund,
+    multipleLabel: fund && !sales.length ? "TVPI" : "MOIC",
     comparable,
     netGain: comparable ? carrying + returned - paid : null,
+    realized: hasBasis && sales.length ? proceeds - disposed : null,
+    unrealized: holding.exitedOn ? 0 : comparable && hasBasis && !distributed ? carrying - (paid - disposed) : null,
     multiple: comparable ? (carrying + returned) / paid : null,
-    dpi: fund && paid > 0 ? returned / paid : null,
+    dpi: fund && paid > 0 ? distributed / paid : null,
     xirr: comparable ? annualizedReturn([
       ...settled.map((flow) => ({ day: flow.date, amount: Number(flow.amount) * (flow.status === "distribution" ? 1 : -1) })),
+      ...sales.map((flow) => ({ day: flow.date, amount: Number(flow.amount) })),
       { day, amount: carrying },
     ]) : null,
   };

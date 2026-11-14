@@ -78,7 +78,10 @@ struct PrivateHoldingsView: View {
                                 Text(record.name).font(.headline)
                                 Text(record.assetClass.rawValue + " · Self-reported")
                                     .font(.footnote).foregroundStyle(.secondary)
-                                if let mark = record.holding.valuation() {
+                                if let closed = record.exitedOn {
+                                    Text("Exited " + PrivateDeal.Round.Listing.formattedDay(closed))
+                                        .font(.subheadline)
+                                } else if let mark = record.holding.valuation() {
                                     Text(PrivateInput.money(mark.value, currency: record.currency) +
                                          (mark.isStale() ? " · Stale valuation" : " · Dated valuation"))
                                         .font(.subheadline.monospacedDigit())
@@ -205,21 +208,32 @@ private struct AccountPrivateHoldingDetail: View {
                 Section("Ownership") {
                     Text(current.assetClass.rawValue + " · Self-reported")
                     LabeledContent("Currency", value: current.currency)
-                    if let units = current.units { LabeledContent("Shares or units", value: units) }
-                    if let ownership = current.ownership { LabeledContent("Ownership", value: ownership + "%") }
+                    if let remaining = current.remainingUnits { LabeledContent("Remaining units", value: remaining) }
+                    else if let units = current.units { LabeledContent("Shares or units", value: units) }
+                    if let ownership = current.ownership {
+                        LabeledContent(current.lastSaleOn == nil ? "Ownership" : "Opening ownership", value: ownership + "%")
+                    }
                     if let commitment = current.commitment { LabeledContent("Committed capital", value: current.currency + " " + commitment) }
                     if let shareClass = current.shareClass { LabeledContent("Share class", value: shareClass) }
                     if let lockup = current.lockupUntil {
                         LabeledContent("Lock-up ends", value: PrivateDeal.Round.Listing.formattedDay(CashIncomeDay.string(lockup)))
                     }
                 }
-                if let mark = current.valuation {
+                if let exit = current.exitedOn {
+                    Section("Exited position") {
+                        LabeledContent("Carrying value", value: current.currency + " 0")
+                        LabeledContent("Exit date", value: PrivateDeal.Round.Listing.formattedDay(exit))
+                    }
+                } else if let mark = current.valuation {
                     Section("Recorded valuation") {
                         LabeledContent("Carrying value", value: current.currency + " " + mark.value)
                         LabeledContent("Valuation date", value: PrivateDeal.Round.Listing.formattedDay(CashIncomeDay.string(mark.date)))
                         LabeledContent("Source", value: mark.source)
                         LabeledContent("Method", value: mark.method)
                     }
+                } else if let sale = current.lastSaleOn {
+                    Text("Add a valuation of the remaining position dated after " + PrivateDeal.Round.Listing.formattedDay(sale) + ".")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Valuation history") {
                     ForEach(current.marks) { mark in
@@ -372,7 +386,10 @@ private struct AccountCashFlowView: View {
             .navigationTitle("Cash Flows & Performance")
             .navigationBarTitleDisplayMode(.inline)
             .disabled(busy)
-            .sheet(item: $editor) { edit in AccountCashFlowEditor(owner: owner, holding: holdingID, edit: edit) }
+            .sheet(item: $editor) { edit in
+                let units = store.accountHoldings.first { $0.id == holdingID }?.units
+                AccountCashFlowEditor(owner: owner, holding: holdingID, hasOpeningUnits: units != nil, edit: edit)
+            }
             .confirmationDialog("Remove this cash flow?", isPresented: Binding(
                 get: { removal != nil }, set: { if !$0 { removal = nil } }
             ), titleVisibility: .visible, presenting: removal) { edit in
@@ -387,7 +404,7 @@ private struct AccountCashFlowView: View {
     @ViewBuilder
     private func records(_ holding: PrivateMarketsAPI.AccountHolding) -> some View {
         Section("Cash flows") {
-            ForEach((holding.cashFlows ?? []).sorted { $0.date > $1.date }) { flow in
+            ForEach(holding.activity.sorted { $0.date > $1.date }) { flow in
                 VStack(alignment: .leading, spacing: 6) {
                     AccountCashFlowLabel(flow: flow, currency: holding.currency)
                     HStack {
@@ -406,14 +423,17 @@ private struct AccountCashFlowView: View {
             Button("Add cash flow") { open() }.accessibilityIdentifier("private.accountCashFlow.add")
             if let error { Text(error).foregroundStyle(.orange) }
         }
-        if holding.cashFlows?.isEmpty == false {
+        if !holding.activity.isEmpty {
             let metrics = holding.holding.metrics()
             Section("Performance") {
                 if let paid = holding.paid { LabeledContent("Capital deployed", value: holding.currency + " " + paid) }
                 if let returned = holding.returned { LabeledContent("Distributions", value: holding.currency + " " + returned) }
+                if let proceeds = holding.saleProceeds { LabeledContent("Net sale proceeds", value: holding.currency + " " + proceeds) }
                 if let pending = holding.pendingCalls { LabeledContent("Pending calls", value: holding.currency + " " + pending) }
+                performanceAmounts(metrics, holding: holding)
                 if let multiple = metrics.multiple {
-                    LabeledContent(holding.assetClass.isFund ? "TVPI" : "MOIC", value: multiple.formatted(.number.precision(.fractionLength(2))) + "×")
+                    let showsTVPI = holding.assetClass.isFund && holding.sales?.isEmpty != false
+                    LabeledContent(showsTVPI ? "TVPI" : "MOIC", value: multiple.formatted(.number.precision(.fractionLength(2))) + "×")
                 } else {
                     Text("Valuation-based returns require deployed capital and a valuation dated on or after all settled flows.")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -423,6 +443,16 @@ private struct AccountCashFlowView: View {
                 }
                 if let xirr = metrics.xirr { LabeledContent("XIRR", value: xirr.formatted(.percent.precision(.fractionLength(2)))) }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func performanceAmounts(_ metrics: PrivateMetrics, holding: PrivateMarketsAPI.AccountHolding) -> some View {
+        let format = Decimal.FormatStyle.Currency(code: holding.currency)
+        if let gain = metrics.netGain { LabeledContent("Total gain or loss", value: gain.formatted(format)) }
+        if let realised = metrics.realizedGain { LabeledContent("Realised gain on sales", value: realised.formatted(format)) }
+        if holding.sales?.isEmpty == false, let unrealised = metrics.unrealizedGain {
+            LabeledContent("Unrealised gain", value: unrealised.formatted(format))
         }
     }
 
@@ -459,6 +489,9 @@ private struct AccountCashFlowLabel: View {
             if let due = flow.dueOn {
                 Text("Originally due " + PrivateDeal.Round.Listing.formattedDay(due) + " · " + flow.source)
             }
+            if let units = flow.soldUnits { Text(units + " units sold") }
+            if flow.closesPosition == true { Text("Entire remaining position sold") }
+            if let basis = flow.disposedCost { Text("Cost basis " + currency + " " + basis) }
         }
         .font(.subheadline)
     }
@@ -471,18 +504,23 @@ private struct AccountCashFlowEditor: View {
     @Environment(\.dismiss) private var dismiss
     let owner: UUID
     let holding: UUID
+    let hasOpeningUnits: Bool
     let edit: AccountCashFlowEdit
     @State private var status: Status
     @State private var amount: String
     @State private var date: Date
     @State private var source: String
+    @State private var soldUnits: String
+    @State private var basis: String
+    @State private var closesPosition: Bool
     @State private var error: String?
     @State private var saving = false
     @State private var changed = false
 
-    init(owner: UUID, holding: UUID, edit: AccountCashFlowEdit) {
+    init(owner: UUID, holding: UUID, hasOpeningUnits: Bool, edit: AccountCashFlowEdit) {
         self.owner = owner
         self.holding = holding
+        self.hasOpeningUnits = hasOpeningUnits
         self.edit = edit
         let record = edit.record
         let status = edit.resolution ?? record?.status ?? .contribution
@@ -490,6 +528,9 @@ private struct AccountCashFlowEditor: View {
         _amount = State(initialValue: record?.amount ?? "")
         _date = State(initialValue: edit.resolution == nil ? record.flatMap { CashIncomeDay.date($0.date) } ?? .now : .now)
         _source = State(initialValue: status.isResolution ? record?.resolutionSource ?? "" : record?.source ?? "")
+        _soldUnits = State(initialValue: record?.soldUnits ?? "")
+        _basis = State(initialValue: record?.disposedCost ?? "")
+        _closesPosition = State(initialValue: record?.closesPosition == true || !hasOpeningUnits)
     }
 
     var body: some View {
@@ -497,20 +538,31 @@ private struct AccountCashFlowEditor: View {
             Form {
                 if edit.record == nil {
                     Picker("Cash flow type", selection: $status) {
-                        ForEach([Status.contribution, .pending, .distribution], id: \.self) { Text($0.title).tag($0) }
+                        ForEach([Status.contribution, .pending, .distribution, .sale], id: \.self) { Text($0.title).tag($0) }
                     }
+                    .accessibilityIdentifier("private.accountCashFlow.type")
                 }
                 if status.isResolution, let record = edit.record {
                     Text("Original notice " + (record.dueOn ?? record.date) + " · " + record.source)
                 } else {
-                    TextField("Cash flow amount", text: $amount).keyboardType(.decimalPad)
+                    TextField(status == .sale ? "Net sale proceeds" : "Cash flow amount", text: $amount).keyboardType(.decimalPad)
                         .accessibilityIdentifier("private.accountCashFlow.amount")
+                }
+                if status == .sale {
+                    Toggle("Sold the entire remaining position", isOn: $closesPosition).disabled(!hasOpeningUnits)
+                        .accessibilityIdentifier("private.accountCashFlow.closePosition")
+                    if !closesPosition {
+                        TextField("Units sold", text: $soldUnits).keyboardType(.decimalPad)
+                            .accessibilityIdentifier("private.accountCashFlow.soldUnits")
+                    }
+                    TextField("Cost basis of units sold (optional)", text: $basis).keyboardType(.decimalPad)
+                        .accessibilityIdentifier("private.accountCashFlow.basis")
                 }
                 if status == .pending {
                     DatePicker("Due date", selection: $date, displayedComponents: .date)
                         .environment(\.timeZone, CashIncomeDay.timeZone)
                 } else {
-                    DatePicker(status.isResolution ? "Resolution date" : "Cash flow date", selection: $date,
+                    DatePicker(status.isResolution ? "Resolution date" : status == .sale ? "Settlement date" : "Cash flow date", selection: $date,
                                in: ...Date.now, displayedComponents: .date)
                         .environment(\.timeZone, CashIncomeDay.timeZone)
                 }
@@ -539,17 +591,38 @@ private struct AccountCashFlowEditor: View {
         let note = source.trimmingCharacters(in: .whitespacesAndNewlines)
         let day = CashIncomeDay.string(date)
         guard let amount = PrivateInput.accountAmount(amount.trimmingCharacters(in: .whitespacesAndNewlines)),
-              amount.range(of: "[1-9]", options: .regularExpression) != nil,
+              status == .sale || amount.range(of: "[1-9]", options: .regularExpression) != nil,
               !note.isEmpty, note.utf16.count <= 400, status == .pending || day <= CashIncomeDay.string(.now) else {
-            error = "Enter a positive amount, a valid date and a source."
+            error = status == .sale ? "Enter net proceeds, a valid settlement date and a source."
+                : "Enter a positive amount, a valid date and a source."
             return
         }
-        var fields = ["id": (edit.record?.id ?? edit.id).uuidString, "status": status.rawValue, "amount": amount,
+        var fields: [String: Any] = ["id": (edit.record?.id ?? edit.id).uuidString, "status": status.rawValue, "amount": amount,
                       "date": day, "source": note]
         if status.isResolution, let record = edit.record {
             fields["source"] = record.source
             fields["dueOn"] = record.dueOn ?? record.date
             fields["resolutionSource"] = note
+        }
+        if status == .sale {
+            let cost = basis.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cost.isEmpty {
+                guard let parsed = PrivateInput.accountAmount(cost) else {
+                    error = "Enter a valid cost basis if known."
+                    return
+                }
+                fields["disposedCost"] = parsed
+            }
+            if closesPosition {
+                fields["closesPosition"] = true
+            } else {
+                guard let units = PrivateInput.accountAmount(soldUnits.trimmingCharacters(in: .whitespacesAndNewlines)),
+                      units.range(of: "[1-9]", options: .regularExpression) != nil else {
+                    error = "Enter the positive number of units sold."
+                    return
+                }
+                fields["soldUnits"] = units
+            }
         }
         saving = true
         error = nil
@@ -732,7 +805,7 @@ private struct AccountPrivateHoldingEditor: View {
                     }
                     TextField("Currency", text: $currency)
                         .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                        .disabled(edit.holding?.valuation != nil || !(edit.holding?.cashFlows ?? []).isEmpty)
+                        .disabled(edit.holding.map { !$0.marks.isEmpty || !$0.activity.isEmpty } ?? false)
                     TextField("Shares or units", text: $units).keyboardType(.decimalPad)
                     TextField("Ownership percentage", text: $ownership).keyboardType(.decimalPad)
                     TextField("Committed capital", text: $commitment).keyboardType(.decimalPad)
@@ -1982,9 +2055,9 @@ struct PrivateCapitalView: View {
                     }
                 }
             }
-            ForEach(store.accountHoldings.filter { $0.cashFlows?.isEmpty == false }) { holding in
+            ForEach(store.accountHoldings.filter { !$0.activity.isEmpty }) { holding in
                 Section(holding.name + " · Account records") {
-                    ForEach((holding.cashFlows ?? []).sorted { $0.date > $1.date }) { flow in
+                    ForEach(holding.activity.sorted { $0.date > $1.date }) { flow in
                         AccountCashFlowLabel(flow: flow, currency: holding.currency)
                     }
                 }
@@ -2012,7 +2085,7 @@ struct PrivateCapitalView: View {
             let hasProviderActivity = store.providerHoldings.contains { position in
                 position.calls?.isEmpty == false || position.cancelledCalls?.isEmpty == false || position.distributions?.isEmpty == false
             }
-            if !hasManualActivity && !hasProviderActivity && !store.accountHoldings.contains(where: { $0.cashFlows?.isEmpty == false }) {
+            if !hasManualActivity && !hasProviderActivity && !store.accountHoldings.contains(where: { !$0.activity.isEmpty }) {
                 ContentUnavailableView("No capital calls or distributions", systemImage: "arrow.left.arrow.right",
                                        description: Text("Record cash flows on a holding to track payments and proceeds."))
             }

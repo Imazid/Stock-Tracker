@@ -83,7 +83,7 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
       <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
         <Field label="Company or fund name" htmlFor={field("name")}><Input id={field("name")} name="name" required maxLength={160} defaultValue={holding?.name} /></Field>
         <Field label="Asset class" htmlFor={field("assetClass")}><Select id={field("assetClass")} name="assetClass" defaultValue={holding?.assetClass}>{classes.map((name) => <option key={name}>{name}</option>)}</Select></Field>
-        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} readOnly={!!holding?.valuation || !!holding?.cashFlows?.length} defaultValue={holding?.currency ?? "AUD"} /></Field>
+        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} readOnly={Boolean(holding?.valuation || holding?.valuationHistory?.length || holding?.cashFlows?.length || holding?.sales?.length)} defaultValue={holding?.currency ?? "AUD"} /></Field>
         {numeric.map(([key, label, value]) => <Field key={key} label={label} htmlFor={field(key)}><Input id={field(key)} name={key} inputMode="decimal" maxLength={39} defaultValue={value} /></Field>)}
         <Field label="Share class" htmlFor={field("shareClass")}><Input id={field("shareClass")} name="shareClass" maxLength={160} defaultValue={holding?.shareClass} /></Field>
         <Field label="Lock-up ends" htmlFor={field("lockup")}><Input id={field("lockup")} type="date" name="lockup" defaultValue={holding?.lockupUntil?.slice(0, 10)} /></Field>
@@ -156,10 +156,10 @@ function AccountValuationHistory({ holding, revision, now, busy, save }: {
       </form>}
       {!marks.length && <p>No valuations recorded.</p>}
       <ul className="divide-y divide-border">
-        {marks.map((mark, index) => <li key={mark.date} className="space-y-2 py-2.5">
+        {marks.map((mark) => <li key={mark.date} className="space-y-2 py-2.5">
           <p><strong>{holding.currency} {groupedDecimal(mark.value)}</strong> · {dateLabel(mark.date)}</p>
           <p>{mark.method} · {mark.source}</p>
-          {index === 0 && <p className="text-xs text-text-3">Used for carrying value</p>}
+          {mark.date === holding.valuation?.date && <p className="text-xs text-text-3">Used for carrying value</p>}
           {removing?.date === mark.date ? <div className="flex flex-wrap items-center gap-2">
             <span>Remove this dated valuation?</span>
             <Button size="sm" variant="danger" disabled={busy} onClick={() => {

@@ -622,6 +622,55 @@ final class PrivateMarketsFlowTests: XCTestCase {
     @MainActor
     func testAccountCashFlowCanBeRecordedOnIPhone() throws {
         try launchWithLocalSession("PRIVATE_ACCOUNT_HOLDINGS_TEST_SESSION")
+        openSharedCashFlow()
+        let amount = app.textFields["private.accountCashFlow.amount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 8), app.debugDescription)
+        amount.tap()
+        amount.typeText("25.123456789")
+        let source = app.textFields["private.accountCashFlow.source"]
+        source.tap()
+        source.typeText("iPhone contribution statement")
+        app.buttons["private.accountCashFlow.save"].tap()
+        XCTAssertTrue(app.navigationBars["Add Cash Flow"].waitForNonExistence(timeout: 12), app.debugDescription)
+        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "iPhone contribution statement")).firstMatch
+        for _ in 0..<4 where !receipt.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(receipt.exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testAccountSaleCanClosePositionOnIPhone() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_SALE_TEST_SESSION")
+        openSharedCashFlow()
+        let type = app.buttons["private.accountCashFlow.type"]
+        XCTAssertTrue(type.waitForExistence(timeout: 8), app.debugDescription)
+        type.tap()
+        let sale = app.buttons["Sale proceeds"].firstMatch
+        XCTAssertTrue(sale.waitForExistence(timeout: 5), app.debugDescription)
+        sale.tap()
+        let full = app.switches["private.accountCashFlow.closePosition"]
+        XCTAssertTrue(full.waitForExistence(timeout: 5), app.debugDescription)
+        let toggle = full.switches.firstMatch
+        (toggle.exists ? toggle : full).tap()
+        let amount = app.textFields["private.accountCashFlow.amount"]
+        amount.tap()
+        amount.typeText("900")
+        let basis = app.textFields["private.accountCashFlow.basis"]
+        basis.tap()
+        basis.typeText("800")
+        let source = app.textFields["private.accountCashFlow.source"]
+        for _ in 0..<3 where !source.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(source.isHittable, app.debugDescription)
+        source.tap()
+        source.typeText("iPhone full sale statement")
+        app.buttons["private.accountCashFlow.save"].tap()
+        XCTAssertTrue(app.navigationBars["Add Cash Flow"].waitForNonExistence(timeout: 12), app.debugDescription)
+        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "iPhone full sale statement")).firstMatch
+        for _ in 0..<4 where !receipt.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(receipt.exists, app.debugDescription)
+    }
+
+    @MainActor
+    private func openSharedCashFlow() {
         openPrivateMarkets()
         app.buttons["private.destination.briefcase"].tap()
         let row = app.buttons.matching(identifier: "private.holding.accountRow")
@@ -640,18 +689,6 @@ final class PrivateMarketsFlowTests: XCTestCase {
         for _ in 0..<4 where !add.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(add.isHittable, app.debugDescription)
         add.tap()
-        let amount = app.textFields["private.accountCashFlow.amount"]
-        XCTAssertTrue(amount.waitForExistence(timeout: 8), app.debugDescription)
-        amount.tap()
-        amount.typeText("25.123456789")
-        let source = app.textFields["private.accountCashFlow.source"]
-        source.tap()
-        source.typeText("iPhone contribution statement")
-        app.buttons["private.accountCashFlow.save"].tap()
-        XCTAssertTrue(app.navigationBars["Add Cash Flow"].waitForNonExistence(timeout: 12), app.debugDescription)
-        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "iPhone contribution statement")).firstMatch
-        for _ in 0..<4 where !receipt.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(receipt.exists, app.debugDescription)
     }
 
     @MainActor

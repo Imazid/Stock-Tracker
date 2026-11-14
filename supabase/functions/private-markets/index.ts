@@ -1,6 +1,6 @@
 import { accountCashFlow } from "../_shared/private-markets/account-cash-flow.ts";
 import {
-  accountHolding, accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
+  accountCashFlows, accountHolding, accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
   withAccountCashFlows, withAccountValuations,
 } from "../_shared/private-markets/account-holdings.ts";
 import { validManualSnapshot } from "../_shared/private-markets/manual-snapshot.ts";
@@ -739,6 +739,8 @@ Deno.serve(async (req) => {
           .select("revision,updated_at,sealed").eq("user_id", userId).maybeSingle();
         if (error) throw error;
         const conflict = () => errorResponse(409, "HOLDINGS_CHANGED", "Your account holdings changed. Refresh and review before saving.");
+        const invalidSale = () => errorResponse(422, "INVALID_SALE_POSITION",
+          "Record opening units before a partial sale and make sure recorded sales stay within the available units.");
         if (!reading && (current?.revision ?? null) !== expected) return conflict();
         const holdings: SavedAccountHolding[] = current?.sealed
           ? JSON.parse(await open(await keys(), current.sealed, context("account_holdings", userId, current.revision))) : [];
@@ -759,11 +761,12 @@ Deno.serve(async (req) => {
           const existing = holdings.findIndex((item) => item.id === id);
           const prior = holdings[existing];
           const marks = accountValuations(prior);
-          const cashFlows = prior?.cashFlows ?? [];
+          const cashFlows = accountCashFlows(prior);
           if (prior && (marks.length || cashFlows.length) && prior.currency !== holding.currency) {
             return errorResponse(422, "VALUATION_CURRENCY", "Recorded valuations and cash flows use the holding currency. Remove them before changing it.");
           }
           const saved = withAccountCashFlows(withAccountValuations(holding, marks, holding.valuation), cashFlows);
+          if (!saved) return invalidSale();
           if (existing < 0) {
             if (holdings.length >= 100) return errorResponse(422, "HOLDING_LIMIT", "This account already has 100 account holdings.");
             holdings.push(saved);
@@ -790,10 +793,10 @@ Deno.serve(async (req) => {
             }
           } else if (savingFlow || removingFlow) {
             const holding = holdings[index];
-            const flows = holding.cashFlows ?? [];
+            const flows = accountCashFlows(holding);
             if (savingFlow) {
               const flow = accountCashFlow(body.cash_flow, new Date());
-              if (!flow) return errorResponse(400, "INVALID_CASH_FLOW", "Review the amount, date and source.");
+              if (!flow) return errorResponse(400, "INVALID_CASH_FLOW", "Review the amount, date, source and any sale details.");
               const previous = flows.find((row) => row.id === flow.id);
               if (flow.status === "paid" || flow.status === "cancelled") {
                 if (!previous || (previous.status !== "pending" && previous.status !== flow.status) ||
@@ -804,11 +807,15 @@ Deno.serve(async (req) => {
               } else if (previous && previous.status !== flow.status) {
                 return errorResponse(422, "INVALID_CASH_FLOW", "Keep the recorded type when correcting an existing entry.");
               }
-              holdings[index] = withAccountCashFlows(holding, [...flows.filter((row) => row.id !== flow.id), flow]);
+              const saved = withAccountCashFlows(holding, [...flows.filter((row) => row.id !== flow.id), flow]);
+              if (!saved) return invalidSale();
+              holdings[index] = saved;
             } else {
               const remaining = flows.filter((row) => row.id !== body.flow_id);
               if (remaining.length === flows.length) return errorResponse(404, "NOT_FOUND", "Cash flow unavailable.");
-              holdings[index] = withAccountCashFlows(holding, remaining);
+              const saved = withAccountCashFlows(holding, remaining);
+              if (!saved) return invalidSale();
+              holdings[index] = saved;
             }
           } else {
             holdings.splice(index, 1);

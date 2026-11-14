@@ -71,7 +71,7 @@ function ManualCapitalActivity({ owner }: { owner: string }) {
   const published = snapshot?.holdings.flatMap((holding) => (holding.capitalActivity ?? []).map((record) => ({
     ...record, holdingId: holding.id, name: holding.name, currency: holding.currency, origin: "snapshot",
   }))) ?? [];
-  const shared = (account.error ? [] : account.data?.holdings ?? []).flatMap((holding) => (holding.cashFlows ?? []).map((record) => ({
+  const shared = (account.error ? [] : account.data?.holdings ?? []).flatMap((holding) => [...(holding.cashFlows ?? []), ...(holding.sales ?? [])].map((record) => ({
     ...record, holdingId: holding.id, name: holding.name, currency: holding.currency, origin: "account",
   })));
   const records = [...shared, ...published];

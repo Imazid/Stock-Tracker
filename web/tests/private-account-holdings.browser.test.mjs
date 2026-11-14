@@ -129,6 +129,37 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
       await activity.getByText(/Fund cancelled the call/).waitFor();
       await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
     }
+    if (process.env.PRIVATE_ACCOUNT_SALE === "1") {
+      await article.getByText("Cash flows", { exact: true }).click();
+      await article.getByRole("button", { name: "Add cash flow", exact: true }).click();
+      await article.getByLabel("Cash flow type").selectOption("sale");
+      await article.getByLabel("Net sale proceeds").fill("400.1234567890000001");
+      await article.getByLabel("Units sold").fill("0.0234567799999999");
+      await article.getByLabel("Cost basis of units sold (optional)").fill("300");
+      await article.getByLabel("Settlement date").fill("2026-07-02");
+      await article.getByLabel("Cash flow source").fill("Partial sale settlement statement");
+      await article.getByRole("button", { name: "Save cash flow", exact: true }).click();
+      await article.locator("dd").getByText("0.1000000000000001", { exact: true }).waitFor();
+      await article.locator("dd").getByText("AUD 400.1234567890000001", { exact: true }).waitFor();
+      await article.getByText(/Add a valuation of the remaining position dated after/).waitFor();
+      await article.getByText("Valuation history", { exact: true }).click();
+      assert.equal(await article.getByText("Used for carrying value", { exact: true }).count(), 0);
+      await article.getByRole("button", { name: "Add valuation", exact: true }).click();
+      await article.getByLabel("Carrying value").fill("850");
+      await article.getByLabel("Valuation date").fill("2026-07-03");
+      await article.getByLabel("Valuation source").fill("Remaining-position statement");
+      await article.getByLabel("Valuation method").fill("Reported NAV");
+      await article.getByRole("button", { name: "Save valuation", exact: true }).click();
+      await article.getByText("Used for carrying value", { exact: true }).waitFor();
+      await article.getByText("Performance", { exact: true }).click();
+      await article.getByText("Realised gain on sales", { exact: true }).waitFor();
+      await article.locator("dd").getByText("$100.12", { exact: true }).waitFor();
+      await article.locator("dd").getByText("1.33×", { exact: true }).waitFor();
+      await page.getByRole("radio", { name: "Capital activity", exact: true }).click();
+      const activity = page.getByRole("region", { name: "Self-reported capital activity" });
+      await activity.getByText("Partial sale settlement statement", { exact: true }).waitFor();
+      await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
+    }
     if (process.env.PRIVATE_ACCOUNT_KEEP_HOLDING !== "1") {
       await article.getByRole("button", { name: "Remove holding", exact: true }).click();
       await article.getByRole("button", { name: "Confirm removal", exact: true }).click();

@@ -408,7 +408,7 @@ enum PrivateMarketsAPI {
         }
         struct CashFlow: Decodable, Identifiable {
             enum Status: String, Decodable, CaseIterable {
-                case contribution, pending, paid, cancelled, distribution
+                case contribution, pending, paid, cancelled, distribution, sale
 
                 var title: String {
                     switch self {
@@ -417,6 +417,7 @@ enum PrivateMarketsAPI {
                     case .paid: "Capital call paid"
                     case .cancelled: "Capital call cancelled"
                     case .distribution: "Distribution"
+                    case .sale: "Sale proceeds"
                     }
                 }
                 var isResolution: Bool { self == .paid || self == .cancelled }
@@ -429,6 +430,9 @@ enum PrivateMarketsAPI {
             let source: String
             let dueOn: String?
             let resolutionSource: String?
+            let soldUnits: String?
+            let disposedCost: String?
+            let closesPosition: Bool?
 
             var ledgerFlow: PrivateCashFlow? {
                 guard let value = Decimal(string: amount, locale: Locale(identifier: "en_US_POSIX")),
@@ -436,9 +440,13 @@ enum PrivateMarketsAPI {
                 let kind: PrivateCashFlow.Kind = switch status {
                 case .contribution: .contribution
                 case .distribution: .distribution
+                case .sale: .sale
                 case .pending, .paid, .cancelled: .capitalCall
                 }
-                return .init(id: id, kind: kind, amount: value, date: day, settled: status != .pending, source: source)
+                let locale = Locale(identifier: "en_US_POSIX")
+                return .init(id: id, kind: kind, amount: value, date: day, settled: status != .pending, source: source,
+                             disposedCost: disposedCost.flatMap { Decimal(string: $0, locale: locale) },
+                             disposedUnits: soldUnits.flatMap { Decimal(string: $0, locale: locale) })
             }
         }
         struct OwnershipEvidence: Decodable { let excerptID: UUID; let reviewedOn: Date }
@@ -457,6 +465,13 @@ enum PrivateMarketsAPI {
         var marks: [Mark] { valuationHistory ?? valuation.map { [$0] } ?? [] }
         let ownershipEvidence: OwnershipEvidence?
         let cashFlows: [CashFlow]?
+        let sales: [CashFlow]?
+        let remainingUnits: String?
+        let lastSaleOn: String?
+        let exitedOn: String?
+        let exitSource: String?
+        let saleProceeds: String?
+        var activity: [CashFlow] { (cashFlows ?? []) + (sales ?? []) }
         let paid: String?
         let returned: String?
         let pendingCalls: String?
@@ -471,9 +486,12 @@ enum PrivateMarketsAPI {
                 }
             }
             return PrivateHolding(id: id, name: name, assetClass: assetClass, currency: currency,
-                                  commitment: decimal(commitment), units: decimal(units), ownershipPercent: decimal(ownership),
+                                  commitment: decimal(commitment), units: decimal(remainingUnits ?? units),
+                                  ownershipPercent: decimal(ownership),
                                   shareClass: shareClass ?? "", lockupUntil: lockupUntil, valuations: mark.map { [$0] } ?? [],
-                                  cashFlows: cashFlows?.compactMap(\.ledgerFlow) ?? [], ownershipEvidenceID: ownershipEvidence?.excerptID, ownershipReviewedOn: ownershipEvidence?.reviewedOn)
+                                  cashFlows: activity.compactMap(\.ledgerFlow),
+                                  ownershipEvidenceID: ownershipEvidence?.excerptID, ownershipReviewedOn: ownershipEvidence?.reviewedOn,
+                                  latestDispositionOn: lastSaleOn.flatMap { CashIncomeDay.date($0) }, exitSource: exitSource)
         }
     }
     struct Handoff: Decodable { let commitmentId: UUID; let handoffUrl: URL }
@@ -577,7 +595,7 @@ final class PrivateMarketsStore: ObservableObject {
 
     var allocationHoldings: [PrivateHolding] {
         PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.filter { !$0.hasExited }.map(\.holding),
-                                       snapshots: angelListSnapshots) + accountHoldings.map(\.holding)
+                                       snapshots: angelListSnapshots) + accountHoldings.filter { $0.exitedOn == nil }.map(\.holding)
     }
 
     func linkedFundValuation(for holding: PrivateHolding) -> (statement: PrivateFundSnapshot, holding: PrivateHolding)? {
@@ -674,7 +692,7 @@ final class PrivateMarketsStore: ObservableObject {
                                         owner: owner, revision: revision)
     }
 
-    func saveAccountCashFlow(_ flow: [String: String], holding: UUID, owner: UUID, revision: UUID?) async throws {
+    func saveAccountCashFlow(_ flow: [String: Any], holding: UUID, owner: UUID, revision: UUID?) async throws {
         try await updateAccountHoldings("save_account_cash_flow", fields: ["id": holding.uuidString, "cash_flow": flow],
                                         owner: owner, revision: revision)
     }

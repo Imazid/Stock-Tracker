@@ -24,6 +24,10 @@ export type ManualHolding = {
   ownershipEvidence?: { excerptID: string; reviewedOn: string };
   capitalActivity?: ManualCapitalRecord[];
   cashFlows?: AccountCashFlow[];
+  sales?: AccountCashFlow[];
+  remainingUnits?: string;
+  lastSaleOn?: string;
+  saleProceeds?: string;
 };
 export type ManualPortfolio = { revision: string | null; snapshot: { updated_at: string; holdings: ManualHolding[] } | null };
 
@@ -75,11 +79,14 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
 }) {
   const { currency, valuation } = holding;
   const money = (value?: string) => value === undefined ? "Unavailable" : currency + " " + groupedDecimal(value);
+  const units = holding.remainingUnits ?? holding.units;
+  const hasActivity = Boolean(holding.cashFlows?.length || holding.sales?.length);
   const values = [
-    ["Remaining units", holding.units === undefined ? "Undisclosed" : groupedDecimal(holding.units)],
-    ["Carrying value", money(valuation?.value)], ["Committed", money(holding.commitment)],
-    ...(published || holding.cashFlows?.length ? [["Capital deployed", money(holding.paid)],
-      ["Returned capital and proceeds", money(holding.returned)],
+    ["Remaining units", units === undefined ? "Undisclosed" : groupedDecimal(units)],
+    ["Carrying value", money(!published && holding.exitedOn ? "0" : valuation?.value)], ["Committed", money(holding.commitment)],
+    ...(published || hasActivity ? [["Capital deployed", money(holding.paid)],
+      [published ? "Returned capital and proceeds" : "Distributions", money(holding.returned)],
+      ...(holding.saleProceeds !== undefined ? [["Net sale proceeds", money(holding.saleProceeds)]] : []),
       [published ? "Pending calls at publication" : "Pending calls", money(holding.pendingCalls)]] : []),
   ];
   const fund = ["Venture fund", "Private equity", "Syndicate or SPV"].includes(holding.assetClass);
@@ -90,12 +97,14 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
     ...(fund ? [["DPI", holding.dpi === undefined ? "Unavailable" : ratio.format(Number(holding.dpi)) + "×"]] : []),
     ["XIRR", holding.xirr === undefined ? "Unavailable" : percent.format(Number(holding.xirr))],
   ];
-  const live = !published && holding.cashFlows?.length ? accountPositionPerformance(holding) : null;
+  const live = !published && hasActivity ? accountPositionPerformance(holding) : null;
+  const performanceMoney = (value: number | null) => value === null ? "Unavailable"
+    : new Intl.NumberFormat("en-AU", { style: "currency", currency }).format(value);
   const livePerformance = live ? [
-    ["Total gain or loss", live.netGain === null ? "Unavailable" : new Intl.NumberFormat("en-AU", {
-      style: "currency", currency,
-    }).format(live.netGain)],
-    [live.fund ? "TVPI" : "MOIC", live.multiple === null ? "Unavailable" : ratio.format(live.multiple) + "×"],
+    ["Total gain or loss", performanceMoney(live.netGain)],
+    ...(holding.sales?.length ? [["Realised gain on sales", performanceMoney(live.realized)],
+      ["Unrealised gain", performanceMoney(live.unrealized)]] : []),
+    [live.multipleLabel, live.multiple === null ? "Unavailable" : ratio.format(live.multiple) + "×"],
     ...(live.fund ? [["DPI", live.dpi === null ? "Unavailable" : ratio.format(live.dpi) + "×"]] : []),
     ["XIRR", live.xirr === null ? "Unavailable" : percent.format(live.xirr)],
   ] : [];
@@ -109,7 +118,7 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
       </dl>
       {holding.exitedOn ? <p className="text-xs text-text-2">Exited {dateLabel(holding.exitedOn)}</p> : <>
         <p className="text-xs text-text-2">
-          {holding.ownership !== undefined && `Ownership ${groupedDecimal(holding.ownership)}% · `}
+          {holding.ownership !== undefined && `${holding.lastSaleOn ? "Opening ownership" : "Ownership"} ${groupedDecimal(holding.ownership)}% · `}
           {holding.shareClass && `${holding.shareClass} · `}
           {holding.lockupUntil ? `Recorded lock-up through ${dateLabel(holding.lockupUntil)}.` : "Liquidity depends on the investment terms."}
         </p>
@@ -117,6 +126,9 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
           <p className="text-xs text-text-2">Valued {dateLabel(valuation.date)} · {valuation.method} · {valuation.source}</p>
           {manualValuationIsStale(valuation.date, now) && <Badge tone="warn">Stale valuation</Badge>}
         </div>}
+        {holding.lastSaleOn && !valuation && <p className="text-xs text-text-2">
+          Add a valuation of the remaining position dated after {dateLabel(holding.lastSaleOn)}.
+        </p>}
       </>}
     </div>
     {holding.ownershipEvidence && <OwnershipExcerpt key={holding.ownershipEvidence.excerptID} owner={owner} evidence={holding.ownershipEvidence} />}
