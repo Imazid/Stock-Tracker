@@ -13,7 +13,13 @@ struct OnboardingWelcomeStep: View {
     @EnvironmentObject private var viewModel: OnboardingViewModel
     @Environment(\.onboardingFinish) private var finish
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var showSignIn = false
+    @EnvironmentObject private var supabaseAuth: SupabaseAuthManager
+    @State private var accountSheet: AccountSheet?
+
+    private enum AccountSheet: String, Identifiable {
+        case create, signIn
+        var id: String { rawValue }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,11 +77,13 @@ struct OnboardingWelcomeStep: View {
                 .buttonStyle(PrimaryPillButtonStyle())
                 .accessibilityIdentifier("onboarding.getStarted")
 
-                Button("I already have an account") {
-                    Haptics.tap()
-                    showSignIn = true
+                if !supabaseAuth.isSignedIn {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: DS.Space.m) { accountActions }
+                        VStack(spacing: 0) { accountActions }
+                    }
+                    .buttonStyle(QuietTextButtonStyle(onDark: true))
                 }
-                .buttonStyle(QuietTextButtonStyle(onDark: true))
 
                 Text("General information only — not financial advice.")
                     .font(.caption2)
@@ -85,14 +93,27 @@ struct OnboardingWelcomeStep: View {
             .padding(.horizontal, DS.Space.gutter)
             .padding(.bottom, DS.Space.s)
         }
-        .sheet(isPresented: $showSignIn) {
-            OnboardingSignInSheet(onSignedIn: {
-                showSignIn = false
-                viewModel.accountLabel = "Signed in"
-                finish()
-            })
+        .sheet(item: $accountSheet) { sheet in
+            OnboardingSignInSheet(defaultMode: sheet == .create ? .signUp : .signIn) {
+                accountSheet = nil
+                if sheet == .create { viewModel.next() }
+                else { finish() }
+            }
             .presentationDetents([.large])
             .presentationCornerRadius(DS.Radius.sheet)
+        }
+    }
+
+    @ViewBuilder
+    private var accountActions: some View {
+        Button("Create an account") {
+            Haptics.tap()
+            accountSheet = .create
+        }
+        .accessibilityIdentifier("onboarding.welcome.create")
+        Button("I already have an account") {
+            Haptics.tap()
+            accountSheet = .signIn
         }
     }
 }

@@ -91,12 +91,13 @@ function Brand({ collapsed }: { collapsed: boolean }) {
 function Account() {
   const session = useSession();
   const router = useRouter();
+  const path = usePathname();
   if (session.status === "unconfigured") {
     return <span className="hidden text-xs text-text-3 md:inline" title="Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY">Accounts not configured</span>;
   }
   if (session.status === "loading") return <span className="skeleton h-8 w-20" aria-hidden />;
   if (session.status === "signedOut") {
-    return <Link href="/login" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-text hover:bg-primary-hover"><LogIn aria-hidden className="h-3.5 w-3.5" />Sign in</Link>;
+    return <Link href={path === "/get-started" ? "/login?next=/get-started" : "/login"} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-text hover:bg-primary-hover"><LogIn aria-hidden className="h-3.5 w-3.5" />Sign in</Link>;
   }
   return (
     <div className="flex items-center gap-2">
