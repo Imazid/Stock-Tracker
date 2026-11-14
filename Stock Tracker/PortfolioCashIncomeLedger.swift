@@ -12,6 +12,7 @@ struct PortfolioCashIncomeLedger: View {
     @State private var totals: [CashIncomeTotal] = []
     @State private var editor: Editor?
     @State private var removing: CashIncomePayment?
+    @State private var section = SectionKind.cash
     @State private var filtered = false
     @State private var start = CashIncomeDay.calendar.date(byAdding: .year, value: -1, to: Date()) ?? Date()
     @State private var end = Date()
@@ -21,6 +22,12 @@ struct PortfolioCashIncomeLedger: View {
     @State private var hasMore = false
     @State private var document: IncomeCSV?
     @State private var exporting = false
+    @State private var preparingExport = false
+
+    private enum SectionKind: String, CaseIterable {
+        case cash = "Cash payments"
+        case reinvestments = "Reinvestments"
+    }
 
     private struct Editor: Identifiable {
         let id = UUID()
@@ -39,7 +46,7 @@ struct PortfolioCashIncomeLedger: View {
             HStack {
                 Text("Dividends and distributions").font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
-                if !valueHidden {
+                if !valueHidden, section == .cash {
                     Button { Task { await load() } } label: {
                         Image(systemName: "arrow.clockwise").frame(minWidth: 44, minHeight: 44)
                     }
@@ -57,14 +64,15 @@ struct PortfolioCashIncomeLedger: View {
         .frostedCard()
         .environment(\.timeZone, CashIncomeDay.timeZone)
         .environment(\.calendar, CashIncomeDay.calendar)
-        .task(id: rangeKey) { await load() }
+        .task(id: "\(section.rawValue)/\(rangeKey)/\(valueHidden)") {
+            if section == .cash, !valueHidden { await load() }
+        }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, rows != nil { Task { await load() } }
+            if phase == .active, section == .cash, !valueHidden, rows != nil { Task { await load() } }
         }
         .sheet(item: $editor) { item in
             CashIncomeEditor(records: records, payment: item.payment, recorded: Set(rows?.compactMap(\.snaptrade_activity_id) ?? [])) {
-                if let first, $0 < first { filtered = false }
-                if let last, $0 > last { filtered = false }
+                revealSavedDay($0)
                 await load()
             }
         }
@@ -76,14 +84,16 @@ struct PortfolioCashIncomeLedger: View {
         .fileExporter(isPresented: $exporting, document: document, contentType: .commaSeparatedText,
                       defaultFilename: "stock-tracker-cash-income") { result in
             document = nil
-            if case .failure = result { problem = "Couldn’t save the cash income CSV." }
+            if case .failure = result { problem = "Couldn’t save the income CSV." }
         }
     }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
-            Text("Statement-confirmed payments across your Stock Tracker account.")
-                .font(.footnote).foregroundStyle(theme.secondaryText)
+            Picker("Income records", selection: $section) {
+                ForEach(SectionKind.allCases, id: \.self) { kind in Text(kind.rawValue).tag(kind) }
+            }
+            .pickerStyle(.segmented)
             Toggle("Filter by Sydney payment date", isOn: $filtered).font(.subheadline)
             if filtered {
                 DatePicker("Payments from", selection: $start, in: CashIncomeDay.first...Date(), displayedComponents: .date)
@@ -91,51 +101,60 @@ struct PortfolioCashIncomeLedger: View {
             }
             if invalidRange {
                 Text("Choose valid payment dates in chronological order.").font(.footnote).foregroundStyle(theme.secondaryText)
-            } else if let rows {
-                if rows.isEmpty {
-                    Text("No recorded cash payments in this date range.").font(.footnote).foregroundStyle(theme.secondaryText)
-                }
-                ForEach(totals) { total in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(total.currency) cash received").font(.caption).foregroundStyle(theme.secondaryText)
-                        Text(cashIncomeMoney(total.cash_received, total.currency))
-                            .font(.title3.weight(.semibold)).monospacedDigit()
-                            .accessibilityIdentifier("portfolio.cashIncome.total.\(total.currency)")
-                        Text(total.payments == 1 ? "1 payment" : "\(total.payments) payments")
-                            .font(.caption).foregroundStyle(theme.secondaryText)
-                    }
-                    .accessibilityElement(children: .contain)
-                }
-                ForEach(rows) { payment in
-                    Divider()
-                    paymentRow(payment)
-                }
-                if hasMore {
-                    Button("More payments") { Task { await load(after: rows.last) } }
-                        .frame(minHeight: 44).disabled(busy)
-                }
             }
-            if busy { ProgressView("Loading cash income").font(.footnote) }
+            if section == .cash {
+                if !invalidRange { cashPayments }
+                Button("Record payment") { editor = Editor(payment: nil) }
+                    .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("portfolio.cashIncome.add")
+            } else {
+                PortfolioReinvestmentList(records: ReinvestmentRecords(userId: userId), from: first, through: last,
+                                          invalidRange: invalidRange, onSave: revealSavedDay)
+            }
             if let problem { Text(problem).font(.footnote).foregroundStyle(theme.secondaryText) }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: DS.Space.m) { actions }
-                VStack(alignment: .leading) { actions }
-            }
+            Button("Export CSV") { Task { await export() } }
+                .buttonStyle(.borderless)
+                .frame(minHeight: 44)
+                .disabled(invalidRange || exporting || preparingExport)
+                .accessibilityIdentifier("portfolio.cashIncome.export")
+            if preparingExport { ProgressView("Preparing income CSV").font(.footnote) }
             Text(cashIncomeNotice).font(.caption).foregroundStyle(theme.secondaryText)
         }
     }
 
     @ViewBuilder
-    private var actions: some View {
-        Button("Record payment") { editor = Editor(payment: nil) }
-            .buttonStyle(.borderless)
-            .frame(minHeight: 44)
-            .accessibilityIdentifier("portfolio.cashIncome.add")
-        Button("Export CSV") { Task { await export() } }
-            .buttonStyle(.borderless)
-            .frame(minHeight: 44)
-            .disabled(invalidRange || busy || exporting)
-            .accessibilityIdentifier("portfolio.cashIncome.export")
+    private var cashPayments: some View {
+        if let rows {
+            if rows.isEmpty {
+                Text("No recorded cash payments in this date range.").font(.footnote).foregroundStyle(theme.secondaryText)
+            }
+            ForEach(totals) { total in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(total.currency) cash received").font(.caption).foregroundStyle(theme.secondaryText)
+                    Text(cashIncomeMoney(total.cash_received, total.currency))
+                        .font(.title3.weight(.semibold)).monospacedDigit()
+                        .accessibilityIdentifier("portfolio.cashIncome.total.\(total.currency)")
+                    Text(total.payments == 1 ? "1 payment" : "\(total.payments) payments")
+                        .font(.caption).foregroundStyle(theme.secondaryText)
+                }
+                .accessibilityElement(children: .contain)
+            }
+            ForEach(rows) { payment in
+                Divider()
+                paymentRow(payment)
+            }
+            if hasMore {
+                Button("More payments") { Task { await load(after: rows.last) } }
+                    .frame(minHeight: 44).disabled(busy)
+            }
+        }
+        if busy { ProgressView("Loading cash income").font(.footnote) }
+    }
+
+    private func revealSavedDay(_ day: String) {
+        if let first, day < first { filtered = false }
+        if let last, day > last { filtered = false }
     }
 
     private func paymentRow(_ payment: CashIncomePayment) -> some View {
@@ -210,14 +229,15 @@ struct PortfolioCashIncomeLedger: View {
     }
 
     private func export() async {
-        busy = true
+        guard !preparingExport else { return }
+        preparingExport = true
         problem = nil
-        defer { busy = false }
+        defer { preparingExport = false }
         do {
             document = IncomeCSV(data: try await records.export(from: first, through: last))
             exporting = true
         } catch {
-            problem = "Couldn’t prepare the cash income CSV. Try again."
+            problem = "Couldn’t prepare the income CSV. Try again."
         }
     }
 }
