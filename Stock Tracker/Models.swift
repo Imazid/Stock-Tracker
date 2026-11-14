@@ -50,6 +50,44 @@ enum PriceDirection {
 
 // MARK: - Asset
 
+struct AssetPriceMove: Hashable, Codable {
+    enum Source: String, Codable {
+        case alpacaEquity, yahooEquity, coinGecko, alpacaCrypto
+
+        var label: String {
+            switch self {
+            case .alpacaEquity: "Alpaca IEX"
+            case .yahooEquity: "Yahoo Finance"
+            case .coinGecko: "CoinGecko aggregate"
+            case .alpacaCrypto: "Alpaca crypto"
+            }
+        }
+
+        var reference: String {
+            switch self {
+            case .alpacaEquity, .yahooEquity: "Previous session close"
+            case .coinGecko: "Price 24 hours earlier"
+            case .alpacaCrypto: "Previous UTC daily close"
+            }
+        }
+    }
+
+    let source: Source
+    let observedAt: Date
+    let currency: String
+    let last: Double
+    let reference: Double
+
+    init?(source: Source, observedAt: Date?, currency: String, last: Double, reference: Double?) {
+        guard let observedAt, let reference, last.isFinite, last > 0, reference.isFinite, reference > 0 else { return nil }
+        self.source = source
+        self.observedAt = observedAt
+        self.currency = currency
+        self.last = last
+        self.reference = reference
+    }
+}
+
 struct Asset: Identifiable, Hashable, Codable {
     let id: UUID
     let symbol: String
@@ -71,6 +109,7 @@ struct Asset: Identifiable, Hashable, Codable {
     var beta: Double?
     let exchange: String
     var isETF: Bool?
+    var priceMove: AssetPriceMove?
     
     init(
         id: UUID = UUID(),
@@ -90,7 +129,8 @@ struct Asset: Identifiable, Hashable, Codable {
         dividend: Double? = nil,
         beta: Double? = nil,
         exchange: String,
-        isETF: Bool? = nil
+        isETF: Bool? = nil,
+        priceMove: AssetPriceMove? = nil
     ) {
         self.id = id
         self.symbol = symbol
@@ -110,6 +150,7 @@ struct Asset: Identifiable, Hashable, Codable {
         self.beta = beta
         self.exchange = exchange
         self.isETF = isETF
+        self.priceMove = priceMove
         
         
     }

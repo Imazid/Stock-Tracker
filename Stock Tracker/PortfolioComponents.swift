@@ -79,7 +79,7 @@ extension Asset {
               change: change, changePercent: changePercent, volume: volume, kind: kind,
               marketCap: marketCap, peRatio: peRatio, eps: eps, week52High: week52High,
               week52Low: week52Low, avgVolume: avgVolume, dividend: dividend, beta: beta,
-              exchange: exchange ?? self.exchange, isETF: isETF)
+              exchange: exchange ?? self.exchange, isETF: isETF, priceMove: price == nil ? priceMove : nil)
     }
 }
 

@@ -51,6 +51,7 @@ private struct CopilotScreen: View {
     @State private var openedProposal: TradingRouter.Ref?
     @State private var openedOrder: TradingRouter.Ref?
     @State private var openedAgent: TradingRouter.Ref?
+    @State private var openedHolding: UUID?
     @State private var showPauseAll = false
     @FocusState private var focused: Bool
 
@@ -98,6 +99,7 @@ private struct CopilotScreen: View {
             }
             .dsScreenBackground()
             .safeAreaInset(edge: .bottom) { inputBar }
+            .navigationDestination(item: $openedHolding) { HoldingDetailView(holdingID: $0) }
             .navigationTitle("Copilot")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -314,6 +316,9 @@ private struct CopilotScreen: View {
                     }
                 }
             }
+
+        case .portfolioMovement(_, let report):
+            PortfolioMovementEvidence(report: report) { id in openedHolding = id }
 
         case .unifiedAllocation:
             VStack(alignment: .leading) {

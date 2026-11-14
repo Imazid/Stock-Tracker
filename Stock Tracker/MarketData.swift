@@ -1318,6 +1318,7 @@ final class MarketData: ObservableObject {
             a.change = live.change
             a.changePercent = live.changePercent
             a.volume = live.volume
+            a.priceMove = live.priceMove
             return a
         }
         // Preserve live market data for portfolio assets
@@ -1329,6 +1330,7 @@ final class MarketData: ObservableObject {
             h.asset.change = live.change
             h.asset.changePercent = live.changePercent
             h.asset.volume = live.volume
+            h.asset.priceMove = live.priceMove
             return h
         }
         if !remoteHistory.isEmpty { portfolioHistory = remoteHistory }

@@ -329,11 +329,11 @@ final class AccountSyncTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.open("Portfolio"))
 
-        func reveal(_ element: XCUIElement) {
+        func reveal(_ element: XCUIElement, lookingAbove: Bool = false) {
             for _ in 0..<16 {
                 let frame = element.exists ? element.frame : .zero
                 if !frame.isEmpty && app.frame.insetBy(dx: 0, dy: 90).contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
-                let down = !frame.isEmpty && frame.midY < app.frame.midY
+                let down = frame.isEmpty ? lookingAbove : frame.midY < app.frame.midY
                 let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.37 : 0.65))
                 let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.63 : 0.38))
                 start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
@@ -360,7 +360,7 @@ final class AccountSyncTests: XCTestCase {
         let weight = try XCTUnwrap(apple.label.firstMatch(of: /[0-9.]+ percent of portfolio/)).0
         reveal(secondApple)
 
-        reveal(search)
+        reveal(search, lookingAbove: true)
         search.tap()
         search.typeText("apple 1212")
         app.keyboards.buttons["Done"].tap()
@@ -405,6 +405,48 @@ final class AccountSyncTests: XCTestCase {
         apple.tap()
         XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.descendants(matching: .any)["holding.position"].waitForExistence(timeout: 8))
+        app.navigationBars["AAPL"].buttons.firstMatch.tap()
+
+        let movement = app.buttons["portfolio.intelligence.movement"]
+        reveal(movement, lookingAbove: true)
+        movement.tap()
+        let coverage = app.staticTexts["copilot.movement.coverage"]
+        XCTAssertTrue(coverage.waitForExistence(timeout: 8))
+        XCTAssertTrue(["Price evidence for 2 of 4 positions", "Price evidence for 3 of 4 positions"].contains(coverage.label))
+        let unavailable = app.staticTexts["copilot.movement.unavailable"]
+        XCTAssertTrue(unavailable.label.contains("QQQ"), unavailable.label)
+        let amount = app.staticTexts["copilot.movement.amount.us:AAPL"].firstMatch
+        reveal(amount)
+        XCTAssertEqual(amount.label, "+US$3.00")
+        let units = app.staticTexts["copilot.movement.units.us:AAPL"]
+        reveal(units)
+        XCTAssertEqual(units.label, "3 shares")
+        let source = app.staticTexts["copilot.movement.source.us:AAPL"]
+        XCTAssertTrue(source.label.hasPrefix("Alpaca IEX · "))
+        XCTAssertTrue(source.label.contains(String(Calendar.current.component(.year, from: Date()))))
+        XCTAssertEqual(app.staticTexts["copilot.movement.prices.us:AAPL"].label,
+                       "Latest US$50.00 · Previous session close US$49.00")
+        let holdingID = try XCTUnwrap(holdings[1]["id"] as? String).uppercased()
+        let openHolding = app.buttons["copilot.movement.holding.\(holdingID)"]
+        reveal(openHolding)
+        XCTAssertTrue(openHolding.label.contains("3434"))
+        attach("portfolio-price-movement")
+        openHolding.tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
+        let synced = app.descendants(matching: .any)["holding.syncedFrom"].firstMatch
+        reveal(synced)
+        XCTAssertTrue(synced.label.contains("3434"), synced.label)
+        app.navigationBars["AAPL"].buttons.firstMatch.tap()
+        app.buttons["copilot.close"].tap()
+
+        app.buttons["portfolio.privacy"].tap()
+        reveal(movement, lookingAbove: true)
+        movement.tap()
+        XCTAssertTrue(coverage.waitForExistence(timeout: 8))
+        reveal(source)
+        XCTAssertFalse(amount.exists)
+        XCTAssertFalse(units.exists)
+        XCTAssertTrue(app.staticTexts["copilot.movement.prices.us:AAPL"].exists)
     }
 
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
