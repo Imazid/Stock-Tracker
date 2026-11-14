@@ -71,16 +71,22 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     assert.equal(refused.status(), 404);
     assert.equal(refused.headers()["cache-control"], "no-store");
 
+    const question = "What does the fund statement say about the review?";
+    let reportID;
     if (testDocumentAI === "true") {
       await owner.getByRole("radio", { name: "AI Research", exact: true }).click();
       await owner.getByLabel(title, { exact: true }).check();
-      await owner.getByLabel("Research question").fill("What does the fund statement say about the review?");
+      await owner.getByLabel("Research question").fill(question);
       await owner.getByLabel("Allow Stock Tracker to send this question and the selected sources to its AI provider.").check();
       const research = owner.getByRole("button", { name: "Run research", exact: true });
       assert.ok(await research.isDisabled());
       await owner.getByLabel("I have permission to share the selected private excerpts with OpenAI for this request.").check();
       assert.ok(await research.isEnabled());
+      const completion = owner.waitForResponse((result) => result.url() === api && result.request().postDataJSON()?.action === "research");
       await research.click();
+      const result = await completion;
+      assert.equal(result.status(), 200);
+      reportID = (await result.json()).id;
       await owner.getByText("The statement reports a pending review.", { exact: true }).waitFor();
       await owner.getByRole("radio", { name: "Deal Room", exact: true }).click();
       await owner.getByRole("button", { name: new RegExp(title) }).click();
@@ -91,6 +97,38 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     await owner.getByText("No excerpts saved", { exact: true }).waitFor();
     await owner.reload();
     await owner.getByText("No excerpts saved", { exact: true }).waitFor();
+
+    if (reportID) {
+      const previewHeaders = previewToken ? { "x-vercel-trusted-oidc-idp-token": previewToken } : {};
+      assert.equal((await other.request.post(api, { headers: previewHeaders, data: { action: "delete_report", id: reportID } })).status(), 401);
+      assert.equal((await other.request.post(api, {
+        headers: { ...previewHeaders, authorization }, data: { action: "delete_report", id: reportID },
+      })).status(), 200);
+
+      await owner.getByRole("radio", { name: "AI Research", exact: true }).click();
+      await owner.getByRole("button", { name: question }).click();
+      const quote = owner.getByRole("blockquote").filter({ hasText: excerpt });
+      await quote.waitFor();
+      await owner.getByRole("button", { name: "Delete report", exact: true }).click();
+      await owner.getByRole("button", { name: "Cancel", exact: true }).click();
+      await quote.waitFor();
+      await owner.getByRole("button", { name: "Delete report", exact: true }).click();
+      const deletion = owner.waitForResponse((result) => result.url() === api && result.request().postDataJSON()?.action === "delete_report");
+      await owner.getByRole("button", { name: "Confirm deletion", exact: true }).click();
+      const deleted = await deletion;
+      assert.equal(deleted.status(), 200);
+      const ownerAuthorization = (await deleted.request().allHeaders()).authorization;
+      await owner.getByText("Report deleted.", { exact: true }).waitFor();
+      await quote.waitFor({ state: "detached" });
+      await owner.getByText("No saved reports", { exact: true }).waitFor();
+      await owner.reload();
+      await owner.getByRole("radio", { name: "AI Research", exact: true }).click();
+      await owner.getByText("No saved reports", { exact: true }).waitFor();
+      const missing = await owner.request.post(api, {
+        headers: { ...previewHeaders, authorization: ownerAuthorization }, data: { action: "report", id: reportID },
+      });
+      assert.equal(missing.status(), 404);
+    }
   } finally {
     await browser.close();
   }

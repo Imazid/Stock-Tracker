@@ -452,8 +452,11 @@ final class PrivateMarketsFlowTests: XCTestCase {
 
     @MainActor
     func testOwnershipExcerptCanBeReviewedAndLinked() async throws {
-        let host = "http://127.0.0.1:58531"
-        let authHost = "http://127.0.0.1:58521"
+        let environment = ProcessInfo.processInfo.environment
+        let port = environment["PRIVATE_TEST_BACKEND_PORT"].flatMap(UInt16.init) ?? 58531
+        let authPort = environment["PRIVATE_TEST_AUTH_PORT"].flatMap(UInt16.init) ?? 58521
+        let host = "http://127.0.0.1:\(port)"
+        let authHost = "http://127.0.0.1:\(authPort)"
         let key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
         func post(_ url: String, _ fields: [String: String], token: String? = nil) async throws -> (Int, [String: Any]) {
             var request = URLRequest(url: try XCTUnwrap(URL(string: url)), timeoutInterval: 20)
@@ -487,6 +490,7 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let saved = try await post(edge, ["action": "save_document", "title": "Ownership statement fixture",
                                           "excerpt": "The unit registry statement records 25 ordinary units and AUD 9500 of paid capital."], token: token)
         XCTAssertEqual(saved.0, 201)
+        let documentID = try XCTUnwrap(saved.1["id"] as? String)
 
         app.terminate()
         app.launchArguments += ["-SupabaseURLOverride", host, "-SupabaseAnonKeyOverride", key,
@@ -525,7 +529,18 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let save = app.buttons["Save evidence review"]
         XCTAssertTrue(save.isEnabled, app.debugDescription)
         save.tap()
-        XCTAssertTrue(app.buttons["private.ownership.linked"].waitForExistence(timeout: 8), app.debugDescription)
+        let linked = app.buttons["private.ownership.linked"]
+        XCTAssertTrue(linked.waitForExistence(timeout: 8), app.debugDescription)
+        let deleted = try await post(edge, ["action": "delete_document", "id": documentID], token: token)
+        XCTAssertEqual(deleted.0, 200)
+        linked.tap()
+        XCTAssertTrue(app.staticTexts["This excerpt is no longer in your Deal Room."].firstMatch.waitForExistence(timeout: 15))
+        if app.navigationBars["Ownership excerpt"].exists {
+            app.navigationBars["Ownership excerpt"].buttons["BackButton"].tap()
+        }
+        XCTAssertTrue(app.navigationBars["Ownership Evidence"].waitForExistence(timeout: 8))
+        XCTAssertFalse(linked.exists)
+        XCTAssertFalse(app.buttons["private.ownership.excerpt"].exists)
     }
 
     func testCompanyUpdatesShowsMonitoringControls() {

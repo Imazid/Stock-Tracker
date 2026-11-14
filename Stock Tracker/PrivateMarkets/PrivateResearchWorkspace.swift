@@ -897,9 +897,13 @@ struct PrivateOwnershipEvidenceView: View {
     }
 
     private func review(id: UUID, title: String, reviewed: Date?) -> some View {
-        PrivateOwnershipReviewView(id: id, title: title, owner: owner, reviewed: reviewed) {
+        PrivateOwnershipReviewView(id: id, title: title, owner: owner, reviewed: reviewed, attach: {
             try store.updateOwnershipEvidence(for: holding.id, owner: owner, documentID: id)
-        }
+        }, removeUnavailableExcerpt: {
+            try store.removeOwnershipEvidence(id, owner: owner)
+            items.removeAll { $0.id == id }
+            error = "This excerpt is no longer in your Deal Room."
+        })
     }
 
     private func update(_ documentID: UUID?) {
@@ -921,15 +925,19 @@ struct PrivateOwnershipEvidenceView: View {
 }
 
 private struct PrivateOwnershipReviewView: View {
+    private struct Document: Decodable { let excerpt: String }
+
     let id: UUID
     let title: String
     let owner: UUID
     let reviewed: Date?
     let attach: () throws -> Void
+    let removeUnavailableExcerpt: () throws -> Void
     @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var excerpt: String?
     @State private var acknowledged = false
+    @State private var saveTask: Task<Void, Never>?
     @State private var error: String?
 
     var body: some View {
@@ -945,10 +953,12 @@ private struct PrivateOwnershipReviewView: View {
                     Text("Your review records supporting evidence for a self-reported holding.")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button("Save evidence review") {
-                        do { try attach(); dismiss() }
-                        catch { self.error = error.localizedDescription }
+                        saveTask = Task {
+                            defer { saveTask = nil }
+                            await readExcerpt(saving: true)
+                        }
                     }
-                    .disabled(!acknowledged)
+                    .disabled(!acknowledged || saveTask != nil)
                 }
             } else if error == nil {
                 ProgressView("Opening excerpt")
@@ -957,14 +967,36 @@ private struct PrivateOwnershipReviewView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            struct Document: Decodable { let excerpt: String }
+        .task { await readExcerpt(saving: false) }
+        .onDisappear { saveTask?.cancel() }
+    }
+
+    private func readExcerpt(saving: Bool) async {
+        error = nil
+        do {
+            let response: Document = try await PrivateMarketsAPI.request("document", ["id": id.uuidString],
+                                                                         expectedUserID: owner)
+            try Task.checkCancellation()
+            guard auth.userId == owner else { return }
+            if saving {
+                try attach()
+                dismiss()
+            } else {
+                excerpt = response.excerpt
+            }
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.status == 404 && failure.code == "NOT_FOUND" {
+            guard !Task.isCancelled, auth.userId == owner else { return }
+            excerpt = nil
             do {
-                let response: Document = try await PrivateMarketsAPI.request("document", ["id": id.uuidString], expectedUserID: owner)
-                try Task.checkCancellation()
-                if auth.userId == owner { excerpt = response.excerpt }
-            } catch is CancellationError {
-            } catch { self.error = error.localizedDescription }
+                try removeUnavailableExcerpt()
+                error = "This excerpt is no longer in your Deal Room."
+            } catch {
+                self.error = error.localizedDescription
+            }
+        } catch {
+            guard !Task.isCancelled, auth.userId == owner else { return }
+            self.error = error.localizedDescription
         }
     }
 }

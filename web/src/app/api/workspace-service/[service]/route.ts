@@ -11,7 +11,7 @@ const services = {
 } as const;
 
 const privateMarketActions = new Set([
-  "catalog", "discover", "research", "research_status", "research_runs", "reports", "report",
+  "catalog", "discover", "research", "research_status", "research_runs", "reports", "report", "delete_report",
   "confirmed_holdings", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
   "profile", "save_profile", "handoff_check", "handoff",
   "documents", "document", "save_document", "delete_document", "research_capabilities",

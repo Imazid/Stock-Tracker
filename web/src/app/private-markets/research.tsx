@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -55,10 +55,11 @@ function ResearchFinding({ finding, sources }: { finding: Finding; sources: Repo
   );
 }
 
-function ReportView({ report }: { report: Report }) {
+function ReportView({ report, actions }: { report: Report; actions: ReactNode }) {
   return (
     <Card className="min-w-0 break-words">
       <CardHeader title={report.question} subtitle={`Saved ${dateLabel(report.created_at, "time")}`} />
+      <div className="space-y-2 border-t border-border px-4 py-3 text-sm text-text-2">{actions}</div>
       {!!report.reported_facts?.length && <section className="space-y-3 border-t border-border p-4 text-sm">
         <h3 className="font-semibold text-text">Reported figures</h3>
         {report.reported_facts.map((group) => (
@@ -96,6 +97,7 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
   const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([]);
   const [reportID, setReportID] = useState<string | null>(initialReportID ?? null);
   const [runID, setRunID] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const cache = useQueryClient();
   const capabilities = useQuery({
     queryKey: ["private-markets", owner, "research-capabilities"], enabled: aiEnabled, gcTime: 0, retry: false,
@@ -158,6 +160,18 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
         setRunID(result.id);
         void cache.invalidateQueries({ queryKey: ["private-markets", owner, "runs"] });
       }
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => privateMarkets("delete_report", { owner, id }),
+    onSuccess: async (_, id) => {
+      setReportID((current) => current === id ? null : current);
+      setRunID((current) => current === id ? null : current);
+      setConfirmDelete((current) => current === id ? null : current);
+      cache.removeQueries({ queryKey: [...reportKey(owner), id], exact: true });
+      cache.setQueryData<{ items: SavedReport[] }>(reportKey(owner),
+        (data) => data && { items: data.items.filter((item) => item.id !== id) });
+      await cache.invalidateQueries({ queryKey: reportKey(owner), exact: true });
     },
   });
   const running = Boolean(runID && !activeRun.error && (!activeRun.data || activeRun.data.status === "running"));
@@ -240,7 +254,20 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
         {activeRun.data?.status === "failed" && <Notice tone="down">{activeRun.data.failure_message ?? "The research run could not finish."}</Notice>}
         {reportBusy && <p className="text-sm text-text-2" role="status">Opening report…</p>}
         {shownReport.error && <Notice tone="down">{shownReport.error.message} <Button size="sm" onClick={() => void shownReport.refetch()}>Retry report</Button></Notice>}
-        {shownReport.data && <ReportView report={shownReport.data} />}
+        {remove.isSuccess && <p className="text-sm text-text-2" role="status">Report deleted.</p>}
+        {remove.error && <Notice tone="down">{remove.error.message}</Notice>}
+        {shownReport.data && <ReportView report={shownReport.data} actions={confirmDelete === shownReport.data.id ? <>
+          <p>Delete this saved report and its quotes?</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="danger" disabled={remove.isPending} onClick={() => remove.mutate(confirmDelete)}>
+              Confirm deletion
+            </Button>
+            <Button size="sm" disabled={remove.isPending} onClick={() => { setConfirmDelete(null); remove.reset(); }}>Cancel</Button>
+          </div>
+        </> : <Button size="sm" disabled={remove.isPending} onClick={() => {
+          setConfirmDelete(shownID);
+          remove.reset();
+        }}>Delete report</Button>} />}
       </div>
       <Card className="min-w-0">
         <CardHeader title="Saved reports" subtitle="Reports saved to this account on web or iPhone." />

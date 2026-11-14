@@ -19,6 +19,7 @@ const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
   "profile", "save_profile", "applications", "confirmed_holdings",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
+  "reports", "report", "delete_report", "research_refresh",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
