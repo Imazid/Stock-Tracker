@@ -255,28 +255,35 @@ final class AccountSyncTests: XCTestCase {
                 "-portfolioValueHidden", hidden ? "YES" : "NO"]
             app.launch()
             XCTAssertTrue(app.open("Portfolio"))
-            let entry = app.buttons["portfolio.brokerCash.open"]
-            for _ in 0..<6 where !entry.isHittable { app.swipeUp(velocity: .slow) }
-            XCTAssertTrue(entry.isHittable)
+            let entry = app.descendants(matching: .any)["portfolio.brokerCash.open"].firstMatch
+            let screen = app.frame.insetBy(dx: 0, dy: 70)
+            for _ in 0..<6 {
+                if entry.exists && !entry.frame.isEmpty && screen.contains(entry.frame) { break }
+                app.swipeUp(velocity: .slow)
+            }
+            XCTAssertTrue(entry.exists && !entry.frame.isEmpty && screen.contains(entry.frame))
             entry.tap()
             XCTAssertTrue(app.navigationBars["Brokerage cash"].waitForExistence(timeout: 8))
         }
 
         openCash(hidden: false)
-        let aud = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "312.34")).firstMatch
-        let debit = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "12.34")).firstMatch
+        let balance = "portfolio.brokerCash.balance.a8cc1385-31a7-4c4d-9955-6789589cc956."
+        let aud = app.staticTexts[balance + "AUD"]
+        let debit = app.staticTexts[balance + "USD"]
         XCTAssertTrue(aud.waitForExistence(timeout: 10))
-        XCTAssertTrue(debit.label.contains("-") || debit.label.contains("−"))
-        XCTAssertTrue(app.staticTexts["Unavailable"].exists)
+        XCTAssertTrue(aud.label.contains("312.34"))
+        XCTAssertTrue(debit.label.contains("12.34") && (debit.label.contains("-") || debit.label.contains("−")))
+        XCTAssertTrue(app.staticTexts[balance + "GBP"].label.contains("Unavailable"))
         XCTAssertTrue(app.staticTexts["Cash balance unavailable."].exists)
-        XCTAssertTrue(try rows("portfolio_holdings", select: "id", token: token).isEmpty)
+        let original = try rows("portfolio_holdings", select: "id,shares", token: token)
         XCTAssertTrue(try rows("portfolio_performance_periods", select: "id", token: token).isEmpty)
 
         app.terminate()
         openCash(hidden: true)
-        XCTAssertTrue(app.staticTexts["••••"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertFalse(aud.exists)
-        XCTAssertFalse(debit.exists)
+        XCTAssertTrue(aud.waitForExistence(timeout: 10))
+        XCTAssertTrue(aud.label.contains("••••") && !aud.label.contains("312.34"))
+        XCTAssertTrue(debit.label.contains("••••") && !debit.label.contains("12.34"))
+        XCTAssertEqual(try rows("portfolio_holdings", select: "id,shares", token: token).count, original.count)
     }
 
     func testReviewedStockTransferSyncsAcrossSignIn() throws {
