@@ -15,6 +15,7 @@ import { useSession } from "@/lib/session";
 import { CompareRounds, DealCard, interpretedFilters } from "./catalog";
 import { CapitalActivity } from "./capital-activity";
 import { DealRoom } from "./deal-room";
+import { FundingRounds, StartupExplorer } from "./funding-rounds";
 import { Monitoring } from "./monitoring";
 import { availability, availabilityLabels, countryName, privateMarkets, type CompanyUpdate, type Discovery, type PrivateDeal } from "./private-data";
 import { Positions } from "./positions";
@@ -22,15 +23,17 @@ import { ProviderApplication } from "./provider-application";
 import { Research } from "./research";
 import { ScenarioCalculator } from "./scenario-calculator";
 
-type Tab = "catalogue" | "research" | "deal-room" | "portfolio" | "updates" | "capital";
+type PublicTab = "catalogue" | "explorer" | "rounds";
+type Tab = PublicTab | "research" | "deal-room" | "portfolio" | "updates" | "capital";
 function SignIn({ view }: { view?: Tab }) {
   const destination = view && view !== "catalogue" ? `/private-markets?view=${view}` : "/private-markets";
   return <ButtonLink variant="primary" size="sm" href={`/login?next=${encodeURIComponent(destination)}`}>Sign in</ButtonLink>;
 }
 
-function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch, onScenario }: {
+function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch, onScenario, onCompany, renderApplication }: {
   owner?: string; aiEnabled: boolean; deals: PrivateDeal[]; asOf: number; selected: PrivateDeal[];
   toggle: (deal: PrivateDeal) => void; onResearch: () => void; onScenario: (deal: PrivateDeal) => void;
+  onCompany: (id: string) => void; renderApplication: (deal: PrivateDeal) => React.ReactNode;
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
@@ -39,6 +42,8 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch,
   const [currency, setCurrency] = useState("");
   const [maxMinimum, setMaxMinimum] = useState("");
   const [maxValuation, setMaxValuation] = useState("");
+  const [minRaise, setMinRaise] = useState("");
+  const [maxRaise, setMaxRaise] = useState("");
   const [traction, setTraction] = useState(false);
   const [country, setCountry] = useState("");
   const [jurisdiction, setJurisdiction] = useState("");
@@ -53,6 +58,7 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch,
   const currentAt = Math.max(asOf, search.submittedAt);
   const query = name.trim().normalize("NFKC").toLowerCase();
   const within = (value: number | null, ceiling: string) => !ceiling || (value !== null && value <= Number(ceiling));
+  const atLeast = (value: number | null, floor: string) => !floor || (value !== null && value >= Number(floor));
   const visible = (search.data?.deals ?? deals).filter((deal) => {
     const company = deal.round.company;
     return (!query || [company.name, deal.round.stage, company.sector].some((value) => value.normalize("NFKC").toLowerCase().includes(query))) &&
@@ -60,7 +66,8 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch,
       (!country || company.country === country) && (!jurisdiction || deal.jurisdictions.includes(jurisdiction)) &&
       (!status || availability(deal, currentAt) === status) && (!eligibility || deal.eligibility === eligibility) &&
       (!stage || deal.round.stage === stage) && (!traction || Boolean(deal.round.traction || company.financials.length)) &&
-      (!currency || (deal.round.currency === currency && within(deal.minimum, maxMinimum) && within(deal.round.valuation, maxValuation)));
+      (!currency || (deal.round.currency === currency && within(deal.minimum, maxMinimum) &&
+        within(deal.round.valuation, maxValuation) && atLeast(deal.round.target, minRaise) && within(deal.round.target, maxRaise)));
   });
   const filters = [
     { id: "private-category", label: "Category", value: category, set: setCategory, options: deals.map(({ category }) => [category, category]) },
@@ -96,7 +103,13 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch,
           <summary className="cursor-pointer text-sm font-medium text-text">Investment size and traction</summary>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <Field label="Reported currency" htmlFor="private-currency">
-              <Select id="private-currency" value={currency} onChange={(event) => setCurrency(event.target.value)}>
+              <Select id="private-currency" value={currency} onChange={(event) => {
+                setCurrency(event.target.value);
+                setMaxMinimum("");
+                setMaxValuation("");
+                setMinRaise("");
+                setMaxRaise("");
+              }}>
                 <option value="">All</option>
                 {[...new Set(deals.map(({ round }) => round.currency))].sort().map((code) => <option key={code}>{code}</option>)}
               </Select>
@@ -108,6 +121,14 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch,
             <Field label="Maximum reported valuation" htmlFor="private-max-valuation">
               <Input id="private-max-valuation" type="number" min="0" step="any" disabled={!currency} value={maxValuation}
                 onChange={(event) => setMaxValuation(event.target.value)} />
+            </Field>
+            <Field label="Minimum raise target" htmlFor="private-min-raise">
+              <Input id="private-min-raise" type="number" min="0" step="any" disabled={!currency} value={minRaise}
+                onChange={(event) => setMinRaise(event.target.value)} />
+            </Field>
+            <Field label="Maximum raise target" htmlFor="private-max-raise">
+              <Input id="private-max-raise" type="number" min="0" step="any" disabled={!currency} value={maxRaise}
+                onChange={(event) => setMaxRaise(event.target.value)} />
             </Field>
             <label className="flex items-center gap-2 text-[13px] text-text-2">
               <input type="checkbox" checked={traction} onChange={(event) => setTraction(event.target.checked)} /> Disclosed traction
@@ -157,20 +178,22 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch,
       </div>
       {selected.length > 1 && <Card>
         <CardHeader title="Compare funding rounds" />
-        <div className="border-t border-border p-4"><CompareRounds deals={selected} asOf={currentAt} /></div>
+        <div className="border-t border-border p-4"><CompareRounds deals={selected} asOf={currentAt} onRemove={toggle} /></div>
       </Card>}
       {visible.length ? <div className="grid items-start gap-4 2xl:grid-cols-2">
-        {visible.map((deal) => <DealCard key={deal.id} deal={deal} asOf={currentAt} selected={selected.some(({ id }) => id === deal.id)}
+        {visible.map((deal) => <DealCard key={deal.id} deal={deal} asOf={currentAt} selected={selected.some(({ round }) => round.id === deal.round.id)}
           selectionFull={selected.length >= 3} onSelect={() => toggle(deal)} onScenario={() => onScenario(deal)}
-          application={<ProviderApplication key={JSON.stringify([deal.offer_document_url, deal.verified_at, deal.round.verified_at,
-            deal.round.currency, deal.round.closes_at, deal.minimum])} owner={owner} deal={deal} />} />)}
+          onCompany={() => onCompany(deal.round.company.id)} application={renderApplication(deal)} />)}
       </div> : <Card><EmptyState icon={<Building2 className="h-5 w-5" aria-hidden />} title="No matching rounds" body="Change the filters to see more published records." /></Card>}
     </div>
   );
 }
 
-export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boolean; initialTab: Tab }) {
+export function PrivateMarketsView({ aiEnabled, initialTab, initialCompany }: {
+  aiEnabled: boolean; initialTab: Tab; initialCompany: string | null;
+}) {
   const [tab, setTab] = useState(initialTab);
+  const [companyID, setCompanyID] = useState(initialCompany);
   const [selected, setSelected] = useState<PrivateDeal[]>([]);
   const [scenario, setScenario] = useState<{ deal?: PrivateDeal } | null>(null);
   const [researchEntry, setResearchEntry] = useState<({ owner: string } & ({ report: string } | { updates: CompanyUpdate[] })) | null>(null);
@@ -181,13 +204,32 @@ export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boole
     queryKey: ["private-markets", "catalogue"], enabled: supabaseConfigured,
     queryFn: ({ signal }) => privateMarkets<{ deals: PrivateDeal[] }>("catalog", { signal }),
   });
+  const publicTab = tab === "catalogue" || tab === "explorer" || tab === "rounds";
 
   function toggle(deal: PrivateDeal) {
     setSelected((current) => {
-      if (current.some(({ id }) => id === deal.id)) return current.filter(({ id }) => id !== deal.id);
+      if (current.some(({ round }) => round.id === deal.round.id)) return current.filter(({ round }) => round.id !== deal.round.id);
       return current.length < 3 ? [...current, deal] : current;
     });
   }
+
+  function onResearch() {
+    setResearchEntry(null);
+    setTab("research");
+  }
+
+  function onCompany(id: string) {
+    setCompanyID(id);
+    setTab("explorer");
+  }
+
+  function renderApplication(deal: PrivateDeal) {
+    return <ProviderApplication key={JSON.stringify([deal.id, deal.offer_document_url, deal.verified_at, deal.round.verified_at,
+      deal.round.currency, deal.round.closes_at, deal.minimum])} owner={owner} deal={deal} />;
+  }
+
+  const actions = { asOf: catalogue.dataUpdatedAt, selected, toggle, onResearch, renderApplication,
+    onScenario: (deal: PrivateDeal) => setScenario({ deal }) };
 
   return (
     <div className="mx-auto max-w-[1300px]">
@@ -196,13 +238,17 @@ export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boole
       {scenario && <ScenarioCalculator deal={scenario.deal} onClose={() => setScenario(null)} />}
       <Segmented<Tab> value={tab} onChange={(value) => { setResearchEntry(null); setTab(value); }} label="Private Markets sections"
         className="mb-4 max-w-full flex-wrap [&>button]:px-2 sm:[&>button]:px-2.5"
-        options={[{ value: "catalogue", label: "Discover" }, { value: "research", label: "AI Research" }, { value: "deal-room", label: "Deal Room" }, { value: "portfolio", label: "Portfolio & applications" }, { value: "capital", label: "Capital activity" }, { value: "updates", label: "Updates" }]} />
-      {tab === "catalogue" && (!supabaseConfigured ? <Notice>Private Markets is unavailable in this deployment.</Notice>
+        options={[{ value: "catalogue", label: "Discover" }, { value: "explorer", label: "Startup Explorer" }, { value: "rounds", label: "Funding Rounds" },
+          { value: "research", label: "AI Research" }, { value: "deal-room", label: "Deal Room" }, { value: "portfolio", label: "Portfolio & applications" },
+          { value: "capital", label: "Capital activity" }, { value: "updates", label: "Updates" }]} />
+      {publicTab && (!supabaseConfigured ? <Notice>Private Markets is unavailable in this deployment.</Notice>
         : catalogue.error ? <Notice tone="down">{catalogue.error.message} <Button size="sm" onClick={() => void catalogue.refetch()}>Retry</Button></Notice>
         : !catalogue.data ? <p className="text-sm text-text-2" role="status">Loading published rounds…</p>
-        : <Discover key={owner ?? "public"} owner={owner} aiEnabled={aiEnabled} deals={catalogue.data.deals} asOf={catalogue.dataUpdatedAt}
-          selected={selected} toggle={toggle} onResearch={() => { setResearchEntry(null); setTab("research"); }} onScenario={(deal) => setScenario({ deal })} />)}
-      {tab !== "catalogue" && (owner ? tab === "research"
+        : tab === "catalogue" ? <Discover key={owner ?? "public"} owner={owner} aiEnabled={aiEnabled} deals={catalogue.data.deals}
+          {...actions} onCompany={onCompany} />
+        : tab === "explorer" ? <StartupExplorer deals={catalogue.data.deals} companyID={companyID} setCompany={setCompanyID} actions={actions} />
+        : <FundingRounds deals={catalogue.data.deals} actions={actions} onCompany={onCompany} />)}
+      {!publicTab && (owner ? tab === "research"
         ? <Research key={owner} owner={owner} selected={selected} aiEnabled={aiEnabled} asOf={catalogue.dataUpdatedAt} openDealRoom={() => setTab("deal-room")}
           initialReportID={entry && "report" in entry ? entry.report : undefined}
           initialUpdates={entry && "updates" in entry ? entry.updates : undefined}

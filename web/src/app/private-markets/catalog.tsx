@@ -1,11 +1,12 @@
-import { ArrowUpRight, ChevronDown } from "lucide-react";
-import type { ReactNode } from "react";
+import Image from "next/image";
+import { ArrowUpRight, Building2, ChevronDown } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import {
   amount, availability, availabilityLabels, countryName, dateLabel, providerName, sourceHref, dayInSydney,
-  type Criteria, type FinancialPeriod, type PrivateDeal,
+  type Criteria, type FinancialPeriod, type PrivateCompany, type PrivateDeal,
 } from "./private-data";
 
 export function SourceLink({ url, children }: { url?: string | null; children: ReactNode }) {
@@ -28,7 +29,19 @@ const quotationLabels = {
   listed: "First quotation confirmed", withdrawn: "Listing application withdrawn",
 };
 
-function FinancialDisclosure({ period }: { period: FinancialPeriod }) {
+function revenueGrowth(period: FinancialPeriod, records: FinancialPeriod[]) {
+  if (period.period_kind !== "financial_year" || period.assurance !== "audited" ||
+      period.revenue === null || !/^\d{4}-\d{2}-\d{2}$/.test(period.period_end_on)) return null;
+  const priorDate = String(Number(period.period_end_on.slice(0, 4)) - 1) + period.period_end_on.slice(4);
+  const prior = records.find((record) => record.period_end_on === priorDate && record.period_kind === "financial_year" &&
+    record.assurance === "audited" && record.currency === period.currency);
+  return prior?.revenue != null && prior.revenue > 0 ? (period.revenue - prior.revenue) / prior.revenue : null;
+}
+
+const percent = new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 1 });
+
+function FinancialDisclosure({ period, records }: { period: FinancialPeriod; records: FinancialPeriod[] }) {
+  const growth = revenueGrowth(period, records);
   const facts = [
     ["Revenue", period.revenue], ["Annual recurring revenue", period.annual_recurring_revenue],
     ["Net profit or loss", period.net_profit_loss], ["Net operating cash flow", period.operating_cash_flow],
@@ -46,16 +59,50 @@ function FinancialDisclosure({ period }: { period: FinancialPeriod }) {
             <dt>{label}</dt><dd className="font-medium tabular-nums text-text">{amount(value, period.currency)}</dd>
           </div>
         ))}
+        {growth !== null && <div className="flex flex-wrap justify-between gap-x-3">
+          <dt>Year-over-year revenue change</dt><dd className="font-medium tabular-nums text-text">{percent.format(growth)}</dd>
+        </div>}
       </dl>
       <p className="mt-2"><SourceLink url={period.source_url}>Financial disclosure</SourceLink></p>
     </li>
   );
 }
 
+export function hasUpcomingQuotation(listing: NonNullable<PrivateDeal["round"]["listing"]>, asOf: number) {
+  return (listing.quotation_status === "proposed" || listing.quotation_status === "anticipated") &&
+    !!listing.quotation_on && listing.quotation_on >= dayInSydney(asOf);
+}
+
 function listingStatus(listing: NonNullable<PrivateDeal["round"]["listing"]>, asOf: number) {
   const awaiting = listing.quotation_status === "proposed" || listing.quotation_status === "anticipated";
-  return awaiting && (!listing.quotation_on || listing.quotation_on < dayInSydney(asOf))
+  return awaiting && !hasUpcomingQuotation(listing, asOf)
     ? "Quotation confirmation pending" : quotationLabels[listing.quotation_status];
+}
+
+export function CompanyLogo({ url }: { url?: string | null }) {
+  const src = sourceHref(url);
+  const [failed, setFailed] = useState<string>();
+  return <span aria-hidden="true" className="relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-primary/10 text-primary-fg">
+    <Building2 className="size-4" />
+    {src && failed !== src && <Image src={src} alt="" width={36} height={36} unoptimized referrerPolicy="no-referrer"
+      className="absolute inset-0 size-full bg-surface object-contain p-1" onError={() => setFailed(src)} />}
+  </span>;
+}
+
+export function CompanyFacts({ company }: { company: PrivateCompany }) {
+  return <>
+    {company.description && <p>{company.description}</p>}
+    {(!!company.founders?.length || !!company.investors?.length) && <dl className="space-y-2">
+      {!!company.founders?.length && <div><dt className="font-medium text-text">Founders</dt><dd>{company.founders.join(", ")}</dd></div>}
+      {!!company.investors?.length && <div><dt className="font-medium text-text">Disclosed investors</dt><dd>{company.investors.join(", ")}</dd></div>}
+    </dl>}
+    {company.financials.length > 0 && <div>
+      <h3 className="font-medium text-text">Published financials</h3>
+      <ul className="mt-2 grid gap-2 md:grid-cols-2">{company.financials.map((period) => (
+        <FinancialDisclosure key={period.id} period={period} records={company.financials} />
+      ))}</ul>
+    </div>}
+  </>;
 }
 
 function roundFigures(deal: PrivateDeal): [string, number | null][] {
@@ -65,7 +112,7 @@ function roundFigures(deal: PrivateDeal): [string, number | null][] {
   ];
 }
 
-export function CompareRounds({ deals, asOf }: { deals: PrivateDeal[]; asOf: number }) {
+export function CompareRounds({ deals, asOf, onRemove }: { deals: PrivateDeal[]; asOf: number; onRemove?: (deal: PrivateDeal) => void }) {
   return <div className="grid gap-2 md:grid-cols-3">
     {deals.map((deal) => <div key={deal.id} className="rounded-lg border border-border bg-surface-2 p-3 text-sm">
       <p className="font-medium text-text">{deal.round.company.name}</p>
@@ -74,29 +121,45 @@ export function CompareRounds({ deals, asOf }: { deals: PrivateDeal[]; asOf: num
         {roundFigures(deal).map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-x-2">
           <dt className="text-xs text-text-2">{label}</dt><dd className="text-xs font-medium text-text">{amount(value, deal.round.currency)}</dd>
         </div>)}
+        <div className="flex flex-wrap justify-between gap-x-2">
+          <dt className="text-xs text-text-2">{deal.round.closes_at ? "Published deadline" : "Announced"}</dt>
+          <dd className="text-xs font-medium text-text">{dateLabel(deal.round.closes_at ?? deal.round.announced_on, deal.round.closes_at ? "time" : "day")}</dd>
+        </div>
       </dl>
       {deal.round.valuation_method && <p className="mb-2 text-xs text-text-2">{deal.round.valuation_method}</p>}
-      <SourceLink url={deal.source_url}>Round disclosure</SourceLink>
+      {!!deal.round.share_classes.length && <ul className="mb-2 space-y-1 text-xs text-text-2">
+        {deal.round.share_classes.map((share) => (
+          <li key={share.name}><SourceLink url={share.source_url}>{share.name}</SourceLink> · {share.rights}</li>
+        ))}
+      </ul>}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SourceLink url={deal.round.source_url}>Round disclosure</SourceLink>
+        {onRemove && <Button size="sm" variant="ghost" aria-label={`Remove ${deal.round.company.name} ${deal.round.stage} from comparison`}
+          onClick={() => onRemove(deal)}>Remove</Button>}
+      </div>
     </div>)}
   </div>;
 }
 
-export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScenario, application }: {
-  deal: PrivateDeal; asOf: number; selected: boolean; selectionFull: boolean; onSelect: () => void; onScenario: () => void; application?: ReactNode;
+export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScenario, onCompany, application }: {
+  deal: PrivateDeal; asOf: number; selected: boolean; selectionFull: boolean; onSelect: () => void;
+  onScenario: () => void; onCompany?: () => void; application?: ReactNode;
 }) {
   const { round } = deal;
   const { company, listing } = round;
   const status = availability(deal, asOf);
   const eligibility = eligibilityLabels[deal.eligibility] ?? deal.eligibility;
-  const hasTeam = !!company.founders?.length || !!company.investors?.length;
   return (
     <Card as="article" className="min-w-0">
       <div className="p-4 md:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-text-3">{deal.category}</p>
-            <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight text-text">{company.name}</h2>
-            <p className="mt-0.5 text-sm text-text-2">{round.stage} · {company.sector} · {company.location ?? countryName(company.country)}</p>
+          <div className="flex min-w-0 items-center gap-3">
+            <CompanyLogo url={company.logo_url} />
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-text-3">{deal.category}</p>
+              <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight text-text">{company.name}</h2>
+              <p className="mt-0.5 text-sm text-text-2">{round.stage} · {company.sector} · {company.location ?? countryName(company.country)}</p>
+            </div>
           </div>
           <Badge tone={status === "open" ? "up" : status === "interest" ? "primary" : status === "unverified" ? "warn" : "neutral"}>
             {availabilityLabels[status]}
@@ -125,14 +188,9 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
           <ChevronDown className="h-4 w-4 shrink-0 group-open:rotate-180" aria-hidden />
         </summary>
         <div className="space-y-3 pb-4 text-[13px] leading-relaxed text-text-2">
-          {company.description && <p>{company.description}</p>}
           <p>Investor jurisdictions {deal.jurisdictions.length ? deal.jurisdictions.map(countryName).join(", ") : "undisclosed"}</p>
           {round.valuation_method && <p>{round.valuation_method}</p>}
           {round.traction && <p>{round.traction}</p>}
-          {hasTeam && <dl className="space-y-2">
-            {!!company.founders?.length && <div><dt className="font-medium text-text">Founders</dt><dd>{company.founders.join(", ")}</dd></div>}
-            {!!company.investors?.length && <div><dt className="font-medium text-text">Disclosed investors</dt><dd>{company.investors.join(", ")}</dd></div>}
-          </dl>}
           {round.share_classes.length > 0 && <div>
             <h3 className="font-medium text-text">Share classes and rights</h3>
             <ul className="mt-1 space-y-1">{round.share_classes.map((share) => (
@@ -145,12 +203,7 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
             {listing.expected_offer_close_on && <p>Expected offer close {dateLabel(listing.expected_offer_close_on)}</p>}
             <SourceLink url={listing.source_url}>Listing disclosure</SourceLink>
           </div>}
-          {company.financials.length > 0 && <div>
-            <h3 className="font-medium text-text">Published financials</h3>
-            <ul className="mt-2 grid gap-2 md:grid-cols-2">{company.financials.map((period) => (
-              <FinancialDisclosure key={period.id} period={period} />
-            ))}</ul>
-          </div>}
+          <CompanyFacts company={company} />
         </div>
       </details>
       {status === "open" && application}
@@ -160,6 +213,7 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
           {deal.offer_document_url && <SourceLink url={deal.offer_document_url}>Offer document</SourceLink>}
         </div>
         <div className="flex flex-wrap gap-2">
+          {onCompany && <Button size="sm" onClick={onCompany} aria-label={`Explore ${company.name}`}>Explore company</Button>}
           <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>
           <Button size="sm" aria-pressed={selected} aria-label={`Select ${company.name} ${round.stage} for research`}
             disabled={!selected && selectionFull} onClick={onSelect}>

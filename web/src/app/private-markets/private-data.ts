@@ -8,6 +8,12 @@ export type FinancialPeriod = {
   published_on: string; source_url: string;
 };
 
+export type PrivateCompany = {
+  id: string; name: string; sector: string; country: string; location: string | null;
+  description: string | null; logo_url: string | null; founders: string[] | null; investors: string[] | null;
+  source_url: string; verified_at: string; financials: FinancialPeriod[];
+};
+
 export type PrivateDeal = {
   id: string; provider: string; category: string; status: string; minimum: number | null;
   eligibility: string; jurisdictions: string[]; source_url: string; offer_document_url: string | null; verified_at: string;
@@ -15,11 +21,7 @@ export type PrivateDeal = {
     id: string; stage: string; raised: number | null; target: number | null; valuation: number | null;
     valuation_method: string | null; currency: string; announced_on: string | null; closes_at: string | null;
     source_url: string; verified_at: string; traction: string | null;
-    company: {
-      id: string; name: string; sector: string; country: string; location: string | null;
-      description: string | null; founders: string[] | null; investors: string[] | null;
-      financials: FinancialPeriod[];
-    };
+    company: PrivateCompany;
     share_classes: { name: string; rights: string; source_url: string }[];
     listing: {
       exchange: string; symbol: string; quotation_status: "proposed" | "anticipated" | "listed" | "withdrawn";
