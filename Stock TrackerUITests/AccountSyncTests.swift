@@ -1238,6 +1238,23 @@ final class AccountSyncTests: XCTestCase {
         for _ in 0..<8 where !verified.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(verified.isHittable)
         attach("hosted-agent-fill-evidence")
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.open("Agents", timeout: 25))
+        let copilot = app.buttons["agents.copilot"].firstMatch
+        XCTAssertTrue(copilot.waitForExistence(timeout: 8), app.debugDescription)
+        for _ in 0..<6 where !copilot.isHittable { app.swipeDown(velocity: .slow) }
+        copilot.tap()
+        let question = app.buttons.containing(.staticText, identifier: "What did my agents do this week?").firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 8), app.debugDescription)
+        question.tap()
+        XCTAssertTrue(app.staticTexts["Agent activity this week"].waitForExistence(timeout: 15), app.debugDescription)
+        let source = app.buttons["copilot.activity.run"].firstMatch
+        XCTAssertTrue(source.exists)
+        for _ in 0..<8 where !source.isHittable { app.swipeUp(velocity: .slow) }
+        source.tap()
+        XCTAssertTrue(app.staticTexts["Fill ID \(fillID)"].waitForExistence(timeout: 15), app.debugDescription)
     }
 
     func testMonthlyETFStrategyEditsBacktestsAndStartsPractice() throws {

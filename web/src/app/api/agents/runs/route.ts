@@ -6,11 +6,13 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { RESEARCH_SECTIONS, type ResearchSection } from "@/lib/research-types";
+import { activityPeriodTitle, agentActivityQuestion } from "@/lib/agent-activity-question";
 import { parseInstrumentID } from "@/server/market/instruments";
 import { supabaseConfigured } from "@/lib/env";
 import { serverSupabase } from "@/lib/supabase/server";
 import { type AgentEvent, type ChatTurn, runTurn } from "@/server/agent/run";
 import { runOpenAITurn } from "@/server/agent/openai";
+import { accountAgentActivity } from "@/server/agent/activity";
 import { jsonError, rateLimited } from "@/server/http/respond";
 
 export const runtime = "nodejs";
@@ -37,9 +39,6 @@ export async function POST(request: Request) {
   if (limited) return limited;
   const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
   const openAIKey = process.env.OPENAI_API_KEY;
-  if (!anthropicConfigured && !openAIKey) {
-    return jsonError(503, "feature_disabled", "The assistant is unavailable on this site.");
-  }
   const supabase = await serverSupabase();
   let signedIn = false;
   if (supabase) {
@@ -53,10 +52,14 @@ export async function POST(request: Request) {
   let history: ChatTurn[];
   let shareAccountContext = false;
   let company: { instrumentId: string; section: string } | undefined;
+  let timeZone = "UTC";
   try {
     const body = await request.json();
     history = decodeHistory(body);
     shareAccountContext = body.shareAccountContext === true;
+    if (typeof body.timeZone === "string" && body.timeZone.length <= 80) {
+      try { timeZone = new Intl.DateTimeFormat("en", { timeZone: body.timeZone }).resolvedOptions().timeZone; } catch { /* Use UTC. */ }
+    }
     if (body.company !== undefined) {
       const { instrumentId, section } = body.company ?? {};
       if (typeof instrumentId !== "string" || !RESEARCH_SECTIONS.includes(section as ResearchSection)) throw new Error("Choose a company research context.");
@@ -67,6 +70,10 @@ export async function POST(request: Request) {
   } catch (error) {
     return jsonError(400, "invalid", error instanceof Error ? error.message : "Bad request.");
   }
+
+  const period = company ? undefined : agentActivityQuestion(history[history.length - 1].content.trim());
+  if (period && (!signedIn || !supabase)) return jsonError(401, "unauthenticated", "Sign in to see your agent activity.");
+  if (!period && !anthropicConfigured && !openAIKey) return jsonError(503, "feature_disabled", "The assistant is unavailable on this site.");
 
   const encoder = new TextEncoder();
   const abort = new AbortController();
@@ -81,8 +88,18 @@ export async function POST(request: Request) {
         }
       };
       try {
+        if (period && supabase) {
+          const summary = await accountAgentActivity(supabase, period, timeZone, abort.signal).catch(() => undefined);
+          if (!summary) {
+            emit({ type: "error", code: "unavailable", message: "Your agent activity could not be loaded. Try again in a moment." });
+          } else {
+            emit({ type: "activity", title: activityPeriodTitle[period], summary });
+          }
+          emit({ type: "done", stopReason: "end_turn", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+          return;
+        }
         const context = { supabase: shareAccountContext && !company ? supabase ?? undefined : undefined,
-          signedIn: shareAccountContext && !company && signedIn, company, now: Date.now() };
+          signedIn: shareAccountContext && !company && signedIn, company, timeZone, now: Date.now() };
         if (anthropicConfigured) await runTurn(history, context, emit, abort.signal);
         else if (openAIKey) await runOpenAITurn(openAIKey, history, context, emit, abort.signal);
       } catch (error) {

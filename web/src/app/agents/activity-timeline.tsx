@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type { AgentActivityDetail, AgentActivityPage, AgentActivityRow } from "@engine/activity.ts";
 import { proposalStatusDisplayName } from "@engine/agent.ts";
@@ -17,7 +17,7 @@ const time = (ms: number) => dateTime(new Date(ms).toISOString());
 const outcomeLabel = { ok: "Passed", info: "Info", warning: "Warning", blocked: "Blocked", failed: "Failed" } as const;
 const riskLabel = { passed: "Passed", warning: "Warning", failed: "Failed", notApplicable: "Not applicable" } as const;
 
-export function AgentTimeline({ userID, agents }: { userID: string; agents: { id: string; name: string }[] }) {
+export function AgentTimeline({ userID, agents, selectedRun }: { userID: string; agents: { id: string; name: string }[]; selectedRun?: string }) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState("");
   const activity = useInfiniteQuery({
@@ -34,6 +34,7 @@ export function AgentTimeline({ userID, agents }: { userID: string; agents: { id
   return (
     <Card id="agent-activity">
       <CardHeader title="Agent activity timeline" />
+      {selectedRun && <LinkedRun userID={userID} runID={selectedRun} />}
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3 text-sm">
         <label htmlFor="activity-agent">Filter by agent</label>
         <select id="activity-agent" value={filter} onChange={(event) => { setFilter(event.target.value); setOpen(""); }}
@@ -56,6 +57,24 @@ export function AgentTimeline({ userID, agents }: { userID: string; agents: { id
       </div>}
     </Card>
   );
+}
+
+function LinkedRun({ userID, runID }: { userID: string; runID: string }) {
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => { section.current?.scrollIntoView({ block: "start" }); }, [runID]);
+  const audit = useQuery({
+    queryKey: ["agentActivityDetail", userID, runID],
+    queryFn: async () => (await practiceCall<{ detail: AgentActivityDetail }>("agentActivityDetail", { runID })).detail,
+    retry: false,
+  });
+  const detail = audit.data;
+  return <section ref={section} aria-label="Selected agent run" className="scroll-mt-20 space-y-2 border-b border-border p-4 pt-0">
+    {audit.isPending ? <p role="status">Loading selected run…</p> : detail ? <>
+      <h3 className="font-medium">{detail.agentName ?? "Agent run"}</h3>
+      <p className="text-sm text-text-2">{detail.run.summary}</p>
+      <RunEvidence detail={detail} />
+    </> : <p role="status" className="text-sm text-text-2">This run is unavailable.</p>}
+  </section>;
 }
 
 function TimelineRun({ userID, run, open, toggle }: { userID: string; run: AgentActivityRow; open: boolean; toggle: () => void }) {

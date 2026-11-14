@@ -19,6 +19,7 @@ import { CHART_RANGES, type ChartRange, type QuoteView } from "@/lib/market-type
 import { toView } from "@/lib/instrument-view";
 import { portfolioInstrument } from "@/lib/portfolio-exposure";
 import { portfolioMovement } from "@/lib/portfolio-movement";
+import { accountAgentActivity } from "./activity";
 import { clean, type ToolContext, type ToolName, TOOL_NAMES, type ToolOutcome } from "./tools-schema.ts";
 
 export { asToolResult, TOOLS, type ToolContext, type ToolName } from "./tools-schema.ts";
@@ -222,6 +223,18 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
         method: "Current quantity × (latest price − equity previous close or crypto reference price). Stale quotes are excluded. Cash flows, currency conversion, and changes in quantities are excluded.",
       },
       sources: contributions,
+    };
+  },
+
+  async get_agent_activity(input, ctx) {
+    if (!ctx.signedIn || !ctx.supabase) return { data: { error: "Sign in and enable account sharing to include agent activity in a model answer." }, isError: true };
+    const period = input.period;
+    if (period !== "thisWeek" && period !== "lastWeek" && period !== "lastSevenDays") throw new ToolInputError("Choose a supported activity period.");
+    const summary = await accountAgentActivity(ctx.supabase, period, ctx.timeZone ?? "UTC");
+    if (!summary) return { data: { error: "Agent activity is unavailable." }, isError: true };
+    return {
+      data: { ...summary, recent: summary.recent.map(({ agentName, summary, status, startedAt, trigger }) => ({ agentName, summary, status, startedAt, trigger })) },
+      card: { kind: "agent_activity", title: "Open agent activity timeline", href: "/agents#agent-activity", payload: null },
     };
   },
 

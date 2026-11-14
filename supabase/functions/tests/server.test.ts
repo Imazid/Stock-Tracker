@@ -13,6 +13,15 @@ import { isLoosening } from "../_shared/server/policy.ts";
 import type { Order } from "../_shared/trading/orders.ts";
 import { type RiskPolicy, standardPolicy } from "../_shared/trading/risk.ts";
 import { TradingError } from "../_shared/trading/state.ts";
+import { agentActivityWindow } from "../_shared/trading/activity.ts";
+
+Deno.test("agent activity weeks start on local Monday across a daylight saving change", () => {
+  const now = Date.parse("2026-10-05T00:00:00Z");
+  const window = agentActivityWindow("lastWeek", "Australia/Sydney", now);
+  assertEquals(new Date(window.from).toISOString(), "2026-09-27T14:00:00.000Z");
+  assertEquals(new Date(window.through).toISOString(), "2026-10-04T13:00:00.000Z");
+  assertEquals(agentActivityWindow("thisWeek", "Australia/Sydney", now), { from: window.through, through: now });
+});
 
 // MARK: - Who is calling
 

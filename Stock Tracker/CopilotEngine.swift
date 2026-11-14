@@ -29,6 +29,7 @@ enum CopilotCard: Identifiable {
     case facts(id: UUID, title: String, facts: [Evidence], footnote: String)
     case orders(id: UUID, proposals: [UUID], orders: [UUID])
     case run(id: UUID, agentID: UUID, runID: UUID)
+    case activity(id: UUID, title: String, summary: AgentActivitySummary, local: Bool)
     case draft(id: UUID, parsed: ParsedAgentRequest)
     case limitChange(id: UUID, agentID: UUID, lines: [String], policy: RiskPolicy, loosens: Bool)
     case backtest(id: UUID, box: BacktestBox)
@@ -42,7 +43,7 @@ enum CopilotCard: Identifiable {
 
     var id: UUID {
         switch self {
-        case .facts(let id, _, _, _), .orders(let id, _, _), .run(let id, _, _), .draft(let id, _),
+        case .facts(let id, _, _, _), .orders(let id, _, _), .run(let id, _, _), .activity(let id, _, _, _), .draft(let id, _),
              .limitChange(let id, _, _, _, _), .backtest(let id, _), .agentChoice(let id, _, _),
              .portfolioMovement(let id, _), .unifiedAllocation(let id), .privateUpdates(let id, _),
              .privateComparison(let id, _), .privateScenario(let id, _), .pauseAll(let id):
@@ -88,10 +89,12 @@ final class CopilotEngine: ObservableObject {
 
     static let portfolioMovementPrompt = "Why did my portfolio move?"
     static let concentrationPrompt = "Analyse my portfolio concentration"
+    static let activityPrompt = "What did my agents do this week?"
 
     static let suggestions = [
         portfolioMovementPrompt,
         "Show me all my pending trades",
+        activityPrompt,
         concentrationPrompt,
         "Show my private investment exposure alongside my listed stocks",
         "Summarise recent updates from the startups I own",
@@ -184,6 +187,8 @@ final class CopilotEngine: ObservableObject {
     private func routeByRules(_ text: String, forcedAgent: UUID? = nil) async -> CopilotMessage? {
         let lower = text.lowercased()
         func has(_ words: String...) -> Bool { words.contains { lower.contains($0) } }
+
+        if let period = activityPeriod(lower) { return await activity(period) }
 
         if has("private market", "private investment", "private asset", "private holding", "private equity") &&
             has("exposure", "allocation", "concentration", "alongside") &&
@@ -305,6 +310,25 @@ final class CopilotEngine: ObservableObject {
     }
 
     // MARK: - Tools
+
+    private func activityPeriod(_ text: String) -> AgentActivityPeriod? {
+        let question = text.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
+        let pattern = #"^(?:please +)?(?:what (?:did|have) my agents (?:do|done)|show(?: me)? (?:what my agents have done|my agents[’']? activity)|summari[sz]e my agents[’']? activity) (?:in |over |for )?(?:the )?(?:this week|last week|last (?:7|seven) days)$"#
+        guard question.range(of: pattern, options: .regularExpression) != nil else { return nil }
+        if question.hasSuffix("this week") { return .thisWeek }
+        return question.hasSuffix("last week") ? .lastWeek : .lastSevenDays
+    }
+
+    private func activity(_ period: AgentActivityPeriod) async -> CopilotMessage {
+        let local = !trading.isAccount
+        do {
+            let summary = try await trading.agentActivitySummary(period: period)
+            return CopilotMessage(isUser: false, text: "Here’s the activity recorded for that period.",
+                                  cards: [.activity(id: UUID(), title: period.title, summary: summary, local: local)])
+        } catch {
+            return CopilotMessage(isUser: false, text: "Your agent activity could not be loaded. Try again in a moment.")
+        }
+    }
 
     private func pendingTrades() -> CopilotMessage {
         let proposals = trading.pendingProposals
@@ -546,6 +570,7 @@ final class CopilotEngine: ObservableObject {
         The user's agents: \(agents.isEmpty ? "none" : agents). Watchlist: \(watch.isEmpty ? "none" : watch).
         If the request matches one of these tools, reply with JSON only and nothing else: \
         {"tool":"pending_trades"} | {"tool":"portfolio_movement"} | {"tool":"concentration"} | {"tool":"explain_decision","agent":"<name>"} | \
+        {"tool":"agent_activity","request":"thisWeek, lastWeek, or lastSevenDays"} | \
         {"tool":"why_stopped","agent":"<name>"} | {"tool":"backtest","agent":"<name>","request":"<the user's words>"} | \
         {"tool":"change_limit","agent":"<name>","request":"<the user's words>"} | {"tool":"create_agent","request":"<the user's words>"}.
         Otherwise answer in plain text, in under 120 words. Give general information only: no personal financial advice, \
@@ -572,6 +597,7 @@ final class CopilotEngine: ObservableObject {
         func agent() -> TradingAgent? { named ?? resolveAgent(original.lowercased()) }
         switch choice.tool {
         case "pending_trades": return pendingTrades()
+        case "agent_activity": return await activity(choice.request.flatMap(AgentActivityPeriod.init(rawValue:)) ?? .thisWeek)
         case "portfolio_movement": return portfolioMovement()
         case "concentration": return concentration()
         case "explain_decision": return agent().map(explainDecision)

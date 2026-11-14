@@ -181,6 +181,14 @@ stateTest("agent activity pages tied runs and follows later approval to the actu
   assertEquals((await api(other.token, { action: "agentActivity", agentID })).data.page.runs, []);
   assertEquals((await api(other.token, { action: "agentActivityDetail", runID: run.id })).status, 404);
   assertEquals((await api(person.token, { action: "agentActivity", before: "9223372036854775808" })).status, 400);
+
+  const fields = { action: "agentActivitySummary", period: "lastSevenDays", timeZone: "Australia/Sydney" };
+  const { summary } = await call(fields);
+  assertEquals([summary.runs, summary.proposals, summary.approvals, summary.fills], [23, 1, 1, 1]);
+  assertEquals(summary.recent[0].id, run.id, "a trade decision stays discoverable among routine checks");
+  assertEquals(summary.through - summary.from, 7 * 86_400_000);
+  assertEquals((await api(other.token, fields)).data.summary.runs, 0);
+  assertEquals((await api(person.token, { ...fields, timeZone: "Invalid/Zone" })).status, 400);
 });
 
 stateTest("includeState: every change can return the saved state; replays get a fresh one; the stored answer never holds it", async (sql) => {

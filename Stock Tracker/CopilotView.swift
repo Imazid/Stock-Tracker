@@ -52,6 +52,7 @@ private struct CopilotScreen: View {
     @State private var openedProposal: TradingRouter.Ref?
     @State private var openedOrder: TradingRouter.Ref?
     @State private var openedAgent: TradingRouter.Ref?
+    @State private var openedRun: AgentActivityRow?
     @State private var openedHolding: UUID?
     @State private var showPauseAll = false
     @FocusState private var focused: Bool
@@ -131,6 +132,7 @@ private struct CopilotScreen: View {
         .sheet(item: $openedProposal) { ProposalReviewSheet(proposalID: $0.id) }
         .sheet(item: $openedOrder) { ref in NavigationStack { OrderDetailView(orderID: ref.id) } }
         .sheet(item: $openedAgent) { ref in NavigationStack { AgentDetailView(agentID: ref.id) } }
+        .sheet(item: $openedRun) { AgentRunSheet(row: $0) }
         .sheet(isPresented: $showPauseAll) { PauseAllSheet() }
         .accessibilityIdentifier("copilot.screen")
     }
@@ -254,6 +256,9 @@ private struct CopilotScreen: View {
                 }
                 .accessibilityIdentifier("copilot.card.run")
             }
+
+        case .activity(_, let title, let summary, let local):
+            AgentActivityAnswer(title: title, summary: summary, local: local) { openedRun = $0 }
 
         case .draft(_, let parsed):
             TradingSection(title: LocalizedStringKey(parsed.draft.name)) {
@@ -460,5 +465,82 @@ private struct CopilotScreen: View {
         input = ""
         focused = false
         Task { await engine.send(trimmed) }
+    }
+}
+
+private struct AgentActivityAnswer: View {
+    let title: String
+    let summary: AgentActivitySummary
+    let local: Bool
+    let open: (AgentActivityRow) -> Void
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        TradingSection(title: LocalizedStringKey(title)) {
+            Text("\(stamp(summary.from)) to \(stamp(summary.through))")
+                .font(.caption).foregroundStyle(theme.secondaryText)
+            TradingRow(label: "Checks", value: summary.runs.formatted())
+            TradingRow(label: "Failed checks", value: summary.failedRuns.formatted())
+            TradingRow(label: "Skipped checks", value: summary.skippedRuns.formatted())
+            TradingRow(label: "Proposals", value: summary.proposals.formatted())
+            TradingRow(label: "Blocked by risk", value: summary.blocked.formatted())
+            TradingRow(label: "Approvals", value: summary.approvals.formatted())
+            TradingRow(label: "Declines", value: summary.declines.formatted())
+            TradingRow(label: "Practice fills", value: summary.fills.formatted())
+            if local { Text("Based on the activity history kept on this iPhone.").font(.caption).foregroundStyle(theme.secondaryText) }
+            ForEach(summary.recent) { row in
+                Button { open(row) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(row.agentName ?? "Agent run", systemImage: "arrow.up.right").font(.subheadline.weight(.medium))
+                        Text(stamp(row.startedAt)).font(.caption)
+                        Text(row.summary).font(.footnote)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .foregroundStyle(theme.primaryText)
+                }
+                .accessibilityIdentifier("copilot.activity.run")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("copilot.activity")
+    }
+
+    private func stamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: summary.timeZone) ?? .current
+        formatter.setLocalizedDateFormatFromTemplate("MMM d, j:mm z")
+        return formatter.string(from: date)
+    }
+}
+
+private struct AgentRunSheet: View {
+    let row: AgentActivityRow
+    @EnvironmentObject private var trading: TradingStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var detail: AgentActivityDetail?
+    @State private var failed = false
+    @State private var attempt = 0
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                TradingSection(title: "Decision evidence") {
+                    Text(row.summary).font(.subheadline)
+                    if let detail { AgentRunEvidence(detail: detail) }
+                    else if failed { Button("Retry evidence") { attempt += 1 } }
+                    else { ProgressView("Loading decision evidence…") }
+                }
+                .padding(DS.Space.gutter)
+            }
+            .dsScreenBackground()
+            .navigationTitle(row.agentName ?? "Agent run")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
+        .task(id: attempt) {
+            failed = false
+            do { detail = try await trading.agentActivityDetail(runID: row.id) }
+            catch { if !Task.isCancelled { failed = true } }
+        }
     }
 }
