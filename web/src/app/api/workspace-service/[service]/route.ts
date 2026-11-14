@@ -13,6 +13,7 @@ const services = {
 const privateMarketActions = new Set([
   "catalog", "discover", "research", "research_status", "research_runs", "reports", "report",
   "confirmed_holdings", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
+  "profile", "save_profile", "handoff_check", "handoff",
 ]);
 
 function failure(message: string, status: number) {
@@ -46,6 +47,13 @@ export async function POST(request: Request, context: {params: Promise<{service:
   }
   if (!publicCatalog && !hasBearer) {
     return failure("Sign in to continue.", 401);
+  }
+  if (service === "private-markets") {
+    const { action, currency } = parsed as { action: string; currency?: unknown };
+    if ((action === "handoff" || action === "handoff_check") &&
+      (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency))) {
+      return failure("Review the current offer currency before continuing.", 400);
+    }
   }
   if (service === "trading") {
     const input = parsed as {action?: string; mode?: string; order?: {mode?: string}; draft?: {mode?: string}};

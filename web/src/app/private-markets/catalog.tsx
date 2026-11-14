@@ -81,8 +81,8 @@ export function CompareRounds({ deals, asOf }: { deals: PrivateDeal[]; asOf: num
   </div>;
 }
 
-export function DealCard({ deal, asOf, selected, selectionFull, onSelect }: {
-  deal: PrivateDeal; asOf: number; selected: boolean; selectionFull: boolean; onSelect: () => void;
+export function DealCard({ deal, asOf, selected, selectionFull, onSelect, application }: {
+  deal: PrivateDeal; asOf: number; selected: boolean; selectionFull: boolean; onSelect: () => void; application?: ReactNode;
 }) {
   const { round } = deal;
   const { company, listing } = round;
@@ -153,6 +153,7 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect }: {
           </div>}
         </div>
       </details>
+      {status === "open" && application}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-[13px] md:px-5">
         <div className="flex flex-wrap gap-x-4 gap-y-1">
           <SourceLink url={deal.source_url}>{providerName(deal.provider)}</SourceLink>

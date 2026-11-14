@@ -48,13 +48,11 @@ test("Private Markets renders sourced rounds and keeps research account-scoped",
     await page.getByRole("button", { name: "Select Heidi Series B for research", exact: true }).click();
     await page.getByRole("button", { name: "Select Heidi Series C for research", exact: true }).click();
 
-    for (const action of ["reports", "confirmed_holdings", "applications"]) {
+    for (const action of ["reports", "confirmed_holdings", "applications", "profile", "save_profile", "handoff_check", "handoff"]) {
       const response = await page.request.post(new URL("/api/workspace-service/private-markets", origin).href, { data: { action } });
       assert.equal(response.status(), 401);
       assert.equal(response.headers()["cache-control"], "no-store");
     }
-    const handoff = await page.request.post(new URL("/api/workspace-service/private-markets", origin).href, { data: { action: "handoff" } });
-    assert.equal(handoff.status(), 403);
     await page.getByRole("radio", { name: "AI Research", exact: true }).click();
     await page.getByText("Sign in for AI research and saved reports", { exact: true }).waitFor();
 

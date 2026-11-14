@@ -17,6 +17,7 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
+  "profile", "save_profile", "applications", "confirmed_holdings",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -623,6 +624,7 @@ Deno.serve(async (req) => {
         });
       }
       case "profile": {
+        if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_REQUEST", "Send only the profile action.");
         const [profile, checks] = await Promise.all([
           admin.from("investor_profiles").select("country,declared_class").eq("user_id", userId).maybeSingle(),
           admin.from("investor_eligibility")
@@ -636,7 +638,8 @@ Deno.serve(async (req) => {
         return jsonResponse(200, { profile: profile.data, eligibility: checks.data });
       }
       case "save_profile": {
-        if (typeof body.country !== "string" || !/^[A-Z]{2}$/.test(body.country) ||
+        if (Object.keys(body).some((key) => !["action", "country", "declared_class"].includes(key)) ||
+          typeof body.country !== "string" || !/^[A-Z]{2}$/.test(body.country) ||
           typeof body.declared_class !== "string" || !["unknown", "retail", "wholesale"].includes(body.declared_class)) {
           return errorResponse(400, "INVALID_PROFILE", "Enter a two-letter country code and select a classification.");
         }
@@ -709,7 +712,8 @@ Deno.serve(async (req) => {
       case "handoff": {
         const checking = body.action === "handoff_check";
         const currency = body.currency;
-        if (typeof body.opportunity_id !== "string" || !uuid.test(body.opportunity_id) ||
+        if (Object.keys(body).some((key) => !["action", "opportunity_id", "amount", "currency", "document_url", "acknowledged"].includes(key)) ||
+          typeof body.opportunity_id !== "string" || !uuid.test(body.opportunity_id) ||
           typeof body.amount !== "string" || !/^\d{1,16}(?:\.\d{1,4})?$/.test(body.amount) ||
           typeof body.document_url !== "string" || body.acknowledged !== true ||
           ((checking || currency !== undefined) && (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)))) {

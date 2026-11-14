@@ -63,6 +63,13 @@ export type PortfolioHolding = {
   dispositions: { id: string; sold_units: number; net_proceeds: number; disposed_cost: number | null; settled_on: string; source: string }[];
 };
 export type PortfolioPage = { holdings: PortfolioHolding[]; next_offset: number | null };
+export type InvestorProfile = { country: string; declared_class: "unknown" | "retail" | "wholesale" };
+export type ProviderVerification = {
+  provider: string; jurisdiction: string; verified_class: "retail" | "wholesale";
+  verified_at: string; expires_at: string; accountant_certificate_reviewed_at: string | null;
+  connection: { revoked_at: string | null };
+};
+export type InvestorProfileResponse = { profile: InvestorProfile | null; eligibility: ProviderVerification[] };
 export type Application = {
   id: string; status: string; requested_amount: number; provider_application_amount: number | null;
   currency: string; provider: string; provider_reference: string | null;
@@ -89,6 +96,7 @@ export type MonitorAlert = {
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
   "reports" | "report" | "confirmed_holdings" | "applications" | "allocation" | "updates" |
+  "profile" | "save_profile" | "handoff_check" | "handoff" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 
 export async function privateMarkets<T>(

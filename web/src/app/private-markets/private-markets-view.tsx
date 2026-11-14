@@ -16,6 +16,7 @@ import { CompareRounds, DealCard, interpretedFilters } from "./catalog";
 import { Monitoring } from "./monitoring";
 import { availability, availabilityLabels, countryName, privateMarkets, type Discovery, type PrivateDeal } from "./private-data";
 import { Positions } from "./positions";
+import { ProviderApplication } from "./provider-application";
 import { Research } from "./research";
 
 type Tab = "catalogue" | "research" | "portfolio" | "updates";
@@ -157,7 +158,9 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch 
       </Card>}
       {visible.length ? <div className="grid items-start gap-4 2xl:grid-cols-2">
         {visible.map((deal) => <DealCard key={deal.id} deal={deal} asOf={currentAt} selected={selected.some(({ id }) => id === deal.id)}
-          selectionFull={selected.length >= 3} onSelect={() => toggle(deal)} />)}
+          selectionFull={selected.length >= 3} onSelect={() => toggle(deal)}
+          application={<ProviderApplication key={JSON.stringify([deal.offer_document_url, deal.verified_at, deal.round.verified_at,
+            deal.round.currency, deal.round.closes_at, deal.minimum])} owner={owner} deal={deal} />} />)}
       </div> : <Card><EmptyState icon={<Building2 className="h-5 w-5" aria-hidden />} title="No matching rounds" body="Change the filters to see more published records." /></Card>}
     </div>
   );

@@ -8,6 +8,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { SourceLink } from "./catalog";
+import { InvestorProfileCard } from "./investor-profile";
 import {
   amount, dateLabel, privateMarkets, providerName, dayInSydney, type Application, type PortfolioHolding, type PortfolioPage,
 } from "./private-data";
@@ -110,8 +111,14 @@ const applicationLabels: Record<string, string> = {
   withdrawn: "Withdrawn", rejected: "Rejected", confirmed: "Ownership confirmed", cancelled: "Cancelled",
 };
 
+const withdrawalHelp: Record<string, string> = {
+  birchal: "https://help.birchal.com/en/articles/1709077-how-do-i-cancel-my-investment",
+  onmarket: "https://www.onmarket.com.au/help-faq/equity-crowdfunding-investing-and-allocations/how-do-i-cancel-my-application/",
+};
+
 function ApplicationCard({ item }: { item: Application }) {
   const name = item.offer?.round?.company?.name ?? providerName(item.provider);
+  const canReviewWithdrawal = item.status === "application_received" || item.status === "withdrawal_requested";
   const timeline = [
     ["Terms acknowledged", item.acknowledged_at], ["Application received", item.provider_received_at],
     ["Cooling-off ends", item.cooling_off_ends_at], ["Supplementary notice", item.supplementary_notice_at],
@@ -133,6 +140,11 @@ function ApplicationCard({ item }: { item: Application }) {
         </div>)}
       </dl>
       {item.supplementary_document_url && <SourceLink url={item.supplementary_document_url}>Supplementary disclosure</SourceLink>}
+      {canReviewWithdrawal && <div className="space-y-1">
+        {item.status === "withdrawal_requested" && <p>Awaiting the provider’s decision. Check your provider account for refund information.</p>}
+        {!item.cooling_off_ends_at && !item.supplementary_withdrawal_ends_at && <p>Check your provider account for withdrawal deadlines.</p>}
+        {withdrawalHelp[item.provider] && <SourceLink url={withdrawalHelp[item.provider]}>Provider withdrawal instructions</SourceLink>}
+      </div>}
     </div>
   </Card>;
 }
@@ -165,6 +177,7 @@ export function Positions({ owner }: { owner: string }) {
       </Button>}
     </section>
     <section className="min-w-0 space-y-3">
+      <InvestorProfileCard owner={owner} />
       <div>
         <h2 className="font-semibold text-text">Applications</h2>
         <p className="text-[13px] text-text-2">Application status and notices reported by your provider.</p>
