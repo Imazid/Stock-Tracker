@@ -432,11 +432,17 @@ final class AccountSyncTests: XCTestCase {
 
         app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
             "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
-            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-preferredCurrency", "USD"]
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-preferredCurrency", "USD",
+            "-portfolioSegment", "holdings"]
         app.launch()
         XCTAssertTrue(app.open("Portfolio"))
         let allocation = app.buttons["portfolio.segment.allocation"]
-        XCTAssertTrue(allocation.waitForExistence(timeout: 20))
+        let privacy = app.buttons["portfolio.privacy"]
+        XCTAssertTrue(privacy.waitForExistence(timeout: 20))
+        let holding = app.buttons["portfolio.holding.AAPL"]
+        for _ in 0..<6 where !holding.isHittable { app.swipeUp(velocity: .slow) }
+        let quote = expectation(for: NSPredicate(format: "label CONTAINS 'Price per unit US$50.00'"), evaluatedWith: holding)
+        XCTAssertEqual(XCTWaiter.wait(for: [quote], timeout: 20), .completed, holding.label)
         XCTAssertTrue(app.open("Private Markets"))
         app.buttons["private.destination.briefcase"].tap()
         let add = app.buttons["private.holding.add"]
@@ -444,12 +450,12 @@ final class AccountSyncTests: XCTestCase {
         add.tap()
         let name = app.textFields["private.holding.name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
-        name.tap()
-        name.typeText("Allocation fixture")
-        app.buttons["Currency"].tap()
+        app.buttons["private.holding.currency"].tap()
         let usd = app.buttons["USD"]
         for _ in 0..<4 where !usd.isHittable { app.swipeUp() }
         usd.tap()
+        name.tap()
+        name.typeText("Allocation fixture")
         app.buttons["private.holding.save"].tap()
         let position = app.buttons["private.holding.row"].firstMatch
         XCTAssertTrue(position.waitForExistence(timeout: 8))
@@ -471,6 +477,7 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Record Valuation"].waitForNonExistence(timeout: 5))
 
         XCTAssertTrue(app.open("Portfolio"))
+        for _ in 0..<5 where allocation.exists && allocation.frame.midY < 120 { app.swipeDown(velocity: .slow) }
         for _ in 0..<7 where !allocation.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(allocation.isHittable)
         allocation.tap()
@@ -487,7 +494,7 @@ final class AccountSyncTests: XCTestCase {
         let excluded = app.staticTexts["Listed positions excluded for an unavailable quote: 1"]
         for _ in 0..<4 where !excluded.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(excluded.exists)
-        app.buttons["portfolio.privacy"].tap()
+        privacy.tap()
         XCTAssertTrue(total.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Portfolio values are hidden."].exists)
     }

@@ -415,6 +415,7 @@ private struct PrivateHoldingEditor: View {
                     Picker("Currency", selection: $currency) {
                         ForEach(Array(Set(MarketData.supportedCurrencies + ["NZD", currency])).sorted(), id: \.self) { Text($0).tag($0) }
                     }
+                    .accessibilityIdentifier("private.holding.currency")
                     .disabled(holding.map { !$0.valuations.isEmpty || !$0.cashFlows.isEmpty } ?? false)
                 }
                 Section("Ownership") {
