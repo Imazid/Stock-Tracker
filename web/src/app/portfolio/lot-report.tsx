@@ -45,7 +45,7 @@ export function LotReport({ userId }: { userId: string }) {
       <CardHeader title="Tax-lot records" subtitle="Download a preliminary record of purchases, sale matches, fees and open lots." />
       <form onSubmit={(event) => void download(event)} className="space-y-3 border-t border-border p-4">
         <p className="text-sm text-text-2">
-          Matches synced purchases in first-in, first-out order within each holding. Position snapshots and purchases with missing costs need acquisition records before the report can estimate a result. Check the lots you actually sold and corporate actions against your records. This report does not calculate tax.
+          Matches synced purchases and recorded dividend reinvestments in first-in, first-out order within each holding. Position snapshots and purchases with missing costs need acquisition records before the report can estimate a result. Check the lots you actually sold and corporate actions against your records. This report does not calculate tax.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="First sale date (Sydney time)" htmlFor="lot-from">

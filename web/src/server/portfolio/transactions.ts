@@ -1,4 +1,5 @@
 import type { serverSupabase } from "@/lib/supabase/server";
+import type { Reinvestment } from "../../lib/portfolio-reinvestments.ts";
 
 export type TradeProvenance = {
   source: "manual_trade" | "opening_position" | "csv_position" | "broker_position";
@@ -15,10 +16,11 @@ export type TransactionRow = {
   holding_id: string;
   transaction_date: string;
   type: string;
-  shares: number;
+  shares: number | string;
   price_per_share: number;
   fees: number;
   trade_provenance?: TradeProvenance | null;
+  reinvestment?: Reinvestment;
   portfolio_holdings: {
     asset_symbol: string;
     asset_exchange: string | null;
