@@ -587,6 +587,20 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(report.exists)
         report.tap()
         XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
+
+        guard ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_COMPANY_REPORT"] == "1" else { return }
+        let research = app.buttons["holding.companyResearch"]
+        for _ in 0..<6 where !research.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(research.isHittable)
+        research.tap()
+        XCTAssertTrue(app.navigationBars["AAPL Research"].waitForExistence(timeout: 8))
+        let filing = app.descendants(matching: .any)["companyResearch.eventSource"].firstMatch
+        XCTAssertTrue(filing.waitForExistence(timeout: 35))
+        XCTAssertTrue(filing.label.contains("issuer filing"), filing.label)
+        XCTAssertTrue(app.staticTexts["Last price"].firstMatch.exists)
+        attach("company-research-from-holding")
+        app.buttons["companyResearch.done"].tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].exists)
     }
 
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {

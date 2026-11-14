@@ -115,9 +115,9 @@ struct AppleStocksDetailView: View {
                         }
                     }
 
-                    if live.kind == .stock, let instrument = Instrument(asset: live), let origin = CompanyResearchView.origin {
+                    if let instrument = CompanyResearchView.listing(for: live) {
                         Button {
-                            sheet = .research(instrument, origin)
+                            sheet = .research(instrument)
                         } label: {
                             Label("Research Everything", systemImage: "doc.text.magnifyingglass")
                                 .frame(maxWidth: .infinity)
@@ -203,8 +203,8 @@ struct AppleStocksDetailView: View {
             case .broker:
                 SnapTradeConnectionView()
                     .environmentObject(marketData)
-            case .research(let instrument, let origin):
-                CompanyResearchView(instrument: instrument, origin: origin)
+            case .research(let instrument):
+                CompanyResearchView(instrument: instrument)
             case .paywall(let feature):
                 PaywallView(requiredTier: .pro, featureName: feature)
                     .environmentObject(SubscriptionManager.shared)
@@ -627,14 +627,14 @@ struct AppleStocksDetailView: View {
 enum DetailSheet: Identifiable {
     case alert, portfolio, broker
     case paywall(String)
-    case research(Instrument, URL)
+    case research(Instrument)
 
     var id: String {
         switch self {
         case .alert: return "alert"
         case .portfolio: return "portfolio"
         case .broker: return "broker"
-        case .research(let instrument, _): return "research-\(instrument.id)"
+        case .research(let instrument): return "research-\(instrument.id)"
         case .paywall(let feature): return "paywall-\(feature)"
         }
     }

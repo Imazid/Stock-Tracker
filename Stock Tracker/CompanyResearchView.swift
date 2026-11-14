@@ -4,13 +4,29 @@ import TradingCore
 
 struct CompanyResearchView: View {
     let instrument: Instrument
-    let origin: URL
+    @EnvironmentObject private var auth: SupabaseAuthManager
     @Environment(\.dismiss) private var dismiss
-    @State private var report: CompanyResearchReport?
-    @State private var failed = false
+    @State private var loaded: LoadedReport?
+    @State private var errorMessage: String?
     @State private var requestCount = 0
 
-    static var origin: URL? {
+    private struct LoadedReport {
+        let owner: UUID?
+        let report: CompanyResearchReport
+        let dashboardURL: URL
+    }
+
+    private struct RequestKey: Equatable {
+        let owner: UUID?
+        let attempt: Int
+    }
+
+    static func listing(for asset: Asset) -> Instrument? {
+        guard let listing = asset.listedStock else { return nil }
+        return .listed(listing.symbol, name: asset.name, on: listing.venue, etf: asset.isListedETF)
+    }
+
+    static var directOrigin: URL? {
         #if DEBUG
         if let override = UserDefaults.standard.string(forKey: "CompanyResearchURLOverride"),
            let url = URL(string: override), url.host() == "127.0.0.1", url.scheme == "http" {
@@ -27,13 +43,24 @@ struct CompanyResearchView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let report {
+                if let loaded, loaded.owner == auth.userId {
+                    let report = loaded.report
                     List {
+                        if let errorMessage {
+                            Section { Text(errorMessage).font(.footnote).foregroundStyle(.secondary) }
+                        }
+                        if let quote = report.quote {
+                            Section("Market quote") {
+                                LabeledContent("Last price", value: TradingFormat.price(quote.last, quote.currency))
+                                Text([quote.source, quote.observedAt, quote.stale ? "Stale" : quote.status.replacingOccurrences(of: "_", with: " ")].joined(separator: " · "))
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
                         if let profile = report.profile {
                             Section("Company") {
                                 Text(profile.name).font(.headline)
-                                if let industry = profile.industry { Text(industry) }
-                                if let location = profile.headquarters { Text(location) }
+                                if let industry = profile.industry ?? profile.sector { Text(industry) }
+                                if let location = profile.headquarters ?? profile.incorporation { Text(location) }
                                 Link(profile.evidence.provider, destination: profile.evidence.url)
                             }
                         }
@@ -63,14 +90,15 @@ struct CompanyResearchView: View {
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(event.title)
                                             Text("\(event.date.prefix(10)) · \(event.category) · \(event.publisher ?? event.evidence.provider)")
-                                                .font(.caption).foregroundStyle(.secondary)
+                                            .font(.caption).foregroundStyle(.secondary)
                                         }
                                     }
+                                    .accessibilityIdentifier("companyResearch.eventSource")
                                 }
                             }
                         }
                         Section("Research workspace") {
-                            Link("Open full company dashboard", destination: origin.appending(path: "markets").appending(path: instrument.id))
+                            Link("Open full company dashboard", destination: loaded.dashboardURL)
                             ForEach(report.links ?? []) { link in
                                 Link(link.label, destination: link.url)
                             }
@@ -85,9 +113,11 @@ struct CompanyResearchView: View {
                         }
                     }
                     .refreshable { await load() }
-                } else if failed {
+                } else if let errorMessage {
                     ContentUnavailableView {
                         Label("Research unavailable", systemImage: "doc.text.magnifyingglass")
+                    } description: {
+                        Text(errorMessage)
                     } actions: {
                         Button("Try again") { requestCount += 1 }
                     }
@@ -98,28 +128,57 @@ struct CompanyResearchView: View {
             .navigationTitle("\(instrument.symbol) Research")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.accessibilityIdentifier("companyResearch.done")
+                }
             }
-            .task(id: requestCount) { await load() }
+            .task(id: RequestKey(owner: auth.userId, attempt: requestCount)) { await load() }
         }
     }
 
     private func load() async {
-        failed = false
-        let url = origin.appending(path: "api/markets/instruments").appending(path: instrument.id).appending(path: "research/report")
-        var request = URLRequest(url: url, timeoutInterval: 40)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let owner = auth.userId
+        errorMessage = nil
+        let decoder = JSONDecoder()
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                failed = true
-                return
+            let loaded: CompanyResearchReport
+            let dashboard: URL
+            if let origin = Self.directOrigin {
+                let url = origin.appending(path: "api/markets/instruments").appending(path: instrument.id).appending(path: "research/report")
+                var request = URLRequest(url: url, timeoutInterval: 40)
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+                loaded = try decoder.decode(CompanyResearchReport.self, from: data)
+                dashboard = origin.appending(path: "markets").appending(path: instrument.id)
+            } else {
+                guard let owner else {
+                    errorMessage = "Sign in to Stock Tracker in Settings to view the company report."
+                    return
+                }
+                let data = try await SecureBackend.invoke("market-workspace", body: [
+                    "action": "companyReport", "instrumentId": instrument.id,
+                ], expectedUserID: owner)
+                let payload = try decoder.decode(CompanyResearchResponse.self, from: data).data
+                loaded = payload.report
+                dashboard = payload.dashboardURL
             }
-            report = try JSONDecoder().decode(CompanyResearchReport.self, from: data)
+            guard loaded.instrumentId == instrument.id else { throw URLError(.badServerResponse) }
+            guard !Task.isCancelled, owner == auth.userId else { return }
+            self.loaded = LoadedReport(owner: owner, report: loaded, dashboardURL: dashboard)
         } catch {
-            if !Task.isCancelled { failed = true }
+            guard !Task.isCancelled, owner == auth.userId else { return }
+            errorMessage = (error as? SecureBackend.FunctionError)?.message ?? "Couldn’t load the company report. Try again."
         }
     }
+}
+
+private struct CompanyResearchResponse: Decodable {
+    struct Payload: Decodable {
+        let report: CompanyResearchReport
+        let dashboardURL: URL
+    }
+    let data: Payload
 }
 
 private struct CompanyResearchReport: Decodable {
@@ -131,7 +190,9 @@ private struct CompanyResearchReport: Decodable {
     struct Profile: Decodable {
         let name: String
         let industry: String?
+        let sector: String?
         let headquarters: String?
+        let incorporation: String?
         let evidence: Source
     }
     struct Fact: Decodable, Identifiable {
@@ -163,7 +224,18 @@ private struct CompanyResearchReport: Decodable {
         var id: URL { url }
     }
 
+    struct Quote: Decodable {
+        let last: Double
+        let currency: String
+        let source: String
+        let observedAt: String
+        let status: String
+        let stale: Bool
+    }
+
+    let instrumentId: String
     let asOf: String
+    let quote: Quote?
     let profile: Profile?
     let facts: [Fact]
     let events: [Event]
