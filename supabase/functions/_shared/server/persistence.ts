@@ -18,7 +18,7 @@ import postgres from "npm:postgres@3.4.5";
 import {
   type AgentRun, agentSpec, strategyVersion, type TradeProposal, type TradingAgent, type TradingSignal,
 } from "../trading/agent.ts";
-import type { AgentActivityDetail, AgentActivityPage } from "../trading/activity.ts";
+import type { AgentActivityDetail, AgentActivityPage, AgentActivityRow, AgentActivitySummary } from "../trading/activity.ts";
 import { type AuditEvent, makeAuditLog, uuidString } from "../trading/audit.ts";
 import type { BrokerEnvironment, BrokerPermission } from "../trading/broker.ts";
 import { TradingEngine } from "../trading/engine.ts";
@@ -454,19 +454,50 @@ export async function readAgentActivity(sql: Sql, userID: string, agentID?: stri
     ${before ? sql`and r.seq < ${before}::bigint` : sql``}
     order by r.seq desc limit ${pageSize + 1}`;
   return {
-    runs: rows.slice(0, pageSize).map((row) => ({
-      id: row.id, agentID: row.agent_id, agentName: row.agent_name, strategyVersion: row.strategy_version,
-      trigger: row.trigger, startedAt: row.started_at.getTime(), status: row.status, summary: row.summary,
-    })),
+    runs: rows.slice(0, pageSize).map(activityRow),
     nextCursor: rows.length > pageSize ? rows[pageSize - 1].seq : undefined,
   };
+}
+
+function activityRow(row: Row): AgentActivityRow {
+  return {
+    id: row.id, agentID: row.agent_id, agentName: row.agent_name, strategyVersion: row.strategy_version,
+    trigger: row.trigger, startedAt: row.started_at.getTime(), status: row.status, summary: row.summary,
+  };
+}
+
+export async function readAgentActivitySummary(sql: Sql, userID: string, window: Pick<AgentActivitySummary, "from" | "through" | "timeZone">): Promise<AgentActivitySummary> {
+  // Check, proposal, review and fill counts use their own event times. A fill this week can follow an older run.
+  const start = new Date(window.from), end = new Date(window.through);
+  return await sql.begin("isolation level repeatable read read only", async (tx) => {
+    await tx`set local role service_role`;
+    const [counts] = await tx`
+      select
+        (select count(*)::int from public.agent_runs where user_id = ${userID} and started_at >= ${start} and started_at < ${end}) as runs,
+        (select count(*)::int from public.agent_runs where user_id = ${userID} and started_at >= ${start} and started_at < ${end} and status = 'failed') as failed_runs,
+        (select count(*)::int from public.agent_runs where user_id = ${userID} and started_at >= ${start} and started_at < ${end} and status = 'skipped') as skipped_runs,
+        (select count(*)::int from public.trade_proposals where user_id = ${userID} and mode = 'paper' and created_at >= ${start} and created_at < ${end} and status <> 'blocked') as proposals,
+        (select count(*)::int from public.trade_proposals where user_id = ${userID} and mode = 'paper' and created_at >= ${start} and created_at < ${end} and status = 'blocked') as blocked,
+        (select count(*)::int from public.audit_events where user_id = ${userID} and agent_id is not null and mode = 'paper' and actor = 'user' and kind = 'proposalApproved' and time >= ${start} and time < ${end}) as approvals,
+        (select count(*)::int from public.audit_events where user_id = ${userID} and agent_id is not null and mode = 'paper' and actor = 'user' and kind = 'proposalRejected' and time >= ${start} and time < ${end}) as declines,
+        (select count(*)::int from public.order_fills where user_id = ${userID} and agent_id is not null and source_kind = 'agent' and mode = 'paper' and time >= ${start} and time < ${end}) as fills`;
+    const recent = await tx`
+      select r.id, r.agent_id, a.name as agent_name, r.strategy_version, r.trigger, r.started_at, r.status, r.summary
+      from public.agent_runs r join public.trading_agents a on a.id = r.agent_id and a.user_id = r.user_id
+      where r.user_id = ${userID} and r.started_at >= ${start} and r.started_at < ${end}
+      order by (cardinality(r.proposal_ids) > 0 or r.status = 'failed') desc, r.started_at desc, r.seq desc limit 4`;
+    return { ...window, runs: counts.runs, failedRuns: counts.failed_runs, skippedRuns: counts.skipped_runs,
+      proposals: counts.proposals, blocked: counts.blocked, approvals: counts.approvals, declines: counts.declines,
+      fills: counts.fills, recent: recent.map(activityRow) };
+  }) as AgentActivitySummary;
 }
 
 /** Read the whole chain from one snapshot. A later approval can add an order to a proposal without changing its original run. */
 export async function readAgentActivityDetail(sql: Sql, userID: string, runID: string): Promise<AgentActivityDetail | undefined> {
   return await sql.begin("isolation level repeatable read read only", async (tx) => {
     await tx`set local role service_role`;
-    const [row] = await tx`select * from public.agent_runs where user_id = ${userID} and id = ${runID}`;
+    const [row] = await tx`select r.*, a.name as agent_name from public.agent_runs r
+      join public.trading_agents a on a.id = r.agent_id and a.user_id = r.user_id where r.user_id = ${userID} and r.id = ${runID}`;
     if (!row) return undefined;
     const run = runFromRow(row);
     const signals = run.signalIDs.length ? (await tx`select * from public.trading_signals
@@ -481,7 +512,7 @@ export async function readAgentActivityDetail(sql: Sql, userID: string, runID: s
     const reviews = proposals.length ? (await tx`select *, round(extract(epoch from time) * 1000)::float8 as time_ms
       from public.audit_events where user_id = ${userID} and proposal_id in ${tx(proposals.map((proposal) => proposal.id))}
       and kind in ('proposalApproved', 'proposalRejected') order by sequence`).map(auditFromRow) : [];
-    return { run, signals, proposals, orders, fills, reviews };
+    return { run, agentName: row.agent_name, signals, proposals, orders, fills, reviews };
   }) as AgentActivityDetail | undefined;
 }
 

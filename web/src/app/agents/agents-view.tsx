@@ -14,7 +14,7 @@ import { AgentTimeline } from "./activity-timeline";
 
 const time = (ms: number) => dateTime(new Date(ms).toISOString());
 
-export function AgentsView() {
+export function AgentsView({ selectedRun }: { selectedRun?: string }) {
   const { session, query } = usePractice();
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -39,7 +39,8 @@ export function AgentsView() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
-      <PageHeader title="Agent Studio" description="Review practice proposals and inspect what your agents did." />
+      <PageHeader title="Agent Studio" description="Review practice proposals and inspect what your agents did."
+        actions={<ButtonLink href="/ai?topic=agent-activity">Ask about agent activity</ButtonLink>} />
       {session.status === "signedOut" ? <Card><EmptyState title="Sign in to manage your agents" actions={<ButtonLink href="/login?next=/agents" variant="primary">Sign in</ButtonLink>} /></Card>
         : session.status === "unconfigured" ? <Card><EmptyState title="Accounts are unavailable" /></Card>
         : session.status === "loading" || query.isPending ? <div className="skeleton h-24" role="status" aria-label="Loading agents" />
@@ -80,7 +81,7 @@ export function AgentsView() {
             </ul> : <EmptyState title="No proposals awaiting review" />}
           </Card>
           {feedback && <p role="status" className="rounded-lg border border-border bg-surface p-3 text-sm">{feedback}</p>}
-          {session.status === "signedIn" && <AgentTimeline key={session.user.id} userID={session.user.id} agents={agents} />}
+          {session.status === "signedIn" && <AgentTimeline key={session.user.id} userID={session.user.id} agents={agents} selectedRun={selectedRun} />}
         </>}
     </div>
   );

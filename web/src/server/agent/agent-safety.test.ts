@@ -5,6 +5,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { asToolResult, canUseTool, clean, scopedHistory, TOOL_NAMES, TOOLS } from "./tools-schema.ts";
+import { agentActivityQuestion } from "../../lib/agent-activity-question.ts";
+
+test("direct activity questions match a period without trapping unrelated assistant requests", () => {
+  assert.equal(agentActivityQuestion("Show me what my agents have done this week."), "thisWeek");
+  assert.equal(agentActivityQuestion("Please summarize my agents’ activity last week?"), "lastWeek");
+  assert.equal(agentActivityQuestion("Show my agents' activity over the last 7 days."), "lastSevenDays");
+  assert.equal(agentActivityQuestion("Can I change my agents' position limit this week?"), undefined);
+});
 
 test("no tool can move money or touch an order", () => {
   assert.deepEqual(TOOLS.map((t) => t.name), [...TOOL_NAMES]);

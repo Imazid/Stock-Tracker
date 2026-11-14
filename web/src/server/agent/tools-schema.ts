@@ -19,6 +19,7 @@ export const TOOL_NAMES = [
   "get_watchlist",
   "get_portfolio",
   "explain_portfolio_movement",
+  "get_agent_activity",
   "draft_strategy",
   "run_backtest",
   "prepare_order_ticket",
@@ -86,6 +87,11 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: obj({}, []),
   },
   {
+    name: "get_agent_activity",
+    description: "Summarize the signed-in person's recorded agent activity, with checks, practice proposals, explicit approvals and simulated fills for the selected period. Requires account sharing.",
+    input_schema: obj({ period: { type: "string", enum: ["thisWeek", "lastWeek", "lastSevenDays"] } }, ["period"]),
+  },
+  {
     name: "draft_strategy",
     description: "Turn a plain-English strategy description into the app's structured strategy (rules on completed bars, sizing, protections), listing what was understood, what was assumed and any unrecognised symbols. The result is a draft for the person to edit in Strategy Studio.",
     input_schema: obj({ description: { type: "string" } }, ["description"]),
@@ -130,7 +136,7 @@ export interface ToolOutcome {
   data: unknown;
   isError?: boolean;
   sources?: AgentSource[];
-  card?: { kind: "strategy" | "order_ticket" | "backtest"; title: string; href: string; payload: unknown };
+  card?: { kind: "strategy" | "order_ticket" | "backtest" | "agent_activity"; title: string; href: string; payload: unknown };
 }
 
 export const COMPANY_RESEARCH_TOOLS: ReadonlySet<string> = new Set([
@@ -143,6 +149,7 @@ export interface ToolContext {
   /** A Supabase client bound to the signed-in person's session, or undefined when signed out / unconfigured. */
   supabase?: SupabaseClient;
   signedIn: boolean;
+  timeZone?: string;
   now: number;
 }
 

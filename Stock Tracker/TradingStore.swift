@@ -34,8 +34,9 @@ struct AgentActivityRow: Decodable, Identifiable {
     let startedAt: Date
     let status: RunStatus
     let summary: String
+    let agentName: String?
 
-    init(run: AgentRun) {
+    init(run: AgentRun, agentName: String? = nil) {
         id = run.id
         agentID = run.agentID
         strategyVersion = run.strategyVersion
@@ -43,6 +44,7 @@ struct AgentActivityRow: Decodable, Identifiable {
         startedAt = run.startedAt
         status = run.status
         summary = run.summary
+        self.agentName = agentName
     }
 }
 
@@ -53,6 +55,43 @@ struct AgentActivityDetail: Decodable {
     let orders: [Order]
     let fills: [Fill]
     let reviews: [AuditEvent]
+}
+
+enum AgentActivityPeriod: String {
+    case thisWeek, lastWeek, lastSevenDays
+
+    var title: String {
+        switch self {
+        case .thisWeek: "Agent activity this week"
+        case .lastWeek: "Agent activity last week"
+        case .lastSevenDays: "Agent activity in the last seven days"
+        }
+    }
+
+    func window(now: Date, timeZone: TimeZone) -> DateInterval {
+        if self == .lastSevenDays { return DateInterval(start: now.addingTimeInterval(-7 * 86_400), end: now) }
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = timeZone
+        let monday = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
+        if self == .thisWeek { return DateInterval(start: monday, end: now) }
+        let start = calendar.date(byAdding: .day, value: -7, to: monday) ?? monday.addingTimeInterval(-7 * 86_400)
+        return DateInterval(start: start, end: monday)
+    }
+}
+
+struct AgentActivitySummary: Decodable {
+    let from: Date
+    let through: Date
+    let timeZone: String
+    let runs: Int
+    let failedRuns: Int
+    let skippedRuns: Int
+    let proposals: Int
+    let blocked: Int
+    let approvals: Int
+    let declines: Int
+    let fills: Int
+    let recent: [AgentActivityRow]
 }
 
 /// A market-data source that can also quote several instruments in one go.
@@ -203,6 +242,31 @@ final class TradingStore: ObservableObject {
                                    reviews: state.audit.events.filter { event in
                                        event.proposalID.map(proposalIDs.contains) == true && [.proposalApproved, .proposalRejected].contains(event.kind)
                                    })
+    }
+
+    func agentActivitySummary(period: AgentActivityPeriod, timeZone: TimeZone = .current, now: Date = Date()) async throws -> AgentActivitySummary {
+        if isAccount, let server {
+            let reply = try await server.call("agentActivitySummary", ["period": period.rawValue, "timeZone": timeZone.identifier], includeState: false)
+            return try reply.decode(AgentActivitySummary.self, at: "summary")
+        }
+        let window = period.window(now: now, timeZone: timeZone)
+        func includes(_ date: Date) -> Bool { date >= window.start && date < window.end }
+        let checks = state.runs.filter { includes($0.startedAt) }
+        let proposals = state.proposals.filter { $0.mode == .paper && includes($0.createdAt) }
+        let reviews = state.audit.events.filter { $0.agentID != nil && $0.mode == .paper && $0.actor == .user && includes($0.time) }
+        let fills = state.fills.filter { $0.mode == .paper && $0.source.agentID != nil && includes($0.time) }
+        let highlights = checks.sorted { a, b in
+            let aRelevant = !a.proposalIDs.isEmpty || a.status == .failed
+            let bRelevant = !b.proposalIDs.isEmpty || b.status == .failed
+            return aRelevant == bRelevant ? a.startedAt > b.startedAt : aRelevant
+        }
+        return AgentActivitySummary(from: window.start, through: window.end, timeZone: timeZone.identifier,
+                                    runs: checks.count, failedRuns: checks.filter { $0.status == .failed }.count,
+                                    skippedRuns: checks.filter { $0.status == .skipped }.count,
+                                    proposals: proposals.filter { $0.status != .blocked }.count, blocked: proposals.filter { $0.status == .blocked }.count,
+                                    approvals: reviews.filter { $0.kind == .proposalApproved }.count,
+                                    declines: reviews.filter { $0.kind == .proposalRejected }.count, fills: fills.count,
+                                    recent: highlights.prefix(4).map { AgentActivityRow(run: $0, agentName: agent($0.agentID)?.name) })
     }
 
     func proposals(for agentID: UUID) -> [TradeProposal] {
