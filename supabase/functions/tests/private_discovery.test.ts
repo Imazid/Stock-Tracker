@@ -53,6 +53,12 @@ Deno.test("discovery rejects malformed filter output and never assumes currency 
   assertEquals(matchDiscovery([deal, qualifying, { ...deal, minimum: 1200 }], priced, now), [qualifying]);
 });
 
+Deno.test("disclosed traction matches structured company financials and narrative disclosures", () => {
+  const financials = { ...deal, round: { ...round, company: { ...round.company, financials: [{ revenue: 1200 }] } } };
+  const narrative = { ...deal, round: { ...round, traction: "A published operating update" } };
+  assertEquals(matchDiscovery([deal, financials, narrative], { ...filters, disclosed_traction: true }, now), [financials, narrative]);
+});
+
 Deno.test("discovery asks the model for filters and enforces the shared AI quota", async () => {
   let charges = 0;
   const criteria = await interpretDiscovery("11111111-1111-1111-1111-111111111111",

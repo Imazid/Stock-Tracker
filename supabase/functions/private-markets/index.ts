@@ -10,9 +10,25 @@ import { advancellCompany, type IssuerNotice, IssuerNewsError, readIssuerNews } 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
   "round:funding_rounds!inner(id,stage,raised,target,valuation,valuation_method,currency,announced_on,closes_at,source_url,verified_at,traction," +
-  "company:private_companies!inner(id,name,sector,country,location,description,logo_url,founders,investors,source_url,verified_at)," +
+  "company:private_companies!inner(id,name,sector,country,location,description,logo_url,founders,investors,source_url,verified_at," +
+  "financials:private_company_financials(id,period_end_on,period_kind,assurance,currency,revenue,annual_recurring_revenue," +
+  "net_profit_loss,operating_cash_flow,cash_and_equivalents,published_on,source_url,verified_at))," +
   "share_classes(name,rights,source_url)," +
   "listing:private_listing_milestones(exchange,symbol,quotation_status,expected_offer_close_on,quotation_on,source_url,verified_at))";
+
+type CompanyFinancials = {
+  period_end_on: string;
+  period_kind: "financial_year" | "month_snapshot";
+  assurance: "audited" | "issuer_reported";
+  currency: string;
+  revenue: number | null;
+  annual_recurring_revenue: number | null;
+  net_profit_loss: number | null;
+  operating_cash_flow: number | null;
+  cash_and_equivalents: number | null;
+  published_on: string;
+  source_url: string;
+};
 
 type CatalogDeal = {
   id: string;
@@ -35,7 +51,7 @@ type CatalogDeal = {
     valuation_method: string | null;
     currency: string;
     traction: string | null;
-    company: { id: string; name: string; description: string | null; country: string; sector: string };
+    company: { id: string; name: string; description: string | null; country: string; sector: string; financials: CompanyFinancials[] };
     share_classes: { name: string; rights: string }[];
     listing: {
       exchange: string; symbol: string; quotation_status: "proposed" | "anticipated" | "listed" | "withdrawn";
@@ -65,7 +81,24 @@ function dealEvidence(deal: CatalogDeal): string {
   ].filter(Boolean).join("\n").slice(0, 2_800);
 }
 
-const listingDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+const disclosureDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+const disclosureMonth = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+
+function financialEvidence(record: CompanyFinancials): string[] {
+  const period = record.period_kind === "financial_year"
+    ? `year ended ${disclosureDate.format(new Date(record.period_end_on))}`
+    : `snapshot for ${disclosureMonth.format(new Date(record.period_end_on))}`;
+  const assurance = record.assurance === "audited" ? "Audited financial statements" : "Issuer-reported figures";
+  const format = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 4 });
+  const fields: [string, number | null][] = [
+    ["Revenue", record.revenue], ["Annual recurring revenue", record.annual_recurring_revenue],
+    ["Net profit or loss", record.net_profit_loss], ["Net operating cash flow", record.operating_cash_flow],
+    ["Cash and cash equivalents", record.cash_and_equivalents],
+  ];
+  return fields.flatMap(([label, amount]) => amount === null ? [] : [
+    `${assurance}, ${period}: ${label} ${record.currency} ${format.format(amount)}.`,
+  ]);
+}
 
 const context = (kind: string, userId: string, id: string) => `private_${kind}:${userId}:${id}`;
 const keys = () => parseKeyring(Deno.env.get("CREDENTIAL_KEKS"), Deno.env.get("CREDENTIAL_ACTIVE_KEK"));
@@ -106,10 +139,15 @@ function aiDependencies(admin: ReturnType<typeof serviceClient>, documentProvide
 }
 
 function catalogue(admin: ReturnType<typeof serviceClient>) {
+  const now = new Date().toISOString();
   return admin.from("investment_opportunities").select(publicDealFields)
     .eq("published", true).eq("round.published", true).eq("round.company.published", true)
     .eq("round.share_classes.published", true)
-    .eq("round.listing.published", true).lte("round.listing.verified_at", new Date().toISOString())
+    .eq("round.listing.published", true).lte("round.listing.verified_at", now)
+    .eq("round.company.financials.published", true).lte("round.company.financials.verified_at", now)
+    .order("period_end_on", { referencedTable: "round.company.financials", ascending: false })
+    .order("period_kind", { referencedTable: "round.company.financials" })
+    .limit(6, { referencedTable: "round.company.financials" })
     .order("verified_at", { ascending: false }).order("id");
 }
 
@@ -674,6 +712,7 @@ Deno.serve(async (req) => {
           const { data, error } = await catalogue(admin).in("id", dealIDs).returns<CatalogDeal[]>();
           if (error) throw error;
           if (data.length !== dealIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published opportunities are unavailable.");
+          const financialIssuers = new Set<string>();
           for (const deal of data) {
             companyIds.add(deal.round.company.id);
             const id = `O${sources.length + 1}`;
@@ -688,13 +727,25 @@ Deno.serve(async (req) => {
                 listed: "Confirmed first quotation", withdrawn: "Listing application withdrawn" };
               const text = [
                 `Exchange: ${exchange}; ${quotation_status === "listed" ? "Listed symbol" : "Proposed symbol"}: ${symbol}`,
-                quotation_on ? `${quotationLabels[quotation_status]}: ${listingDate.format(new Date(quotation_on))}` : quotationLabels[quotation_status],
-                expected_offer_close_on && `Expected offer close (date only): ${listingDate.format(new Date(expected_offer_close_on))}`,
+                quotation_on ? `${quotationLabels[quotation_status]}: ${disclosureDate.format(new Date(quotation_on))}` : quotationLabels[quotation_status],
+                expected_offer_close_on && `Expected offer close (date only): ${disclosureDate.format(new Date(expected_offer_close_on))}`,
                 `Listing source verified: ${verified_at}`,
                 "The listing milestone alone does not establish offer availability, investor eligibility, or a trading route.",
               ].filter(Boolean).join("\n");
               evidence.push({ id, title, text });
               sources.push({ id, title, url: source_url });
+            }
+            if (!financialIssuers.has(deal.round.company.id)) {
+              financialIssuers.add(deal.round.company.id);
+              const bySource = Map.groupBy(deal.round.company.financials.slice(0, 4), (record) => record.source_url);
+              for (const [url, records] of bySource) {
+                const id = `O${sources.length + 1}`;
+                const title = `${company} financial disclosure`;
+                const reported = disclosureDate.format(new Date(records[0].published_on));
+                const text = [`Company: ${company}`, `Disclosure published: ${reported}`, ...records.flatMap(financialEvidence)].join("\n");
+                evidence.push({ id, title, text });
+                sources.push({ id, title, url });
+              }
             }
           }
         }

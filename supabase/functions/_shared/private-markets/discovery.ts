@@ -53,7 +53,7 @@ export type Discoverable = {
     currency: string;
     valuation: number | null;
     traction: string | null;
-    company: { name: string; country: string; sector: string };
+    company: { name: string; country: string; sector: string; financials?: unknown[] };
   };
 };
 
@@ -157,6 +157,6 @@ export function matchDiscovery<T extends Discoverable>(deals: T[], criteria: Dis
     (!criteria.currency || deal.round.currency === criteria.currency) &&
     atMost(deal.minimum, criteria.max_minimum) &&
     atMost(deal.round.valuation, criteria.max_valuation) &&
-    (!criteria.disclosed_traction || !!deal.round.traction?.trim())
+    (!criteria.disclosed_traction || !!deal.round.traction?.trim() || !!deal.round.company.financials?.length)
   );
 }

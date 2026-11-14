@@ -212,7 +212,7 @@ private struct PrivateDiscoveryView: View {
                 (stage.isEmpty || deal.round.stage == stage) && (status.isEmpty || deal.displayedStatus == status) &&
                 (eligibility.isEmpty || deal.eligibility == eligibility) && (currency.isEmpty || deal.round.currency == currency) &&
                 matches(deal.minimum, maximum: maxMinimum) && matches(deal.round.valuation, maximum: maxValuation) &&
-                (!hasTraction || deal.round.traction?.isEmpty == false) &&
+                (!hasTraction || deal.round.traction?.isEmpty == false || deal.company.financials?.isEmpty == false) &&
                 (!following || store.state.follows.contains { $0.id == deal.company.id })
         }
     }
@@ -551,6 +551,7 @@ private struct PrivateCompanyFundingHistory: View {
                             .accessibilityIdentifier("private.funding.round.\(deal.round.stage)")
                 }
             }
+            PrivateCompanyFinancialsSections(company: company)
             if history.count > 1, auth.userId != nil {
                 Section("Research") {
                     NavigationLink("Compare funding rounds") {
@@ -561,6 +562,52 @@ private struct PrivateCompanyFundingHistory: View {
         }
         .navigationTitle(company.name)
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct PrivateCompanyFinancialsSections: View {
+    let company: PrivateDeal.Company
+
+    var body: some View {
+        let records = company.financials ?? []
+        if !records.isEmpty {
+            Section("Disclosed financials") {
+                ForEach(records) { record in
+                    VStack(alignment: .leading, spacing: DS.Space.s) {
+                        Text(record.reportingPeriod).font(.headline)
+                        Text(record.assurance == .audited ? "Audited financial statements" : "Issuer-reported figures")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        financialAmount("Revenue", record.revenue, record.currency)
+                        financialAmount("Annual recurring revenue", record.annualRecurringRevenue, record.currency)
+                        if let growth = annualRevenueGrowth(record, records: records) {
+                            LabeledContent("Year-over-year revenue change", value: growth.formatted(.percent.precision(.fractionLength(1))))
+                        }
+                        financialAmount("Net profit or loss", record.netProfitLoss, record.currency)
+                        financialAmount("Net operating cash flow", record.operatingCashFlow, record.currency)
+                        financialAmount("Cash and cash equivalents", record.cashAndEquivalents, record.currency)
+                        LabeledContent("Disclosure published", value: PrivateDeal.Round.Listing.formattedDay(record.publishedOn))
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if record.sourceUrl.privateSourceIsSafe { Link("Read financial disclosure", destination: record.sourceUrl) }
+                    }
+                    .padding(.vertical, DS.Space.xs)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func financialAmount(_ label: String, _ amount: Decimal?, _ currency: String) -> some View {
+        if let amount { LabeledContent(label, value: PrivateInput.money(amount, currency: currency)) }
+    }
+
+    private func annualRevenueGrowth(_ current: PrivateDeal.Company.Financials, records: [PrivateDeal.Company.Financials]) -> Decimal? {
+        guard current.periodKind == .financialYear, current.assurance == .audited, let revenue = current.revenue,
+              let year = Int(current.periodEndOn.prefix(4)) else { return nil }
+        let priorDate = String(year - 1) + current.periodEndOn.dropFirst(4)
+        guard let prior = records.first(where: {
+            $0.periodEndOn == priorDate && $0.periodKind == .financialYear && $0.assurance == .audited && $0.currency == current.currency
+        })?.revenue, prior > 0 else { return nil }
+        return revenue / prior - 1
     }
 }
 
@@ -624,6 +671,7 @@ private struct PrivateDealDetail: View {
                     if listing.sourceUrl.privateSourceIsSafe { Link("Read listing source", destination: listing.sourceUrl) }
                 }
             }
+            PrivateCompanyFinancialsSections(company: deal.company)
             Section("Sources") {
                 LabeledContent("Verified", value: deal.verifiedAt.formatted(date: .abbreviated, time: .shortened))
                 if deal.sourceUrl.privateSourceIsSafe { Link("Read source", destination: deal.sourceUrl) }

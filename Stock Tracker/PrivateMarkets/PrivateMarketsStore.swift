@@ -30,6 +30,33 @@ struct PrivateProvider: Identifiable {
 
 struct PrivateDeal: Codable, Identifiable {
     struct Company: Codable, Identifiable {
+        struct Financials: Codable, Identifiable {
+            enum PeriodKind: String, Codable { case financialYear = "financial_year", monthSnapshot = "month_snapshot" }
+            enum Assurance: String, Codable { case audited, issuerReported = "issuer_reported" }
+
+            let id: UUID
+            let periodEndOn: String
+            let periodKind: PeriodKind
+            let assurance: Assurance
+            let currency: String
+            let revenue: Decimal?
+            let annualRecurringRevenue: Decimal?
+            let netProfitLoss: Decimal?
+            let operatingCashFlow: Decimal?
+            let cashAndEquivalents: Decimal?
+            let publishedOn: String
+            let sourceUrl: URL
+            let verifiedAt: Date
+
+            var reportingPeriod: String {
+                if periodKind == .financialYear { return "Year ended \(Round.Listing.formattedDay(periodEndOn))" }
+                guard let date = CashIncomeDay.date(periodEndOn) else { return periodEndOn }
+                var style = Date.FormatStyle.dateTime.month(.wide).year()
+                style.timeZone = CashIncomeDay.timeZone
+                return date.formatted(style)
+            }
+        }
+
         let id: UUID
         let name: String
         let sector: String
@@ -41,6 +68,7 @@ struct PrivateDeal: Codable, Identifiable {
         let investors: [String]?
         let sourceUrl: URL
         let verifiedAt: Date
+        let financials: [Financials]?
     }
     struct Round: Codable {
         struct Listing: Codable {

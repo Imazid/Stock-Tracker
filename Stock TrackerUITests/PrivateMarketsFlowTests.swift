@@ -365,6 +365,38 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testStartupExplorerShowsSourcedFinancialsAndSeparatesRecurringRevenue() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
+                          "Run this test with the hosted Private Markets configuration.")
+        openPrivateMarkets()
+        app.buttons["private.destination.building.2"].tap()
+        let capability = app.buttons["private.explorer.company.A581F4AF-A8D0-41FD-A9BE-0E4E1607F102"]
+        XCTAssertTrue(capability.waitForExistence(timeout: 20), app.debugDescription)
+        capability.tap()
+        let audited = app.staticTexts["Audited financial statements"].firstMatch
+        for _ in 0..<2 where !audited.exists { app.swipeUp() }
+        XCTAssertTrue(audited.exists, app.debugDescription)
+        let revenue = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "1,057,652")).firstMatch
+        XCTAssertTrue(revenue.exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "38.0%")).firstMatch.exists)
+        let source = app.buttons["Read financial disclosure"].firstMatch
+        for _ in 0..<3 where !source.isHittable { app.swipeUp() }
+        XCTAssertTrue(source.isHittable, app.debugDescription)
+
+        app.navigationBars["Capability X Limited"].buttons["BackButton"].tap()
+        let heidi = app.buttons["private.explorer.company.D72C4060-1AE7-4A2F-8F2E-9F4BF1577E01"]
+        XCTAssertTrue(heidi.waitForExistence(timeout: 8))
+        heidi.tap()
+        let arr = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Annual recurring revenue,")).firstMatch
+        for _ in 0..<3 where !arr.exists { app.swipeUp() }
+        XCTAssertTrue(arr.exists, app.debugDescription)
+        XCTAssertTrue(arr.label.contains("50,000,000"))
+        XCTAssertTrue(app.staticTexts["April 2026"].exists)
+        XCTAssertTrue(app.staticTexts["Issuer-reported figures"].exists)
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Revenue,")).firstMatch.exists)
+    }
+
+    @MainActor
     func testFundingRoundsShowsDisclosedIPOMilestones() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
                           "Run this test with the hosted Private Markets configuration.")
