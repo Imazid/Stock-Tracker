@@ -707,6 +707,24 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.open("Portfolio"))
         let unchanged = NSPredicate(format: "label == %@", "No position changes since your last visit")
         XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: unchanged, evaluatedWith: visit)], timeout: 8), .completed)
+
+        guard ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_HOLDING_EVENTS"] == "1" else { return }
+        let events = app.buttons["portfolio.intelligence.events"]
+        for _ in 0..<6 where !events.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(events.isHittable)
+        events.tap()
+        XCTAssertTrue(app.navigationBars["Earnings and news"].waitForExistence(timeout: 8))
+        let earnings = app.staticTexts["portfolio.events.earnings.coverage"]
+        let news = app.staticTexts["portfolio.events.news.coverage"]
+        let check = NSPredicate(format: "label BEGINSWITH %@", "2 of 2 eligible listings checked")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: check, evaluatedWith: earnings)], timeout: 15), .completed)
+        XCTAssertTrue(news.label.hasPrefix("1 of 2 eligible listings checked"))
+        XCTAssertTrue(app.staticTexts["Apple announces a company update"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example Publisher")).firstMatch.exists)
+        let report = app.descendants(matching: .any)["portfolio.events.earnings.AAPL"].firstMatch
+        XCTAssertTrue(report.exists)
+        report.tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
     }
 
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
