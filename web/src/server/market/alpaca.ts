@@ -22,7 +22,7 @@ function headers(): Record<string, string> {
 }
 
 export function alpacaSupports(instrument: Instrument): boolean {
-  return alpacaConfigured() && (instrument.venue === "us" || instrument.venue === "crypto");
+  return !instrument.symbol.startsWith("^") && alpacaConfigured() && (instrument.venue === "us" || instrument.venue === "crypto");
 }
 
 interface AlpacaBar { t: string; o: number; h: number; l: number; c: number; v: number }

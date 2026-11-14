@@ -23,7 +23,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const router = useRouter();
-  const search = useSearch(query);
+  const search = useSearch(query, { includeIndexes: true });
 
   useEffect(() => {
     const dialog = ref.current;

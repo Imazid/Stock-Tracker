@@ -85,6 +85,7 @@ export const defaultWatchlistId = "00000000-0000-0000-0000-000000000001";
 
 interface AccountWatchItem extends WatchItem {
   key: string;
+  savedAt?: string;
 }
 
 interface AccountWatchlist {
@@ -96,7 +97,7 @@ interface AccountWatchlist {
 type AccountWatchlistRow = {
   id: string;
   name: string;
-  assets: (Omit<Row, "updated_at"> & { listing_id: string; added_at: string })[];
+  assets: (Omit<Row, "updated_at"> & { listing_id: string; added_at: string; saved_at?: string | null })[];
 };
 
 type WatchlistChange =
@@ -107,9 +108,10 @@ type WatchlistChange =
 
 const accountWatchlistsKey = (userId: string | undefined) => ["accountWatchlists", userId];
 
-export function useAccountWatchlists(userId: string) {
+export function useAccountWatchlists(userId: string | undefined) {
   return useQuery({
     queryKey: accountWatchlistsKey(userId),
+    enabled: Boolean(userId),
     queryFn: async (): Promise<AccountWatchlist[]> => {
       const supabase = browserSupabase();
       if (!supabase) throw new Error("Accounts aren't configured.");
@@ -123,6 +125,7 @@ export function useAccountWatchlists(userId: string) {
           rowId: row.id,
           instrument: toView(rowToInstrument(row)),
           addedAt: row.added_at,
+          savedAt: row.saved_at ?? undefined,
         })),
       }));
     },

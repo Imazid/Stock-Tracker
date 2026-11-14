@@ -177,6 +177,7 @@ struct HomeView: View {
 /// Real index levels (Yahoo ^GSPC, ^AXJO… — points, not ETF prices) plus Bitcoin,
 /// each with a real latest-session sparkline whose baseline matches its % pill.
 struct LiveIndicesWithGlow: View {
+    var includeBitcoin = true
     @EnvironmentObject var marketData: MarketData
     @AppStorage("preferredMarket") private var preferredMarket = "US"
     @State private var cards: [IndexCardModel] = []
@@ -198,7 +199,8 @@ struct LiveIndicesWithGlow: View {
                   Spec(name: "Nasdaq", symbol: "^IXIC", kind: .stock),
                   Spec(name: "Dow Jones", symbol: "^DJI", kind: .stock)]
         let btc = Spec(name: "Bitcoin", symbol: "bitcoin", kind: .crypto)
-        return preferredMarket == "AU" ? [asx] + us + [btc] : us + [asx, btc]
+        let indexes = preferredMarket == "AU" ? [asx] + us : us + [asx]
+        return includeBitcoin ? indexes + [btc] : indexes
     }
 
     var body: some View {

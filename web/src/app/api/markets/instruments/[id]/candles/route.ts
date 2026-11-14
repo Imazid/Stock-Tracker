@@ -13,7 +13,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const range = (request.nextUrl.searchParams.get("range") ?? "6M").toUpperCase() as ChartRange;
   if (!CHART_RANGES.includes(range)) return jsonError(400, "invalid", `range must be one of ${CHART_RANGES.join(", ")}.`);
   try {
-    const instrument = parseInstrumentID((await params).id);
+    const instrument = parseInstrumentID((await params).id, { allowIndex: true });
     const view = await getCandles(instrument, range);
     const interval = request.nextUrl.searchParams.get("interval");
     if (interval && interval !== view.interval) {

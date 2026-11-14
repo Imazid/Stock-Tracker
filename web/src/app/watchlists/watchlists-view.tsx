@@ -55,7 +55,7 @@ function AddPanel({ existing, onAdd, pending }: {
   );
 }
 
-export function WatchlistsView() {
+export function WatchlistsView({ initialList }: { initialList?: string }) {
   const session = useSession();
   if (session.status === "unconfigured") {
     return <div className="mx-auto max-w-5xl"><PageHeader title="Watchlists" /><Card><EmptyState title="Accounts aren't configured" body="Watchlists are saved to your account. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable sign-in." /></Card></div>;
@@ -66,13 +66,13 @@ export function WatchlistsView() {
   if (session.status === "loading") {
     return <div className="mx-auto max-w-6xl"><PageHeader title="Watchlists" /><Card><div className="skeleton m-4 h-40" /></Card></div>;
   }
-  return <AccountWatchlists key={session.user.id} userId={session.user.id} />;
+  return <AccountWatchlists key={`${session.user.id}:${initialList ?? ""}`} userId={session.user.id} initialList={initialList} />;
 }
 
-function AccountWatchlists({ userId }: { userId: string }) {
+function AccountWatchlists({ userId, initialList }: { userId: string; initialList?: string }) {
   const lists = useAccountWatchlists(userId);
   const change = useAccountWatchlistChange(userId);
-  const [selected, setSelected] = useState(defaultWatchlistId);
+  const [selected, setSelected] = useState(initialList ?? defaultWatchlistId);
   const [editing, setEditing] = useState<{ mode: "create" | "rename" | "delete"; groupId: string; listName: string } | null>(null);
   const [name, setName] = useState("");
   const [sort, setSort] = useState<SortKey>("manual");

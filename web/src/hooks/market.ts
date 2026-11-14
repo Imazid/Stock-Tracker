@@ -5,11 +5,11 @@ import { getJSON } from "@/lib/api";
 import type { CandlesView, ChartRange, InstrumentResponse, QuoteResponse, SearchResponse } from "@/lib/market-types";
 import { useDebounced } from "./useDebounced";
 
-export function useSearch(query: string) {
+export function useSearch(query: string, options: { includeIndexes?: boolean } = {}) {
   const q = useDebounced(query.trim(), 220);
   return useQuery({
-    queryKey: ["search", q],
-    queryFn: ({ signal }) => getJSON<SearchResponse>(`/api/markets/search?q=${encodeURIComponent(q)}`, signal),
+    queryKey: ["search", q, options.includeIndexes === true],
+    queryFn: ({ signal }) => getJSON<SearchResponse>(`/api/markets/search?q=${encodeURIComponent(q)}${options.includeIndexes ? "&indexes=1" : ""}`, signal),
     enabled: q.length > 0,
     staleTime: 60_000,
     placeholderData: (previous) => previous,

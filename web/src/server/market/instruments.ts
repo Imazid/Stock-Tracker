@@ -9,6 +9,7 @@ import {
   VENUES,
 } from "@engine/market.ts";
 import { toView as clientToView } from "@/lib/instrument-view";
+import { marketIndexes } from "@/lib/market-indexes";
 import { marketCatalog } from "@/lib/market-catalog";
 import type { InstrumentView, MarketStateView } from "@/lib/market-types";
 
@@ -17,13 +18,19 @@ const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9.\-&]{0,19}$/;
 export class BadInstrumentError extends Error {}
 
 /** "us:AAPL" → Instrument. Throws BadInstrumentError for anything malformed. */
-export function parseInstrumentID(raw: string): Instrument {
-  const decoded = decodeURIComponent(raw).trim();
+export function parseInstrumentID(raw: string, { allowIndex = false } = {}): Instrument {
+  let decoded: string;
+  try { decoded = decodeURIComponent(raw).trim(); }
+  catch { throw new BadInstrumentError("That symbol isn't valid."); }
   const colon = decoded.indexOf(":");
   if (colon <= 0) throw new BadInstrumentError("An instrument id looks like venue:SYMBOL, e.g. us:AAPL.");
   const venue = decoded.slice(0, colon) as Venue;
   const symbol = decoded.slice(colon + 1).toUpperCase();
   if (!VENUES.includes(venue)) throw new BadInstrumentError(`Unknown venue "${decoded.slice(0, colon)}".`);
+  if (allowIndex) {
+    const index = marketIndexes.find((item) => item.venue === venue && item.symbol === symbol);
+    if (index) return index;
+  }
   if (!SYMBOL_PATTERN.test(symbol)) throw new BadInstrumentError("That symbol isn't valid.");
   const known = marketCatalog.find((instrument) => instrument.symbol === symbol && instrument.venue === venue);
   if (known) return known;
