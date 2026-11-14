@@ -14,6 +14,8 @@ const {
 } = process.env;
 
 const previewHeaders = previewToken ? { "x-vercel-trusted-oidc-idp-token": previewToken } : {};
+const capabilityCompany = "/private-markets?view=explorer&company=a581f4af-a8d0-41fd-a9be-0e4e1607f102";
+const heidiCompany = "/private-markets?view=explorer&company=d72c4060-1ae7-4a2f-8f2e-9f4bf1577e01";
 
 async function permitPreview(page) {
   if (previewToken) await page.route(`${origin}/**`, (route) => route.continue({
@@ -21,12 +23,12 @@ async function permitPreview(page) {
   }));
 }
 
-async function signIn(page, address, secret) {
-  await page.goto(new URL("/login?next=%2Fprivate-markets%3Fview%3Dupdates", origin).href);
+async function signIn(page, address, secret, destination = "/private-markets?view=updates") {
+  await page.goto(new URL(`/login?next=${encodeURIComponent(destination)}`, origin).href);
   await page.getByLabel("Email", { exact: true }).fill(address);
   await page.getByLabel("Password", { exact: true }).fill(secret);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.waitForURL("**/private-markets?view=updates");
+  await page.waitForURL(new URL(destination, origin).href);
   await page.getByRole("button", { name: "Sign out", exact: true }).waitFor();
 }
 
@@ -45,16 +47,26 @@ test("web monitoring saves account choices, shows sourced alerts, and removes it
     assert.equal(anonymous.status(), 401);
     assert.equal(anonymous.headers()["cache-control"], "no-store");
 
-    await signIn(page, email, password);
+    await page.goto(new URL(capabilityCompany, origin).href);
+    const followSignIn = page.getByRole("link", { name: "Sign in to follow", exact: true });
+    assert.equal(await followSignIn.getAttribute("href"), `/login?next=${encodeURIComponent(capabilityCompany)}`);
+    await signIn(page, email, password, capabilityCompany);
+    const follow = page.getByRole("button", { name: "Follow company", exact: true });
+    const unfollow = page.getByRole("button", { name: "Unfollow company", exact: true });
+    await follow.click();
+    await page.getByText("Enable web monitoring to collect this company’s published updates", { exact: false }).waitFor();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await follow.click();
+    await page.getByRole("button", { name: "Enable monitoring and follow", exact: true }).click();
+    await unfollow.waitFor();
+    await page.getByRole("button", { name: "View company updates", exact: true }).click();
     const enabled = page.getByLabel("Collect alerts for this account from the web", { exact: true });
-    await enabled.check();
     await page.getByLabel("Find a company to follow").fill("Capability X");
     const company = page.getByRole("checkbox", { name: /Capability X Limited/ });
-    await company.check();
+    assert.ok(await enabled.isChecked());
+    assert.ok(await company.isChecked());
     const digest = page.getByLabel(/Allow Stock Tracker to send published updates/);
     assert.equal(await digest.isChecked(), false);
-    await page.getByRole("button", { name: "Save monitoring preferences" }).click();
-    await page.getByRole("status").getByText("Monitoring preferences saved.").waitFor();
     const alert = page.getByRole("heading", { name: "Capability X began trading on ASX", exact: true }).first();
     await alert.waitFor();
     const source = alert.locator("xpath=ancestor::li").getByRole("link").first();
@@ -107,7 +119,7 @@ test("web monitoring saves account choices, shows sourced alerts, and removes it
       assert.ok(await run.isDisabled());
     }
 
-    await page.reload();
+    await page.goto(new URL("/private-markets?view=updates", origin).href);
     await company.waitFor();
     assert.equal(await company.isChecked(), true);
     assert.equal(await enabled.isChecked(), true);
@@ -117,6 +129,30 @@ test("web monitoring saves account choices, shows sourced alerts, and removes it
     await page.reload();
     await digest.waitFor();
     assert.equal(await digest.isChecked(), true);
+    await page.getByLabel(/Include new rounds matching/).check();
+    await page.getByRole("button", { name: "Save monitoring preferences" }).click();
+    await page.getByRole("status").getByText("Monitoring preferences saved.").waitFor();
+
+    const concurrent = await page.context().newPage();
+    await permitPreview(concurrent);
+    await concurrent.goto(new URL(heidiCompany, origin).href);
+    const concurrentFollow = concurrent.getByRole("button", { name: "Follow company", exact: true });
+    await concurrentFollow.waitFor();
+    await page.goto(new URL(capabilityCompany, origin).href);
+    await unfollow.click();
+    await follow.waitFor();
+    await concurrentFollow.click();
+    await concurrent.getByText("Monitoring preferences changed. Review the latest choices and try again.", { exact: true }).waitFor();
+    await concurrentFollow.click();
+    await concurrent.getByRole("button", { name: "Unfollow company", exact: true }).waitFor();
+    await concurrent.close();
+    await page.goto(new URL("/private-markets?view=updates", origin).href);
+    const heidi = page.getByRole("checkbox", { name: /Heidi/ });
+    await heidi.waitFor();
+    assert.ok(await heidi.isChecked());
+    assert.ok(!(await company.isChecked()));
+    assert.ok(await digest.isChecked());
+    assert.ok(await page.getByLabel(/Include new rounds matching/).isChecked());
     await page.setViewportSize({ width: 360, height: 800 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
 

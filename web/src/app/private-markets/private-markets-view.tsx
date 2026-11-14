@@ -246,7 +246,8 @@ export function PrivateMarketsView({ aiEnabled, initialTab, initialCompany }: {
         : !catalogue.data ? <p className="text-sm text-text-2" role="status">Loading published rounds…</p>
         : tab === "catalogue" ? <Discover key={owner ?? "public"} owner={owner} aiEnabled={aiEnabled} deals={catalogue.data.deals}
           {...actions} onCompany={onCompany} />
-        : tab === "explorer" ? <StartupExplorer deals={catalogue.data.deals} companyID={companyID} setCompany={setCompanyID} actions={actions} />
+        : tab === "explorer" ? <StartupExplorer deals={catalogue.data.deals} companyID={companyID} setCompany={setCompanyID} actions={actions}
+          owner={owner} signedOut={session.status === "signedOut"} showUpdates={() => setTab("updates")} />
         : <FundingRounds deals={catalogue.data.deals} actions={actions} onCompany={onCompany} />)}
       {!publicTab && (owner ? tab === "research"
         ? <Research key={owner} owner={owner} selected={selected} aiEnabled={aiEnabled} asOf={catalogue.dataUpdatedAt} openDealRoom={() => setTab("deal-room")}

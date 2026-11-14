@@ -117,6 +117,12 @@ type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "
   "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 
+export class PrivateMarketsError extends Error {
+  constructor(message: string, public readonly code?: string) {
+    super(message);
+  }
+}
+
 export async function privateMarkets<T>(
   action: PrivateAction, { owner, signal, ...body }: Record<string, unknown> & { owner?: string; signal?: AbortSignal } = {},
 ): Promise<T> {
@@ -135,7 +141,7 @@ export async function privateMarkets<T>(
   });
   const data = await response.json().catch(() => null);
   if (!response.ok || !data) {
-    throw new Error(data?.error?.message ?? "Private Markets is temporarily unavailable.");
+    throw new PrivateMarketsError(data?.error?.message ?? "Private Markets is temporarily unavailable.", data?.error?.code);
   }
   return data as T;
 }

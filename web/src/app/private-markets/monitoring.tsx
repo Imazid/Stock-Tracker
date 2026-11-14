@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -12,12 +12,8 @@ import { SourceLink } from "./catalog";
 import {
   dateLabel, privateMarkets, type CompanyUpdate, type MonitorAlert, type MonitorPreferences, type PrivateDeal, type SavedReport,
 } from "./private-data";
+import { maxMonitoredCompanies, useWebMonitor, webMonitorKey, type WebMonitorOptions } from "./web-monitor";
 
-type SettingsResponse = { preferences: MonitorPreferences | null };
-type Options = Pick<MonitorPreferences, "company_ids" | "eligible_opportunities" | "digest_enabled"> & { enabled: boolean };
-
-const keyFor = (owner: string) => ["private-markets", owner, "monitor"];
-const maxCompanies = 250;
 const groupSize = 100;
 const alertLabels: Record<string, string> = {
   announcement: "Company announcement",
@@ -35,7 +31,7 @@ function MonitoringForm({ preferences, saving, deals, onSave }: {
   preferences: MonitorPreferences | null;
   saving: boolean;
   deals: PrivateDeal[];
-  onSave: (options: Options) => void;
+  onSave: (options: WebMonitorOptions) => void;
 }) {
   const [enabled, setEnabled] = useState(Boolean(preferences));
   const [followed, setFollowed] = useState(preferences?.company_ids ?? []);
@@ -69,11 +65,11 @@ function MonitoringForm({ preferences, saving, deals, onSave }: {
           <Field label="Find a company to follow" htmlFor="private-monitor-company">
             <Input id="private-monitor-company" type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
           </Field>
-          <p className="text-xs text-text-2" role="status">{followed.length} of {maxCompanies} followed</p>
+          <p className="text-xs text-text-2" role="status">{followed.length} of {maxMonitoredCompanies} followed</p>
           <div className="max-h-56 space-y-1 overflow-y-auto">
             {visible.map(({ id, name, sector }) => <label key={id} className="flex items-start gap-2 rounded-md px-1 py-1.5 text-sm text-text hover:bg-surface-3">
               <input className="mt-0.5 shrink-0" type="checkbox" checked={followed.includes(id)}
-                disabled={!followed.includes(id) && followed.length >= maxCompanies} onChange={(event) => toggle(id, event.target.checked)} />
+                disabled={!followed.includes(id) && followed.length >= maxMonitoredCompanies} onChange={(event) => toggle(id, event.target.checked)} />
               <span className="min-w-0 break-words">{name}<span className="block text-xs text-text-3">{sector}</span></span>
             </label>)}
             {visible.length === 0 && <p className="p-1 text-xs text-text-2">No matching companies in the catalogue.</p>}
@@ -122,23 +118,11 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
   retryCatalogue: () => void; onReport: (id: string) => void;
   onResearch?: (updates: CompanyUpdate[]) => void;
 }) {
-  const cache = useQueryClient();
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
-  const scope = keyFor(owner);
-  const settings = useQuery({
-    queryKey: [...scope, "preferences"], gcTime: 0, retry: false,
-    queryFn: ({ signal }) => privateMarkets<SettingsResponse>("web_monitor_preferences", { owner, signal }),
-  });
+  const scope = webMonitorKey(owner);
+  const { settings, save } = useWebMonitor(owner);
+  const revision = settings.data?.revision ?? null;
   const preferences = settings.data?.preferences ?? null;
-  const save = useMutation({
-    mutationFn: (options: Options) => privateMarkets<SettingsResponse>("save_web_monitor", { owner, ...options }),
-    onMutate: () => cache.cancelQueries({ queryKey: [...scope, "preferences"] }),
-    onSuccess: (value) => {
-      setSelectedIDs([]);
-      cache.setQueryData([...scope, "preferences"], value);
-      void cache.invalidateQueries({ queryKey: [...scope, "alerts"] });
-    },
-  });
   const alerts = useQuery({
     queryKey: [...scope, "alerts"], gcTime: 0, retry: false,
     queryFn: ({ signal }) => privateMarkets<{ alerts: MonitorAlert[] }>("monitor_inbox", { owner, signal }),
@@ -171,8 +155,10 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
         {settings.error && <div className="border-t border-border p-4"><Notice tone="down">{settings.error.message} <Button size="sm" onClick={() => void settings.refetch()}>Retry preferences</Button></Notice></div>}
         {catalogueError && <div className="border-t border-border p-4"><Notice tone="down">{catalogueError.message} <Button size="sm" onClick={retryCatalogue}>Retry catalogue</Button></Notice></div>}
         {catalogueLoading && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading published companies…</p>}
-        {settings.data && <MonitoringForm key={preferences?.refreshed_at ?? "disabled"} preferences={preferences}
-          saving={save.isPending} deals={deals} onSave={(options) => save.mutate(options)} />}
+        {settings.data && <MonitoringForm key={`${revision}:${Boolean(preferences)}`} preferences={preferences}
+          saving={save.isPending || settings.isFetching || settings.isError} deals={deals}
+          onSave={(options) => save.mutate({ ...options, expected_revision: revision, expected_enabled: Boolean(preferences) },
+            { onSuccess: () => setSelectedIDs([]) })} />}
         {save.error && <div className="px-4 pb-4"><Notice tone="down">{save.error.message}</Notice></div>}
         {save.isSuccess && <p className="px-4 pb-4 text-sm text-text-2" role="status">Monitoring preferences saved.</p>}
       </Card>

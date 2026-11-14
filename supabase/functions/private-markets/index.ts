@@ -524,27 +524,30 @@ Deno.serve(async (req) => {
         }
         if (body.action === "save_web_monitor") {
           const { enabled, company_ids: companies, eligible_opportunities: eligible, digest_enabled: digest } = body;
-          if (Object.keys(body).some((key) => !["action", "enabled", "company_ids", "eligible_opportunities", "digest_enabled"].includes(key)) ||
+          const expected = body.expected_revision;
+          const expectedEnabled = body.expected_enabled;
+          if (Object.keys(body).some((key) => !["action", "enabled", "company_ids", "eligible_opportunities", "digest_enabled", "expected_revision", "expected_enabled"].includes(key)) ||
             typeof enabled !== "boolean" || typeof eligible !== "boolean" || typeof digest !== "boolean" ||
+            ((expected === undefined) !== (expectedEnabled === undefined)) ||
+            (expectedEnabled !== undefined && typeof expectedEnabled !== "boolean") ||
+            (expected !== undefined && expected !== null && (typeof expected !== "string" || !uuid.test(expected))) ||
             !Array.isArray(companies) || companies.length > 250 ||
             companies.some((id) => typeof id !== "string" || !uuid.test(id))) {
             return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Choose valid web monitoring preferences.");
           }
-          const { error } = await admin.rpc("configure_private_monitor", {
-            p_user: userId, p_device: webMonitorDevice, p_enabled: enabled,
+          const { data, error } = await admin.rpc("save_private_web_monitor", {
+            p_user: userId, p_expected_revision: expected ?? null, p_expected_enabled: expectedEnabled ?? null, p_enabled: enabled,
             p_companies: enabled ? [...new Set(companies.map((id: string) => id.toLowerCase()))] : [],
             p_eligible: enabled && eligible, p_digest: enabled && digest,
           });
           if (error?.code === "22023") return errorResponse(422, "MONITOR_SETTINGS_UNAVAILABLE", error.message);
           if (error) throw error;
+          if (data === null) return errorResponse(409, "MONITOR_SETTINGS_CHANGED", "Monitoring preferences changed. Review the latest choices and try again.");
+          return jsonResponse(200, data);
         }
-        const { data, error } = await admin.from("private_monitor_devices")
-          .select("company_ids,eligible_opportunities,digest_enabled,refreshed_at")
-          .eq("user_id", userId).eq("device_id", webMonitorDevice)
-          .gte("refreshed_at", new Date(Date.now() - 90 * 86_400_000).toISOString())
-          .maybeSingle();
+        const { data, error } = await admin.rpc("private_web_monitor_preferences", { p_user: userId });
         if (error) throw error;
-        return jsonResponse(200, { preferences: data });
+        return jsonResponse(200, data);
       }
       case "monitor_push": {
         const { device_id: device, environment, token } = body;
