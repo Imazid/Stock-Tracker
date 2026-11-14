@@ -2,6 +2,11 @@ import { createClient } from "@supabase/supabase-js";
 import type { FinancialFact } from "@/lib/research-types";
 import { SEC_DIRECTORY, type SecListing } from "./sec";
 
+export function companyAlertWorkerConfigured() {
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.RESEARCH_SUPABASE_SERVICE_ROLE_KEY &&
+    (process.env.COMPANY_ALERT_CRON_SECRET || process.env.CRON_SECRET));
+}
+
 export function researchDatabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.RESEARCH_SUPABASE_SERVICE_ROLE_KEY;

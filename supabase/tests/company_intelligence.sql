@@ -65,7 +65,8 @@ set local role service_role;
 do $$
 declare
   claimed public.company_research_alerts;
-  sample_events jsonb := '[{"event_key":"filing1","title":"A new filing","url":"https://www.sec.gov/","occurred_at":"2026-11-13T00:00:00Z"}]';
+  sample_events jsonb := jsonb_build_array(jsonb_build_object(
+    'event_key', 'filing1', 'title', 'A new filing', 'url', 'https://www.sec.gov/', 'occurred_at', now()));
 begin
   select * into claimed from public.claim_company_research_alerts(5);
   if claimed.id is null or claimed.lease_token is null then

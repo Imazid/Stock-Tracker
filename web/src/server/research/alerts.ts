@@ -3,17 +3,11 @@ import type { CompanyAlert } from "@/lib/research-alert-types";
 import type { ResearchEvent } from "@/lib/research-types";
 import { parseInstrumentID } from "@/server/market/instruments";
 import { getQuote } from "@/server/market/service";
+import { evaluateQuoteAlert, type AlertEvent, type Evaluation } from "./alert-observation";
 import { getResearch, parseFilters } from "./service";
 import { researchDatabase } from "./storage";
 
-type ClaimedAlert = CompanyAlert & { instrument_id: string; lease_token: string; last_condition: boolean | null };
-interface AlertEvent {
-  event_key: string;
-  title: string;
-  url?: string;
-  occurred_at: string;
-}
-
+type ClaimedAlert = CompanyAlert & { instrument_id: string; lease_token: string; last_condition: boolean | null; last_observed_at: string | null };
 function published(event: ResearchEvent) {
   return event.evidence.publishedAt ?? event.date;
 }
@@ -28,7 +22,7 @@ function itemEvents(alert: ClaimedAlert, rows: ResearchEvent[]): AlertEvent[] {
   }));
 }
 
-async function evaluate(alert: ClaimedAlert): Promise<{ condition: boolean | null; events: AlertEvent[]; problem: string | null }> {
+async function evaluate(alert: ClaimedAlert): Promise<Evaluation> {
   const instrument = parseInstrumentID(alert.instrument_id);
   if (alert.kind === "news" && process.env.RESEARCH_FMP_ALERTS !== "true") {
     return { condition: null, events: [], problem: "The news feed is disabled for alert storage." };
@@ -43,22 +37,7 @@ async function evaluate(alert: ClaimedAlert): Promise<{ condition: boolean | nul
   }
 
   const { quote } = await getQuote(instrument);
-  const date = Date.parse(quote.observedAt);
-  const maxAge = 3 * 86_400_000;
-  const threshold = Number(alert.threshold);
-  const volume = alert.kind === "volume_above";
-  const value = volume ? quote.volumeScope === "consolidated" ? quote.volume : undefined
-    : quote.currency === alert.currency ? quote.last : undefined;
-  if (value === undefined || quote.stale || Date.now() - date > maxAge) {
-    return { condition: null, events: [], problem: "A sufficiently recent quote in the expected currency or volume scope is unavailable." };
-  }
-  const condition = alert.kind === "price_below" ? value <= threshold : value >= threshold;
-  const event = condition && alert.last_condition !== true && date >= Date.parse(alert.created_at) ? {
-    event_key: `${alert.kind}:${quote.observedAt}`,
-    title: `${instrument.symbol} ${volume ? "volume" : "price"} reached ${value} ${volume ? "shares" : quote.currency} (${quote.source}, ${quote.status.replaceAll("_", " ")})`,
-    occurred_at: quote.observedAt,
-  } : undefined;
-  return { condition: date >= Date.parse(alert.created_at) ? condition : null, events: event ? [event] : [], problem: null };
+  return evaluateQuoteAlert(alert, quote, Date.now());
 }
 
 export async function runCompanyAlerts() {
@@ -71,9 +50,9 @@ export async function runCompanyAlerts() {
   }
   const alerts = claim.data as ClaimedAlert[];
   const results = await Promise.all(alerts.map(async (alert) => {
-    const { condition, events, problem } = await evaluate(alert).catch(() => ({ condition: null, events: [], problem: "The provider request did not complete." }));
+    const { condition, events, problem, observedAt }: Evaluation = await evaluate(alert).catch(() => ({ condition: null, events: [], problem: "The provider request did not complete." }));
     const finished = await db.rpc("finish_company_research_alert", {
-      target_id: alert.id, token: alert.lease_token, observed_condition: condition, problem, new_events: events,
+      target_id: alert.id, token: alert.lease_token, observed_condition: condition, problem, new_events: events, observed_at: observedAt ?? null,
     });
     if (finished.error) console.warn("Company research alert finish failed", finished.error.code || "transport");
     return { finished: finished.data === true, providerProblem: Boolean(problem) };
