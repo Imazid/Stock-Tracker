@@ -568,19 +568,37 @@ final class PrivateMarketsStore: ObservableObject {
         guard AngelListLink.shared.isCurrentConnection(connectionID, owner: owner) else {
             throw AngelListLink.Failure.disconnected
         }
-        if let manual = snapshot.replacesManualHoldingID {
-            guard activeManualHoldings.contains(where: { $0.id == manual && $0.currency == snapshot.currency }),
-                  !angelListSnapshots.contains(where: { $0.reference != snapshot.reference && $0.replacesManualHoldingID == manual }) else {
-                throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_FUND_ALLOCATION",
-                    message: "Choose an unlinked manual holding in the same currency.")
-            }
+        let existing = angelListSnapshots.contains { $0.reference == snapshot.reference }
+        if !existing, case .linked(let id) = snapshot.placement,
+           !eligibleFundHoldings(currency: snapshot.currency, excludingReference: snapshot.reference).contains(where: { $0.id == id }) {
+            throw invalidFundPlacement()
         }
-        guard angelListSnapshots.count < 100 || angelListSnapshots.contains(where: { $0.reference == snapshot.reference }),
+        guard angelListSnapshots.count < 100 || existing,
               let updated = snapshot.replacing(in: angelListSnapshots) else {
             throw SecureBackend.FunctionError(status: 422, code: "PRIVATE_FUND_SNAPSHOT",
                 message: "Check the reference, date and currency against the saved statement. You can keep up to 100 statements.")
         }
         try change { $0.angelListSnapshots = updated }
+    }
+
+    func eligibleFundHoldings(currency: String, excludingReference reference: String) -> [PrivateHolding] {
+        let taken = Set(angelListSnapshots.filter { $0.reference != reference }.compactMap(\.replacesManualHoldingID))
+        return activeManualHoldings.filter { $0.currency == currency && !taken.contains($0.id) }
+    }
+
+    func setAngelListPlacement(_ placement: PrivateFundSnapshot.Placement, for id: UUID, owner: UUID) throws {
+        guard scope == owner, let statement = angelListSnapshots.first(where: { $0.id == id }) else { throw CancellationError() }
+        if case .linked(let holdingID) = placement,
+           !eligibleFundHoldings(currency: statement.currency, excludingReference: statement.reference).contains(where: { $0.id == holdingID }) {
+            throw invalidFundPlacement()
+        }
+        try change { state in
+            state.angelListSnapshots = state.angelListSnapshots?.map { $0.id == id ? $0.placed(placement) : $0 }
+        }
+    }
+
+    private func invalidFundPlacement() -> SecureBackend.FunctionError {
+        .init(status: 422, code: "PRIVATE_FUND_ALLOCATION", message: "Choose an available manual holding in the same currency.")
     }
 
     func removeAngelListSnapshot(_ id: UUID, owner: UUID) throws {

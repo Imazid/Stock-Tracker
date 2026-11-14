@@ -128,6 +128,7 @@ private struct PrivateFundSnapshotDetail: View {
     let id: UUID
     let owner: UUID
     @State private var showRemove = false
+    @State private var editPlacement = false
     @State private var error: String?
 
     var body: some View {
@@ -155,25 +156,29 @@ private struct PrivateFundSnapshotDetail: View {
                     Text("Return metrics require dated contributions, distributions and valuations.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if let linked {
-                    Section("Linked holding") {
+                Section("Portfolio allocation") {
+                    if let linked {
                         NavigationLink(linked.name) { PrivateHoldingDetail(id: linked.id) }
                         if usesStatement {
                             Text("This NAV is used for the holding’s carrying value.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
-                    }
-                } else if statement.replacesManualHoldingID != nil {
-                    Section("Linked holding") {
+                    } else if statement.replacesManualHoldingID != nil {
                         Text("The linked holding was removed. This statement is kept in your history.")
                             .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        Text(statement.placement == .history ? "Statement history only" : "Separate portfolio position")
+                            .accessibilityIdentifier("private.statement.placementStatus")
                     }
+                    Button("Change allocation") { editPlacement = true }
+                        .accessibilityIdentifier("private.statement.changePlacement")
                 }
                 Button("Remove statement", role: .destructive) { showRemove = true }
                 if let error { Text(error).foregroundStyle(.orange) }
             }
             .navigationTitle(statement.name)
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $editPlacement) { PrivateFundPlacementEditor(statement: statement, owner: owner) }
             .confirmationDialog("Remove this saved statement?", isPresented: $showRemove, titleVisibility: .visible) {
                 Button("Remove statement", role: .destructive) {
                     do {
@@ -189,6 +194,65 @@ private struct PrivateFundSnapshotDetail: View {
 
     private func balance(_ title: String, _ value: Decimal?, _ currency: String) -> some View {
         LabeledContent(title, value: PrivateInput.money(value, currency: currency))
+    }
+}
+
+private struct PrivateFundPlacementEditor: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @Environment(\.dismiss) private var dismiss
+    let statement: PrivateFundSnapshot
+    let owner: UUID
+    @State private var selection: PrivateFundSnapshot.Placement
+    @State private var error: String?
+
+    init(statement: PrivateFundSnapshot, owner: UUID) {
+        self.statement = statement
+        self.owner = owner
+        _selection = State(initialValue: statement.placement)
+    }
+
+    var body: some View {
+        NavigationStack {
+            let holdings = store.eligibleFundHoldings(currency: statement.currency, excludingReference: statement.reference)
+            Form {
+                Picker("Use this statement", selection: $selection) {
+                    Text("Statement history only").tag(PrivateFundSnapshot.Placement.history)
+                    Text("Separate portfolio position").tag(PrivateFundSnapshot.Placement.standalone)
+                    ForEach(holdings) { holding in
+                        Text(holding.name).tag(PrivateFundSnapshot.Placement.linked(holding.id))
+                    }
+                    if case let .linked(id) = selection, !holdings.contains(where: { $0.id == id }) {
+                        Text("Current holding unavailable").tag(PrivateFundSnapshot.Placement.linked(id))
+                    }
+                }
+                .pickerStyle(.inline)
+                Text("Choose a holding for the same investment, track this as a separate position, or retain only the statement.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let error { Text(error).foregroundStyle(.orange) }
+            }
+            .navigationTitle("Statement Allocation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: save)
+                        .disabled(auth.userId != owner || selection == statement.placement)
+                        .accessibilityIdentifier("private.statement.savePlacement")
+                }
+            }
+        }
+        .onChange(of: auth.userId) { _, _ in dismiss() }
+    }
+
+    private func save() {
+        guard auth.userId == owner else { return }
+        do {
+            try store.setAngelListPlacement(selection, for: statement.id, owner: owner)
+            dismiss()
+        } catch is CancellationError {
+            dismiss()
+        } catch { self.error = error.localizedDescription }
     }
 }
 

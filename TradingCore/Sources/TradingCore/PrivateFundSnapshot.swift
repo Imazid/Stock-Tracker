@@ -4,6 +4,10 @@ import Foundation
 /// Values explicitly selected from one provider capital account. Aggregate
 /// balances are not dated cash flows or proof of an opening settlement.
 public struct PrivateFundSnapshot: Codable, Equatable, Identifiable, Sendable {
+    public enum Placement: Hashable, Sendable {
+        case standalone, linked(UUID), history
+    }
+
     public let id: UUID
     public let reference: String
     public let name: String
@@ -16,8 +20,23 @@ public struct PrivateFundSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let distributions: Decimal?
     public let replacesManualHoldingID: UUID?
     public let retrievedAt: Date
+    private var historyOnly: Bool? = nil
 
     public static let source = "AngelList capital account"
+
+    public var placement: Placement {
+        if historyOnly == true { return .history }
+        return replacesManualHoldingID.map(Placement.linked) ?? .standalone
+    }
+
+    public func placed(_ placement: Placement) -> Self {
+        let holdingID: UUID?
+        if case .linked(let id) = placement { holdingID = id } else { holdingID = nil }
+        return Self(id: id, reference: reference, name: name, assetClass: assetClass, currency: currency, asOf: asOf,
+                    netAssetValue: netAssetValue, commitment: commitment, paidIn: paidIn, distributions: distributions,
+                    replacesManualHoldingID: holdingID, retrievedAt: retrievedAt,
+                    historyOnly: placement == .history ? true : nil)
+    }
 
     public var allocationHolding: PrivateHolding {
         PrivateHolding(id: id, name: name, assetClass: assetClass, currency: currency, commitment: commitment,
@@ -144,7 +163,8 @@ public struct PrivateFundSnapshot: Codable, Equatable, Identifiable, Sendable {
         guard previous.asOf <= asOf, previous.retrievedAt <= retrievedAt, previous.currency == currency else { return nil }
         let updated = Self(id: previous.id, reference: reference, name: name, assetClass: assetClass, currency: currency,
                            asOf: asOf, netAssetValue: netAssetValue, commitment: commitment, paidIn: paidIn,
-                           distributions: distributions, replacesManualHoldingID: replacesManualHoldingID, retrievedAt: retrievedAt)
+                           distributions: distributions, replacesManualHoldingID: previous.replacesManualHoldingID,
+                           retrievedAt: retrievedAt, historyOnly: previous.historyOnly)
         return snapshots.map { $0.reference == reference ? updated : $0 }
     }
 
@@ -155,7 +175,7 @@ public struct PrivateFundSnapshot: Codable, Equatable, Identifiable, Sendable {
             .map { holding in
                 linkedValuation(for: holding, snapshots: snapshots, asOf: asOf)?.holding ?? holding
             }
-        let standalone = snapshots.filter { $0.replacesManualHoldingID == nil && $0.asOf <= asOf }.map(\.allocationHolding)
+        let standalone = snapshots.filter { $0.placement == .standalone && $0.asOf <= asOf }.map(\.allocationHolding)
         return manualHoldings + confirmed + standalone
     }
 

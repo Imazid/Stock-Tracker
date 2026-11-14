@@ -183,6 +183,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let applied = app.staticTexts["This NAV is used for the holding’s carrying value."]
         for _ in 0..<3 where !applied.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(applied.exists, app.debugDescription)
+        let placement = app.buttons["private.statement.changePlacement"]
+        for _ in 0..<2 where !placement.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(placement.isHittable)
         app.navigationBars.firstMatch.buttons.firstMatch.tap()
         let discrepancy = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "The statement’s paid-in capital or distributions differ")).firstMatch
         for _ in 0..<4 where !discrepancy.isHittable { app.swipeUp(velocity: .slow) }
@@ -190,6 +193,21 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let ledger = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Manual contribution receipt")).firstMatch
         for _ in 0..<4 where !ledger.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(ledger.exists)
+
+        for _ in 0..<4 where !source.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(source.isHittable)
+        source.tap()
+        for _ in 0..<4 where !placement.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(placement.isHittable)
+        placement.tap()
+        let history = app.staticTexts["Statement history only"].firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        history.tap()
+        app.buttons["private.statement.savePlacement"].tap()
+        XCTAssertTrue(app.staticTexts["private.statement.placementStatus"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["private.statement.placementStatus"].label, "Statement history only")
+        app.navigationBars.firstMatch.buttons.firstMatch.tap()
+        XCTAssertFalse(source.exists)
     }
 
     private func addPendingCall(_ value: String, source: String) {

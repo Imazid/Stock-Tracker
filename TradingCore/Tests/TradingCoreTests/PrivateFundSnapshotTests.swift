@@ -54,6 +54,28 @@ final class PrivateFundSnapshotTests: XCTestCase {
         XCTAssertNil(otherCurrency.replacing(in: snapshots))
     }
 
+    func testReimportPreservesAllocationPlacementAndHistoryKeepsTheStatement() throws {
+        let holding = PrivateHolding(name: "Tracked fund", assetClass: .ventureFund, currency: "USD")
+        let imported = try XCTUnwrap(make())
+        let update = try XCTUnwrap(make(date: "2026-11-03", netAssetValue: "650"))
+        let linked = imported.placed(.linked(holding.id))
+        let refreshed = try XCTUnwrap(update.replacing(in: [linked])?.first)
+        XCTAssertEqual(refreshed.id, imported.id)
+        XCTAssertEqual(refreshed.placement, .linked(holding.id))
+        XCTAssertEqual(refreshed.netAssetValue, 650)
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [refreshed], asOf: retrieved).first?.valuation(asOf: retrieved)?.value, 650)
+
+        let saved = try JSONDecoder().decode(PrivateFundSnapshot.self, from: JSONEncoder().encode(linked.placed(.history)))
+        XCTAssertEqual(saved.placement, .history)
+        let historical = try XCTUnwrap(update.replacing(in: [saved])?.first)
+        XCTAssertEqual(historical.placement, .history)
+        XCTAssertEqual(historical.reference, linked.reference)
+        XCTAssertNil(historical.replacesManualHoldingID)
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [historical], asOf: retrieved), [holding])
+        let standalone = historical.placed(.standalone)
+        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [], confirmed: [], snapshots: [standalone], asOf: retrieved).map(\.id), [imported.id])
+    }
+
     func testLinkedSnapshotReplacesOnlyMatchingManualNAV() throws {
         let opening = Date(timeIntervalSince1970: 1_750_000_000)
         let manual = PrivateHolding(name: "Tracked fund", assetClass: .ventureFund, currency: "USD", commitment: 200, units: 5,

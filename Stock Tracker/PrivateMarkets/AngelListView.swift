@@ -213,6 +213,11 @@ private struct AngelListSnapshotEditor: View {
                                         replacesManualHoldingID: replacesManualHoldingID, retrievedAt: fetchedAt)
     }
 
+    private var existingStatement: PrivateFundSnapshot? {
+        guard let reference = value(.reference)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        return store.angelListSnapshots.first { $0.reference == reference }
+    }
+
     var body: some View {
         Form {
             if auth.userId == owner {
@@ -239,15 +244,21 @@ private struct AngelListSnapshotEditor: View {
                     Text("Choose amounts in whole currency units, such as dollars. A dated NAV can appear in your unified allocation.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if !store.activeManualHoldings.isEmpty {
+                if existingStatement != nil {
+                    Section("Portfolio allocation") {
+                        Text("This update keeps the account’s saved allocation setting. You can change it from the saved statement.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                } else if let currency = value(.currency)?.uppercased(), let reference = value(.reference) {
+                    let eligible = store.eligibleFundHoldings(currency: currency, excludingReference: reference)
                     Section("Portfolio allocation") {
                         Picker("Same position already tracked", selection: $replacesManualHoldingID) {
-                            Text("None").tag(nil as UUID?)
-                            ForEach(store.activeManualHoldings) { holding in
+                            Text("Separate position").tag(nil as UUID?)
+                            ForEach(eligible) { holding in
                                 Text("\(holding.name) · \(holding.currency)").tag(Optional(holding.id))
                             }
                         }
-                        Text("Allocation uses the latest available valuation for a linked position. Your manual holding and cash flows stay available.")
+                        Text("Link a manual holding for the same investment so it counts once in your portfolio.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
@@ -275,7 +286,12 @@ private struct AngelListSnapshotEditor: View {
     private func selector(_ field: Field) -> some View {
         Picker(field.rawValue, selection: Binding(
             get: { selection[field] ?? "" },
-            set: { selection[field] = $0; confirmed = false; error = nil }
+            set: {
+                selection[field] = $0
+                if field == .reference || field == .currency { replacesManualHoldingID = nil }
+                confirmed = false
+                error = nil
+            }
         )) {
             Text("Select field").tag("")
             ForEach(record.fields) { source in
