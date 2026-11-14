@@ -1,5 +1,6 @@
 import type { serverSupabase } from "@/lib/supabase/server";
 import { stockTransferFields, type StockTransfer } from "../../lib/portfolio-transfers.ts";
+import { stockSpinOffFields, type StockSpinOff } from "../../lib/portfolio-spin-offs.ts";
 import { splitFields, type StockSplit } from "../../lib/portfolio-splits.ts";
 import { reinvestmentAcquisition, reinvestmentPages } from "./reinvestments.ts";
 import { transactionPages, type TransactionRow } from "./transactions.ts";
@@ -12,6 +13,7 @@ export async function readLotLedger(
   const acquisitions: TransactionRow[] = [];
   const splits: StockSplit[] = [];
   const transfers: StockTransfer[] = [];
+  const spinOffs: StockSpinOff[] = [];
   // Sydney midnight is earlier than UTC midnight. The query uses a broad UTC
   // cutoff and the calculation applies the exact Sydney day.
   const before = beforeTime ?? (end ? new Date(Date.parse(end + "T00:00:00Z") + 86_400_000).toISOString() : undefined);
@@ -52,7 +54,21 @@ export async function readLotLedger(
         lastId = data.length === pageSize ? data[data.length - 1].id : undefined;
       } while (lastId);
     })(),
+    (async () => {
+      const pageSize = 500;
+      let lastId: string | undefined;
+      do {
+        let query = db.from("portfolio_stock_spin_offs").select(stockSpinOffFields).eq("user_id", userId)
+          .order("id").limit(pageSize).abortSignal(signal);
+        if (end) query = query.lte("effective_on", end);
+        if (lastId) query = query.gt("id", lastId);
+        const { data, error } = await query.overrideTypes<StockSpinOff[], { merge: false }>();
+        if (error) throw error;
+        spinOffs.push(...data);
+        lastId = data.length === pageSize ? data[data.length - 1].id : undefined;
+      } while (lastId);
+    })(),
   ]);
 
-  return { transactions: transactions.concat(acquisitions), acquisitions, splits, transfers };
+  return { transactions: transactions.concat(acquisitions), acquisitions, splits, transfers, spinOffs };
 }
