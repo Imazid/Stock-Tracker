@@ -75,3 +75,22 @@ test("values only reconciled open quantities with matching fresh quotes and USD 
   assert.deepEqual(result.fxDates, ["2026-08-05"]);
   assert.equal(unrealisedGains(holdings, open, () => ({ ...quote, stale: true }), undefined).total, null);
 });
+
+test("web gains reconcile the lot quantity at the split and recognise cash on the later statement date", () => {
+  const adjustment: StockSplit = { id: "cash-split", holding_id: "group", effective_date: "2026-08-02",
+    new_shares: 1, old_shares: 2, statement_reference: "statement", updated_at: "2026-08-05",
+    portfolio_holdings: null, snaptrade_activity_id: null, snaptrade_activity_date: null,
+    snaptrade_activity_label: null, snaptrade_activity_symbol: null, fraction_shares: "0.5",
+    fraction_paid_on: "2026-08-04", fraction_currency: "USD", fraction_proceeds: "22", fraction_fees: "0.25" };
+  const purchase = trade("buy", "group", "Buy", 3, 10, 0, "2026-08-01");
+  const ledger = { transactions: [purchase], acquisitions: [], transfers: [], splits: [adjustment] };
+  const pending = portfolioGains("owner", "2026-08-03T05:00:00Z", ledger);
+  assert.equal(pending.realisedUsd, null);
+  assert.equal(pending.fractionalPayments, 0);
+  assert.deepEqual(pending.open.group, { units: "1", costUsd: 20, lastSplit: "2026-08-02" });
+  const paid = portfolioGains("owner", "2026-08-04T05:00:00Z", ledger);
+  assert.equal(paid.fractionalPayments, 1);
+  assert.equal(paid.matchedSales, 1);
+  assert.equal(paid.realisedUsd, 11.75);
+  assert.equal(paid.tradeRecords, 1);
+});

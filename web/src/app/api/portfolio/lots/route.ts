@@ -1,3 +1,4 @@
+import { fractionalShareCash } from "@/lib/portfolio-splits";
 import { csvField } from "@/lib/csv";
 import { serverSupabase } from "@/lib/supabase/server";
 import { jsonError } from "@/server/http/respond";
@@ -14,6 +15,10 @@ const columns = [
 ];
 const noteColumn = columns.indexOf("Report note");
 const splitColumns = ["Split ID", "Split effective date (Sydney)", "Split new shares", "Split old shares", "Split statement reference"];
+const fractionalColumns = [
+  "Fractional shares removed", "Fractional payment date (Sydney)", "Fractional payment currency",
+  "Fractional proceeds (payment currency)", "Fractional fees (payment currency)", "Fractional statement net (USD)",
+];
 const brokerSplitColumns = ["SnapTrade activity reference", "SnapTrade reported date", "SnapTrade reported activity", "SnapTrade reported symbol"];
 const reinvestmentColumns = ["Reinvestment ID", "Reinvestment acquisition date (Sydney)", "Reinvested amount", "Reinvestment currency", "Reinvestment statement reference"];
 const brokerReinvestmentColumns = [
@@ -38,7 +43,7 @@ const audDisclosure = "AUD figures use original amounts. Foreign amounts use the
 function referenceFields(references: ReadonlyMap<string, AudReference>, trade?: TransactionRow) {
   const reference = trade && references.get(trade.id);
   return [
-    csvField(trade?.reinvestment?.currency ?? trade?.trade_provenance?.currency ?? null),
+    csvField(trade?.fractionalCash?.fraction_currency ?? trade?.reinvestment?.currency ?? trade?.trade_provenance?.currency ?? null),
     reference && "rate" in reference ? reference.rate : "",
     csvField(reference && "date" in reference ? reference.date : null),
     csvField(reference?.source ?? null),
@@ -97,7 +102,9 @@ export async function GET(request: Request) {
     }
     rows = calculateLots(transactions, start ?? undefined, end ?? undefined, rates, splits, transfers);
   }
+  const hasFractionalCash = splits.some(fractionalShareCash);
   const actionColumns = [...(splits.length ? splitColumns : []),
+    ...(hasFractionalCash ? fractionalColumns : []),
     ...(splits.some((split) => split.snaptrade_activity_id) ? brokerSplitColumns : [])];
   const hasReinvestments = acquisitions.length > 0;
   const hasBrokerReinvestments = acquisitions.some((acquisition) => acquisition.reinvestment?.snaptrade_activity_id);
@@ -110,7 +117,10 @@ export async function GET(request: Request) {
   const transferOrdering = transfers.length
     ? " Stock transfers move after the trades and reinvestments on their Sydney dates. Shares received from earlier departures are posted before same-day departures. Verify the stated timing and both account records."
     : "";
-  const information = `${disclaimer}${ordering}${transferOrdering} ${includesAud ? audDisclosure + " " : ""}${period}`;
+  const fractionalOrdering = hasFractionalCash
+    ? " Fractional units leave the FIFO ledger immediately after their split. The report includes their proceeds from the payment date. Original payment amounts appear on the split row. A statement net USD amount on a foreign-currency payment includes fees already."
+    : "";
+  const information = `${disclaimer}${ordering}${transferOrdering}${fractionalOrdering} ${includesAud ? audDisclosure + " " : ""}${period}`;
   const records = [
     reportColumns.map(csvField).join(","),
     reportColumns.map((_, index) => index === 0 ? csvField("Report information")
@@ -157,6 +167,8 @@ export async function GET(request: Request) {
     if ("split" in row) {
       const { split } = row;
       const holding = split.portfolio_holdings;
+      const cash = fractionalShareCash(split);
+      const paid = cash && (!end || cash.fraction_paid_on <= end);
       const fields: Record<string, string | number | null> = {
         "Record type": row.kind,
         "Holding ID": split.holding_id,
@@ -170,6 +182,12 @@ export async function GET(request: Request) {
         "Split new shares": split.new_shares,
         "Split old shares": split.old_shares,
         "Split statement reference": split.statement_reference || null,
+        "Fractional shares removed": cash?.fraction_shares ?? null,
+        "Fractional payment date (Sydney)": cash?.fraction_paid_on ?? null,
+        "Fractional payment currency": paid ? cash.fraction_currency : null,
+        "Fractional proceeds (payment currency)": paid ? cash.fraction_proceeds : null,
+        "Fractional fees (payment currency)": paid ? cash.fraction_fees : null,
+        "Fractional statement net (USD)": paid ? cash.fraction_net_usd : null,
         "SnapTrade activity reference": split.snaptrade_activity_id,
         "SnapTrade reported date": split.snaptrade_activity_date,
         "SnapTrade reported activity": split.snaptrade_activity_label,
@@ -181,9 +199,9 @@ export async function GET(request: Request) {
     const transaction = row.transaction;
     const holding = transaction.portfolio_holdings;
     const text = [
-      row.kind, transaction.holding_id, holding?.asset_symbol ?? null, holding?.asset_exchange ?? null,
-      holding?.asset_kind ?? null, transaction.id, transaction.reinvestment ? null : transaction.transaction_date,
-      transaction.reinvestment?.acquired_on ?? sydneyDate(transaction.transaction_date), row.purchase?.id ?? null,
+      transaction.fractionalCash ? (row.kind === "Sale match" ? "Fractional payment match" : "Fractional payment review") : row.kind, transaction.holding_id, holding?.asset_symbol ?? null, holding?.asset_exchange ?? null,
+      holding?.asset_kind ?? null, transaction.id, transaction.reinvestment || transaction.fractionalCash ? null : transaction.transaction_date,
+      transaction.fractionalCash?.fraction_paid_on ?? transaction.reinvestment?.acquired_on ?? sydneyDate(transaction.transaction_date), row.purchase?.id ?? null,
       row.purchase?.reinvestment ? null : row.purchase?.transaction_date ?? null,
     ].map(csvField);
     const numbers = [
@@ -191,7 +209,7 @@ export async function GET(request: Request) {
       lotNumber(row.saleProceeds, 2), lotNumber(row.saleFee, 2), lotNumber(row.result, 2),
     ];
     const cells = [...text, ...numbers, csvField(row.note ?? null),
-      csvField(transaction.reinvestment ? "Dividend reinvestment" : tradeSource(transaction.trade_provenance)),
+      csvField(transaction.fractionalCash ? "Broker statement entry" : transaction.reinvestment ? "Dividend reinvestment" : tradeSource(transaction.trade_provenance)),
       csvField(row.purchase?.reinvestment ? "Dividend reinvestment" : row.purchase ? tradeSource(row.purchase.trade_provenance) : null),
     ];
     if (includesAud) {
@@ -200,7 +218,7 @@ export async function GET(request: Request) {
         ...referenceFields(references, row.purchase),
         ...referenceFields(references, transaction.type === "Sell" ? transaction : undefined));
     }
-    cells.push(...actionColumns.map(() => ""));
+    cells.push(...actionColumns.map((column) => column === "Split ID" ? csvField(transaction.fractionalCash?.id ?? null) : ""));
     if (hasReinvestments) {
       const reinvestment = row.purchase?.reinvestment ?? transaction.reinvestment;
       cells.push(...[reinvestment?.id, reinvestment?.acquired_on, reinvestment?.reinvested_amount, reinvestment?.currency,

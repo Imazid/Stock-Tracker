@@ -114,6 +114,14 @@ email limits apply until a custom SMTP sender is configured.
   Never remove a key while rows still reference it (`select kek_id, count(*) from
   public.broker_credentials group by 1`).
 
+### Cash paid for fractional shares
+
+In web Portfolio, open **Tax-lot records → Manage stock split adjustments**. Add or edit the existing split for the holding and select **Record cash paid for fractional shares**. Enter the post-split quantity, payment date, gross cash, fees and a statement reference. For a foreign-currency payment, the broker’s net USD amount is optional. If it is absent, the USD result stays blank. The AUD export uses the original amounts and the payment date’s supported ECB reference rate, or the original AUD amounts if the broker paid in AUD.
+
+The lot report removes the recorded fraction immediately after the split and before trades dated that day. It shows payment proceeds on the broker’s payment date, including when the date falls after the split reporting period. Keep a single record for the disposal and verify the actual lots and payment against the statement. The lot report provides preliminary FIFO estimates for review. Australian tax treatment can depend on the arrangement. [ATO guide to capital gains tax](https://www.ato.gov.au/law/view/pdf?DocId=SAV%2FGCGT%2F00005&PiT=99991231235958&filename=law%2Fview%2Fpdf%2Fsos_sgml%2Fgcgt20240701.pdf)
+
+Deploy migration `20261115160000` before deploying the web build that reads the new fields. Existing adjustments may leave all payment fields blank.
+
 ### Crypto token research
 
 Web asset pages and the iPhone crypto detail use `market-workspace` for the CoinGecko supply, market data and network profiles. This public read accepts only catalog symbols with fixed CoinGecko IDs and keeps the provider’s own market timestamp. A five-minute cache shares requests for each token within the function instance. A missing timestamp or supply cap stays unavailable. The UI points to the original listing and keeps network contracts separate from the trade ticket.
