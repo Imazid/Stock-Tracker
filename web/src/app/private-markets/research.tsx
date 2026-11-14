@@ -13,7 +13,7 @@ import { CompareRounds, SourceLink } from "./catalog";
 import { dealRoomExcerpts } from "./deal-room";
 import { ResearchSourceReview } from "./research-source-review";
 import {
-  dateLabel, privateMarkets, type Finding, type PrivateDeal, type Report, type ResearchCapabilities,
+  dateLabel, privateMarkets, type CompanyUpdate, type Finding, type PrivateDeal, type Report, type ResearchCapabilities,
   type ResearchRefresh, type ResearchRun, type SavedReport,
 } from "./private-data";
 
@@ -91,10 +91,13 @@ function ReportView({ report, actions }: { report: Report; actions: ReactNode })
   );
 }
 
-export function Research({ owner, aiEnabled, selected, asOf, initialReportID, openDealRoom, openScenario }: {
-  owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number; initialReportID?: string; openDealRoom: () => void; openScenario: () => void;
+export function Research({ owner, aiEnabled, selected, asOf, initialReportID, initialUpdates, openDealRoom, openScenario }: {
+  owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number; initialReportID?: string;
+  initialUpdates?: CompanyUpdate[]; openDealRoom: () => void; openScenario: () => void;
 }) {
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(initialUpdates?.length
+    ? "Summarise these published company updates and identify what still needs verification." : "");
+  const [updates, setUpdates] = useState(initialUpdates ?? []);
   const [mode, setMode] = useState<Mode>("question");
   const [consent, setConsent] = useState(false);
   const [excerptConsentProvider, setExcerptConsentProvider] = useState<ResearchCapabilities["document_provider"]>(null);
@@ -121,7 +124,8 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
   const originalPublicIDs = review.data ? [...new Set([
     ...review.data.deals.map(({ id }) => id), ...review.data.announcements.map(({ id }) => id),
   ])].slice(0, 3) : [];
-  const publicIDs = reviewID ? (reviewSelection ?? originalPublicIDs) : selected.map(({ id }) => id);
+  const defaultPublicIDs = initialUpdates ? updates.map(({ id }) => id) : selected.map(({ id }) => id);
+  const publicIDs = reviewID ? (reviewSelection ?? originalPublicIDs) : defaultPublicIDs;
   const excerptItems = [...new Map([...(review.data?.documents ?? []), ...(excerpts.data?.items ?? [])].map((item) => [item.id, item])).values()];
   const sourceCount = publicIDs.length + selectedExcerpts.length;
   const sourcesValid = sourceCount > 0 && sourceCount <= 3 &&
@@ -224,7 +228,9 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
             setReportID(null);
             setRunID(null);
             const eligibleDeals = review.data?.deals ?? selected;
-            const dealIDs = publicIDs.filter((id) => eligibleDeals.some((deal) => deal.id === id));
+            const dealIDs = reviewID || !initialUpdates
+              ? publicIDs.filter((id) => eligibleDeals.some((deal) => deal.id === id))
+              : updates.filter(({ kind }) => kind === "open_round" || kind === "interest").map(({ id }) => id);
             submit.mutate({ prompt: question.trim(), kind: mode, dealIDs,
               announcementIDs: publicIDs.filter((id) => !dealIDs.includes(id)), previousID: reviewID ?? undefined,
               documentIDs: selectedExcerpts, documentPermission: excerptConsent, provider: documentProvider });
@@ -244,8 +250,21 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
                     resetConsent();
                   }} />
               </>}
+            </section> : initialUpdates ? <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-text">Selected company updates</h2>
+              {updates.length ? <ul className="space-y-2">
+                {updates.map((item) => <li key={item.id} className="rounded-lg border border-border p-3 text-sm text-text-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className="min-w-0 break-words font-medium text-text">{item.company.name} · {item.title}</p>
+                    <Button size="sm" disabled={busy} aria-label={`Remove ${item.title}`}
+                      onClick={() => { setUpdates(updates.filter(({ id }) => id !== item.id)); resetConsent(); }}>Remove</Button>
+                  </div>
+                  <p className="mb-1 break-words">{item.significance}</p>
+                  <SourceLink url={item.source_url}>{item.source_label ?? "Read original source"}</SourceLink>
+                </li>)}
+              </ul> : <p className="text-sm text-text-2">Select company updates in the Updates tab.</p>}
             </section> : selected.length ? <CompareRounds deals={selected} asOf={asOf} />
-              : <p className="text-sm text-text-2">Select published rounds in Discover.</p>}
+              : <p className="text-sm text-text-2">Select published rounds in Discover or disclosures in Updates.</p>}
             {!aiEnabled && <Notice>New AI research is unavailable in this deployment. Saved reports are still available.</Notice>}
             {aiEnabled && <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">

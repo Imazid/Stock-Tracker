@@ -94,8 +94,9 @@ export type MonitorPreferences = {
 };
 
 export type CompanyUpdate = {
-  id: string; title: string; significance: string; source_url: string; source_label?: string;
-  published_at: string; revised_at?: string; company: { name: string };
+  id: string; title: string; significance: string; source_url: string; source_label?: string | null;
+  kind: "announcement" | "financial_disclosure" | "closed_round" | "open_round" | "interest";
+  published_at: string; revised_at?: string | null; company: { name: string };
 };
 
 export type MonitorAlert = {

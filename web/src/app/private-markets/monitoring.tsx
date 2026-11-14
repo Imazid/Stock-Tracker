@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -98,9 +98,9 @@ function MonitoringForm({ preferences, saving, deals, onSave }: {
   </form>;
 }
 
-function UpdateRow({ title, company, date, revised, significance, url, label, kind }: {
+function UpdateRow({ title, company, date, revised, significance, url, label, kind, action }: {
   title: string; company: string; date: string; revised?: string | null; significance: string;
-  url?: string | null; label?: string | null; kind?: string;
+  url?: string | null; label?: string | null; kind?: string; action?: ReactNode;
 }) {
   return <li className="space-y-1 border-t border-border p-4 text-[13px] text-text-2">
     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -110,15 +110,20 @@ function UpdateRow({ title, company, date, revised, significance, url, label, ki
     <p className="text-xs text-text-3">{company} · {dateLabel(date, label === "Issuer financial disclosure" ? "day" : "time")}</p>
     {revised && <p className="text-xs text-text-3">Revised {dateLabel(revised, "time")}</p>}
     <p className="break-words">{significance}</p>
-    {(url || label) && <p><SourceLink url={url}>{label ?? "Read source"}</SourceLink></p>}
+    {(url || label || action) && <div className="flex flex-wrap items-center justify-between gap-2">
+      {(url || label) && <SourceLink url={url}>{label ?? "Read source"}</SourceLink>}
+      {action}
+    </div>}
   </li>;
 }
 
-export function Monitoring({ owner, deals, catalogueLoading, catalogueError, retryCatalogue, onReport }: {
+export function Monitoring({ owner, deals, catalogueLoading, catalogueError, retryCatalogue, onReport, onResearch }: {
   owner: string; deals: PrivateDeal[]; catalogueLoading: boolean; catalogueError?: Error | null;
   retryCatalogue: () => void; onReport: (id: string) => void;
+  onResearch?: (updates: CompanyUpdate[]) => void;
 }) {
   const cache = useQueryClient();
+  const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const scope = keyFor(owner);
   const settings = useQuery({
     queryKey: [...scope, "preferences"], gcTime: 0, retry: false,
@@ -129,6 +134,7 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
     mutationFn: (options: Options) => privateMarkets<SettingsResponse>("save_web_monitor", { owner, ...options }),
     onMutate: () => cache.cancelQueries({ queryKey: [...scope, "preferences"] }),
     onSuccess: (value) => {
+      setSelectedIDs([]);
       cache.setQueryData([...scope, "preferences"], value);
       void cache.invalidateQueries({ queryKey: [...scope, "alerts"] });
     },
@@ -154,6 +160,8 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
         .slice(0, 100);
     },
   });
+
+  const selected = updates.data?.filter(({ id }) => selectedIDs.includes(id)) ?? [];
 
   return <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)]">
     <div className="min-w-0 space-y-4">
@@ -193,11 +201,27 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
       </Card>
       {companyIDs.length > 0 && <Card>
         <CardHeader title="Company updates" />
+        {onResearch && !!updates.data?.length && <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
+          <p className="text-xs text-text-2" role="status">{selected.length} of 3 updates selected.</p>
+          <Button size="sm" variant="primary" disabled={!selected.length || updates.isError || save.isPending}
+            onClick={() => onResearch(selected)}>Research selected updates</Button>
+        </div>}
         {updates.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading company updates…</p>}
         {updates.error && <div className="border-t border-border p-4"><Notice tone="down">{updates.error.message} <Button size="sm" onClick={() => void updates.refetch()}>Retry updates</Button></Notice></div>}
         {updates.data && !updates.data.length && <EmptyState title="No published updates for followed companies" className="border-t border-border" />}
-        <ul>{updates.data?.map((item) => <UpdateRow key={item.id} title={item.title} company={item.company.name}
-          significance={item.significance} date={item.published_at} revised={item.revised_at} url={item.source_url} label={item.source_label} />)}</ul>
+        <ul>{updates.data?.map((item) => {
+          const checked = selected.some(({ id }) => id === item.id);
+          return <UpdateRow key={item.id} title={item.title} company={item.company.name}
+            significance={item.significance} date={item.published_at} revised={item.revised_at} url={item.source_url}
+            label={item.source_label} kind={item.kind} action={onResearch && <label className="flex items-center gap-2">
+              <input type="checkbox" checked={checked} aria-label={`Select ${item.title} for research`}
+                disabled={updates.isError || save.isPending || (!checked && selected.length >= 3)}
+                onChange={(event) => setSelectedIDs(event.target.checked
+                  ? [...selected.map(({ id }) => id), item.id]
+                  : selectedIDs.filter((id) => id !== item.id))} />
+              Select for research
+            </label>} />;
+        })}</ul>
       </Card>}
     </div>
   </div>;
