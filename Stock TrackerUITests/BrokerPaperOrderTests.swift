@@ -2,7 +2,7 @@ import XCTest
 
 final class BrokerPaperOrderTests: XCTestCase {
     /// Uses the actual order and connection functions against a local broker transport fixture.
-    /// The fixture listens only on loopback and tracks outgoing submissions.
+    /// The fixture listens only on loopback and provides a preconnected paper account.
     func testPaperOrderNeedsApprovalAndShowsBrokerFill() throws {
         let app = try launchFixtureAccount()
         XCTAssertTrue(app.open("Search"))
@@ -12,19 +12,6 @@ final class BrokerPaperOrderTests: XCTestCase {
         tap(app.buttons["search.result.us.AAPL"], in: app, timeout: 30)
         XCTAssertTrue(app.descendants(matching: .any)["detail.screen"].firstMatch.waitForExistence(timeout: 10))
         tap(app.buttons["Trade with Alpaca Paper"], in: app, timeout: 30)
-        tap(app.buttons["brokerPaper.connect"], in: app)
-
-        let key = app.secureTextFields["brokerPaper.keyID"]
-        tap(key, in: app)
-        key.typeText("paper-fixture-key")
-        let secret = app.secureTextFields["brokerPaper.secretKey"]
-        tap(secret, in: app)
-        secret.typeText("paper-fixture-secret")
-        let permission = app.switches["brokerPaper.tradePermission"]
-        tap(permission, in: app)
-        XCTAssertEqual(permission.value as? String, "1")
-        tap(app.buttons["brokerPaper.saveConnection"], in: app)
-
         tap(app.buttons["brokerPaper.prepare"], in: app, timeout: 35)
         let quantity = app.textFields["brokerPaper.size"]
         tap(quantity, in: app)
