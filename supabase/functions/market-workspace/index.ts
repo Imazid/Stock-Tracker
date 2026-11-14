@@ -4,6 +4,7 @@ import { serviceClient } from "../_shared/secure/edge.ts";
 import { authenticate } from "../_shared/server/auth.ts";
 import { errorResponse, Field, HttpError, ok, readJSONObject, sameSecret } from "../_shared/server/http.ts";
 import { historicalCashConversion } from "./historical_fx.ts";
+import { cachedCryptoFacts, cryptoCoinID } from "./crypto_facts.ts";
 import { providerFromEnv } from "../_shared/market/index.ts";
 import { cachedPortfolioBenchmark, validBenchmarkPeriod } from "../_shared/portfolio/benchmark.ts";
 import { PORTFOLIO_BENCHMARKS, type PortfolioBenchmark } from "../_shared/portfolio/benchmark_types.ts";
@@ -45,14 +46,15 @@ Deno.serve(async (request) => {
     const body = await readJSONObject(request, 12_000);
     const featured = body.action === "featured";
     let userID: string | undefined;
-    const publicMarketFeed = featured || body.action === "explore" && request.headers.has("x-workspace-overview-secret");
+    const publicMarketFeed = featured || (body.action === "explore" || body.action === "cryptoFacts") && request.headers.has("x-workspace-overview-secret");
+    const anonymousCrypto = body.action === "cryptoFacts" && !publicMarketFeed && !request.headers.has("authorization");
     if (publicMarketFeed) {
       const expected = env("WORKSPACE_OVERVIEW_SECRET");
       const provided = request.headers.get("x-workspace-overview-secret");
       if (!expected || !provided || !sameSecret(expected, provided)) {
         throw new HttpError(403, "private_feed", "The featured market feed is limited to the Stock Tracker workspace.");
       }
-    } else {
+    } else if (!anonymousCrypto) {
       const caller = await authenticate(request, { url: env("SUPABASE_URL"), anonKey: env("SUPABASE_ANON_KEY") });
       userID = caller.userID;
       const { data: allowed, error } = await serviceClient().rpc("consume_market_data_quota", { p_user_id: caller.userID });
@@ -60,6 +62,13 @@ Deno.serve(async (request) => {
       if (!allowed) throw new HttpError(429, "rate_limit", "Market data request limit reached. Wait a minute and retry.");
     }
     const now = Date.now();
+    if (body.action === "cryptoFacts") {
+      const symbol = Field.string(body.symbol, "symbol", 16).toUpperCase();
+      if (!cryptoCoinID(symbol)) throw new HttpError(404, "unsupported_crypto", "Research is unavailable for this token.");
+      const result = await cachedCryptoFacts(symbol, now, env("COINGECKO_API_KEY"), env("COINGECKO_PRO_API_KEY"));
+      if (!result) throw new HttpError(503, "crypto_unavailable", "CoinGecko token research is temporarily unavailable.");
+      return ok(result);
+    }
     if (body.action === "companyQuestion" && userID) {
       const id = Field.string(body.instrumentId, "instrumentId", 42);
       researchListing(id);
