@@ -132,6 +132,74 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Record Settled Sale"].waitForNonExistence(timeout: 5))
     }
 
+    func testManualCapitalCallsRetainTheOriginalNoticeAfterPaymentAndCancellation() {
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let add = app.buttons["private.holding.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.tap()
+        let name = app.textFields["private.holding.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Capital call ledger")
+        app.buttons["private.holding.save"].tap()
+        let holding = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(holding.waitForExistence(timeout: 5))
+        holding.tap()
+
+        addPendingCall("500", source: "Original payment notice")
+        resolveCall(action: "private.capital.recordPayment", source: "Receipt from fund", title: "Record Payment")
+        let paid = app.staticTexts["private.capital.manualPayment"].firstMatch
+        XCTAssertTrue(paid.waitForExistence(timeout: 5))
+        XCTAssertTrue(paid.label.contains("Receipt from fund"))
+        XCTAssertTrue(app.staticTexts.matching(identifier: "private.capital.originalNotice").firstMatch.label.contains("Original payment notice"))
+
+        addPendingCall("250", source: "Original cancelled notice")
+        resolveCall(action: "private.capital.recordCancellation", source: "Rescinded by fund", title: "Record Cancellation")
+        let cancelled = app.staticTexts["private.capital.manualCancellation"].firstMatch
+        XCTAssertTrue(cancelled.waitForExistence(timeout: 5))
+        XCTAssertTrue(cancelled.label.contains("Rescinded by fund"))
+        let originalNotices = app.staticTexts.matching(identifier: "private.capital.originalNotice")
+        XCTAssertTrue(originalNotices.allElementsBoundByIndex.contains { $0.label.contains("Original cancelled notice") })
+        XCTAssertFalse(app.buttons["private.capital.recordPayment"].exists)
+        XCTAssertFalse(app.buttons["private.capital.recordCancellation"].exists)
+    }
+
+    private func addPendingCall(_ value: String, source: String) {
+        let open = app.buttons["private.ledger.openCashFlow"]
+        for _ in 0..<4 where !open.isHittable { app.swipeUp() }
+        open.tap()
+        let kind = app.buttons["private.ledger.kind"]
+        XCTAssertTrue(kind.waitForExistence(timeout: 5))
+        kind.tap()
+        app.buttons["Capital call"].tap()
+        let pending = app.switches["private.ledger.paymentPending"]
+        XCTAssertTrue(pending.waitForExistence(timeout: 5))
+        let switchControl = pending.switches.firstMatch
+        (switchControl.exists ? switchControl : pending).tap()
+        let amount = app.textFields["private.ledger.amount"]
+        amount.tap()
+        amount.typeText(value)
+        let notice = app.textFields["private.ledger.source"]
+        notice.tap()
+        notice.typeText(source)
+        app.buttons["private.ledger.save"].tap()
+        XCTAssertTrue(app.navigationBars["Record Cash Flow"].waitForNonExistence(timeout: 5))
+    }
+
+    private func resolveCall(action: String, source: String, title: String) {
+        let record = app.buttons[action].firstMatch
+        for _ in 0..<3 where !record.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(record.isHittable)
+        record.tap()
+        let evidence = app.textFields["private.capital.resolutionSource"]
+        XCTAssertTrue(evidence.waitForExistence(timeout: 5))
+        evidence.tap()
+        evidence.typeText(source)
+        app.buttons["private.capital.resolutionSave"].tap()
+        XCTAssertTrue(app.navigationBars[title].waitForNonExistence(timeout: 5))
+    }
+
     func testProviderDirectoryAndOfflineCalculatorAreReachable() {
         openPrivateMarkets()
         app.buttons["private.destination.magnifyingglass"].tap()

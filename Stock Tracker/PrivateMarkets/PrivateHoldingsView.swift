@@ -470,6 +470,7 @@ struct PrivateHoldingDetail: View {
                     }
                     if !providerRecord {
                         Button("Record cash flow") { editor = .cashFlow }
+                            .accessibilityIdentifier("private.ledger.openCashFlow")
                         if holding.closedOn() == nil, holding.matchingProviderHoldingID == nil {
                             Button("Record settled sale") { editor = .sale }
                                 .accessibilityIdentifier("private.holding.sale.add")
@@ -787,7 +788,11 @@ private struct PrivateLedgerEditor: View {
                     Picker("Cash flow type", selection: $kind) {
                         ForEach(PrivateCashFlow.Kind.allCases.filter { $0 != .sale }, id: \.self) { Text($0.rawValue).tag($0) }
                     }
-                    if kind == .capitalCall { Toggle("Payment pending", isOn: $pending) }
+                    .accessibilityIdentifier("private.ledger.kind")
+                    if kind == .capitalCall {
+                        Toggle("Payment pending", isOn: $pending)
+                            .accessibilityIdentifier("private.ledger.paymentPending")
+                    }
                 }
                 if !isValuation && kind == .capitalCall && pending {
                     DatePicker("Due date", selection: $date, displayedComponents: .date)
@@ -939,19 +944,37 @@ private struct PrivateCashFlowRow: View {
     let holding: PrivateHolding
     let flow: PrivateCashFlow
     var isEditable = true
-    @State private var error: String?
-    @State private var confirmPayment = false
-    @State private var paymentDate = Date.now
+    @State private var resolution: Resolution?
+
+    private enum Resolution: String, Identifiable {
+        case payment, cancellation
+        var id: Self { self }
+        var title: String { self == .payment ? "Record Payment" : "Record Cancellation" }
+        var dateLabel: String { self == .payment ? "Date paid" : "Cancellation date" }
+        var sourceLabel: String { self == .payment ? "Payment source" : "Cancellation source" }
+        var value: PrivateCashFlow.CapitalCallResolution { self == .payment ? .paid : .cancelled }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             LabeledContent(flow.kind.rawValue, value: PrivateInput.money(flow.amount, currency: holding.currency))
-            Text("\(flow.settled ? "Recorded" : "Due") \(flow.date.formatted(date: .abbreviated, time: .omitted)) · \(flow.source)")
-                .font(.footnote).foregroundStyle(.secondary)
-            if flow.settled, let due = flow.originalDueDate {
-                Text("Originally due \(due.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.footnote).foregroundStyle(.secondary)
+            Group {
+                if let cancellation = flow.cancellation {
+                    Text("Cancelled \(formatted(cancellation.date)) · \(cancellation.source)")
+                        .accessibilityIdentifier("private.capital.manualCancellation")
+                } else if let payment = flow.paymentEvidence {
+                    Text("Paid \(formatted(payment.date)) · \(payment.source)")
+                        .accessibilityIdentifier("private.capital.manualPayment")
+                } else {
+                    Text("\(flow.settled ? "Recorded" : "Due") \(formatted(flow.date)) · \(flow.source)")
+                }
+                if (flow.settled || flow.cancellation != nil), let due = flow.originalDueDate {
+                    let notice = flow.paymentEvidence != nil || flow.cancellation != nil ? " · \(flow.source)" : ""
+                    Text("Originally due \(formatted(due))\(notice)")
+                        .accessibilityIdentifier("private.capital.originalNotice")
+                }
             }
+            .font(.footnote).foregroundStyle(.secondary)
             if let units = flow.disposedUnits {
                 LabeledContent("Shares or units sold", value: units.formatted())
                     .font(.footnote).foregroundStyle(.secondary)
@@ -960,33 +983,75 @@ private struct PrivateCashFlowRow: View {
                 LabeledContent("Cost basis", value: PrivateInput.money(cost, currency: holding.currency))
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if isEditable && !flow.settled { Button("Record as paid") { confirmPayment = true }.buttonStyle(.borderless) }
-            if let error { Text(error).font(.footnote).foregroundStyle(Color.orange) }
-        }
-        .sheet(isPresented: $confirmPayment) {
-            NavigationStack {
-                Form {
-                    DatePicker("Date paid", selection: $paymentDate, in: ...Date.now, displayedComponents: .date)
-                    Button("Save payment date", action: settle)
+            if flow.isPendingCapitalCall() {
+                if Calendar.current.startOfDay(for: .now) > (flow.originalDueDate ?? flow.date) {
+                    Text("Overdue").font(.footnote.weight(.semibold)).foregroundStyle(.orange)
                 }
-                .navigationTitle("Record payment")
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { confirmPayment = false } } }
+                if isEditable {
+                    Button("Record as paid") { resolution = .payment }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("private.capital.recordPayment")
+                    Button("Record cancellation") { resolution = .cancellation }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("private.capital.recordCancellation")
+                }
             }
-            .presentationDetents([.medium])
+        }
+        .sheet(item: $resolution) { resolution in
+            ResolutionEditor(resolution: resolution, holdingID: holding.id, flowID: flow.id)
         }
     }
 
-    private func settle() {
-        do {
-            try store.change { state in
-                guard let holdingIndex = state.holdings.firstIndex(where: { $0.id == holding.id }),
-                      let index = state.holdings[holdingIndex].cashFlows.firstIndex(where: { $0.id == flow.id && !$0.settled }) else {
-                    throw PrivateLedgerError.holdingChanged
+    private func formatted(_ date: Date) -> String { date.formatted(date: .abbreviated, time: .omitted) }
+
+    private struct ResolutionEditor: View {
+        @EnvironmentObject private var store: PrivateMarketsStore
+        @Environment(\.dismiss) private var dismiss
+        let resolution: Resolution
+        let holdingID: UUID
+        let flowID: UUID
+        @State private var date = Date.now
+        @State private var source = ""
+        @State private var error: String?
+
+        var body: some View {
+            NavigationStack {
+                Form {
+                    DatePicker(resolution.dateLabel, selection: $date, in: ...Date.now, displayedComponents: .date)
+                    TextField(resolution.sourceLabel, text: $source)
+                        .accessibilityIdentifier("private.capital.resolutionSource")
+                    if let error { Text(error).font(.footnote).foregroundStyle(.orange) }
                 }
-                state.holdings[holdingIndex].cashFlows[index].settled = true
-                state.holdings[holdingIndex].cashFlows[index].date = Calendar.current.startOfDay(for: paymentDate)
+                .navigationTitle(resolution.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save", action: save)
+                            .disabled(source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("private.capital.resolutionSave")
+                    }
+                }
             }
-            confirmPayment = false
-        } catch { self.error = "The payment record could not be saved." }
+        }
+
+        private func save() {
+            guard source.count <= 400 else {
+                error = "Use a source reference of 400 characters or fewer."
+                return
+            }
+            do {
+                try store.change { state in
+                    guard let holding = state.holdings.firstIndex(where: { $0.id == holdingID }),
+                          let call = state.holdings[holding].cashFlows.firstIndex(where: { $0.id == flowID }),
+                          state.holdings[holding].cashFlows[call].resolveCapitalCall(
+                              resolution.value, date: Calendar.current.startOfDay(for: date), source: source
+                          ) else { throw PrivateLedgerError.holdingChanged }
+                }
+                dismiss()
+            } catch PrivateLedgerError.holdingChanged {
+                error = "The call changed. Reopen it to review the current record."
+            } catch { self.error = "The record could not be saved." }
+        }
     }
 }

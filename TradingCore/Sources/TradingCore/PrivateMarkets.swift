@@ -12,6 +12,15 @@ public enum PrivateAssetClass: String, CaseIterable, Codable, Sendable {
 }
 
 public struct PrivateCashFlow: Codable, Sendable, Equatable {
+    public enum CapitalCallResolution: Sendable {
+        case paid, cancelled
+    }
+
+    public struct ResolutionEvidence: Codable, Sendable, Equatable {
+        public let date: Date
+        public let source: String
+    }
+
     public enum Kind: String, CaseIterable, Codable, Sendable {
         case contribution = "Contribution"
         case distribution = "Distribution"
@@ -30,6 +39,8 @@ public struct PrivateCashFlow: Codable, Sendable, Equatable {
     public var disposedCost: Decimal?
     public var disposedUnits: Decimal?
     public private(set) var closesManualPosition: Bool?
+    public private(set) var cancellation: ResolutionEvidence?
+    public private(set) var paymentEvidence: ResolutionEvidence?
     public var source: String
 
     public init(id: UUID = UUID(), kind: Kind, amount: Decimal, date: Date, settled: Bool, source: String,
@@ -44,6 +55,29 @@ public struct PrivateCashFlow: Codable, Sendable, Equatable {
         self.disposedUnits = kind == .sale ? disposedUnits : nil
         self.closesManualPosition = kind == .sale ? closesManualPosition : nil
         self.source = source
+    }
+
+    public func isPendingCapitalCall(asOf: Date = .now) -> Bool {
+        guard kind == .capitalCall else { return false }
+        if let cancellation, cancellation.date <= asOf { return false }
+        return !settled || paymentEvidence.map { $0.date > asOf } == true
+    }
+
+    public mutating func resolveCapitalCall(_ resolution: CapitalCallResolution, date: Date, source: String, asOf: Date = .now) -> Bool {
+        let reference = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard kind == .capitalCall, !settled, cancellation == nil, date <= asOf,
+              !reference.isEmpty, reference.count <= 400 else { return false }
+        originalDueDate = originalDueDate ?? self.date
+        let evidence = ResolutionEvidence(date: date, source: reference)
+        switch resolution {
+        case .paid:
+            self.date = date
+            settled = true
+            paymentEvidence = evidence
+        case .cancelled:
+            cancellation = evidence
+        }
+        return true
     }
 }
 
@@ -227,7 +261,7 @@ public struct PrivateHolding: Identifiable, Codable, Sendable, Equatable {
         }
         return PrivateMetrics(paid: paid, returned: returned,
                               uncalled: commitment.map { max(0, $0 - paid) },
-                              pendingCalls: cashFlows.filter { $0.kind == .capitalCall && !$0.settled }.reduce(0) { $0 + $1.amount },
+                              pendingCalls: cashFlows.filter { $0.isPendingCapitalCall(asOf: asOf) }.reduce(0) { $0 + $1.amount },
                               netGain: comparable ? value.map { $0 + returned - paid } : nil,
                               realizedGain: realized, unrealizedGain: unrealized, multiple: multiple, xirr: xirr,
                               dpi: assetClass.isFund && paid > 0 ? distributed / paid : nil)
@@ -422,8 +456,8 @@ extension PrivateMath {
                                            calendar: Calendar = .current) -> [PrivateCapitalCallReminder] {
         holdings.flatMap { holding in
             holding.cashFlows.compactMap { flow -> PrivateCapitalCallReminder? in
-                guard flow.kind == .capitalCall, !flow.settled,
-                      let due = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: flow.date),
+                guard flow.isPendingCapitalCall(asOf: now),
+                      let due = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: flow.originalDueDate ?? flow.date),
                       due > now else { return nil }
                 let earlier = calendar.date(byAdding: .day, value: -1, to: due) ?? due
                 return .init(holdingID: holding.id, callID: flow.id, date: earlier > now ? earlier : due)

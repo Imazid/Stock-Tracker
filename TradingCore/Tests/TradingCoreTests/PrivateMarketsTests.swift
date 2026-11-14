@@ -109,6 +109,35 @@ final class PrivateMarketsTests: XCTestCase {
         XCTAssertEqual(holding.metrics(asOf: mark).netGain, 500)
     }
 
+    func testManualCallResolutionPreservesNoticeAndUpdatesRemindersAndPerformance() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let recorded = Date(timeIntervalSince1970: 86_400)
+        let resolved = recorded.addingTimeInterval(86_400)
+        let due = resolved.addingTimeInterval(3 * 86_400)
+        let notice = PrivateCashFlow(kind: .capitalCall, amount: 500, date: due, settled: false, source: "Original notice")
+        var holding = PrivateHolding(name: "Fund", assetClass: .ventureFund, currency: "AUD", commitment: 2_000,
+                                     cashFlows: [notice, .init(kind: .capitalCall, amount: 250, date: due, settled: false, source: "Second notice")])
+        XCTAssertEqual(PrivateMath.capitalCallReminders(in: [holding], now: recorded, calendar: calendar).count, 2)
+        XCTAssertFalse(holding.cashFlows[0].resolveCapitalCall(.paid, date: due, source: "Future receipt", asOf: resolved))
+        XCTAssertFalse(holding.cashFlows[0].resolveCapitalCall(.cancelled, date: resolved, source: " ", asOf: resolved))
+        XCTAssertTrue(holding.cashFlows[0].resolveCapitalCall(.paid, date: resolved, source: "Receipt", asOf: resolved))
+        XCTAssertTrue(holding.cashFlows[1].resolveCapitalCall(.cancelled, date: resolved, source: "Rescinded notice", asOf: resolved))
+        XCTAssertFalse(holding.cashFlows[1].resolveCapitalCall(.paid, date: resolved, source: "Duplicate", asOf: resolved))
+        let saved = try JSONDecoder().decode(PrivateHolding.self, from: JSONEncoder().encode(holding))
+        XCTAssertEqual(saved.cashFlows[0].originalDueDate, due)
+        XCTAssertEqual(saved.cashFlows[0].source, notice.source)
+        XCTAssertEqual(saved.cashFlows[0].paymentEvidence?.source, "Receipt")
+        XCTAssertEqual(saved.cashFlows[1].originalDueDate, due)
+        XCTAssertEqual(saved.cashFlows[1].cancellation?.source, "Rescinded notice")
+        XCTAssertEqual(saved.metrics(asOf: recorded).pendingCalls, 750)
+        XCTAssertEqual(saved.metrics(asOf: resolved).pendingCalls, 0)
+        XCTAssertEqual(saved.metrics(asOf: resolved).paid, 500)
+        XCTAssertTrue(PrivateMath.capitalCallReminders(in: [saved], now: resolved, calendar: calendar).isEmpty)
+        let legacy = try JSONDecoder().decode(PrivateCashFlow.self, from: JSONEncoder().encode(notice))
+        XCTAssertTrue(legacy.isPendingCapitalCall(asOf: resolved))
+    }
+
     func testLaterCashFlowSuppressesRatiosAndUnknownValuationRemainsUnknown() {
         let earlier = Date(timeIntervalSince1970: 1)
         let later = earlier.addingTimeInterval(86_400)
