@@ -567,12 +567,18 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(difference.label.contains("pp"))
         XCTAssertTrue(app.buttons["ETF details"].exists || app.links["ETF details"].exists)
         attach("statement-period-benchmark")
+        app.navigationBars["Benchmark comparison"].buttons["Done"].tap()
+        let add = app.buttons["portfolio.returns.add"]
+        for _ in 0..<4 where !add.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(add.isHittable)
+        add.tap()
+        XCTAssertTrue(app.textFields["portfolio.returns.opening"].waitForExistence(timeout: 8))
 
         app.terminate()
         launch(hidden: true)
-        let hidden = app.staticTexts["Balances are hidden."]
-        for _ in 0..<6 where !hidden.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(hidden.isHittable)
+        let hidden = app.staticTexts["portfolio.returns.hidden"]
+        for _ in 0..<6 where !hidden.exists { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(hidden.exists, app.debugDescription)
         XCTAssertFalse(open.exists)
     }
 

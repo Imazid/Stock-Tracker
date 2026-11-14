@@ -116,6 +116,7 @@ struct PortfolioPerformanceLedger: View {
             }
             if valueHidden {
                 Text("Balances are hidden.").font(.footnote).foregroundStyle(theme.secondaryText)
+                    .accessibilityIdentifier("portfolio.returns.hidden")
             } else if let error {
                 Text(error).font(.footnote).foregroundStyle(theme.secondaryText)
                 Button("Retry") { Task { await load() } }.frame(minHeight: 44)
