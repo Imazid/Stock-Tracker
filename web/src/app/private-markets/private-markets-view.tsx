@@ -13,13 +13,14 @@ import { Segmented } from "@/components/ui/Segmented";
 import { supabaseConfigured } from "@/lib/env";
 import { useSession } from "@/lib/session";
 import { CompareRounds, DealCard, interpretedFilters } from "./catalog";
+import { DealRoom } from "./deal-room";
 import { Monitoring } from "./monitoring";
 import { availability, availabilityLabels, countryName, privateMarkets, type Discovery, type PrivateDeal } from "./private-data";
 import { Positions } from "./positions";
 import { ProviderApplication } from "./provider-application";
 import { Research } from "./research";
 
-type Tab = "catalogue" | "research" | "portfolio" | "updates";
+type Tab = "catalogue" | "research" | "deal-room" | "portfolio" | "updates";
 function SignIn({ view }: { view?: Tab }) {
   const destination = view && view !== "catalogue" ? `/private-markets?view=${view}` : "/private-markets";
   return <ButtonLink variant="primary" size="sm" href={`/login?next=${encodeURIComponent(destination)}`}>Sign in</ButtonLink>;
@@ -189,22 +190,24 @@ export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boole
       <PageHeader title="Private Markets" description="Explore published funding rounds, research private companies, and review provider-confirmed activity." />
       <Segmented<Tab> value={tab} onChange={(value) => { setOpenedReport(null); setTab(value); }} label="Private Markets sections"
         className="mb-4 max-w-full flex-wrap [&>button]:px-2 sm:[&>button]:px-2.5"
-        options={[{ value: "catalogue", label: "Discover" }, { value: "research", label: "AI Research" }, { value: "portfolio", label: "Portfolio & applications" }, { value: "updates", label: "Updates" }]} />
+        options={[{ value: "catalogue", label: "Discover" }, { value: "research", label: "AI Research" }, { value: "deal-room", label: "Deal Room" }, { value: "portfolio", label: "Portfolio & applications" }, { value: "updates", label: "Updates" }]} />
       {tab === "catalogue" && (!supabaseConfigured ? <Notice>Private Markets is unavailable in this deployment.</Notice>
         : catalogue.error ? <Notice tone="down">{catalogue.error.message} <Button size="sm" onClick={() => void catalogue.refetch()}>Retry</Button></Notice>
         : !catalogue.data ? <p className="text-sm text-text-2" role="status">Loading published rounds…</p>
         : <Discover key={owner ?? "public"} owner={owner} aiEnabled={aiEnabled} deals={catalogue.data.deals} asOf={catalogue.dataUpdatedAt}
           selected={selected} toggle={toggle} onResearch={() => setTab("research")} />)}
       {tab !== "catalogue" && (owner ? tab === "research"
-        ? <Research key={owner} owner={owner} selected={selected} aiEnabled={aiEnabled} asOf={catalogue.dataUpdatedAt}
+        ? <Research key={owner} owner={owner} selected={selected} aiEnabled={aiEnabled} asOf={catalogue.dataUpdatedAt} openDealRoom={() => setTab("deal-room")}
           initialReportID={openedReport?.owner === owner ? openedReport.id : undefined} />
+        : tab === "deal-room" ? <DealRoom key={owner} owner={owner} />
         : tab === "portfolio" ? <Positions key={owner} owner={owner} />
         : <Monitoring key={owner} owner={owner} deals={catalogue.data?.deals ?? []} catalogueLoading={catalogue.isLoading}
           catalogueError={catalogue.error} retryCatalogue={() => void catalogue.refetch()}
           onReport={(id) => { setOpenedReport({ owner, id }); setTab("research"); }} />
         : session.status === "loading" ? <p className="text-sm text-text-2" role="status">Checking account…</p>
         : <Card><EmptyState title={tab === "research" ? "Sign in for AI research and saved reports" :
-          tab === "updates" ? "Sign in to follow companies and see monitoring alerts" : "Sign in to see your private portfolio"}
+          tab === "updates" ? "Sign in to follow companies and see monitoring alerts" :
+          tab === "deal-room" ? "Sign in to open your Deal Room" : "Sign in to see your private portfolio"}
           actions={session.status === "signedOut" ? <SignIn view={tab} /> : undefined} /></Card>)}
     </div>
   );

@@ -40,6 +40,8 @@ export type Discovery = {
 };
 
 export type SavedReport = { id: string; title: string; created_at: string };
+export type SavedExcerpt = { id: string; title: string; created_at: string };
+export type ResearchCapabilities = { document_provider: "openai" | "gemini" | null };
 export type ResearchRun = { id: string; status: "running" | "complete" | "failed"; created_at: string; failure_message: string | null };
 export type Finding = {
   title: string; analysis: string; confidence: string; evidence: { source: string; quote: string }[];
@@ -97,6 +99,7 @@ export type MonitorAlert = {
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
   "reports" | "report" | "confirmed_holdings" | "applications" | "allocation" | "updates" |
   "profile" | "save_profile" | "handoff_check" | "handoff" |
+  "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 
 export async function privateMarkets<T>(

@@ -18,6 +18,7 @@ const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
   "profile", "save_profile", "applications", "confirmed_holdings",
+  "documents", "document", "save_document", "delete_document", "research_capabilities",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -129,6 +130,12 @@ function financialFacts(record: CompanyFinancials): ReportFact[] {
 
 const context = (kind: string, userId: string, id: string) => `private_${kind}:${userId}:${id}`;
 const keys = () => parseKeyring(Deno.env.get("CREDENTIAL_KEKS"), Deno.env.get("CREDENTIAL_ACTIVE_KEK"));
+
+function approvedDocumentProvider() {
+  const provider = Deno.env.get("PRIVATE_MARKETS_DOCUMENT_AI_PROVIDER");
+  if (Deno.env.get("PRIVATE_MARKETS_DOCUMENT_AI_ENABLED") === "true" &&
+    (provider === "openai" || provider === "gemini")) return provider;
+}
 const fail = (status: number, code: string, message: string) => { throw new ResearchError(status, code, message); };
 const researchStatusFields = "id,status,created_at,failure_code,failure_message";
 const researchTimeoutMs = 180_000;
@@ -463,7 +470,8 @@ Deno.serve(async (req) => {
     }
     const userId = await authenticatedUserId(req, admin);
     if (!userId) return errorResponse(401, "UNAUTHENTICATED", "Sign in first.");
-    if (typeof body.action === "string" && activeSessionActions.has(body.action)) {
+    const documentResearch = body.action === "research" && Array.isArray(body.document_ids) && body.document_ids.length > 0;
+    if ((typeof body.action === "string" && activeSessionActions.has(body.action)) || documentResearch) {
       const session = sessionId(req);
       if (!session) return errorResponse(401, "UNAUTHENTICATED", "Sign in to view your account records.");
       const { data: active, error } = await admin.rpc("account_deletion_session_active", { p_user: userId, p_session: session });
@@ -738,6 +746,8 @@ Deno.serve(async (req) => {
         }
         return jsonResponse(200, checking ? { ready: data === true } : data);
       }
+      case "research_capabilities":
+        return jsonResponse(200, { document_provider: approvedDocumentProvider() ?? null });
       case "save_document": {
         const { title, excerpt } = body;
         if (typeof title !== "string" || !title.trim() || title.length > 160 ||
@@ -824,11 +834,12 @@ Deno.serve(async (req) => {
         if (previousId !== undefined && (typeof previousId !== "string" || !uuid.test(previousId))) {
           return errorResponse(400, "INVALID_RESEARCH", "Invalid previous research report.");
         }
-        const documentProvider = Deno.env.get("PRIVATE_MARKETS_DOCUMENT_AI_PROVIDER");
-        const approvedProvider = documentProvider === "gemini" || documentProvider === "openai";
-        if (ids.length && (body.ai_consent !== true || Deno.env.get("PRIVATE_MARKETS_DOCUMENT_AI_ENABLED") !== "true" ||
-          !approvedProvider)) {
+        const documentProvider = approvedDocumentProvider();
+        if (ids.length && (body.ai_consent !== true || !documentProvider)) {
           return errorResponse(403, "DOCUMENT_AI_DISABLED", "Document analysis requires consent and an approved AI processing configuration.");
+        }
+        if (ids.length && body.document_provider !== undefined && body.document_provider !== documentProvider) {
+          return errorResponse(409, "DOCUMENT_AI_PROVIDER_CHANGED", "The approved AI provider changed. Review the excerpt permissions again.");
         }
         const keyring = await keys();
         const evidence: Evidence[] = [];
@@ -931,7 +942,7 @@ Deno.serve(async (req) => {
         const research = async () => {
           try {
             await audit(ids.length ? "document_ai_consent" : "public_research_started", runId);
-            const deps = aiDependencies(admin, ids.length && approvedProvider ? documentProvider : undefined);
+            const deps = aiDependencies(admin, ids.length ? documentProvider : undefined);
             if (mode === "committee") deps.config.timeoutMs = 22_000;
             const researchQuestion = typeof previousId === "string" ?
               `${question.trim()}\nFor this update, distinguish published changes from new disclosures. Cite the comparison source when it supports a change. State when the evidence does not establish what changed.` : question;

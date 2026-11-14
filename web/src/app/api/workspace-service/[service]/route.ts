@@ -14,6 +14,7 @@ const privateMarketActions = new Set([
   "catalog", "discover", "research", "research_status", "research_runs", "reports", "report",
   "confirmed_holdings", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
   "profile", "save_profile", "handoff_check", "handoff",
+  "documents", "document", "save_document", "delete_document", "research_capabilities",
 ]);
 
 function failure(message: string, status: number) {
@@ -49,10 +50,16 @@ export async function POST(request: Request, context: {params: Promise<{service:
     return failure("Sign in to continue.", 401);
   }
   if (service === "private-markets") {
-    const { action, currency } = parsed as { action: string; currency?: unknown };
+    const { action, currency, document_ids, document_provider } = parsed as {
+      action: string; currency?: unknown; document_ids?: unknown; document_provider?: unknown;
+    };
     if ((action === "handoff" || action === "handoff_check") &&
       (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency))) {
       return failure("Review the current offer currency before continuing.", 400);
+    }
+    if (action === "research" && Array.isArray(document_ids) && document_ids.length > 0 &&
+      document_provider !== "openai" && document_provider !== "gemini") {
+      return failure("Review the approved provider before sharing excerpts.", 400);
     }
   }
   if (service === "trading") {

@@ -10,7 +10,8 @@ import { Field } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { Segmented } from "@/components/ui/Segmented";
 import { CompareRounds, SourceLink } from "./catalog";
-import { dateLabel, privateMarkets, type Finding, type PrivateDeal, type Report, type ResearchRun, type SavedReport } from "./private-data";
+import { dealRoomExcerpts } from "./deal-room";
+import { dateLabel, privateMarkets, type Finding, type PrivateDeal, type Report, type ResearchCapabilities, type ResearchRun, type SavedReport } from "./private-data";
 
 type Mode = "question" | "committee";
 const reportKey = (owner: string) => ["private-markets", owner, "reports"];
@@ -85,15 +86,32 @@ function ReportView({ report }: { report: Report }) {
   );
 }
 
-export function Research({ owner, aiEnabled, selected, asOf, initialReportID }: {
-  owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number; initialReportID?: string;
+export function Research({ owner, aiEnabled, selected, asOf, initialReportID, openDealRoom }: {
+  owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number; initialReportID?: string; openDealRoom: () => void;
 }) {
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState<Mode>("question");
   const [consent, setConsent] = useState(false);
+  const [excerptConsentProvider, setExcerptConsentProvider] = useState<ResearchCapabilities["document_provider"]>(null);
+  const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([]);
   const [reportID, setReportID] = useState<string | null>(initialReportID ?? null);
   const [runID, setRunID] = useState<string | null>(null);
   const cache = useQueryClient();
+  const capabilities = useQuery({
+    queryKey: ["private-markets", owner, "research-capabilities"], enabled: aiEnabled, gcTime: 0, retry: false,
+    queryFn: ({ signal }) => privateMarkets<ResearchCapabilities>("research_capabilities", { owner, signal }),
+  });
+  const documentProvider = capabilities.data?.document_provider;
+  const excerptConsent = Boolean(documentProvider && excerptConsentProvider === documentProvider);
+  const providerLabel = documentProvider === "openai" ? "OpenAI" : "Google Gemini";
+  const excerpts = useQuery({ ...dealRoomExcerpts(owner), enabled: Boolean(documentProvider) });
+  const sourcesValid = selected.length + selectedExcerpts.length > 0 && selected.length + selectedExcerpts.length <= 3 &&
+    (!selectedExcerpts.length || (Boolean(documentProvider) &&
+      selectedExcerpts.every((id) => excerpts.data?.items.some((item) => item.id === id))));
+  function resetConsent() {
+    setConsent(false);
+    setExcerptConsentProvider(null);
+  }
 
   const saved = useQuery({
     queryKey: reportKey(owner), gcTime: 0, retry: false,
@@ -123,9 +141,13 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID }: 
     }
   }, [cache, finished, owner]);
   const submit = useMutation({
-    mutationFn: ({ prompt, kind, sourceIDs }: { prompt: string; kind: Mode; sourceIDs: string[] }) =>
+    mutationFn: ({ prompt, kind, sourceIDs, documentIDs, documentPermission, provider }: {
+      prompt: string; kind: Mode; sourceIDs: string[]; documentIDs: string[]; documentPermission: boolean;
+      provider?: ResearchCapabilities["document_provider"];
+    }) =>
       privateMarkets<Report | { id: string; status: "running" }>("research", {
-        owner, question: prompt, mode: kind, opportunity_ids: sourceIDs, document_ids: [], model_consent: true, background: kind === "committee",
+        owner, question: prompt, mode: kind, opportunity_ids: sourceIDs, document_ids: documentIDs, model_consent: true,
+        ai_consent: documentPermission, document_provider: documentIDs.length ? provider : undefined, background: kind === "committee",
       }),
     onSuccess: (result) => {
       if ("findings" in result) {
@@ -142,36 +164,72 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID }: 
   const busy = submit.isPending || running;
   const reportBusy = Boolean(shownID && shownReport.isPending);
   const pendingRuns = runs.data?.runs.filter((item) => item.id !== runID) ?? [];
+  const canSubmit = aiEnabled && sourcesValid && !busy && consent && Boolean(question.trim()) &&
+    (!selectedExcerpts.length || excerptConsent);
 
   return (
     <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.44fr)]">
       <div className="min-w-0 space-y-4">
         <Card>
-          <CardHeader title="AI Investment Research" subtitle="Ask about one to three published funding rounds." />
+          <CardHeader title="AI Investment Research" subtitle="Choose up to three sources for your question." />
           <form className="space-y-4 border-t border-border p-4" onSubmit={(event) => {
             event.preventDefault();
-            if (!aiEnabled || !consent || busy || !question.trim() || !selected.length) return;
-            setConsent(false);
+            if (!canSubmit) return;
+            resetConsent();
             setReportID(null);
             setRunID(null);
-            submit.mutate({ prompt: question.trim(), kind: mode, sourceIDs: selected.map(({ id }) => id) });
+            submit.mutate({ prompt: question.trim(), kind: mode, sourceIDs: selected.map(({ id }) => id),
+              documentIDs: selectedExcerpts, documentPermission: excerptConsent, provider: documentProvider });
           }}>
             {selected.length ? <CompareRounds deals={selected} asOf={asOf} />
-              : <p className="text-sm text-text-2">Select up to three rounds in Discover to start a report.</p>}
+              : <p className="text-sm text-text-2">Select published rounds in Discover.</p>}
             {!aiEnabled && <Notice>New AI research is unavailable in this deployment. Saved reports are still available.</Notice>}
+            {aiEnabled && <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-medium text-text">Deal Room excerpts</p>
+                <Button type="button" size="sm" onClick={openDealRoom}>Open Deal Room</Button>
+              </div>
+              {capabilities.isPending && <p className="text-xs text-text-2" role="status">Checking private excerpt availability…</p>}
+              {capabilities.error && <Notice tone="warn">Private excerpt availability could not be checked. <Button type="button" size="sm" onClick={() => void capabilities.refetch()}>Retry</Button></Notice>}
+              {capabilities.data && !documentProvider && <p className="text-xs text-text-2">AI analysis of private excerpts is unavailable.</p>}
+              {selectedExcerpts.length > 0 && !sourcesValid &&
+                <p className="text-xs text-text-2">A selected excerpt is unavailable. <Button type="button" size="sm" onClick={() => { setSelectedExcerpts([]); resetConsent(); }}>Clear excerpt selection</Button></p>}
+              {documentProvider && <>
+                {excerpts.error && <Notice tone="warn">{excerpts.error.message} <Button type="button" size="sm" onClick={() => void excerpts.refetch()}>Retry</Button></Notice>}
+                {excerpts.data?.items.length === 0 && <p className="text-xs text-text-2">Save an authorized excerpt in Deal Room to use it here.</p>}
+                {excerpts.data?.items.map((item) => {
+                  const checked = selectedExcerpts.includes(item.id);
+                  return <label key={item.id} className="flex items-start gap-2 text-[13px] text-text-2">
+                    <input type="checkbox" className="mt-0.5" checked={checked}
+                      disabled={busy || (!checked && selected.length + selectedExcerpts.length >= 3)} onChange={() => {
+                        setSelectedExcerpts(checked ? selectedExcerpts.filter((id) => id !== item.id) : [...selectedExcerpts, item.id]);
+                        resetConsent();
+                      }} />
+                    <span className="min-w-0 break-words">{item.title}</span>
+                  </label>;
+                })}
+                {selectedExcerpts.length > 0 && <label className="flex items-start gap-2 text-[13px] text-text-2">
+                    <input type="checkbox" className="mt-0.5" checked={excerptConsent} disabled={busy}
+                      onChange={(event) => setExcerptConsentProvider(event.target.checked ? documentProvider : null)} />
+                    <span>I have permission to share the selected private excerpts with {providerLabel} for this request.</span>
+                </label>}
+              </>}
+            </div>}
             <Field label="Research question" htmlFor="private-question">
               <textarea id="private-question" rows={3} maxLength={1_000} required disabled={!aiEnabled || busy}
-                value={question} onChange={(event) => { setQuestion(event.target.value); setConsent(false); }}
+                value={question} onChange={(event) => { setQuestion(event.target.value); resetConsent(); }}
                 className="w-full rounded-lg border border-border bg-surface-2 p-3 text-sm text-text disabled:opacity-60" />
             </Field>
-            <Segmented<Mode> label="Research mode" value={mode} onChange={(value) => { setMode(value); setConsent(false); }}
+            <Segmented<Mode> label="Research mode" value={mode} onChange={(value) => { setMode(value); resetConsent(); }}
               options={[{ value: "question", label: "Question", disabled: busy }, { value: "committee", label: "Investment Committee", disabled: busy }]} />
             <label className="flex items-start gap-2 text-[13px] text-text-2">
               <input type="checkbox" className="mt-0.5" checked={consent} disabled={!aiEnabled || busy}
                 onChange={(event) => setConsent(event.target.checked)} />
-              <span>Allow Stock Tracker to send this question and the selected published sources to its AI provider.</span>
+              <span>{selectedExcerpts.length
+                ? "Allow Stock Tracker to send this question and the selected sources to its AI provider."
+                : "Allow Stock Tracker to send this question and the selected published sources to its AI provider."}</span>
             </label>
-            <Button type="submit" variant="primary" disabled={!aiEnabled || !consent || !question.trim() || !selected.length || busy}>
+            <Button type="submit" variant="primary" disabled={!canSubmit}>
               {submit.isPending ? "Submitting…" : mode === "committee" ? "Run committee" : "Run research"}
             </Button>
           </form>
