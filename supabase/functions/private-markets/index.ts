@@ -300,16 +300,20 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
     if (result.error) throw result.error;
     return result.data === true;
   }));
+  const failureCodes = new Set<string>();
   for (const result of results) {
     if (result.status === "rejected") {
-      const reason = result.reason;
-      console.error("private scheduled research failed", reason instanceof ResearchError ? reason.code : reason?.code ?? "UNKNOWN");
+      const code = result.reason?.code;
+      const safeCode = typeof code === "string" && /^[A-Z0-9_]{1,48}$/.test(code) ? code : "UNKNOWN";
+      failureCodes.add(safeCode);
+      console.error("private scheduled research failed", safeCode);
     }
   }
   return jsonResponse(200, {
     claimed: jobs.length,
     saved: results.filter((result) => result.status === "fulfilled" && result.value).length,
     failed: results.filter((result) => result.status === "rejected").length,
+    ...(failureCodes.size > 0 ? { failure_codes: [...failureCodes] } : {}),
   });
 }
 
