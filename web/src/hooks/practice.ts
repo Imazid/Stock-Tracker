@@ -4,14 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 import type { TradingState } from "@engine/state.ts";
 import { useSession } from "@/lib/session";
 
-export async function practiceCall<T>(action: string, fields: Record<string, unknown> = {}, key?: string): Promise<T> {
+export class PracticeError extends Error {
+  constructor(message: string, readonly code?: string) { super(message); }
+}
+
+export async function practiceCall<T>(action: string, fields: Record<string, unknown> = {}, key?: string, owner?: string): Promise<T> {
   const response = await fetch("/api/practice", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(key ? { "Idempotency-Key": key } : {}) },
+    headers: { "Content-Type": "application/json", ...(key ? { "Idempotency-Key": key } : {}), ...(owner ? { "X-Stock-Tracker-Account": owner } : {}) },
     body: JSON.stringify({ action, ...fields }),
   });
   const reply = await response.json();
-  if (!response.ok || reply.ok !== true) throw new Error(reply.error?.message ?? "Practice trading is unavailable.");
+  if (!response.ok || reply.ok !== true) throw new PracticeError(reply.error?.message ?? "Practice trading is unavailable.", reply.error?.code);
   return reply.data as T;
 }
 

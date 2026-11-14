@@ -954,6 +954,7 @@ struct OnboardingDoneStep: View {
     @EnvironmentObject private var supabaseAuth: SupabaseAuthManager
     @Environment(\.onboardingFinish) private var finish
     @State private var appeared = false
+    @State private var showPracticeLimits = false
 
     /// Already signed in (e.g. a saved session after reinstalling) skips the account
     /// step, so there's no label from it — it still backs up, so don't say "This iPhone only".
@@ -964,60 +965,77 @@ struct OnboardingDoneStep: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Space.xl) {
-            Spacer(minLength: DS.Space.xl)
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.xl) {
+                Color.clear.frame(height: DS.Space.xl).accessibilityHidden(true)
 
-            CelebrationCheck(trigger: appeared, size: 64, foreground: .black, background: .white)
+                CelebrationCheck(trigger: appeared, size: 64, foreground: .black, background: .white)
 
-            VStack(alignment: .leading, spacing: DS.Space.m) {
-                Text("You're all set")
-                    .font(DS.display(.largeTitle))
-                    .foregroundStyle(.white)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Here's what we set up. Everything can be changed later.")
-                    .foregroundStyle(.white.opacity(0.64))
-            }
+                VStack(alignment: .leading, spacing: DS.Space.m) {
+                    Text("You're all set")
+                        .font(DS.display(.largeTitle))
+                        .foregroundStyle(.white)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("Here's what we set up. Everything can be changed later.")
+                        .foregroundStyle(.white.opacity(0.64))
+                }
 
-            VStack(spacing: 0) {
-                OnboardingSummaryRow(icon: "star", title: "Watchlist",
-                           value: viewModel.picks.isEmpty ? "Add from Search any time" : "\(viewModel.picks.count) to follow") {
-                    if !viewModel.picks.isEmpty {
-                        HStack(spacing: -8) {
-                            ForEach(viewModel.picks.prefix(4)) { pick in
-                                TickerLogo(symbol: pick.symbol, kind: pick.kind, exchange: pick.exchange, size: 24)
-                                    .overlay(Circle().strokeBorder(Color.black, lineWidth: 1.5))
+                VStack(spacing: 0) {
+                    OnboardingSummaryRow(icon: "star", title: "Watchlist",
+                               value: viewModel.picks.isEmpty ? "Add from Search any time" : "\(viewModel.picks.count) to follow") {
+                        if !viewModel.picks.isEmpty {
+                            HStack(spacing: -8) {
+                                ForEach(viewModel.picks.prefix(4)) { pick in
+                                    TickerLogo(symbol: pick.symbol, kind: pick.kind, exchange: pick.exchange, size: 24)
+                                        .overlay(Circle().strokeBorder(Color.black, lineWidth: 1.5))
+                                }
                             }
                         }
                     }
+                    .staggeredAppear(1)
+                    OnboardingSummaryRow(icon: "briefcase", title: "Portfolio",
+                               value: marketData.portfolio.isEmpty ? "Not added yet" : "\(marketData.portfolio.count) holdings") { EmptyView() }
+                        .staggeredAppear(2)
+                    OnboardingSummaryRow(icon: "bell", title: "Alerts",
+                               value: viewModel.notificationsEnabled == true ? "On" : "Off") { EmptyView() }
+                        .staggeredAppear(3)
+                    if viewModel.biometricsAvailable {
+                        OnboardingSummaryRow(icon: viewModel.biometryType == .touchID ? "touchid" : "faceid", title: LocalizedStringKey(viewModel.biometryName),
+                                   value: viewModel.biometricsEnabled == true ? "On" : "Off") { EmptyView() }
+                            .staggeredAppear(4)
+                    }
+                    OnboardingSummaryRow(icon: "icloud", title: "Backup & sync",
+                               value: backupLabel, showsDivider: false) { EmptyView() }
+                        .staggeredAppear(5)
                 }
-                .staggeredAppear(1)
-                OnboardingSummaryRow(icon: "briefcase", title: "Portfolio",
-                           value: marketData.portfolio.isEmpty ? "Not added yet" : "\(marketData.portfolio.count) holdings") { EmptyView() }
-                    .staggeredAppear(2)
-                OnboardingSummaryRow(icon: "bell", title: "Alerts",
-                           value: viewModel.notificationsEnabled == true ? "On" : "Off") { EmptyView() }
-                    .staggeredAppear(3)
-                if viewModel.biometricsAvailable {
-                    OnboardingSummaryRow(icon: viewModel.biometryType == .touchID ? "touchid" : "faceid", title: LocalizedStringKey(viewModel.biometryName),
-                               value: viewModel.biometricsEnabled == true ? "On" : "Off") { EmptyView() }
-                        .staggeredAppear(4)
+                .background(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous).fill(Color.white.opacity(0.05)))
+
+                if supabaseAuth.isSignedIn, supabaseAuth.userId != nil {
+                    Button("Set account practice limits") { showPracticeLimits = true }
+                        .buttonStyle(SecondaryPillButtonStyle())
+                        .accessibilityIdentifier("onboarding.practiceLimits")
                 }
-                OnboardingSummaryRow(icon: "icloud", title: "Backup & sync",
-                           value: backupLabel, showsDivider: false) { EmptyView() }
-                    .staggeredAppear(5)
+                Button("Go to my dashboard") { finish() }
+                    .buttonStyle(PrimaryPillButtonStyle())
+                    .accessibilityIdentifier("onboarding.finish")
+                    .padding(.bottom, DS.Space.s)
             }
-            .background(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous).fill(Color.white.opacity(0.05)))
-
-            Spacer()
-
-            Button("Go to my dashboard") { finish() }
-                .buttonStyle(PrimaryPillButtonStyle())
-                .accessibilityIdentifier("onboarding.finish")
-                .padding(.bottom, DS.Space.s)
+            .padding(.horizontal, DS.Space.gutter)
         }
-        .padding(.horizontal, DS.Space.gutter)
+        .scrollBounceBehavior(.basedOnSize)
         // Bursts from the check badge.
         .overlay { ConfettiBurst(trigger: appeared ? 1 : 0, origin: UnitPoint(x: 0.14, y: 0.3)).ignoresSafeArea() }
+        .sheet(isPresented: $showPracticeLimits) {
+            if let owner = supabaseAuth.userId {
+                NavigationStack {
+                    AccountPracticeLimitsScreen(owner: owner)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) { Button("Done") { showPracticeLimits = false } }
+                        }
+                }
+            }
+        }
+        .onChange(of: supabaseAuth.userId) { showPracticeLimits = false }
         .onAppear {
             Haptics.success()
             appeared = true

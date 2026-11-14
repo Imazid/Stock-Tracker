@@ -39,6 +39,7 @@ import {
   type OrderSource, type OrderStatus, orderStatusDisplayName, orderTypeDisplayName, remainingQuantity, transition,
 } from "./orders.ts";
 import {
+  accountLimitIssues, accountLimits, type AccountLimits,
   type AgentRiskView, evaluate as evaluateRisk, intentNotional, isApproved, makePolicy, type OrderIntent, policyIssues,
   quantityText, reportFailures, reportSummary, reportWarnings, type RiskContext, type RiskPolicy, type RiskReport, riskCheckTitle,
 } from "./risk.ts";
@@ -496,6 +497,22 @@ export class TradingEngine {
     policy.killSwitchEngaged = false;
     delete policy.killSwitchAt;
     this.audit({ time: now, actor: "user", kind: "killSwitchReleased", summary: "Kill switch turned off. Agents stay paused until you resume them." });
+  }
+
+  updateAccountLimits(limits: AccountLimits, now: number): void {
+    const issues = accountLimitIssues(limits);
+    if (issues.length) throw TradingError.invalid(issues);
+    const previous = accountLimits(this.state.accountPolicy);
+    if (deepEqual(previous, limits)) return;
+    const change = (old: number, next: number) => `${swiftDouble(old)} → ${swiftDouble(next)}`;
+    Object.assign(this.state.accountPolicy, limits);
+    this.audit({
+      time: now, actor: "user", kind: "riskPolicyChanged", summary: "Account practice limits changed.",
+      details: {
+        maxSymbolExposurePct: change(previous.maxSymbolExposurePct, limits.maxSymbolExposurePct),
+        maxTotalDailyNotional: change(previous.maxTotalDailyNotional, limits.maxTotalDailyNotional),
+      },
+    });
   }
 
   // MARK: - Orders

@@ -975,6 +975,42 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(left["period"] as? Int, 15)
     }
 
+    func testOnboardingSavesPracticeLimitsToAccount() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_PRACTICE_LIMITS"] == "1",
+                          "Start the signed-in practice limits relay")
+        let email = "practice-limits-ui-\(UUID().uuidString.lowercased())@example.com"
+        let created = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(created.status, 200)
+        let token = try signIn(email: email)
+        app.launchArguments = ["-UITestFreshInstall", "-OnboardingStep", "done", "-hasCompletedOnboarding", "NO",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark"]
+        app.launch()
+        let configure = app.buttons["onboarding.practiceLimits"]
+        XCTAssertTrue(configure.waitForExistence(timeout: 20))
+        if !configure.isHittable { app.swipeUp() }
+        configure.tap()
+        let exposure = app.textFields["practiceLimits.exposure"]
+        XCTAssertTrue(exposure.waitForExistence(timeout: 15))
+        exposure.tap()
+        let original = try XCTUnwrap(exposure.value as? String)
+        exposure.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: original.count) + "12")
+        let done = app.buttons["practiceLimits.keyboardDone"]
+        if done.exists { done.tap() }
+        app.buttons["practiceLimits.save"].tap()
+        XCTAssertTrue(app.staticTexts["practiceLimits.saved"].waitForExistence(timeout: 15))
+        let result = try request("POST", "/functions/v1/trading-api",
+            body: JSONSerialization.data(withJSONObject: ["action": "accountLimits"]), token: token)
+        XCTAssertEqual(result.status, 200)
+        let response = try XCTUnwrap(try JSONSerialization.jsonObject(with: result.data) as? [String: Any])
+        let data = try XCTUnwrap(response["data"] as? [String: Any])
+        let limits = try XCTUnwrap(data["limits"] as? [String: Any])
+        XCTAssertEqual(limits["maxSymbolExposurePct"] as? Int, 12)
+        XCTAssertEqual(limits["maxTotalDailyNotional"] as? Int, 250_000)
+    }
+
     func testExplicitRSIStrategyEditsBacktestsAndStartsPaperAgent() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STRATEGY_STUDIO"] == "1",
                           "Start the signed-in strategy relay with historical market data")

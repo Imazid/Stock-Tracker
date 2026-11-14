@@ -132,6 +132,23 @@ export function defaultAccountPolicy(): AccountPolicy {
   return { killSwitchEngaged: false, maxSymbolExposurePct: 35, maxTotalDailyNotional: 250_000, live: liveDisabled(), allowFixtureData: false };
 }
 
+export type AccountLimits = Pick<AccountPolicy, "maxSymbolExposurePct" | "maxTotalDailyNotional">;
+
+export function accountLimits(policy: AccountPolicy = defaultAccountPolicy()): AccountLimits {
+  return { maxSymbolExposurePct: policy.maxSymbolExposurePct, maxTotalDailyNotional: policy.maxTotalDailyNotional };
+}
+
+export function accountLimitIssues(limits: AccountLimits): string[] {
+  const issues: string[] = [];
+  if (!Number.isFinite(limits.maxSymbolExposurePct) || limits.maxSymbolExposurePct <= 0 || limits.maxSymbolExposurePct > 100) {
+    issues.push("Single-asset exposure must be greater than 0% and at most 100%.");
+  }
+  if (!Number.isFinite(limits.maxTotalDailyNotional) || limits.maxTotalDailyNotional <= 0) {
+    issues.push("The daily agent buy limit must be greater than zero.");
+  }
+  return issues;
+}
+
 // MARK: - Report
 
 export type RiskCheckID =

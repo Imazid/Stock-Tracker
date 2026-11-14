@@ -50,6 +50,17 @@ struct SettingsSheetView: View {
                 Section { planRow }
 
                 preferencesSection
+                if supabaseAuthManager.isSignedIn, let owner = supabaseAuthManager.userId {
+                    Section {
+                        NavigationLink {
+                            AccountPracticeLimitsScreen(owner: owner)
+                        } label: {
+                            rowLabel("Account practice limits", icon: "shield")
+                        }
+                        .accessibilityIdentifier("settings.practiceLimits")
+                    }
+                    .id(owner)
+                }
                 notificationsSection
                 dataSection
                 securitySection
