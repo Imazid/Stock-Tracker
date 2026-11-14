@@ -5,6 +5,10 @@ import bundledFilings from "../../../../Stock Tracker/IssuerFilings.json" with {
 // Xcode also includes this dated SEC filing catalog as a bundle resource.
 const issuerFilings: Readonly<Record<string, IssuerClassification>> = bundledFilings;
 
+export function bundledIssuerFiling(id: string): IssuerClassification | undefined {
+  return Object.hasOwn(issuerFilings, id) ? issuerFilings[id] : undefined;
+}
+
 // The US SIC divisions are based on the OSHA SIC Manual. Special-purpose investment
 // vehicles have no operating sector. Preserve that distinction for exposure weights.
 const sicDivisions = [
@@ -52,7 +56,8 @@ export async function issuerClassifications(ids: readonly string[], deps = {
   const issuers: Record<string, IssuerClassification> = {};
   const missing: string[] = [];
   for (const id of new Set(ids)) {
-    if (Object.hasOwn(issuerFilings, id)) issuers[id] = issuerFilings[id];
+    const bundled = bundledIssuerFiling(id);
+    if (bundled) issuers[id] = bundled;
     else if (id.startsWith("us:")) missing.push(id);
   }
 

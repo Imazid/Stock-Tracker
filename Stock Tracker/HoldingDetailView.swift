@@ -11,6 +11,7 @@
 //
 
 import SwiftUI
+import TradingCore
 
 struct HoldingDetailView: View {
     let holdingID: UUID
@@ -31,6 +32,7 @@ struct HoldingDetailView: View {
     @State private var txSheet: TransactionSheetItem?
     @State private var confirmRemove = false
     @State private var stockPage: Asset?
+    @State private var researchListing: Instrument?
     @State private var alertText: String?
     @State private var insightText: String?
     @State private var insightLoading = false
@@ -77,6 +79,9 @@ struct HoldingDetailView: View {
                 TransactionFormSheet(holding: holding, editing: item.transaction)
             }
         }
+        .sheet(item: $researchListing) { listing in
+            CompanyResearchView(instrument: listing)
+        }
         .sheet(item: $stockPage) { asset in
             AppleStocksDetailView(stock: detailedStock(from: asset), asset: asset, position: nil)
         }
@@ -106,6 +111,13 @@ struct HoldingDetailView: View {
             header(h).portfolioRow(top: DS.Space.m, bottom: DS.Space.m)
             chartBlock(h).portfolioRow(bottom: DS.Space.l)
             positionCard(h).portfolioRow(bottom: DS.Space.l)
+            if let listing = CompanyResearchView.listing(for: h.asset) {
+                Button { researchListing = listing } label: {
+                    Label("Company research", systemImage: "doc.text.magnifyingglass")
+                }
+                .accessibilityIdentifier("holding.companyResearch")
+                .portfolioRow(bottom: DS.Space.l)
+            }
 
             transactionsHeader(h).portfolioRow(bottom: DS.Space.xs)
             if h.transactions.isEmpty {
