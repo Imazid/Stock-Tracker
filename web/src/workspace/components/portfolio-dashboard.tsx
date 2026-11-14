@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { HoldingsCard } from "@/components/portfolio/holdings-card";
 import { usePortfolioBrokerage } from "@/hooks/portfolio-brokerage";
 import { usePortfolioGains, usePortfolioRates } from "@/hooks/portfolio-metrics";
 import { usePortfolioPositions } from "@/hooks/portfolio-positions";
@@ -9,6 +10,7 @@ import { dateTime, money, percent, signedMoney } from "@/lib/format";
 import { portfolioAccountValue } from "@/lib/portfolio-account-value";
 import { portfolioExposure, type ExposureCurrency } from "@/lib/portfolio-exposure";
 import { unrealisedGains } from "@/lib/portfolio-gains";
+import { holdingComparison } from "@/lib/portfolio-holdings";
 import { portfolioMovement } from "@/lib/portfolio-movement";
 import { PortfolioHistory } from "./portfolio-history";
 
@@ -18,12 +20,12 @@ function Metric({ title, value, detail }: { title: string; value: ReactNode; det
 
 const balanceText = (amount: string | null | undefined, currency: string) => amount == null ? "Unavailable" : money(Number(amount), currency);
 
-export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals, openAgents, aiEnabled, openConnections }: {
-  userId: string; brokerageEnabled: boolean; pendingApprovals?: number; openAgents: () => void; aiEnabled: boolean; openConnections: () => void;
+export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals, openAgents, aiEnabled, logosEnabled, openConnections }: {
+  userId: string; brokerageEnabled: boolean; pendingApprovals?: number; openAgents: () => void; aiEnabled: boolean; logosEnabled: boolean; openConnections: () => void;
 }) {
   const [base, setBase] = useState<ExposureCurrency>("USD");
   const [showAccounts, setShowAccounts] = useState(false);
-  const { portfolio, holdings, pricedListings, quotes, loadingPrices } = usePortfolioPositions(userId);
+  const { portfolio, holdings, pricedListings, quotes, pendingQuotes, loadingPrices } = usePortfolioPositions(userId);
   const gains = usePortfolioGains(userId);
   const brokerage = usePortfolioBrokerage(userId, brokerageEnabled && showAccounts);
   const accounts = brokerage.data?.accounts ?? [];
@@ -34,6 +36,7 @@ export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals,
   const movement = portfolioMovement(pricedListings, (id) => quoteFor(id)?.quote);
   const realised = gains.data?.realisedUsd;
   const unrealised = gains.data && unrealisedGains(holdings, gains.data.open, (id) => quoteFor(id)?.quote, rates.data);
+  const comparison = holdingComparison(holdings, quoteFor, rates.data, unrealised?.byHolding);
   const reported = portfolioAccountValue(accounts, base, rates.data);
   const coverage = `${exposure.priced} of ${holdings.length} ${portfolio.data?.truncated ? "displayed " : ""}holdings valued`;
   const biggest = movement.contributions[0];
@@ -112,5 +115,7 @@ export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals,
         {pendingApprovals !== undefined && pendingApprovals > 0 && <button type="button" className="button secondary small" onClick={openAgents}>Review {pendingApprovals} pending {pendingApprovals === 1 ? "proposal" : "proposals"}</button>}
       </div>
     </section>
+    {portfolio.isSuccess && <HoldingsCard comparison={comparison} pendingQuotes={pendingQuotes}
+      truncated={portfolio.data.truncated} logosEnabled={logosEnabled} gainsUnavailable={gains.isError} ratesUnavailable={rates.isError} overview />}
   </div>;
 }
