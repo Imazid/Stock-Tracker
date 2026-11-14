@@ -657,7 +657,7 @@ private struct PrivateCompanyFundingHistory: View {
 
 struct PrivateRoundComparison: View {
     let deals: [PrivateDeal]?
-    static let defaultQuestion = "Compare the selected funding rounds qualitatively. Explain their structures, reported financing and investor rights, and identify missing terms. Apply valuation and dilution concepts where relevant. Keep dates and amounts in the source citations. Use the word reported or undisclosed for each company."
+    static let defaultQuestion = "Compare the selected funding rounds qualitatively. Explain their structures, reported financing and investor rights. Where relevant, explain the reported valuation basis and dilution. Identify missing terms. Keep dates and amounts in the source citations. Use the word reported or undisclosed for each company."
     var question = PrivateRoundComparison.defaultQuestion
     var preselectRecentRounds = false
     @EnvironmentObject private var auth: SupabaseAuthManager
