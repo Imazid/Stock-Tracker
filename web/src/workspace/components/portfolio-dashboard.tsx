@@ -3,15 +3,18 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { HoldingsCard } from "@/components/portfolio/holdings-card";
+import { HoldingEvents } from "@/components/portfolio/holding-events";
 import { usePortfolioBrokerage } from "@/hooks/portfolio-brokerage";
 import { usePortfolioGains, usePortfolioRates } from "@/hooks/portfolio-metrics";
 import { usePortfolioPositions } from "@/hooks/portfolio-positions";
+import { usePreviousPortfolioVisit } from "@/hooks/portfolio-visit";
 import { dateTime, money, percent, signedMoney } from "@/lib/format";
 import { portfolioAccountValue } from "@/lib/portfolio-account-value";
 import { portfolioExposure, type ExposureCurrency } from "@/lib/portfolio-exposure";
 import { unrealisedGains } from "@/lib/portfolio-gains";
-import { holdingComparison } from "@/lib/portfolio-holdings";
-import { portfolioMovement } from "@/lib/portfolio-movement";
+import { holdingComparison, updatedOpenHoldings } from "@/lib/portfolio-holdings";
+import { portfolioMovement, portfolioUnusualMoves } from "@/lib/portfolio-movement";
+import { portfolioQuestionHref } from "@/lib/portfolio-question";
 import { PortfolioHistory } from "./portfolio-history";
 
 function Metric({ title, value, detail }: { title: string; value: ReactNode; detail: ReactNode }) {
@@ -26,6 +29,7 @@ export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals,
   const [base, setBase] = useState<ExposureCurrency>("USD");
   const [showAccounts, setShowAccounts] = useState(false);
   const { portfolio, holdings, pricedListings, quotes, pendingQuotes, loadingPrices } = usePortfolioPositions(userId);
+  const previousVisit = usePreviousPortfolioVisit(userId, portfolio.isSuccess);
   const gains = usePortfolioGains(userId);
   const brokerage = usePortfolioBrokerage(userId, brokerageEnabled && showAccounts);
   const accounts = brokerage.data?.accounts ?? [];
@@ -40,6 +44,11 @@ export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals,
   const reported = portfolioAccountValue(accounts, base, rates.data);
   const coverage = `${exposure.priced} of ${holdings.length} ${portfolio.data?.truncated ? "displayed " : ""}holdings valued`;
   const biggest = movement.contributions[0];
+  const unusual = portfolioUnusualMoves(movement.contributions).slice(0, 3);
+  const changes = previousVisit === undefined ? undefined : {
+    count: updatedOpenHoldings(holdings, previousVisit, portfolio.dataUpdatedAt),
+    since: new Date(previousVisit).toISOString(),
+  };
 
   return <div className="portfolio-dashboard">
     <section className="panel dashboard-summary" aria-label="Portfolio balances and gains">
@@ -103,7 +112,7 @@ export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals,
     <PortfolioHistory userId={userId} portfolioLink />
     <section className="panel dashboard-intelligence" aria-label="Your Portfolio Intelligence">
       <div className="panel-heading"><h2>Your Portfolio Intelligence</h2>
-        {aiEnabled && <Link className="button secondary small" href="/ai">Ask AI</Link>}
+        {aiEnabled && <Link className="button secondary small" href={portfolioQuestionHref}>Ask what moved my portfolio</Link>}
       </div>
       <div className="dashboard-intelligence-body">
         <h3>Price movement on current holdings</h3>
@@ -111,9 +120,17 @@ export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals,
           : <p>{portfolio.isPending || loadingPrices ? "Checking position prices…" : "Price movement unavailable."}</p>}
         <p>{movement.covered} of {holdings.length} {portfolio.data?.truncated ? "displayed " : ""}holdings covered. Uses previous closes for shares and provider reference prices for crypto.</p>
         {biggest && <p>Largest contribution <Link href={`/markets/${encodeURIComponent(biggest.id)}`}>{biggest.id.slice(biggest.id.indexOf(":") + 1)}</Link> {signedMoney(biggest.value, biggest.currency)} · {biggest.quote.source} · {dateTime(biggest.quote.observedAt)}</p>}
+        {unusual.length > 0 && <div>
+          <h3>Price moves of 5% or more</h3>
+          <ul className="dashboard-unusual">{unusual.map(({ id, quote, changePct }) => <li key={id}>
+            <Link href={`/markets/${encodeURIComponent(id)}`}>{id.slice(id.indexOf(":") + 1)}</Link> {percent(changePct)} · {quote.source} · {dateTime(quote.observedAt)}
+          </li>)}</ul>
+        </div>}
         {exposure.listings[0] && <p>Largest holding by listing <Link href={`/markets/${encodeURIComponent(exposure.listings[0].id)}`}>{exposure.listings[0].label}</Link> · {percent(exposure.listings[0].weight, { signed: false, decimals: 1 })} of valued holdings.</p>}
+        {changes && <p><Link href="/portfolio#holdings">{changes.count} of {holdings.length} displayed open holding records updated</Link> since this browser’s last overview visit on {dateTime(changes.since)}.</p>}
         {pendingApprovals !== undefined && pendingApprovals > 0 && <button type="button" className="button secondary small" onClick={openAgents}>Review {pendingApprovals} pending {pendingApprovals === 1 ? "proposal" : "proposals"}</button>}
       </div>
+      {holdings.length > 0 && <HoldingEvents userId={userId} overview />}
     </section>
     {portfolio.isSuccess && <HoldingsCard comparison={comparison} pendingQuotes={pendingQuotes}
       truncated={portfolio.data.truncated} logosEnabled={logosEnabled} gainsUnavailable={gains.isError} ratesUnavailable={rates.isError} overview />}
