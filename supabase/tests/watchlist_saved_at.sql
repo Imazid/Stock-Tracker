@@ -2,10 +2,6 @@
 \pset tuples_only on
 \pset format unaligned
 begin;
--- The migration harness uses the container’s Auth stub. GoTrue supplies this column.
-set local role supabase_admin;
-alter table auth.users add column if not exists email_confirmed_at timestamptz;
-reset role;
 insert into auth.users(id) values ('66104000-1111-4444-8888-aabbcc000001');
 insert into auth.users(id,email_confirmed_at)
 select ('66104000-1111-4444-8888-aabbcc0000' || lpad(number::text, 2, '0'))::uuid, now()
