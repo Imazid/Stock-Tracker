@@ -10,5 +10,5 @@ export default async function PrivateMarketsPage({
 }) {
   const { view } = await searchParams;
   return <PrivateMarketsView aiEnabled={process.env.ENABLE_AI === "true"}
-    initialTab={view === "portfolio" || view === "updates" || view === "research" || view === "deal-room" ? view : "catalogue"} />;
+    initialTab={view === "portfolio" || view === "updates" || view === "research" || view === "deal-room" || view === "capital" ? view : "catalogue"} />;
 }

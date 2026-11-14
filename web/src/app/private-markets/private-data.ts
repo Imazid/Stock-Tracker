@@ -71,6 +71,11 @@ export type PortfolioHolding = {
   distributions: { id: string; amount: number; received_on: string; source: string }[];
   dispositions: { id: string; sold_units: number; net_proceeds: number; disposed_cost: number | null; settled_on: string; source: string }[];
 };
+export type CapitalActivityItem = {
+  id: string; holding_id: string; holding_name: string; provider: string; currency: string; amount: string;
+  status: "upcoming" | "overdue" | "paid" | "cancelled" | "distribution";
+  due_on: string | null; occurred_on: string; source: string;
+};
 export type PortfolioPage = { holdings: PortfolioHolding[]; next_offset: number | null };
 export type InvestorProfile = { country: string; declared_class: "unknown" | "retail" | "wholesale" };
 export type ProviderVerification = {
@@ -105,7 +110,7 @@ export type MonitorAlert = {
 };
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
-  "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "applications" | "allocation" | "updates" |
+  "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "capital_activity" | "applications" | "allocation" | "updates" |
   "profile" | "save_profile" | "handoff_check" | "handoff" |
   "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";

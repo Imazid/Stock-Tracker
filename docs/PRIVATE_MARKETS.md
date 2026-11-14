@@ -124,6 +124,8 @@ AngelList can verify the read-only path using an entitled account with a capital
 
 ## Phase 3 · Advanced infrastructure
 
+On web, open **Capital activity** to see outstanding calls in deadline order and recent paid calls, cancellations and distributions across confirmed holdings. Amounts retain their original currency and provider source. Sydney calendar dates distinguish overdue and upcoming calls. Reversed payments are excluded. Older records stay accessible through pagination.
+
 The product records capital calls, distributions, stale marks, share classes and dated corporate actions. Optional reminders schedule on the device for up to 20 upcoming recorded calls, at 9 a.m. the preceding day or the due date if the earlier reminder window has passed. The app clears pending reminders for settled and cancelled calls after the provider records refresh. A cancellation also removes the due alert from the monitoring inbox and stops pending push eligibility. Capital payments, embedded execution, fund subscription, syndicate participation, live registry synchronization, and secondary transactions require their own provider agreements, documented APIs and jurisdiction review. There are no in-app payment or order routes. Stock Tracker does not act as a custody or secondary-market operator.
 
 ## Development and rollout

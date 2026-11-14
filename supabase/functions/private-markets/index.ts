@@ -17,7 +17,7 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
-  "profile", "save_profile", "applications", "confirmed_holdings",
+  "profile", "save_profile", "applications", "confirmed_holdings", "capital_activity",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
 ]);
@@ -664,6 +664,22 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.rpc("private_portfolio_allocation", { p_user: userId });
         if (error) throw error;
         return jsonResponse(200, { buckets: data });
+      }
+      case "capital_activity": {
+        const section = body.section;
+        const offset = body.offset ?? 0;
+        if (Object.keys(body).some((key) => !["action", "section", "offset"].includes(key)) ||
+          (section !== "calls" && section !== "history") || typeof offset !== "number" ||
+          !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
+          return errorResponse(400, "INVALID_REQUEST", "Choose a capital activity section and page.");
+        }
+        const { data, error } = await admin.rpc("private_capital_activity", {
+          p_user: userId, p_section: section, p_offset: offset,
+        });
+        if (error) throw error;
+        return jsonResponse(200, {
+          items: data.slice(0, 25), next_offset: data.length > 25 ? offset + 25 : null,
+        });
       }
       case "confirmed_holdings": {
         const offset = body.offset ?? 0;
