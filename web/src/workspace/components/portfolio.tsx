@@ -94,15 +94,16 @@ export function PersonalList({ journal, onAsset, onWatch, onAlert, onAlertChange
   </div>;
 }
 
-export function JournalForm({ kind, asset, holding, userID, onDone }: { kind: "holding" | "alert"; asset: Instrument; holding?: Holding; userID: string; onDone: (text: string) => void }) {
+export function JournalForm({ kind, asset, holding, userID, onDone, onReload }: { kind: "holding" | "alert"; asset: Instrument; holding?: Holding; userID: string; onDone: (text: string) => void; onReload?: () => void }) {
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState("");
+  const [conflict,setConflict] = useState(false);
   const canSelectPortfolio = kind === "holding" && !holding;
   const portfolioFieldId = useId();
   const { groups } = usePortfolioGroups(canSelectPortfolio ? userID : undefined);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !backend || (canSelectPortfolio && !groups.data)) return;
+    if (busy || conflict || !backend || (canSelectPortfolio && !groups.data)) return;
     const form = new FormData(event.currentTarget);
     setBusy(true); setError("");
     try {
@@ -116,10 +117,14 @@ export function JournalForm({ kind, asset, holding, userID, onDone }: { kind: "h
         const group = groups.data?.find(item => item.id === destination);
         if (canSelectPortfolio && !group) throw new Error("Choose a portfolio for this holding.");
         const result = holding
-          ? await backend.from("portfolio_holdings").update(values).eq("id", holding.id).eq("user_id", userID).is("deleted_at",null).select("id").single()
+          ? await backend.from("portfolio_holdings").update(values).eq("id", holding.id).eq("user_id", userID).eq("ledger_revision", holding.ledger_revision).is("deleted_at",null).select("id").maybeSingle()
           : await backend.from("portfolio_holdings").insert({ ...values, id: crypto.randomUUID(), user_id: userID, asset_symbol: storedTicker(asset), asset_name: asset.name, asset_kind: storedKind(asset), asset_exchange: storedExchange(asset),
               portfolio_group_id: group?.id === mainPortfolioId ? null : group?.id });
         if (result.error) throw result.error;
+        if (holding && !result.data) {
+          setConflict(true);
+          throw new Error("This holding changed after you opened it. Review the current values before editing again.");
+        }
         onDone("Holding saved.");
       }
     } catch (failure) { setError(message(failure)); } finally { setBusy(false); }
@@ -138,6 +143,7 @@ export function JournalForm({ kind, asset, holding, userID, onDone }: { kind: "h
     <label>{kind === "holding" ? "Average cost per unit (USD)" : "Target price (USD)"}<input type="number" name="price" min={kind === "alert" ? 0.00000001 : 0} max="1000000000000" step="any" required defaultValue={holding?.avg_cost}/></label>
     {kind === "alert" && <label className="checkbox"><input type="checkbox" name="repeat"/> Repeat after re-arming</label>}
     {error && <p className="error" role="alert">{error}</p>}
-    <button disabled={busy || (canSelectPortfolio && !groups.data)} className="button primary">{busy ? "Saving…" : "Save"}</button>
+    {conflict ? <button type="button" className="button primary" onClick={onReload}>Reload holdings</button>
+      : <button disabled={busy || (canSelectPortfolio && !groups.data)} className="button primary">{busy ? "Saving…" : "Save"}</button>}
   </form>;
 }

@@ -660,7 +660,7 @@ struct TransactionFormSheet: View {
             let updated = Transaction(id: editing.id, date: date, shares: q, pricePerShare: priceUSD, type: type,
                                       fees: feesUSD, avgCostAtSale: editing.avgCostAtSale, provenance: provenance)
             let list = holding.transactions.map { $0.id == editing.id ? updated : $0 }
-            result = marketData.replaceTransactions(holdingID: holding.id, with: list)
+            result = marketData.replaceTransactions(holdingID: holding.id, with: list, basedOn: holding)
         } else {
             result = marketData.recordTransaction(holdingID: holding.id, type: type, shares: q,
                                                   pricePerUnit: p, priceCurrency: priceCurrency, fees: f, date: date)

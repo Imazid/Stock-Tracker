@@ -301,7 +301,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled, logosEnabled }:
         custom={item => { if (dialog === "holdingFinder") {setHoldingAsset(item); setDialog("holding");} else if (page === "strategy" || page === "research") selectAsset(item,page); else selectAsset(item); }}/>}
       {dialog === "tradeFinder" && <Palette commands={[]} connected={signedIn}
         choose={item => { setAsset(item); setDialog("order"); }} custom={item => { setAsset(item); setDialog("order"); }} />}
-      {dialog === "holding" && userID && <JournalForm kind="holding" asset={holdingAsset} holding={holding} userID={userID} onDone={saved}/>}
+      {dialog === "holding" && userID && <JournalForm kind="holding" asset={holdingAsset} holding={holding} userID={userID} onDone={saved} onReload={() => { setDialog(null); sync(); }}/>}
       {dialog === "alert" && userID && <JournalForm kind="alert" asset={asset} userID={userID} onDone={saved}/>}
       {dialog === "order" && signedIn && <OrderTicket key={trading?.ledgers.map(ledger => ledger.id).join(",") ?? "loading"} state={trading} asset={asset} initialSide={side} act={tradeAction} onDone={saved}/>}
     </Modal>}

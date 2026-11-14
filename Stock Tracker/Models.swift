@@ -219,6 +219,7 @@ struct PortfolioHolding: Identifiable, Codable {
     let dateAdded: Date
     var transactions: [Transaction]
     var brokerAccount: HoldingBrokerAccount?
+    var ledgerRevision: UUID?
     
     init(
         id: UUID = UUID(),
@@ -227,7 +228,8 @@ struct PortfolioHolding: Identifiable, Codable {
         avgCost: Double,
         dateAdded: Date = Date(),
         transactions: [Transaction] = [],
-        brokerAccount: HoldingBrokerAccount? = nil
+        brokerAccount: HoldingBrokerAccount? = nil,
+        ledgerRevision: UUID? = nil
     ) {
         self.id = id
         self.asset = asset
@@ -236,6 +238,7 @@ struct PortfolioHolding: Identifiable, Codable {
         self.dateAdded = dateAdded
         self.transactions = transactions
         self.brokerAccount = brokerAccount
+        self.ledgerRevision = ledgerRevision
     }
     
     /// Current market value = current price * shares
