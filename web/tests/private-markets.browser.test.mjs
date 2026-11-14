@@ -61,6 +61,51 @@ test("Private Markets renders sourced rounds and keeps research account-scoped",
     await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Private Markets", exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
 
+    const launchCalculator = page.getByRole("button", { name: "Scenario calculator", exact: true });
+    await launchCalculator.click();
+    const scenario = page.getByRole("dialog", { name: "Scenario calculator" });
+    const calculatedRequests = [];
+    const watchRequests = (request) => {
+      if (request.method() === "POST") calculatedRequests.push(new URL(request.url()).pathname);
+    };
+    page.on("request", watchRequests);
+    await scenario.getByLabel("Scenario currency").selectOption("USD");
+    await scenario.getByLabel("Investment amount (USD)").fill("5,000");
+    await scenario.getByLabel("Post-money valuation (USD)", { exact: true }).fill("1,000,000");
+    await scenario.getByLabel("New capital raised (USD)").fill("500,000");
+    assert.equal(await scenario.getByLabel("Ownership after round").textContent(), "Unavailable");
+    await scenario.getByLabel("Next post-money valuation (USD)").fill("2,000,000");
+    assert.equal(await scenario.getByLabel("Initial ownership").textContent(), "0.50%");
+    assert.equal(await scenario.getByLabel("Ownership after round").textContent(), "0.375%");
+    await scenario.getByLabel("Bear exit value (USD)").fill("0");
+    await scenario.getByLabel("Base exit value (USD)").fill("1,000,000");
+    await scenario.getByLabel("Bull exit value (USD)").fill("4,000,000");
+    assert.match(await scenario.getByLabel("Bear proceeds").textContent(), /USD 0\.00.*0\.00×/);
+    assert.match(await scenario.getByLabel("Base proceeds").textContent(), /USD 3,750\.00.*0\.75×/);
+    assert.match(await scenario.getByLabel("Bull proceeds").textContent(), /USD 15,000\.00.*3\.00×/);
+    await scenario.getByRole("radio", { name: "Existing stake", exact: true }).click();
+    await scenario.getByLabel("Existing ownership (%)").fill("2");
+    assert.equal(await scenario.getByLabel("Ownership after round").textContent(), "1.50%");
+    await scenario.getByLabel("Model a preferred share class").check();
+    await scenario.getByLabel("Your share class").selectOption("preferred");
+    await scenario.getByLabel("Preferred ownership at exit (%)").fill("20");
+    await scenario.getByLabel("Total liquidation preference (USD)").fill("100,000");
+    assert.match(await scenario.getByLabel("Base proceeds").textContent(), /USD 15,000\.00/);
+    await scenario.getByLabel("Participating preferred", { exact: true }).check();
+    assert.match(await scenario.getByLabel("Base proceeds").textContent(), /USD 21,000\.00/);
+    assert.ok(await scenario.evaluate((element) => element.scrollWidth <= element.clientWidth + 1));
+    await page.keyboard.press("Escape");
+    await scenario.waitFor({ state: "hidden" });
+    assert.ok(await launchCalculator.evaluate((element) => element === document.activeElement));
+    page.off("request", watchRequests);
+    assert.deepEqual(calculatedRequests, []);
+
+    await page.getByRole("radio", { name: "Discover", exact: true }).click();
+    await page.getByRole("button", { name: "Model Heidi Series C scenarios", exact: true }).click();
+    await scenario.getByRole("link", { name: "Round disclosure", exact: true }).waitFor();
+    assert.equal(await scenario.getByLabel("Post-money valuation (USD)", { exact: true }).inputValue(), "");
+    await scenario.getByRole("button", { name: "Close", exact: true }).click();
+
     const email = process.env.PRIVATE_MARKETS_TEST_EMAIL;
     const password = process.env.PRIVATE_MARKETS_TEST_PASSWORD;
     if (email && password) {
@@ -89,6 +134,9 @@ test("Private Markets renders sourced rounds and keeps research account-scoped",
       await page.getByRole("heading", { name: "Reported figures", exact: true }).waitFor();
       assert.match(await page.getByRole("link", { name: "Heidi · Series C", exact: true }).first().getAttribute("href"), /^https:\/\//);
       assert.equal(await run.isDisabled(), true);
+      await page.getByRole("button", { name: "Model exit scenarios", exact: true }).click();
+      await scenario.getByLabel("Investment amount (AUD)").waitFor();
+      await scenario.getByRole("button", { name: "Close", exact: true }).click();
 
       if (process.env.PRIVATE_MARKETS_TEST_COMMITTEE === "true") {
         await page.getByRole("radio", { name: "Investment Committee", exact: true }).click();

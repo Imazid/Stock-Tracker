@@ -81,8 +81,8 @@ export function CompareRounds({ deals, asOf }: { deals: PrivateDeal[]; asOf: num
   </div>;
 }
 
-export function DealCard({ deal, asOf, selected, selectionFull, onSelect, application }: {
-  deal: PrivateDeal; asOf: number; selected: boolean; selectionFull: boolean; onSelect: () => void; application?: ReactNode;
+export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScenario, application }: {
+  deal: PrivateDeal; asOf: number; selected: boolean; selectionFull: boolean; onSelect: () => void; onScenario: () => void; application?: ReactNode;
 }) {
   const { round } = deal;
   const { company, listing } = round;
@@ -159,10 +159,13 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, applic
           <SourceLink url={deal.source_url}>{providerName(deal.provider)}</SourceLink>
           {deal.offer_document_url && <SourceLink url={deal.offer_document_url}>Offer document</SourceLink>}
         </div>
-        <Button size="sm" aria-pressed={selected} aria-label={`Select ${company.name} ${round.stage} for research`}
-          disabled={!selected && selectionFull} onClick={onSelect}>
-          {selected ? "Selected" : "Select for research"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>
+          <Button size="sm" aria-pressed={selected} aria-label={`Select ${company.name} ${round.stage} for research`}
+            disabled={!selected && selectionFull} onClick={onSelect}>
+            {selected ? "Selected" : "Select for research"}
+          </Button>
+        </div>
       </div>
     </Card>
   );

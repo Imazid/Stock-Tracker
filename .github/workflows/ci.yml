@@ -57,7 +57,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
-      - run: node --test src/lib/portfolio-movement.test.ts src/lib/csv.test.ts src/server/portfolio/*.test.ts src/server/agent/agent-safety.test.ts src/server/research/financials.test.ts
+      - run: node --test src/lib/portfolio-movement.test.ts src/lib/csv.test.ts src/lib/private-scenarios.test.ts src/server/portfolio/*.test.ts src/server/agent/agent-safety.test.ts src/server/research/financials.test.ts
       - run: npm run build
 
   ios:

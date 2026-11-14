@@ -91,8 +91,8 @@ function ReportView({ report, actions }: { report: Report; actions: ReactNode })
   );
 }
 
-export function Research({ owner, aiEnabled, selected, asOf, initialReportID, openDealRoom }: {
-  owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number; initialReportID?: string; openDealRoom: () => void;
+export function Research({ owner, aiEnabled, selected, asOf, initialReportID, openDealRoom, openScenario }: {
+  owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number; initialReportID?: string; openDealRoom: () => void; openScenario: () => void;
 }) {
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState<Mode>("question");
@@ -324,6 +324,7 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
           {shownReport.data.previous_report_id && <Button size="sm" onClick={() => {
             setReportID(shownReport.data?.previous_report_id ?? null);
           }}>Open previous report</Button>}
+          <Button size="sm" onClick={openScenario}>Model exit scenarios</Button>
           <Button size="sm" disabled={busy} onClick={() => {
             setConfirmDelete(shownID);
             remove.reset();

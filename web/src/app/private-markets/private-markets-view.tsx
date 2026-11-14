@@ -19,6 +19,7 @@ import { availability, availabilityLabels, countryName, privateMarkets, type Dis
 import { Positions } from "./positions";
 import { ProviderApplication } from "./provider-application";
 import { Research } from "./research";
+import { ScenarioCalculator } from "./scenario-calculator";
 
 type Tab = "catalogue" | "research" | "deal-room" | "portfolio" | "updates";
 function SignIn({ view }: { view?: Tab }) {
@@ -26,9 +27,9 @@ function SignIn({ view }: { view?: Tab }) {
   return <ButtonLink variant="primary" size="sm" href={`/login?next=${encodeURIComponent(destination)}`}>Sign in</ButtonLink>;
 }
 
-function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch }: {
+function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch, onScenario }: {
   owner?: string; aiEnabled: boolean; deals: PrivateDeal[]; asOf: number; selected: PrivateDeal[];
-  toggle: (deal: PrivateDeal) => void; onResearch: () => void;
+  toggle: (deal: PrivateDeal) => void; onResearch: () => void; onScenario: (deal: PrivateDeal) => void;
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
@@ -159,7 +160,7 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch 
       </Card>}
       {visible.length ? <div className="grid items-start gap-4 2xl:grid-cols-2">
         {visible.map((deal) => <DealCard key={deal.id} deal={deal} asOf={currentAt} selected={selected.some(({ id }) => id === deal.id)}
-          selectionFull={selected.length >= 3} onSelect={() => toggle(deal)}
+          selectionFull={selected.length >= 3} onSelect={() => toggle(deal)} onScenario={() => onScenario(deal)}
           application={<ProviderApplication key={JSON.stringify([deal.offer_document_url, deal.verified_at, deal.round.verified_at,
             deal.round.currency, deal.round.closes_at, deal.minimum])} owner={owner} deal={deal} />} />)}
       </div> : <Card><EmptyState icon={<Building2 className="h-5 w-5" aria-hidden />} title="No matching rounds" body="Change the filters to see more published records." /></Card>}
@@ -170,6 +171,7 @@ function Discover({ owner, aiEnabled, deals, asOf, selected, toggle, onResearch 
 export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boolean; initialTab: Tab }) {
   const [tab, setTab] = useState(initialTab);
   const [selected, setSelected] = useState<PrivateDeal[]>([]);
+  const [scenario, setScenario] = useState<{ deal?: PrivateDeal } | null>(null);
   const [openedReport, setOpenedReport] = useState<{ owner: string; id: string } | null>(null);
   const session = useSession();
   const owner = session.status === "signedIn" ? session.user.id : undefined;
@@ -187,7 +189,9 @@ export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boole
 
   return (
     <div className="mx-auto max-w-[1300px]">
-      <PageHeader title="Private Markets" description="Explore published funding rounds, research private companies, and review provider-confirmed activity." />
+      <PageHeader title="Private Markets" description="Explore published funding rounds, research private companies, and review provider-confirmed activity."
+        actions={<Button size="sm" onClick={() => setScenario({})}>Scenario calculator</Button>} />
+      {scenario && <ScenarioCalculator deal={scenario.deal} onClose={() => setScenario(null)} />}
       <Segmented<Tab> value={tab} onChange={(value) => { setOpenedReport(null); setTab(value); }} label="Private Markets sections"
         className="mb-4 max-w-full flex-wrap [&>button]:px-2 sm:[&>button]:px-2.5"
         options={[{ value: "catalogue", label: "Discover" }, { value: "research", label: "AI Research" }, { value: "deal-room", label: "Deal Room" }, { value: "portfolio", label: "Portfolio & applications" }, { value: "updates", label: "Updates" }]} />
@@ -195,10 +199,10 @@ export function PrivateMarketsView({ aiEnabled, initialTab }: { aiEnabled: boole
         : catalogue.error ? <Notice tone="down">{catalogue.error.message} <Button size="sm" onClick={() => void catalogue.refetch()}>Retry</Button></Notice>
         : !catalogue.data ? <p className="text-sm text-text-2" role="status">Loading published rounds…</p>
         : <Discover key={owner ?? "public"} owner={owner} aiEnabled={aiEnabled} deals={catalogue.data.deals} asOf={catalogue.dataUpdatedAt}
-          selected={selected} toggle={toggle} onResearch={() => setTab("research")} />)}
+          selected={selected} toggle={toggle} onResearch={() => setTab("research")} onScenario={(deal) => setScenario({ deal })} />)}
       {tab !== "catalogue" && (owner ? tab === "research"
         ? <Research key={owner} owner={owner} selected={selected} aiEnabled={aiEnabled} asOf={catalogue.dataUpdatedAt} openDealRoom={() => setTab("deal-room")}
-          initialReportID={openedReport?.owner === owner ? openedReport.id : undefined} />
+          initialReportID={openedReport?.owner === owner ? openedReport.id : undefined} openScenario={() => setScenario({})} />
         : tab === "deal-room" ? <DealRoom key={owner} owner={owner} />
         : tab === "portfolio" ? <Positions key={owner} owner={owner} />
         : <Monitoring key={owner} owner={owner} deals={catalogue.data?.deals ?? []} catalogueLoading={catalogue.isLoading}
