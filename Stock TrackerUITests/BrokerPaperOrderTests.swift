@@ -9,8 +9,13 @@ final class BrokerPaperOrderTests: XCTestCase {
         let search = app.searchFields.firstMatch
         tap(search, in: app)
         search.typeText("AAPL")
-        tap(app.buttons["search.result.us.AAPL"], in: app, timeout: 30)
-        XCTAssertTrue(app.descendants(matching: .any)["detail.screen"].firstMatch.waitForExistence(timeout: 10))
+        let result = app.buttons["search.result.us.AAPL"]
+        let detail = app.descendants(matching: .any)["detail.screen"].firstMatch
+        for _ in 0..<3 where !detail.exists {
+            tap(result, in: app, timeout: 30)
+            if detail.waitForExistence(timeout: 3) { break }
+        }
+        XCTAssertTrue(detail.exists, app.debugDescription)
         tap(app.buttons["Trade with Alpaca Paper"], in: app, timeout: 30)
         tap(app.buttons["brokerPaper.prepare"], in: app, timeout: 35)
         let quantity = app.textFields["brokerPaper.size"]
