@@ -11,17 +11,10 @@ import { SourceLink } from "./catalog";
 import {
   amount, dateLabel, privateMarkets, providerName, dayInSydney, type Application, type PortfolioHolding, type PortfolioPage,
 } from "./private-data";
+import { privatePositionPerformance } from "./private-performance";
 
-function currentValuation(holding: PortfolioHolding, asOf: number) {
-  const dispositionOn = Date.parse(holding.last_disposition_on ?? "");
-  const revisionAt = Date.parse(holding.disposition_revision_at ?? "");
-  return holding.marks.find((mark) => {
-    const valuedAt = Date.parse(mark.valued_on);
-    const reportedAt = Date.parse(mark.provider_event_at ?? "");
-    return valuedAt <= asOf && (!(dispositionOn <= asOf) || valuedAt > dispositionOn) &&
-      (!(revisionAt <= asOf) || (reportedAt > revisionAt && reportedAt <= asOf));
-  });
-}
+const percent = new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 2 });
+const ratio = new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function LedgerSection({ title, children }: { title: string; children: ReactNode }) {
   return <section>
@@ -32,18 +25,30 @@ function LedgerSection({ title, children }: { title: string; children: ReactNode
 
 function HoldingCard({ holding, asOf }: { holding: PortfolioHolding; asOf: number }) {
   const { currency } = holding;
-  const exited = holding.remaining_units === 0 && Boolean(holding.exit_source) &&
-    holding.last_disposition_on !== null && holding.last_disposition_on <= dayInSydney(asOf);
-  const mark = exited ? undefined : currentValuation(holding, asOf);
-  const stale = mark && asOf - Date.parse(mark.valued_on) > 90 * 86_400_000;
+  const { exited, mark, stale, metrics, completeActivity, fund } = privatePositionPerformance(holding, dayInSydney(asOf), asOf);
   const acquisition = holding.settled_on
     ? `Settled ${dateLabel(holding.settled_on)} · ${holding.settlement_source ?? "Provider confirmation"}`
     : "Provider confirmation";
+  const units = holding.remaining_units ?? holding.units;
   const capital = [
     ["Committed", amount(holding.committed_amount, currency)], ["Settled", amount(holding.settled_amount, currency)],
-    ["Remaining units", String(holding.remaining_units ?? holding.units)],
+    ["Remaining units", units == null ? "Undisclosed" : String(units)],
     ["Carrying value", exited ? amount(0, currency) : mark ? amount(mark.value, currency) : "Unavailable"],
   ];
+  const money = (value: number | null) => value === null ? "Unavailable" : amount(value, currency);
+  const multiple = (value: number | null) => value === null ? "Unavailable" : `${ratio.format(value)}×`;
+  const performance = metrics ? [
+    ["Capital deployed", money(metrics.paid)],
+    ["Returned capital and proceeds", money(metrics.returned)],
+    ["Uncalled commitment", money(metrics.uncalled)],
+    ["Pending calls", money(metrics.pending)],
+    ["Total gain or loss", money(metrics.netGain)],
+    ["Realised gain on sales", money(metrics.realized)],
+    ["Unrealised gain", money(metrics.unrealized)],
+    [metrics.multipleLabel, multiple(metrics.multiple)],
+    ...(fund ? [["DPI", multiple(metrics.dpi)]] : []),
+    ["XIRR", metrics.xirr === null ? "Unavailable" : percent.format(metrics.xirr)],
+  ] : [];
   return (
     <Card as="article" className="break-words">
       <CardHeader title={holding.name} subtitle={`${providerName(holding.commitment.provider)} · ${holding.asset_class.replaceAll("_", " ")}`}
@@ -55,27 +60,43 @@ function HoldingCard({ holding, asOf }: { holding: PortfolioHolding; asOf: numbe
           </div>)}
         </dl>
         <p className="text-xs text-text-2">{acquisition}</p>
+        {holding.last_disposition_on === null && holding.ownership_percent != null &&
+          <p className="text-xs text-text-2">Reported ownership {percent.format(holding.ownership_percent / 100)}</p>}
         {holding.commitment.provider_reference && <p className="break-words text-xs text-text-3">Provider reference {holding.commitment.provider_reference}</p>}
         {mark && <div className="flex flex-wrap items-center gap-2">
           <p className="text-xs text-text-2">Valued {dateLabel(mark.valued_on)} · {mark.methodology} · {mark.source}</p>
           {stale && <Badge tone="warn">Stale valuation</Badge>}
         </div>}
         {exited && <p className="text-xs text-text-2">Exit recorded {dateLabel(holding.last_disposition_on)} · {holding.exit_source}</p>}
+        {!exited && <p className="text-xs text-text-2">Private holding · Liquidity depends on the investment terms.</p>}
       </div>
+      <details className="border-t border-border px-4 py-3 text-[13px] text-text-2">
+        <summary className="cursor-pointer font-medium text-text">Performance</summary>
+        {metrics ? <div className="mt-3 space-y-3">
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {performance.map(([label, value]) => <div key={label}>
+              <dt className="text-xs text-text-3">{label}</dt><dd className="font-medium tabular-nums text-text">{value}</dd>
+            </div>)}
+          </dl>
+          {!exited && metrics.netGain === null && <p className="text-xs">Returns need a valuation dated on or after all recorded settled activity.</p>}
+        </div> : <p className="mt-2 text-xs">{completeActivity
+          ? "Performance needs a dated opening settlement from the provider."
+          : "Performance requires a complete activity history. This view shows up to 100 records per category."}</p>}
+      </details>
       {!!(holding.calls.length || holding.cancelled_calls.length || holding.distributions.length || holding.dispositions.length) &&
         <details className="border-t border-border px-4 py-3 text-[13px] text-text-2">
           <summary className="cursor-pointer font-medium text-text">Capital activity</summary>
           <div className="mt-3 space-y-3">
-            {!!holding.calls.length && <LedgerSection title="Capital calls">{holding.calls.map((call) => (
+            {!!holding.calls.length && <LedgerSection title="Capital calls">{holding.calls.slice(0, 100).map((call) => (
               <li key={call.id}>{amount(call.amount, currency)} · {call.settled_on ? `Paid ${dateLabel(call.settled_on)}` : `Due ${dateLabel(call.due_on)}`} · {call.source}</li>
             ))}</LedgerSection>}
             {!!holding.cancelled_calls.length && <LedgerSection title="Cancelled calls">{holding.cancelled_calls.map((call) => (
               <li key={call.id}>{amount(call.amount, currency)} · Cancelled {dateLabel(call.cancelled_at)} · {call.cancellation_source}</li>
             ))}</LedgerSection>}
-            {!!holding.distributions.length && <LedgerSection title="Distributions">{holding.distributions.map((record) => (
+            {!!holding.distributions.length && <LedgerSection title="Distributions">{holding.distributions.slice(0, 100).map((record) => (
               <li key={record.id}>{amount(record.amount, currency)} · {dateLabel(record.received_on)} · {record.source}</li>
             ))}</LedgerSection>}
-            {!!holding.dispositions.length && <LedgerSection title="Settled sales">{holding.dispositions.map((sale) => (
+            {!!holding.dispositions.length && <LedgerSection title="Settled sales">{holding.dispositions.slice(0, 100).map((sale) => (
               <li key={sale.id}>{sale.sold_units} units · {amount(sale.net_proceeds, currency)} · {dateLabel(sale.settled_on)} · {sale.source}</li>
             ))}</LedgerSection>}
           </div>

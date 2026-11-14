@@ -115,6 +115,10 @@ test("Private Markets renders sourced rounds and keeps research account-scoped",
         const position = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Stock Tracker browser holding", exact: true }) });
         await position.getByText("Provider confirmed", { exact: true }).waitFor();
         await position.getByText("Dated provider statement", { exact: false }).waitFor();
+        await position.getByText("Performance", { exact: true }).click();
+        await position.getByText("Capital deployed", { exact: true }).waitFor();
+        await position.getByText("MOIC", { exact: true }).waitFor();
+        await position.getByText("1.40×", { exact: true }).waitFor();
         await position.getByText("Capital activity").click();
         await position.getByText("QA capital call notice", { exact: false }).waitFor();
         await position.getByText("QA distribution receipt", { exact: false }).waitFor();

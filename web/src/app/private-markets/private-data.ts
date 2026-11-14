@@ -51,7 +51,7 @@ export type Report = {
   reported_facts?: { source: string; title: string; entries: { label: string; value: string }[] }[];
 };
 export type PortfolioHolding = {
-  id: string; name: string; asset_class: string; currency: string; units: number;
+  id: string; name: string; asset_class: string; currency: string; units: number | null; ownership_percent: number | null;
   remaining_units: number | null; settled_amount: number | null; committed_amount: number | null;
   settled_on: string | null; settlement_source: string | null; last_disposition_on: string | null;
   disposition_revision_at: string | null; exit_source: string | null;
@@ -60,7 +60,7 @@ export type PortfolioHolding = {
   calls: { id: string; amount: number; due_on: string; settled_on: string | null; source: string }[];
   cancelled_calls: { id: string; amount: number; due_on: string; cancelled_at: string; cancellation_source: string }[];
   distributions: { id: string; amount: number; received_on: string; source: string }[];
-  dispositions: { id: string; sold_units: number; net_proceeds: number; settled_on: string; source: string }[];
+  dispositions: { id: string; sold_units: number; net_proceeds: number; disposed_cost: number | null; settled_on: string; source: string }[];
 };
 export type PortfolioPage = { holdings: PortfolioHolding[]; next_offset: number | null };
 export type Application = {
