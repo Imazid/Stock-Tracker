@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Field, Input, Select } from "@/components/ui/Field";
+import { StockSpinOffs } from "./stock-spin-offs";
 import { StockSplits } from "./stock-splits";
 import { StockTransfers } from "./stock-transfers";
 
@@ -75,6 +76,7 @@ export function LotReport({ userId }: { userId: string }) {
       </form>
       <StockSplits userId={userId} />
       <StockTransfers userId={userId} />
+      <StockSpinOffs userId={userId} />
     </Card>
   );
 }

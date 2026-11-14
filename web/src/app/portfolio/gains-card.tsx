@@ -65,6 +65,7 @@ export function GainsCard({ userId, holdings, quoteFor, loading, truncated }: {
               {current.fxMissing > 0 && !waiting && `${current.fxMissing} holdings need exchange rates.`}
             </p>}
             {report.pendingTransfers > 0 && <p className="text-xs text-text-2">Transfers in transit or needing review · {report.pendingTransfers}</p>}
+            {!!report.unreconciledSpinOffs && <p className="text-xs text-text-2">Spin-offs needing review · {report.unreconciledSpinOffs}</p>}
             {report.archivedLots > 0 && <p className="text-xs text-text-2">Archived holdings with remaining lots · {report.archivedLots}</p>}
             {truncated && <p className="text-xs text-text-2">Unrealised gains cover the first 200 holdings shown in Portfolio.</p>}
             {needsRates && rates.isError && <Button size="sm" onClick={() => void rates.refetch()}>Retry exchange rates</Button>}

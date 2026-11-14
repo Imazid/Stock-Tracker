@@ -20,7 +20,7 @@ test("summarises exact FIFO matches, partial sales and recorded fees once per tr
   const fullBuy = trade("fullBuy", "closed", "Buy", 1, 20, 1, "2026-08-01");
   const fullSell = trade("fullSell", "closed", "Sell", 1, 15, 1, "2026-08-03");
   const result = portfolioGains("owner", "2026-08-05T04:00:00Z", {
-    transactions: [buy, snapshot, sale, future, fullBuy, fullSell], acquisitions: [], transfers: [], splits: [],
+    transactions: [buy, snapshot, sale, future, fullBuy, fullSell], acquisitions: [], spinOffs: [], transfers: [], splits: [],
   });
   assert.equal(result.realisedUsd, 10);
   assert.deepEqual([result.sales, result.matchedSales, result.partialSales], [2, 1, 1]);
@@ -44,7 +44,7 @@ test("keeps transferred and split basis in the receiving holding, with incomplet
     snaptrade_activity_date: null, snaptrade_activity_label: null, snaptrade_activity_symbol: null } satisfies StockSplit;
   const snapshot = { ...trade("snapshot", "unknown", "Buy", 1, 10, 0, "2026-08-01"),
     trade_provenance: { source: "csv_position" as const } };
-  const ledger = { transactions: [buy, snapshot], acquisitions: [], transfers: [transfer], splits: [split] };
+  const ledger = { transactions: [buy, snapshot], acquisitions: [], spinOffs: [], transfers: [transfer], splits: [split] };
   const inTransit = portfolioGains("owner", "2026-08-03T04:00:00Z", ledger);
   assert.equal(inTransit.pendingTransfers, 1);
   assert.equal(inTransit.open.destination, undefined);
@@ -83,7 +83,7 @@ test("web gains reconcile the lot quantity at the split and recognise cash on th
     snaptrade_activity_label: null, snaptrade_activity_symbol: null, fraction_shares: "0.5",
     fraction_paid_on: "2026-08-04", fraction_currency: "USD", fraction_proceeds: "22", fraction_fees: "0.25" };
   const purchase = trade("buy", "group", "Buy", 3, 10, 0, "2026-08-01");
-  const ledger = { transactions: [purchase], acquisitions: [], transfers: [], splits: [adjustment] };
+  const ledger = { transactions: [purchase], acquisitions: [], spinOffs: [], transfers: [], splits: [adjustment] };
   const pending = portfolioGains("owner", "2026-08-03T05:00:00Z", ledger);
   assert.equal(pending.realisedUsd, null);
   assert.equal(pending.fractionalPayments, 0);
