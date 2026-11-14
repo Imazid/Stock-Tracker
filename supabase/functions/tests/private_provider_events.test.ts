@@ -107,6 +107,7 @@ Deno.test("signed application and holding events accept provider references as t
   };
   const accepted = [
     { ...sample, details: application },
+    { ...sample, details: { ...application, handoff_reference: sample.details.commitment_id } },
     { ...sample, kind: "holding_activity", details: holding },
     { ...sample, kind: "holding_disposition", details: sale },
   ];
@@ -127,6 +128,9 @@ Deno.test("signed application and holding events accept provider references as t
     { ...sample, details: { reference: "receipt-1", status: "application_received" } },
     { ...sample, details: { ...application, offer_reference: " offer-A" } },
     { ...sample, details: { ...application, reference: "receipt-1 " } },
+    { ...sample, details: { ...application, handoff_reference: "opaque-bad-reference" } },
+    { ...sample, details: { ...application, handoff_reference: null } },
+    { ...sample, details: { ...application, status: "confirmed", handoff_reference: sample.details.commitment_id } },
     { ...sample, kind: "holding_activity", details: { ...holding, application_reference: null } },
     { ...sample, kind: "holding_activity", details: { ...holding, holding_id: sample.details.commitment_id } },
     { ...sample, kind: "holding_disposition", details: { ...sale, offer_reference: null } },

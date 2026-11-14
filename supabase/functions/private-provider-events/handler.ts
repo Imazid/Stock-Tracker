@@ -17,7 +17,7 @@ const verification = {
   expires_at: timestamp, accountant_reviewed_at: timestamp,
 };
 const application = {
-  commitment_id: uuid, offer_reference: text(200), reference: text(200), status, cooling_off_ends_at: timestamp, units,
+  commitment_id: uuid, offer_reference: text(200), handoff_reference: uuid, reference: text(200), status, cooling_off_ends_at: timestamp, units,
   invested_amount: money, application_amount: money, application_currency: currency, supplementary_deadline: timestamp,
   supplementary_document_url: text(2048),
 };
@@ -101,6 +101,8 @@ function parseEvent(bytes: Bytes): Omit<Delivery, "p_provider" | "p_body_sha256"
   const details = body.details;
   if (shape.required.some((field) => !Object.hasOwn(details, field) || details[field] === null) ||
       (kind === "verification" && !Object.hasOwn(details, "verified_class"))) throw badEvent();
+  if (kind === "application" && Object.hasOwn(details, "handoff_reference") &&
+      (details.status !== "application_received" || !matches(details.handoff_reference, uuid))) throw badEvent();
   if (kind === "application" || kind === "holding_activity" || kind === "holding_disposition") {
     const byId = Object.hasOwn(details, kind === "application" ? "commitment_id" : "holding_id");
     const byOffer = Object.hasOwn(details, "offer_reference");

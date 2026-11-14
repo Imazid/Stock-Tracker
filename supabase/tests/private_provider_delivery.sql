@@ -216,6 +216,85 @@ select case when h.remaining_units=2.11111111 and v.value=530.4321
   where h.commitment_id='f3000000-0000-4000-8000-000000000040' and v.provider_reference='valuation-1';
 reset role;
 
+-- The optional partner echo binds a receipt to the exact handoff.
+insert into public.investor_profiles values ('f3000000-0000-4000-8000-000000000002','AU','retail');
+insert into public.investment_opportunities
+  (id,round_id,provider,category,status,minimum,eligibility,jurisdictions,source_url,handoff_url,
+   offer_document_url,verified_at,published,provider_offer_reference,provider_handoff_parameter)
+values ('f3000000-0000-4000-8000-000000000031','f3000000-0000-4000-8000-000000000020',
+    'birchal','Crowdfunding','open',100,'retail',array['AU'],
+    'https://www.birchal.com/echo-fixture','https://www.birchal.com/echo-fixture','https://example.test/echo-offer',
+    now(),true,'echo-offer','partner_ref');
+select pg_temp.expect_delivery_error($q$
+  update public.investment_opportunities set handoff_url='https://www.birchal.com/echo?partner_ref=wrong'
+  where provider_offer_reference='echo-offer'$q$,'23514','hosted route cannot predefine the outgoing referral reference');
+select case when not has_column_privilege('anon','public.investment_opportunities','provider_handoff_parameter','select')
+  and not has_function_privilege('authenticated','provider_operations.record_private_provider_event(text,text,uuid,text,text,timestamptz,timestamptz,numeric,numeric,numeric,text,timestamptz,text,uuid)','execute')
+  then 'ok   referral configuration and receipt handler are internal' else 'FAIL referral access' end;
+set role service_role;
+select public.record_private_provider_verification(
+  'f3000000-0000-4000-8000-000000000002','birchal','delivery-other','AU','retail',
+  now()-interval '13 days','Disposable eligibility',now()+interval '1 day');
+select case when public.check_private_handoff('f3000000-0000-4000-8000-000000000002',
+  'f3000000-0000-4000-8000-000000000031',500,'https://example.test/echo-offer','AUD')
+  and not exists (select from public.investment_commitments where opportunity_id='f3000000-0000-4000-8000-000000000031')
+  then 'ok   readiness does not create an application or referral' else 'FAIL referral created during readiness' end;
+
+select commitment_id as tracked_id, handoff_url as tracked_url
+from public.open_private_handoff('f3000000-0000-4000-8000-000000000002',
+  'f3000000-0000-4000-8000-000000000031',500,'https://example.test/echo-offer','AUD') \gset
+select provider_handoff_reference as tracked_reference
+from public.investment_commitments where id=:'tracked_id' \gset
+select case when :'tracked_url'='https://www.birchal.com/echo-fixture?partner_ref=' || :'tracked_reference'
+  and :'tracked_reference'<>:'tracked_id'
+  then 'ok   application link carries a separate opaque reference' else 'FAIL handoff reference URL' end;
+select case when handoff_url=:'tracked_url' and commitment_id=:'tracked_id'::uuid
+  then 'ok   reopening the handoff reuses its reference' else 'FAIL handoff reference rotated' end
+from public.open_private_handoff('f3000000-0000-4000-8000-000000000002',
+  'f3000000-0000-4000-8000-000000000031',500,'https://example.test/echo-offer','AUD');
+
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','echo-receipt',repeat('a',64),'application','delivery-other',now(),
+  '{"offer_reference":"echo-offer","reference":"echo-1","status":"application_received"}')$q$,
+  '42501','offer and investor alone cannot bind an unrelated receipt');
+select case when not exists (select from provider_operations.private_event_deliveries where event_id='echo-receipt')
+  then 'ok   a failed correlation does not consume the event ID' else 'FAIL wrong receipt persisted' end;
+select pg_temp.expect_delivery_error(format($q$select public.record_private_provider_event(
+  'birchal','delivery-other',%L,'echo-1','application_received',now())$q$,:'tracked_id'),
+  '42501','the legacy service RPC cannot bypass the referral check');
+select pg_temp.expect_delivery_error(format($q$select public.accept_private_provider_delivery(
+  'birchal','echo-receipt',repeat('a',64),'application','delivery-other',now(),
+  jsonb_build_object('commitment_id',%L,'reference','echo-1','status','application_received'))$q$,:'tracked_id'),
+  '42501','signed direct-ID delivery cannot bypass the referral check');
+select pg_temp.expect_delivery_error($q$select public.accept_private_provider_reference_delivery(
+  'birchal','echo-receipt',repeat('a',64),'application','delivery-other',now(),
+  '{"offer_reference":"echo-offer","reference":"echo-1","status":"application_received","handoff_reference":"f3000000-0000-4000-8000-000000000042"}')$q$,
+  '42501','a mismatched referral cannot bind an application');
+select pg_temp.expect_delivery_error(format($q$select public.accept_private_provider_reference_delivery(
+  'birchal','echo-receipt',repeat('a',64),'application','delivery-owner',now(),
+  jsonb_build_object('offer_reference','echo-offer','reference','echo-1','status','application_received',
+    'handoff_reference',%L))$q$,:'tracked_reference'),
+  '42501','matching referral reference still requires the linked provider subject');
+select case when public.accept_private_provider_reference_delivery(
+  'birchal','echo-receipt',repeat('a',64),'application','delivery-other',now(),
+  jsonb_build_object('offer_reference','echo-offer','reference','echo-1','status','application_received',
+    'handoff_reference',:'tracked_reference','cooling_off_ends_at',now()+interval '5 days'))='accepted'
+  then 'ok   correct provider and handoff reference attach the receipt' else 'FAIL correlated receipt' end;
+select case when status='application_received' and provider_reference='echo-1'
+  then 'ok   the correlated receipt becomes the recorded application' else 'FAIL receipt did not bind' end
+  from public.investment_commitments where id=:'tracked_id';
+-- Move the recorded revision back to simulate a later transaction in this fixture.
+update public.investment_commitments set provider_event_at=now()-interval '1 second' where id=:'tracked_id';
+select case when public.accept_private_provider_reference_delivery(
+  'birchal','echo-withdrawal',repeat('b',64),'application','delivery-other',now(),
+  '{"offer_reference":"echo-offer","reference":"echo-1","status":"withdrawn"}')='accepted'
+  then 'ok   later events use the established provider receipt' else 'FAIL post-receipt provider delivery' end;
+select case when status='withdrawn' and withdrawn_at=now() and
+  not exists (select from public.private_holdings where commitment_id=:'tracked_id')
+  then 'ok   the withdrawal remains in history without creating ownership' else 'FAIL application withdrawal' end
+  from public.investment_commitments where id=:'tracked_id';
+reset role;
+
 delete from auth.users where id='f3000000-0000-4000-8000-000000000001';
 select case when not exists (select 1 from provider_operations.private_event_deliveries where user_id='f3000000-0000-4000-8000-000000000001')
   then 'ok   deleting the account clears its delivery receipts' else 'FAIL retained delivery receipts' end;
