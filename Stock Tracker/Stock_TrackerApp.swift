@@ -275,7 +275,13 @@ struct StockCryptoTrackerApp: App {
             // When the user signs in to Supabase, run the first-sync merge
             .onReceive(supabaseAuthManager.$authState) { state in
                 if case .signedIn = state {
+                    if marketData.portfolioOwner != supabaseAuthManager.userId {
+                        syncManager.resetInitialSyncFlag()
+                        SnapTradeViewModel.shared.accountChanged()
+                    }
+                    marketData.usePortfolioAccount(supabaseAuthManager.userId)
                     marketData.useWatchlistAccount(supabaseAuthManager.userId)
+                    alertManager.useAccount(supabaseAuthManager.userId)
                     // Practice money and agents move to the account, where agents keep
                     // running while the app is closed (if its trading server answers).
                     Task { await tradingStore.useAccount() }
@@ -296,6 +302,7 @@ struct StockCryptoTrackerApp: App {
                     tradingStore.useDevice()
                     SnapTradeViewModel.shared.accountChanged()
                     marketData.reloadFromDisk()
+                    alertManager.useAccount(nil)
                     syncManager.resetInitialSyncFlag()
                 }
             }

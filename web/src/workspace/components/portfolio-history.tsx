@@ -10,10 +10,10 @@ import Chart from "./chart";
 const day = (time: number) => new Date(time).toISOString().slice(0, 10);
 const kinds = [{ id: "values", label: "Saved values" }, { id: "returns", label: "Investment return" }] as const;
 
-export function PortfolioHistory({ userId, portfolioLink = false }: { userId: string; portfolioLink?: boolean }) {
+export function PortfolioHistory({ userId, portfolioLink = false, group, groupName }: { userId: string; portfolioLink?: boolean; group?: string; groupName?: string }) {
   const [kind, setKind] = useState<HistoryKind>("values");
   const [range, setRange] = useState<HistoryRange>("1M");
-  const query = usePortfolioHistory(userId, kind);
+  const query = usePortfolioHistory(userId, kind, group);
   const today = Date.parse(day(query.dataUpdatedAt));
   const snapshots = query.data?.kind === "values" ? snapshotHistory(query.data.rows, today, range) : [];
   const returns = query.data?.kind === "returns" ? statementHistory(query.data.rows, today, range) : undefined;
@@ -22,12 +22,12 @@ export function PortfolioHistory({ userId, portfolioLink = false }: { userId: st
 
   return <section className="panel price-panel portfolio-history" aria-label="Portfolio performance">
     <div className="panel-heading portfolio-history-heading">
-      <h2>Portfolio performance</h2>
+      <h2>{groupName ? groupName + " saved values" : "Portfolio performance"}</h2>
       {portfolioLink && <Link className="button secondary small" href="/portfolio">Open Portfolio</Link>}
     </div>
     <div className="portfolio-history-controls">
       <div className="segmented" role="group" aria-label="History type">
-        {kinds.map(({ id, label }) => <button key={id} type="button" aria-pressed={kind === id} onClick={() => setKind(id)}>{label}</button>)}
+        {kinds.filter(({ id }) => !groupName || id === "values").map(({ id, label }) => <button key={id} type="button" aria-pressed={kind === id} onClick={() => setKind(id)}>{label}</button>)}
       </div>
       <div className="segmented" role="group" aria-label="Portfolio history range">
         {(Object.keys(historyRanges) as HistoryRange[]).map((value) => <button key={value} type="button" aria-pressed={range === value}
@@ -63,7 +63,7 @@ export function PortfolioHistory({ userId, portfolioLink = false }: { userId: st
       </>}
     <footer className="portfolio-history-footer">
       {kind === "values"
-        ? "Daily iPhone holdings snapshots in USD. Values reflect the holdings saved on each date."
+        ? groupName ? "Daily iPhone holdings snapshots in USD for this portfolio." : "Daily iPhone holdings snapshots in USD from the main portfolio."
         : "USD totals use the latest continuous chain of complete saved periods in the range. The solid line shows investment change. The dashed line shows net external transfers."}
       {kind === "values" && range === "1D" && " This view shows up to two daily snapshots."}
     </footer>

@@ -86,7 +86,7 @@ struct ContentView: View {
         if let owner {
             ready = cloudAuth.authState == .signedIn && sync.hasLoadedPortfolio(for: owner)
         } else {
-            ready = cloudAuth.authState == .signedOut && DataPersistenceManager.shared.lastPortfolioAccount() == nil
+            ready = cloudAuth.authState == .signedOut && marketData.portfolioOwner == nil
         }
         let scope = ready ? portfolio.map { PortfolioVisitSnapshot.Scope(owner: owner, portfolio: $0) } : nil
         let visiting = (selectedTab == .home || selectedTab == .portfolio) && scenePhase != .background

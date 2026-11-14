@@ -57,6 +57,8 @@ final class DataPersistenceManager {
         static let watchlistStorage     = "com.stocktracker.persist.watchlistStorage"
         static let watchlistGroups      = "com.stocktracker.persist.watchlistGroups"
         static let portfolioVisits      = "com.stocktracker.persist.portfolioVisits"
+        static let priceAlertAccounts   = "com.stocktracker.persist.priceAlertAccounts"
+        static let portfolioAccounts   = "com.stocktracker.persist.portfolioAccounts"
         static let portfolioGroups      = "com.stocktracker.persist.portfolioGroups"
         static let portfolioLedgerQueue = "com.stocktracker.persist.portfolioLedgerQueue"
         static let lastPortfolioAccount = "com.stocktracker.persist.lastPortfolioAccount"
@@ -97,16 +99,25 @@ final class DataPersistenceManager {
 
     // MARK: - Portfolio Groups
 
-    func savePortfolioGroups(_ groups: [PortfolioGroup], activeIndex: Int) {
-        guard let data = try? encoder.encode(groups) else { return }
-        _ = keychain.saveData(key: KeychainKeys.portfolioGroups, value: data)
-        UserDefaults.standard.set(activeIndex, forKey: "active_portfolio_index")
+    func loadPortfolioAccounts() -> StoredPortfolios {
+        if let data = keychain.retrieveData(key: KeychainKeys.portfolioAccounts),
+           let state = try? decoder.decode(StoredPortfolios.self, from: data) {
+            return state
+        }
+        let groups = keychain.retrieveData(key: KeychainKeys.portfolioGroups)
+            .flatMap { try? decoder.decode([PortfolioGroup].self, from: $0) } ?? []
+        let state = StoredPortfolios(legacyGroups: groups,
+                                     selectedIndex: defaults.integer(forKey: "active_portfolio_index"),
+                                     holdings: loadPortfolio(), history: loadPortfolioHistory(),
+                                     hiddenClosed: hiddenSyncedClosedPositions(), owner: lastPortfolioAccount())
+        savePortfolioAccounts(state)
+        return state
     }
 
-    func loadPortfolioGroups() -> (groups: [PortfolioGroup], activeIndex: Int) {
-        guard let data = keychain.retrieveData(key: KeychainKeys.portfolioGroups),
-              let groups = try? decoder.decode([PortfolioGroup].self, from: data) else { return ([], 0) }
-        return (groups, UserDefaults.standard.integer(forKey: "active_portfolio_index"))
+    @discardableResult
+    func savePortfolioAccounts(_ state: StoredPortfolios) -> Bool {
+        guard let data = try? encoder.encode(state) else { return false }
+        return keychain.saveData(key: KeychainKeys.portfolioAccounts, value: data)
     }
 
     func portfolioVisit(for scope: PortfolioVisitSnapshot.Scope) -> PortfolioVisitSnapshot? {
@@ -194,22 +205,45 @@ final class DataPersistenceManager {
 
     // MARK: - Price Alerts
 
-    func savePriceAlerts(_ alerts: [PriceAlert]) {
-        guard let data = try? encoder.encode(alerts) else { return }
-        _ = keychain.saveData(key: KeychainKeys.priceAlerts, value: data)
+    private struct AlertAccounts: Codable {
+        var alerts: [String: [PriceAlert]]
+        var guestImported: Bool
     }
 
-    func loadPriceAlerts() -> [PriceAlert] {
-        guard let data = keychain.retrieveData(key: KeychainKeys.priceAlerts),
-              let decoded = try? decoder.decode([PriceAlert].self, from: data) else {
-            migrateFromUserDefaults(keychainKey: KeychainKeys.priceAlerts, defaultsKey: "saved_price_alerts", type: [PriceAlert].self)
-            guard let data2 = keychain.retrieveData(key: KeychainKeys.priceAlerts),
-                  let decoded2 = try? decoder.decode([PriceAlert].self, from: data2) else {
-                return []
-            }
-            return decoded2
+    private func loadAlertAccounts() -> AlertAccounts {
+        if let data = keychain.retrieveData(key: KeychainKeys.priceAlertAccounts),
+           let stored = try? decoder.decode(AlertAccounts.self, from: data) {
+            return stored
         }
-        return decoded
+        migrateFromUserDefaults(keychainKey: KeychainKeys.priceAlerts, defaultsKey: "saved_price_alerts", type: [PriceAlert].self)
+        let legacy = keychain.retrieveData(key: KeychainKeys.priceAlerts)
+            .flatMap { try? decoder.decode([PriceAlert].self, from: $0) } ?? []
+        let owner = lastPortfolioAccount()
+        let result = AlertAccounts(alerts: [owner?.uuidString ?? "device": legacy], guestImported: owner != nil)
+        saveAlertAccounts(result)
+        return result
+    }
+
+    func savePriceAlerts(_ alerts: [PriceAlert], owner: UUID? = nil) {
+        var stored = loadAlertAccounts()
+        stored.alerts[owner?.uuidString ?? "device"] = alerts
+        saveAlertAccounts(stored)
+    }
+
+    func loadPriceAlerts(owner: UUID? = nil) -> [PriceAlert] {
+        var stored = loadAlertAccounts()
+        guard let owner else { return stored.alerts["device"] ?? [] }
+        if let alerts = stored.alerts[owner.uuidString] { return alerts }
+        let initial = stored.guestImported ? [] : stored.alerts["device"] ?? []
+        stored.alerts[owner.uuidString] = initial
+        stored.guestImported = true
+        saveAlertAccounts(stored)
+        return initial
+    }
+
+    private func saveAlertAccounts(_ stored: AlertAccounts) {
+        guard let data = try? encoder.encode(stored) else { return }
+        _ = keychain.saveData(key: KeychainKeys.priceAlertAccounts, value: data)
     }
 
     // MARK: - Portfolio History
@@ -258,13 +292,6 @@ final class DataPersistenceManager {
         guard let data = keychain.retrieveData(key: KeychainKeys.hiddenClosedPositions),
               let ids = try? decoder.decode(Set<UUID>.self, from: data) else { return [] }
         return ids
-    }
-
-    func hideSyncedClosedPosition(_ id: UUID) {
-        let ids = hiddenSyncedClosedPositions().union([id])
-        if let data = try? encoder.encode(ids) {
-            _ = keychain.saveData(key: KeychainKeys.hiddenClosedPositions, value: data)
-        }
     }
 
     func loadPortfolioLedgerQueue() -> [String: [PortfolioLedgerChange]] {
@@ -333,6 +360,7 @@ final class DataPersistenceManager {
         _ = keychain.delete(key: KeychainKeys.watchlistGroups)
         _ = keychain.delete(key: KeychainKeys.watchlistStorage)
         _ = keychain.delete(key: KeychainKeys.portfolioGroups)
+        _ = keychain.delete(key: KeychainKeys.portfolioAccounts)
         _ = keychain.delete(key: KeychainKeys.portfolioVisits)
         _ = keychain.delete(key: KeychainKeys.portfolioLedgerQueue)
         _ = keychain.delete(key: KeychainKeys.lastPortfolioAccount)
@@ -340,6 +368,7 @@ final class DataPersistenceManager {
         _ = keychain.delete(key: KeychainKeys.portfolio)
         _ = keychain.delete(key: KeychainKeys.customAssets)
         _ = keychain.delete(key: KeychainKeys.priceAlerts)
+        _ = keychain.delete(key: KeychainKeys.priceAlertAccounts)
         _ = keychain.delete(key: KeychainKeys.portfolioHistory)
         _ = keychain.delete(key: KeychainKeys.referralCode)
         // Leave UserDefaults preferences intact (currency, theme)
