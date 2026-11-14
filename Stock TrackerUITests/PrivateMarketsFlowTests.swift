@@ -10,6 +10,24 @@ final class PrivateMarketsFlowTests: XCTestCase {
         app.launch()
     }
 
+    @MainActor
+    func testApprovedProviderLinkCodeIsDisplayed() throws {
+        try launchWithLocalSession("PRIVATE_PROVIDER_LINK_TEST_SESSION")
+        openPrivateMarkets()
+        let profile = app.buttons["Investor profile & applications"]
+        for _ in 0..<4 where !profile.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(profile.isHittable)
+        profile.tap()
+        let generate = app.buttons["Generate link code"]
+        XCTAssertTrue(app.navigationBars["Investor Profile & Applications"].waitForExistence(timeout: 5))
+        for _ in 0..<4 where !generate.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(generate.isHittable)
+        generate.tap()
+        let code = app.staticTexts["private.investor.linkCode"]
+        XCTAssertTrue(code.waitForExistence(timeout: 10))
+        XCTAssertNotNil(code.label.range(of: #"^[a-f0-9]{32}$"#, options: .regularExpression))
+    }
+
     func testManualHoldingAppearsInUnifiedPortfolioAndSurvivesRelaunch() {
         openPrivateMarkets()
         app.buttons["private.destination.briefcase"].tap()

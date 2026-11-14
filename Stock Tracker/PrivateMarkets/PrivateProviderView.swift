@@ -172,6 +172,7 @@ private struct PrivateProviderLinkView: View {
             }.disabled(busy)
             if let link {
                 Text(link.code).font(.footnote.monospaced()).textSelection(.enabled)
+                    .accessibilityIdentifier("private.investor.linkCode")
                 LabeledContent("Expires", value: link.expiresAt.formatted(date: .abbreviated, time: .shortened))
                 Button("Refresh verification") { Task { await refresh() } }
             }
