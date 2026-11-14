@@ -10,10 +10,16 @@ const holding = {
 
 Deno.test("manual portfolio snapshots accept precise amounts and decline data outside the snapshot schema", () => {
   assertEquals(validManualSnapshot([holding]), true);
+  const ownershipEvidence = { excerptID: "ed000000-0000-4000-8000-000000000011", reviewedOn: "2026-01-01T00:00:00Z" };
+  assertEquals(validManualSnapshot([{ ...holding, ownershipEvidence }]), true);
   for (const fields of [
     { units: 1.1 }, { ownership: "101" }, { pendingCalls: "-1" }, { currency: "au" }, { paid: "1e3" },
     { ownershipEvidenceID: holding.id }, { commitment: "12\n" }, { valuation: { ...holding.valuation, source: "" } },
     { valuation: { ...holding.valuation, date: "2999-01-01T00:00:00Z" } },
+    { ownershipEvidence: { ...ownershipEvidence, excerpt: "Private document body" } },
+    { ownershipEvidence: { ...ownershipEvidence, excerptID: "https://example.test/document" } },
+    { ownershipEvidence: { ...ownershipEvidence, reviewedOn: "2999-01-01T00:00:00Z" } },
+    { ownershipEvidence: { excerptID: ownershipEvidence.excerptID } },
   ]) {
     assertEquals(validManualSnapshot([{ ...holding, ...fields }]), false);
   }

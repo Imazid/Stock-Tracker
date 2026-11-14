@@ -13,13 +13,16 @@ function fields(value: unknown, keys: string[]): value is Record<string, unknown
     Object.keys(value).every((key) => keys.includes(key));
 }
 
-export function validManualSnapshot(value: unknown) {
+type OwnershipEvidence = { excerptID: string; reviewedOn: string };
+type SnapshotHolding = Record<string, unknown> & { ownershipEvidence?: OwnershipEvidence };
+
+export function validManualSnapshot(value: unknown): value is SnapshotHolding[] {
   if (!Array.isArray(value) || !value.length || value.length > 150) return false;
   const seen = new Set<string>();
   for (const item of value) {
     if (!fields(item, ["id", "name", "assetClass", "currency", "units", "ownership", "shareClass", "lockupUntil",
       "commitment", "paid", "returned", "pendingCalls", "exitedOn", "valuation", "netGain", "realizedGain",
-      "unrealizedGain", "multiple", "dpi", "xirr"]) ||
+      "unrealizedGain", "multiple", "dpi", "xirr", "ownershipEvidence"]) ||
       typeof item.id !== "string" || !uuid.test(item.id) || seen.has(item.id.toLowerCase()) ||
       !text(item.name, 160) || typeof item.assetClass !== "string" || !classes.has(item.assetClass) ||
       typeof item.currency !== "string" || !/^[A-Z]{3}$/.test(item.currency) ||
@@ -29,6 +32,11 @@ export function validManualSnapshot(value: unknown) {
       ["netGain", "realizedGain", "unrealizedGain", "xirr"].some((key) => item[key] !== undefined && !reading(item[key], true)) ||
       ["lockupUntil", "exitedOn"].some((key) => item[key] !== undefined && !date(item[key])) ||
       (item.ownership !== undefined && (!reading(item.ownership) || Number(item.ownership) > 100))) return false;
+    if (item.ownershipEvidence !== undefined) {
+      const evidence = item.ownershipEvidence;
+      if (!fields(evidence, ["excerptID", "reviewedOn"]) || typeof evidence.excerptID !== "string" ||
+        !uuid.test(evidence.excerptID) || !date(evidence.reviewedOn) || Date.parse(evidence.reviewedOn) > Date.now()) return false;
+    }
     if (item.valuation !== undefined) {
       const mark = item.valuation;
       if (!fields(mark, ["value", "date", "source", "method"]) || !reading(mark.value) || !date(mark.date) ||

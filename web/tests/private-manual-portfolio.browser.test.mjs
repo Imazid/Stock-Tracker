@@ -6,7 +6,8 @@ const {
   PRIVATE_MARKETS_TEST_ORIGIN: origin, PRIVATE_MARKETS_TEST_CHROME: executablePath,
   PRIVATE_MARKETS_TEST_EMAIL: email, PRIVATE_MARKETS_TEST_PASSWORD: password,
   PRIVATE_MARKETS_OTHER_EMAIL: otherEmail, PRIVATE_MARKETS_OTHER_PASSWORD: otherPassword,
-  PRIVATE_MANUAL_SNAPSHOT_FIXTURE: fixture, VERCEL_OIDC_TOKEN: previewToken,
+  PRIVATE_MANUAL_SNAPSHOT_FIXTURE: fixture, PRIVATE_MANUAL_EXCERPT_FIXTURE: excerptFixture,
+  PRIVATE_MANUAL_EXCERPT_ID: excerptID, VERCEL_OIDC_TOKEN: previewToken,
 } = process.env;
 const previewHeaders = previewToken ? { "x-vercel-trusted-oidc-idp-token": previewToken } : {};
 
@@ -32,6 +33,7 @@ test("Published iPhone holdings are dated, owner-scoped, included in allocation 
   }
 
   try {
+    const portfolioRequest = (request) => request.url() === api && request.postDataJSON()?.action === "manual_portfolio";
     const page = await signedIn(email, password);
     const response = await page.request.post(api, { headers: previewHeaders, data: { action: "manual_portfolio" } });
     assert.equal(response.status(), 401);
@@ -51,6 +53,30 @@ test("Published iPhone holdings are dated, owner-scoped, included in allocation 
     const other = await signedIn(otherEmail, otherPassword);
     await other.getByText("Publish your current snapshot from My Private Portfolio on iPhone.", { exact: true }).waitFor();
     assert.equal(await other.getByRole("heading", { name: fixture, exact: true }).count(), 0);
+    if (excerptFixture && excerptID) {
+      const source = holding.getByRole("button", { name: "Open ownership excerpt", exact: true });
+      assert.equal(await holding.getByText(excerptFixture, { exact: true }).count(), 0);
+      await source.click();
+      await holding.getByText(excerptFixture, { exact: true }).waitFor();
+      await holding.getByText(/Reviewed by you on/).waitFor();
+      const blocked = other.waitForRequest(portfolioRequest);
+      await other.reload();
+      const { authorization: otherAuthorization } = await (await blocked).allHeaders();
+      const denied = await other.request.post(api, {
+        headers: { ...previewHeaders, authorization: otherAuthorization }, data: { action: "document", id: excerptID },
+      });
+      assert.equal(denied.status(), 404);
+
+      await page.getByRole("radio", { name: "Deal Room", exact: true }).click();
+      await page.getByRole("button", { name: /Published ownership fixture/ }).click();
+      await page.getByRole("button", { name: "Delete excerpt", exact: true }).click();
+      await page.getByRole("button", { name: "Confirm deletion", exact: true }).click();
+      await page.getByRole("heading", { name: "No excerpts saved", exact: true }).waitFor();
+      await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
+      await source.click();
+      await holding.getByText("This excerpt is no longer available in your Deal Room.", { exact: true }).waitFor();
+      assert.equal(await holding.getByText(excerptFixture, { exact: true }).count(), 0);
+    }
 
     await page.getByRole("button", { name: "Remove web snapshot", exact: true }).click();
     await page.getByRole("button", { name: "Confirm removal", exact: true }).click();

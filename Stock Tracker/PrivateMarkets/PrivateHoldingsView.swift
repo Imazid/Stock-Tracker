@@ -145,6 +145,7 @@ private struct PrivateManualPortfolioPublication: View {
     @EnvironmentObject private var store: PrivateMarketsStore
     @State private var remote: Remote?
     @State private var busy = false
+    @State private var includeOwnershipEvidence = false
     @State private var confirmPublish = false
     @State private var confirmRemoval = false
     @State private var error: String?
@@ -155,6 +156,13 @@ private struct PrivateManualPortfolioPublication: View {
                 Text("Publish a dated view of your self-reported holdings to your signed-in web portfolio. Publish again after changes to update the web copy.")
                 Text("The encrypted snapshot includes holding names, ownership, manually recorded values and sources, and calculated performance.")
                     .font(.footnote).foregroundStyle(.secondary)
+                if store.independentManualHoldings.contains(where: { $0.ownershipEvidenceID != nil && $0.ownershipReviewedOn != nil }) {
+                    Toggle("Include reviewed ownership excerpt links", isOn: $includeOwnershipEvidence)
+                        .accessibilityIdentifier("private.portfolio.publish.evidence")
+                        .disabled(busy)
+                    Text("The web portfolio can open linked excerpts already saved in your Deal Room.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 if let published = remote?.snapshot?.updatedAt {
                     LabeledContent("Last published", value: published.formatted(date: .abbreviated, time: .shortened))
                 }
@@ -250,6 +258,10 @@ private struct PrivateManualPortfolioPublication: View {
         fields["units"] = holding.remainingUnits(asOf: asOf).map(number)
         fields["ownership"] = holding.latestManualSale == nil ? holding.ownershipPercent.map(number) : nil
         fields["shareClass"] = holding.shareClass.isEmpty ? nil : holding.shareClass
+        if includeOwnershipEvidence, let excerptID = holding.ownershipEvidenceID,
+           let reviewedOn = holding.ownershipReviewedOn, reviewedOn <= asOf {
+            fields["ownershipEvidence"] = ["excerptID": excerptID.uuidString, "reviewedOn": iso.string(from: reviewedOn)]
+        }
         fields["lockupUntil"] = holding.lockupUntil.map(iso.string(from:))
         fields["commitment"] = holding.commitment.map(number)
         fields["exitedOn"] = holding.closedOn(asOf: asOf).map(iso.string(from:))

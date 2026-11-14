@@ -491,6 +491,14 @@ final class PrivateMarketsFlowTests: XCTestCase {
         publish.tap()
         let current = app.buttons["private.portfolio.publish.current"]
         XCTAssertTrue(current.waitForExistence(timeout: 10))
+        if ProcessInfo.processInfo.environment["PRIVATE_MANUAL_OWNERSHIP_FIXTURE"] == "1" {
+            let include = app.switches["private.portfolio.publish.evidence"]
+            XCTAssertTrue(include.waitForExistence(timeout: 5))
+            XCTAssertEqual(include.value as? String, "0")
+            let control = include.switches.firstMatch
+            (control.exists ? control : include).tap()
+            XCTAssertEqual(include.value as? String, "1")
+        }
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: current)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 15), .completed)
         current.tap()

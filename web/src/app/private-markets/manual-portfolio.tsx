@@ -1,12 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
-import { dateLabel, groupedDecimal, privateMarkets, dayInSydney } from "./private-data";
+import { dateLabel, groupedDecimal, privateMarkets, dayInSydney, PrivateMarketsError } from "./private-data";
 
 type ManualHolding = {
   id: string; name: string; assetClass: string; currency: string; units?: string; ownership?: string;
@@ -14,6 +14,7 @@ type ManualHolding = {
   pendingCalls: string; exitedOn?: string;
   valuation?: { value: string; date: string; source: string; method: string };
   netGain?: string; realizedGain?: string; unrealizedGain?: string; multiple?: string; dpi?: string; xirr?: string;
+  ownershipEvidence?: { excerptID: string; reviewedOn: string };
 };
 export type ManualPortfolio = { revision: string | null; snapshot: { updated_at: string; holdings: ManualHolding[] } | null };
 
@@ -31,7 +32,36 @@ export function manualValuationIsStale(date: string, now: number) {
   return Date.parse(dayInSydney(now)) - Date.parse(dayInSydney(Date.parse(date))) > 90 * 86_400_000;
 }
 
-function ManualHoldingCard({ holding, now }: { holding: ManualHolding; now: number }) {
+function OwnershipExcerpt({ owner, evidence }: { owner: string; evidence: NonNullable<ManualHolding["ownershipEvidence"]> }) {
+  const regionID = useId();
+  const [open, setOpen] = useState(false);
+  return <div className="space-y-2 border-t border-border px-4 py-3 text-sm text-text-2">
+    <Button size="sm" aria-controls={regionID} aria-expanded={open} onClick={() => setOpen(!open)}>
+      {open ? "Close ownership excerpt" : "Open ownership excerpt"}
+    </Button>
+    <div id={regionID} hidden={!open}>
+      {open && <OwnershipExcerptContent owner={owner} evidence={evidence} />}
+    </div>
+  </div>;
+}
+
+function OwnershipExcerptContent({ owner, evidence }: { owner: string; evidence: NonNullable<ManualHolding["ownershipEvidence"]> }) {
+  const content = useQuery({
+    queryKey: ["private-markets", owner, "documents", evidence.excerptID.toLowerCase()], gcTime: 0, retry: false, staleTime: 0,
+    queryFn: ({ signal }) => privateMarkets<{ excerpt: string }>("document", { owner, signal, id: evidence.excerptID }),
+  });
+  if (content.isFetching || content.isPending) return <p role="status">Opening your Deal Room excerpt…</p>;
+  if (content.error instanceof PrivateMarketsError && content.error.code === "NOT_FOUND") {
+    return <p role="status">This excerpt is no longer available in your Deal Room.</p>;
+  }
+  if (content.error) return <Notice tone="down">{content.error.message} <Button size="sm" onClick={() => void content.refetch()}>Retry excerpt</Button></Notice>;
+  return <div className="space-y-2">
+    <p className="text-xs">Reviewed by you on {dateLabel(evidence.reviewedOn)}.</p>
+    <p className="whitespace-pre-wrap break-words">{content.data.excerpt}</p>
+  </div>;
+}
+
+function ManualHoldingCard({ owner, holding, now }: { owner: string; holding: ManualHolding; now: number }) {
   const { currency, valuation } = holding;
   const money = (value?: string) => value === undefined ? "Unavailable" : currency + " " + groupedDecimal(value);
   const values = [
@@ -68,6 +98,7 @@ function ManualHoldingCard({ holding, now }: { holding: ManualHolding; now: numb
         </div>}
       </>}
     </div>
+    {holding.ownershipEvidence && <OwnershipExcerpt key={holding.ownershipEvidence.excerptID} owner={owner} evidence={holding.ownershipEvidence} />}
     <details className="border-t border-border px-4 py-3 text-sm">
       <summary className="cursor-pointer font-medium">Performance at publication</summary>
       <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -116,6 +147,6 @@ export function ManualPortfolioPanel({ owner }: { owner: string }) {
     {result.error && <Notice tone="down">{result.error.message} <Button size="sm" onClick={() => void result.refetch()}>Retry snapshot</Button></Notice>}
     {remove.error && <Notice tone="down">{remove.error.message}</Notice>}
     {remove.isSuccess && <p className="text-sm text-text-2" role="status">Web snapshot removed.</p>}
-    {snapshot?.holdings.map((holding) => <ManualHoldingCard key={holding.id} holding={holding} now={result.dataUpdatedAt} />)}
+    {snapshot?.holdings.map((holding) => <ManualHoldingCard key={holding.id} owner={owner} holding={holding} now={result.dataUpdatedAt} />)}
   </section>;
 }

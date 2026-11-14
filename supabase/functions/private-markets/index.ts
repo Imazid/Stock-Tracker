@@ -691,13 +691,29 @@ Deno.serve(async (req) => {
         const saving = body.action === "save_manual_portfolio";
         const expected = body.expected_revision;
         if (Object.keys(body).some((key) => !["action", "expected_revision", ...(saving ? ["holdings"] : [])].includes(key)) ||
-          (expected !== null && (typeof expected !== "string" || !uuid.test(expected))) ||
-          (saving && !validManualSnapshot(body.holdings))) {
+          (expected !== null && (typeof expected !== "string" || !uuid.test(expected)))) {
           return errorResponse(400, "INVALID_PORTFOLIO", "Review the portfolio snapshot and try again.");
         }
-        const revision = crypto.randomUUID();
-        const payload = saving ? JSON.stringify(body.holdings) : "";
+        let payload = "";
+        if (saving) {
+          const holdings = body.holdings;
+          if (!validManualSnapshot(holdings)) return errorResponse(400, "INVALID_PORTFOLIO", "Review the portfolio snapshot and try again.");
+          const excerptIDs = [...new Set(holdings.flatMap(({ ownershipEvidence }) =>
+            ownershipEvidence ? [ownershipEvidence.excerptID.toLowerCase()] : []))];
+          if (excerptIDs.length) {
+            const { data: owned, error } = await admin.from("deal_documents").select("id").eq("user_id", userId).in("id", excerptIDs);
+            if (error) throw error;
+            const available = new Set(owned.map(({ id }) => id));
+            for (const holding of holdings) {
+              if (holding.ownershipEvidence && !available.has(holding.ownershipEvidence.excerptID.toLowerCase())) {
+                delete holding.ownershipEvidence;
+              }
+            }
+          }
+          payload = JSON.stringify(holdings);
+        }
         if (utf8(payload).byteLength > 110_000) return errorResponse(413, "PORTFOLIO_TOO_LARGE", "The snapshot is too large to publish.");
+        const revision = crypto.randomUUID();
         const sealed = saving ? await seal(await keys(), payload, context("manual_portfolio", userId, revision)) : null;
         const { data, error } = await admin.rpc("write_private_manual_portfolio_snapshot", {
           p_user: userId, p_expected: expected, p_revision: revision, p_sealed: sealed,
