@@ -190,6 +190,7 @@ private struct PrivateDiscoveryView: View {
     @State private var search = ""
     @State private var category = ""
     @State private var country = ""
+    @State private var investorJurisdiction = ""
     @State private var sector = ""
     @State private var stage = ""
     @State private var status = ""
@@ -197,30 +198,46 @@ private struct PrivateDiscoveryView: View {
     @State private var currency = ""
     @State private var maxMinimum = ""
     @State private var maxValuation = ""
+    @State private var minTarget = ""
+    @State private var maxTarget = ""
     @State private var hasTraction = false
     @State private var following = false
     @State private var showFilters = false
 
     private var filtered: [PrivateDeal] {
-        deals.filter { deal in
+        let now = Date.now
+        return deals.filter { deal in
             let matchesSearch = search.isEmpty || [
                 deal.company.name, deal.company.sector, deal.company.country, deal.company.location ?? "",
                 deal.company.description ?? "", deal.round.stage, deal.sourceName, deal.round.listing?.symbol ?? ""
             ].contains { $0.localizedCaseInsensitiveContains(search) }
             return matchesSearch && (category.isEmpty || deal.category == category) &&
                 (country.isEmpty || deal.company.country == country) && (sector.isEmpty || deal.company.sector == sector) &&
-                (stage.isEmpty || deal.round.stage == stage) && (status.isEmpty || deal.displayedStatus == status) &&
+                (investorJurisdiction.isEmpty || deal.jurisdictions.contains(investorJurisdiction)) &&
+                (stage.isEmpty || deal.round.stage == stage) && (status.isEmpty || deal.displayedStatus(at: now) == status) &&
                 (eligibility.isEmpty || deal.eligibility == eligibility) && (currency.isEmpty || deal.round.currency == currency) &&
-                matches(deal.minimum, maximum: maxMinimum) && matches(deal.round.valuation, maximum: maxValuation) &&
+                matches(deal.minimum, upper: maxMinimum) && matches(deal.round.valuation, upper: maxValuation) &&
+                matches(deal.round.target, lower: minTarget, upper: maxTarget) &&
                 (!hasTraction || deal.round.traction?.isEmpty == false || deal.company.financials?.isEmpty == false) &&
                 (!following || store.state.follows.contains { $0.id == deal.company.id })
         }
     }
 
-    private func matches(_ value: Decimal?, maximum: String) -> Bool {
-        guard !maximum.isEmpty else { return true }
-        guard let value, let limit = PrivateInput.amount(maximum), !currency.isEmpty else { return false }
-        return value <= limit
+    private func matches(_ value: Decimal?, lower: String = "", upper: String) -> Bool {
+        guard !lower.isEmpty || !upper.isEmpty else { return true }
+        guard let value, !currency.isEmpty else { return false }
+        let minimum = lower.isEmpty ? true : PrivateInput.amount(lower).map { value >= $0 } ?? false
+        let maximum = upper.isEmpty ? true : PrivateInput.amount(upper).map { value <= $0 } ?? false
+        return minimum && maximum
+    }
+
+    private var amountIssue: String? {
+        let entries = [maxMinimum, maxValuation, minTarget, maxTarget].filter { !$0.isEmpty }
+        if entries.contains(where: { PrivateInput.amount($0) == nil }) { return "Enter valid amounts in the selected currency." }
+        if let low = PrivateInput.amount(minTarget), let high = PrivateInput.amount(maxTarget), low > high {
+            return "The minimum raise target exceeds the maximum."
+        }
+        return nil
     }
 
     var body: some View {
@@ -228,6 +245,10 @@ private struct PrivateDiscoveryView: View {
             Section {
                 Toggle("Following", isOn: $following)
                 Button { showFilters = true } label: { Label("Filters", systemImage: "line.3.horizontal.decrease") }
+                    .accessibilityIdentifier("private.discover.filters")
+                if !investorJurisdiction.isEmpty {
+                    LabeledContent("Investor jurisdiction", value: countryName(investorJurisdiction))
+                }
                 if auth.userId != nil {
                     NavigationLink { PrivateDiscoverySearchView() } label: {
                         Label("Search the catalogue with AI", systemImage: "sparkle.magnifyingglass")
@@ -325,7 +346,7 @@ private struct PrivateDiscoveryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Company, symbol, sector or provider")
         .refreshable { await refresh() }
-        .onChange(of: currency) { _, value in if value.isEmpty { maxMinimum = ""; maxValuation = "" } }
+        .onChange(of: currency) { _, _ in clearAmounts() }
         .sheet(isPresented: $showFilters) {
             NavigationStack {
                 Form {
@@ -333,31 +354,57 @@ private struct PrivateDiscoveryView: View {
                         picker("Category", selection: $category, values: deals.map(\.category))
                         picker("Stage", selection: $stage, values: deals.map(\.round.stage))
                         picker("Sector", selection: $sector, values: deals.map(\.company.sector))
-                        picker("Country", selection: $country, values: deals.map(\.company.country))
+                        picker("Company country", selection: $country, values: deals.map(\.company.country), valueLabel: countryName)
+                        picker("Investor jurisdiction", selection: $investorJurisdiction,
+                               values: deals.flatMap(\.jurisdictions), valueLabel: countryName)
+                            .accessibilityIdentifier("private.discover.investorJurisdiction")
                         picker("Status", selection: $status, values: deals.map(\.displayedStatus))
                         picker("Eligibility", selection: $eligibility, values: deals.map(\.eligibility))
                         Toggle("Disclosed traction", isOn: $hasTraction)
                     }
                     Section("Amounts") {
-                        picker("Currency", selection: $currency, values: deals.map(\.round.currency))
-                        TextField("Maximum minimum investment", text: $maxMinimum).keyboardType(.decimalPad).disabled(currency.isEmpty)
-                        TextField("Maximum valuation", text: $maxValuation).keyboardType(.decimalPad).disabled(currency.isEmpty)
+                        picker("Currency", selection: $currency, values: deals.map(\.round.currency), valueLabel: { $0 })
+                            .accessibilityIdentifier("private.discover.currency")
+                        Group {
+                            TextField("Maximum minimum investment", text: $maxMinimum)
+                            TextField("Minimum raise target", text: $minTarget)
+                                .accessibilityIdentifier("private.discover.targetMin")
+                            TextField("Maximum raise target", text: $maxTarget)
+                                .accessibilityIdentifier("private.discover.targetMax")
+                            TextField("Maximum valuation", text: $maxValuation)
+                        }
+                        .keyboardType(.decimalPad)
+                        .disabled(currency.isEmpty)
+                        if let amountIssue { Text(amountIssue).foregroundStyle(.red) }
                     }
                     Button("Clear filters") {
                         category = ""; stage = ""; sector = ""; country = ""; status = ""; eligibility = ""
-                        currency = ""; maxMinimum = ""; maxValuation = ""; hasTraction = false
+                        currency = ""; investorJurisdiction = ""; clearAmounts(); hasTraction = false
                     }
                 }
                 .navigationTitle("Filters")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showFilters = false } } }
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showFilters = false }.disabled(amountIssue != nil)
+                    }
+                }
             }
         }
     }
 
-    private func picker(_ label: String, selection: Binding<String>, values: [String]) -> some View {
+    private func clearAmounts() {
+        maxMinimum = ""; maxValuation = ""; minTarget = ""; maxTarget = ""
+    }
+
+    private func countryName(_ code: String) -> String {
+        Locale.current.localizedString(forRegionCode: code) ?? code
+    }
+
+    private func picker(_ label: String, selection: Binding<String>, values: [String],
+                        valueLabel: @escaping (String) -> String = { $0.capitalized }) -> some View {
         Picker(label, selection: selection) {
             Text("Any").tag("")
-            ForEach(Set(values).sorted(), id: \.self) { Text($0.capitalized).tag($0) }
+            ForEach(Set(values).sorted(), id: \.self) { Text(valueLabel($0)).tag($0) }
         }
     }
 }
@@ -366,9 +413,11 @@ private struct PrivateDiscoverySearchView: View {
     private struct Results: Decodable {
         struct Criteria: Decodable {
             let countries, sectors, categories, statuses, eligibility, providers, unsupported: [String]
+            let investorJurisdictions: [String]?
             let stages: [String]?
             let company, currency: String
             let maxMinimum, maxValuation: Decimal
+            let minRaiseTarget, maxRaiseTarget: Decimal?
             let disclosedTraction: Bool
         }
         let criteria: Criteria
@@ -425,7 +474,8 @@ private struct PrivateDiscoverySearchView: View {
     @ViewBuilder
     private func filters(_ criteria: Results.Criteria) -> some View {
         let lists = [
-            ("Country", criteria.countries), ("Sector", criteria.sectors), ("Category", criteria.categories), ("Stage", criteria.stages ?? []),
+            ("Company country", criteria.countries), ("Investor jurisdiction", criteria.investorJurisdictions ?? []),
+            ("Sector", criteria.sectors), ("Category", criteria.categories), ("Stage", criteria.stages ?? []),
             ("Status", criteria.statuses), ("Eligibility", criteria.eligibility), ("Source", criteria.providers),
         ]
         ForEach(lists.filter { !$0.1.isEmpty }, id: \.0) { label, values in
@@ -435,6 +485,8 @@ private struct PrivateDiscoverySearchView: View {
         if !criteria.currency.isEmpty { LabeledContent("Currency", value: criteria.currency) }
         if criteria.maxMinimum > 0 { LabeledContent("Maximum minimum investment", value: criteria.maxMinimum.formatted()) }
         if criteria.maxValuation > 0 { LabeledContent("Maximum valuation", value: criteria.maxValuation.formatted()) }
+        if let low = criteria.minRaiseTarget, low > 0 { LabeledContent("Minimum raise target", value: low.formatted()) }
+        if let high = criteria.maxRaiseTarget, high > 0 { LabeledContent("Maximum raise target", value: high.formatted()) }
         if criteria.disclosedTraction { Text("Disclosed traction required") }
         ForEach(criteria.unsupported, id: \.self) { Label($0, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
     }
@@ -464,8 +516,16 @@ private struct PrivateDealRow: View {
     let deal: PrivateDeal
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "building.2")
-                .foregroundStyle(Color.cyan)
+            Group {
+                if let url = deal.company.logoUrl, url.privateSourceIsSafe {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image { image.resizable().scaledToFit().padding(4) }
+                        else { logoPlaceholder }
+                    }
+                } else {
+                    logoPlaceholder
+                }
+            }
                 .frame(width: 36, height: 36)
                 .background(.cyan.opacity(0.1), in: RoundedRectangle(cornerRadius: 11))
                 .accessibilityHidden(true)
@@ -480,6 +540,10 @@ private struct PrivateDealRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
+    }
+
+    private var logoPlaceholder: some View {
+        Image(systemName: "building.2").foregroundStyle(Color.cyan)
     }
 }
 
@@ -789,7 +853,8 @@ struct PrivateDealDetail: View {
                 }
                 if deal.provider != "issuer" {
                     LabeledContent("Eligibility", value: deal.eligibility.capitalized)
-                    if !deal.jurisdictions.isEmpty { LabeledContent("Jurisdictions", value: deal.jurisdictions.joined(separator: ", ")) }
+                    LabeledContent("Investor jurisdictions", value: deal.jurisdictions.isEmpty
+                        ? "Undisclosed" : deal.jurisdictions.map { Locale.current.localizedString(forRegionCode: $0) ?? $0 }.joined(separator: ", "))
                     LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
                 }
                 LabeledContent("Raise target", value: PrivateInput.money(deal.round.target, currency: deal.round.currency))

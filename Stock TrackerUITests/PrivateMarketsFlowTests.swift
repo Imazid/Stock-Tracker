@@ -827,6 +827,42 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testDiscoveryFiltersInvestorJurisdictionAndRaiseTarget() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
+                          "Run with the hosted Private Markets catalogue.")
+        openPrivateMarkets()
+        app.buttons["private.destination.magnifyingglass"].tap()
+        let filters = app.buttons["private.discover.filters"]
+        XCTAssertTrue(filters.waitForExistence(timeout: 10))
+        filters.tap()
+        let currency = app.buttons["private.discover.currency"]
+        for _ in 0..<4 where !currency.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(currency.isHittable, app.debugDescription)
+        currency.tap()
+        app.buttons["AUD"].firstMatch.tap()
+        let jurisdiction = app.buttons["private.discover.investorJurisdiction"]
+        for _ in 0..<3 where !jurisdiction.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(jurisdiction.isHittable, app.debugDescription)
+        jurisdiction.tap()
+        app.buttons["Australia"].firstMatch.tap()
+        let minimum = app.textFields["private.discover.targetMin"]
+        for _ in 0..<4 where !minimum.isHittable { app.swipeUp(velocity: .slow) }
+        minimum.tap()
+        minimum.typeText("4000000")
+        let maximum = app.textFields["private.discover.targetMax"]
+        for _ in 0..<3 where !maximum.isHittable { app.swipeUp(velocity: .slow) }
+        maximum.tap()
+        maximum.typeText("6000000")
+        app.buttons["Done"].firstMatch.tap()
+        let museum = app.staticTexts["MoPA: Museum of Play and Art"].firstMatch
+        for _ in 0..<3 where !museum.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(museum.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["ABC Commodities Limited"].exists)
+        XCTAssertFalse(app.staticTexts["Alvear Tungsten Limited"].exists)
+        XCTAssertFalse(app.staticTexts["Grong Grong Solar Farm"].exists)
+    }
+
+    @MainActor
     func testCompanyUpdatesShowsCitableFinancialDisclosure() throws {
         try launchWithLocalSession("PRIVATE_FINANCIAL_DISCLOSURE_TEST_SESSION")
         openCompanyUpdatesFollowingHeidi()

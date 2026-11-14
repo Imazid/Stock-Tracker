@@ -4,18 +4,19 @@ import { type Discoverable, interpretDiscovery, matchDiscovery, parseDiscovery }
 import { ResearchError } from "../_shared/private-markets/research.ts";
 
 const filters = {
-  countries: ["AU"], sectors: ["Healthcare technology"], stages: [], categories: [], statuses: ["open"],
+  countries: ["AU"], investor_jurisdictions: [], sectors: ["Healthcare technology"], stages: [], categories: [], statuses: ["open"],
   eligibility: ["retail"], providers: [], company: "", currency: "", max_minimum: 0, max_valuation: 0,
+  min_raise_target: 0, max_raise_target: 0,
   disclosed_traction: false, unsupported: [],
 };
 const now = Date.parse("2026-11-14T00:00:00Z");
 const recent = "2026-11-13T23:00:00Z";
 const round = {
-  verified_at: recent, stage: "Series C", closes_at: "2026-11-14T04:00:00Z", currency: "AUD", valuation: null,
+  verified_at: recent, stage: "Series C", closes_at: "2026-11-14T04:00:00Z", currency: "AUD", valuation: null, target: null,
   traction: null, company: { name: "Example", country: "AU", sector: "Healthcare technology" },
 };
 const deal: Discoverable = {
-  category: "Crowdfunding", status: "open", eligibility: "retail", provider: "birchal",
+  category: "Crowdfunding", status: "open", eligibility: "retail", provider: "birchal", jurisdictions: ["AU"],
   minimum: null, verified_at: recent, round,
 };
 
@@ -42,6 +43,13 @@ Deno.test("specific stage filters distinguish closed financing rounds in the sam
   })), now), [seriesC]);
 });
 
+Deno.test("enumerating every status keeps availability unrestricted", () => {
+  const unverified = { ...deal, status: "unverified" };
+  const criteria = parseDiscovery(JSON.stringify({ ...filters, statuses: ["open", "interest", "closed", "unverified"] }));
+  assertEquals(criteria.statuses, []);
+  assertEquals(matchDiscovery([deal, unverified], criteria, now), [deal, unverified]);
+});
+
 Deno.test("discovery rejects malformed filter output and never assumes currency or unknown amounts", () => {
   for (const field of [{ statuses: ["definitely open"] }, { countries: ["Australia"] }, { currency: null }, { max_valuation: -1 }]) {
     assertThrows(() => parseDiscovery(JSON.stringify({ ...filters, ...field })), ResearchError);
@@ -57,6 +65,24 @@ Deno.test("disclosed traction matches structured company financials and narrativ
   const financials = { ...deal, round: { ...round, company: { ...round.company, financials: [{ revenue: 1200 }] } } };
   const narrative = { ...deal, round: { ...round, traction: "A published operating update" } };
   assertEquals(matchDiscovery([deal, financials, narrative], { ...filters, disclosed_traction: true }, now), [financials, narrative]);
+});
+
+Deno.test("the investor country and original-currency raise range use disclosed offer terms", () => {
+  const qualifying = { ...deal, round: { ...round, target: 1_000_000 } };
+  const criteria = { ...filters, investor_jurisdictions: ["AU"], currency: "AUD",
+    min_raise_target: 1_000_000, max_raise_target: 3_000_000 };
+  const candidates = [
+    qualifying, deal, { ...qualifying, jurisdictions: [] }, { ...qualifying, jurisdictions: ["NZ"] },
+    { ...qualifying, round: { ...qualifying.round, currency: "USD" } },
+    { ...qualifying, round: { ...qualifying.round, target: 3_000_001 } },
+    { ...qualifying, round: { ...qualifying.round, target: 999_999 } },
+    { ...qualifying, round: { ...qualifying.round, company: { ...round.company, country: "NZ" } } },
+    { ...qualifying, eligibility: "wholesale" },
+  ];
+  assertEquals(matchDiscovery(candidates, parseDiscovery(JSON.stringify(criteria)), now), [qualifying]);
+  assertEquals(matchDiscovery(candidates, parseDiscovery(JSON.stringify({ ...criteria, currency: "" })), now), []);
+  assertEquals(matchDiscovery(candidates, parseDiscovery(JSON.stringify({ ...criteria, max_raise_target: 500 })), now), []);
+  assertThrows(() => parseDiscovery(JSON.stringify({ ...criteria, investor_jurisdictions: ["Australia"] })), ResearchError);
 });
 
 Deno.test("discovery asks the model for filters and enforces the shared AI quota", async () => {
