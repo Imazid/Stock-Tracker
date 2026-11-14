@@ -342,18 +342,24 @@ public enum StrategyEvaluator {
             invested > 0 && abs((values[id] ?? 0) / invested * 100 - (config.targets[id] ?? 0))
                 >= config.driftThresholdPct
         }
-        if triggered {
-            let rebalance = RebalanceConfig(targets: config.targets, driftThresholdPct: 0)
-            return rebalanceTrades(config: rebalance, values: values, equity: total).filter { $0.notional > 0 }
+        let deltas = ids.map { id in
+            let current = values[id] ?? 0
+            let weight = config.targets[id] ?? 0
+            let delta = triggered ? total * weight / 100 - current : contribution * weight / 100
+            return RebalanceTrade(instrumentID: id, side: delta < 0 ? .sell : .buy,
+                                  notional: Rounding.floor(abs(delta), increment: 0.01),
+                                  currentPct: invested > 0 ? current / invested * 100 : 0, targetPct: weight)
         }
-        return ids.compactMap { id in
-            let target = config.targets[id] ?? 0
-            let amount = Rounding.money(contribution * target / 100)
-            guard amount > 0 else { return nil }
-            return RebalanceTrade(instrumentID: id, side: .buy, notional: amount,
-                                  currentPct: invested > 0 ? (values[id] ?? 0) / invested * 100 : 0,
-                                  targetPct: target)
+        let sells = deltas.filter { $0.side == .sell && $0.notional > 0 }
+        var available = Rounding.floor(contribution, increment: 0.01) + sells.reduce(0) { $0 + $1.notional }
+        let buys = deltas.filter { $0.side == .buy }.compactMap { trade -> RebalanceTrade? in
+            var order = trade
+            order.notional = min(order.notional, Rounding.money(available))
+            guard order.notional > 0 else { return nil }
+            available -= order.notional
+            return order
         }
+        return sells + buys
     }
 
     /// Trades that bring holdings back to target. Sells come first so their proceeds fund the buys.

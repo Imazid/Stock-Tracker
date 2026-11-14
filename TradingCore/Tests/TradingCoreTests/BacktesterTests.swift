@@ -59,6 +59,16 @@ final class BacktesterTests: XCTestCase {
         XCTAssertEqual(recovered.lastMonthlyInvestmentPeriod, "2026-11")
     }
 
+    func testMonthlyOrdersStayWithinBudgetAfterRounding() {
+        let config = RebalanceConfig(targets: ["us:BND": 33.33, "us:VTI": 33.33, "us:VXUS": 33.34], driftThresholdPct: 5)
+        for values in [[:], ["us:VTI": 200.01, "us:BND": 17.88, "us:VXUS": 40.08]] {
+            let trades = StrategyEvaluator.monthlyRebalanceTrades(config: config, values: values, contribution: 100.01)
+            let net = trades.reduce(0) { $0 + ($1.side == .buy ? $1.notional : -$1.notional) }
+            XCTAssertGreaterThan(net, 99.97)
+            XCTAssertLessThanOrEqual(Rounding.money(net), 100.01)
+        }
+    }
+
     func testSyntheticAndUnapprovedFixtureDataAreRefused() {
         let spec = Fx.aboveAverageSpec([Fx.aapl])
         let synthetic = Fx.series(Fx.aapl, closes: wave(), provenance: .synthetic)

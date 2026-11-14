@@ -1074,17 +1074,27 @@ final class AccountSyncTests: XCTestCase {
         app.buttons["agent.new.draft"].tap()
 
         let monthly = app.textFields["agent.draft.monthlyAmount"]
-        for _ in 0..<6 where !monthly.isHittable { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(monthly.waitForExistence(timeout: 8), app.debugDescription)
+        for _ in 0..<12 where !app.frame.insetBy(dx: 0, dy: 175).contains(CGPoint(x: monthly.frame.midX, y: monthly.frame.midY)) {
+            let down = monthly.frame.midY < app.frame.midY
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.37 : 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.63 : 0.38))
+            start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        }
         XCTAssertEqual(monthly.value as? String, "150")
-        monthly.tap()
+        monthly.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
         monthly.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "175")
-        let done = app.buttons["keyboard.done"].firstMatch
-        if done.isHittable { done.tap() }
+        XCTAssertEqual(monthly.value as? String, "175")
+        let done = app.buttons["agent.draft.keyboardDone"].firstMatch
+        if done.waitForExistence(timeout: 3) { done.tap() }
 
         let backtest = app.buttons["agent.draft.backtest"]
-        for _ in 0..<10 where !backtest.isHittable { app.swipeUp(velocity: .fast) }
-        XCTAssertTrue(backtest.isHittable && backtest.isEnabled)
+        for _ in 0..<10 where !backtest.isHittable {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.64))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.29))
+            start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        XCTAssertTrue(backtest.isHittable && backtest.isEnabled, app.debugDescription)
         backtest.tap()
         XCTAssertTrue(app.navigationBars["Backtest"].waitForExistence(timeout: 90), app.debugDescription)
         XCTAssertFalse(app.staticTexts["backtest.testData"].exists)

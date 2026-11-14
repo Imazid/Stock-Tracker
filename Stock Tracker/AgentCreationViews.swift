@@ -191,6 +191,7 @@ struct AgentDraftEditor: View {
     @State private var isCreating = false
     @State private var editedRule: DraftRule?
     @State private var descriptionText = ""
+    @FocusState private var numberField: String?
     private let originalRuleLines: [String]
 
     private enum DraftRule: String, Identifiable {
@@ -358,7 +359,16 @@ struct AgentDraftEditor: View {
         .dsScreenBackground()
         .navigationTitle("Review agent")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { if draft.mode == .paper { PracticeChip() } } }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { if draft.mode == .paper { PracticeChip() } }
+            ToolbarItemGroup(placement: .keyboard) {
+                if numberField != nil {
+                    Spacer()
+                    Button("Done") { numberField = nil }
+                        .accessibilityIdentifier("agent.draft.keyboardDone")
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             Button(isCreating ? "Starting…" : (draft.mode == .paper ? "Start in practice" : "Start agent")) { create() }
                 .buttonStyle(PrimaryPillButtonStyle())
@@ -519,6 +529,7 @@ struct AgentDraftEditor: View {
     private func strategyNumber(_ title: LocalizedStringKey, value: Binding<Double>, id: String) -> some View {
         LabeledContent(title) {
             TextField(title, value: value, format: .number.grouping(.never))
+                .focused($numberField, equals: id)
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .accessibilityIdentifier("agent.draft.\(id)")
@@ -596,6 +607,7 @@ struct AgentDraftEditor: View {
                     Spacer()
                     Text(TradingFormat.symbol(currency).trimmingCharacters(in: .whitespaces)).foregroundStyle(theme.secondaryText)
                     TextField("10000", text: $budgetText)
+                        .focused($numberField, equals: "budget")
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .font(.body.weight(.semibold).monospacedDigit())

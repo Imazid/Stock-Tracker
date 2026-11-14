@@ -6,6 +6,7 @@ import {
   backtestConfigForAgent, type BacktestConfig, BacktestError, Backtester, type BacktestTrade, makeBacktestConfig,
 } from "../_shared/studio/mod.ts";
 import { defaultPaperConfig } from "../_shared/trading/broker.ts";
+import { monthlyRebalanceTrades } from "../_shared/trading/evaluator.ts";
 import { type BarSeries, instrumentID, makeInstrument, marketProvenance, syntheticProvenance, usETF } from "../_shared/trading/market.ts";
 import * as Rounding from "../_shared/trading/rounding.ts";
 import { makeDraft } from "../_shared/trading/state.ts";
@@ -301,4 +302,15 @@ Deno.test("approved monthly practice purchases do not repeat after persisted sta
   const restored = Fx.engine();
   restored.state = JSON.parse(JSON.stringify(engine.state));
   assertEquals(restored.runAgent(agent.id, snapshot, "manual", Fx.now)?.proposalIDs.length, 0);
+});
+
+Deno.test("monthly orders stay within budget after rounding", () => {
+  const allocation = { targets: { "us:BND": 33.33, "us:VTI": 33.33, "us:VXUS": 33.34 }, driftThresholdPct: 5 };
+  const scenarios: Record<string, number>[] = [{}, { "us:VTI": 200.01, "us:BND": 17.88, "us:VXUS": 40.08 }];
+  for (const values of scenarios) {
+    const trades = monthlyRebalanceTrades(allocation, values, 100.01);
+    const net = trades.reduce((amount, trade) => amount + (trade.side === "buy" ? trade.notional : -trade.notional), 0);
+    assert(net > 99.97);
+    assert(Rounding.money(net) <= 100.01);
+  }
 });

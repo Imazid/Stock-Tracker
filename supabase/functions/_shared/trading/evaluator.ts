@@ -4,7 +4,7 @@
 import { Indicators, type Series } from "./indicators.ts";
 import { type Bar, barName, measureStats, type Timeframe } from "./market.ts";
 import type { OrderSide } from "./orders.ts";
-import { money } from "./rounding.ts";
+import { floor, money } from "./rounding.ts";
 import {
   type Condition, conditionLabel, isGroup, type Operand, Op, type RebalanceConfig, type StrategySpec, warmupBars,
 } from "./strategy.ts";
@@ -341,19 +341,27 @@ export function rebalanceTrades(config: RebalanceConfig, values: Record<string, 
 export function monthlyRebalanceTrades(config: RebalanceConfig, values: Record<string, number>, contribution: number): RebalanceTrade[] {
   const ids = sortedStrings(Object.keys(config.targets));
   const invested = ids.reduce((total, id) => total + (values[id] ?? 0), 0);
-  if (!(invested + contribution > 0)) return [];
+  const total = invested + contribution;
+  if (!(total > 0)) return [];
   const triggered = invested > 0 && ids.some((id) =>
     Math.abs((values[id] ?? 0) / invested * 100 - config.targets[id]) >= config.driftThresholdPct
   );
-  if (triggered) {
-    return rebalanceTrades({ ...config, driftThresholdPct: 0 }, values, invested + contribution).filter((trade) => trade.notional > 0);
-  }
-  return ids.flatMap((id) => {
+  const deltas = ids.map((id): RebalanceTrade => {
+    const current = values[id] ?? 0;
     const targetPct = config.targets[id];
-    const notional = money(contribution * targetPct / 100);
-    return notional > 0 ? [{ instrumentID: id, side: "buy" as const, notional,
-      currentPct: invested > 0 ? (values[id] ?? 0) / invested * 100 : 0, targetPct }] : [];
+    const delta = triggered ? total * targetPct / 100 - current : contribution * targetPct / 100;
+    return { instrumentID: id, side: delta < 0 ? "sell" : "buy", notional: floor(Math.abs(delta), 0.01),
+      currentPct: invested > 0 ? current / invested * 100 : 0, targetPct };
   });
+  const sells = deltas.filter((trade) => trade.side === "sell" && trade.notional > 0);
+  let available = floor(contribution, 0.01) + sells.reduce((amount, trade) => amount + trade.notional, 0);
+  const buys = deltas.filter((trade) => trade.side === "buy").flatMap((trade) => {
+    const notional = Math.min(trade.notional, money(available));
+    if (notional <= 0) return [];
+    available -= notional;
+    return [{ ...trade, notional }];
+  });
+  return [...sells, ...buys];
 }
 
 /** Plain facts about a series, for research-only agents and the copilot. No opinion, no order. */
