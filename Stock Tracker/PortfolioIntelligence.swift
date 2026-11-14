@@ -126,6 +126,16 @@ struct PortfolioIntelligenceEntry: View {
             .foregroundStyle(theme.intelligenceTint)
             .accessibilityIdentifier("portfolio.intelligence.movement")
 
+            Button {
+                router.askCopilot(CopilotEngine.concentrationPrompt)
+            } label: {
+                Label("Review portfolio concentration", systemImage: "chart.pie")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("portfolio.intelligence.concentration")
+
             let count = trading.pendingProposals.count
             if count > 0 {
                 Button {

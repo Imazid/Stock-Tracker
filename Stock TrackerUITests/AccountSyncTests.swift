@@ -454,6 +454,25 @@ final class AccountSyncTests: XCTestCase {
         reveal(holdingUnits)
         XCTAssertTrue(holdingUnits.label.contains("••••"), holdingUnits.label)
         XCTAssertTrue(app.descendants(matching: .any)["holding.avgCost"].firstMatch.label.contains("••••"))
+        app.navigationBars["AAPL"].buttons.firstMatch.tap()
+        app.buttons["copilot.close"].tap()
+
+        let concentration = app.buttons["portfolio.intelligence.concentration"]
+        reveal(concentration, lookingAbove: true)
+        concentration.tap()
+        let title = app.staticTexts["Your tracked portfolio"]
+        XCTAssertTrue(title.waitForExistence(timeout: 8))
+        let appleListings = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "AAPL · US"))
+        XCTAssertTrue(appleListings.firstMatch.waitForExistence(timeout: 8))
+        XCTAssertEqual(appleListings.count, 1)
+        let fundListing = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "QQQ · US")).firstMatch
+        XCTAssertTrue(fundListing.exists)
+        func listingWeight(_ row: XCUIElement) throws -> Double {
+            let percent = try XCTUnwrap(row.label.firstMatch(of: /([0-9]+[.][0-9]+)%/))
+            return try XCTUnwrap(Double(percent.1))
+        }
+        XCTAssertEqual(try listingWeight(appleListings.firstMatch), try listingWeight(fundListing) * 1.5, accuracy: 0.15)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "positions priced")).firstMatch.exists)
     }
 
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
