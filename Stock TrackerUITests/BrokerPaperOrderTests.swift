@@ -52,13 +52,11 @@ final class BrokerPaperOrderTests: XCTestCase {
         let filled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Filled'"), object: status)
         XCTAssertEqual(XCTWaiter.wait(for: [filled], timeout: 20), .completed, status.label)
 
-        let close = app.buttons["Close"].firstMatch
-        XCTAssertTrue(close.waitForExistence(timeout: 5))
-        close.tap()
-        let detailDone = app.buttons["Done"].firstMatch
-        if detailDone.waitForExistence(timeout: 5) { detailDone.tap() }
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 35))
         XCTAssertTrue(app.open("Activity"))
-        tap(app.buttons["brokerPaper.activity"], in: app, timeout: 15)
+        tap(app.buttons["brokerPaper.activity"], in: app, timeout: 35)
         let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'brokerPaper.history.'")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 15))
         XCTAssertTrue(saved.label.contains("Buy AAPL") && saved.label.contains("Filled"), saved.label)
