@@ -49,6 +49,10 @@ function incomeKind(label: string): IncomeKind | undefined {
   }
 }
 
+function isInternalCashTransfer(label: string) {
+  return label === "Incoming cash transfer between accounts" || label === "Outgoing cash transfer between accounts";
+}
+
 function brokerAccountLabel(account: Account) {
   return [account.name || account.institution_name || "Brokerage account", account.number?.slice(-4)].filter(Boolean).join(" · ");
 }
@@ -229,9 +233,10 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
               </Button>}
             </li>;
           }
-          const foreign = activity.foreignCashFlow;
-          const converted = conversions[activity.id];
-          const cashFlow = activity.cashFlow ?? (foreign && converted
+          const internal = isInternalCashTransfer(activity.label);
+          const foreign = internal ? null : activity.foreignCashFlow;
+          const converted = internal ? undefined : conversions[activity.id];
+          const cashFlow = internal ? null : activity.cashFlow ?? (foreign && converted
             ? { date: foreign.date, kind: foreign.kind, amount: converted.usdAmount, fx: converted.fx } : null);
           return <li key={activity.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
             <div>
@@ -241,6 +246,9 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
                   activity.units !== null && activity.units !== 0 && `${quantity(activity.units)} units`,
                   activity.fee !== null && activity.fee !== 0 && `Fee ${quantity(activity.fee, activity.currency)}`].filter(Boolean).join(" · ")}
               </p>
+              {internal && <p className="text-xs text-text-2">{included
+                ? "Already included. Remove it from the period if both accounts were in your valuations."
+                : "Leave this out when both accounts are in your valuations. Use a manual entry if cash crossed the portfolio boundary."}</p>}
               {converted && <p className="text-xs text-text-2">{quantity(converted.usdAmount, "USD")} · {conversionDetails(converted.fx)}</p>}
               {fxError?.id === activity.id && <p className="text-xs text-down" role="alert">{fxError.message} You can enter the USD amount manually.</p>}
             </div>
@@ -248,7 +256,7 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
               disabled={Boolean(lookup) || busy || !review.canInclude} onClick={() => void convert(activity)}>
               {lookup === activity.id ? "Looking up rate…" : "Look up USD value"}
             </Button>}
-            {(cashFlow || included) && activity.date > start && <Button size="sm" disabled={included || !review.canInclude} aria-label={included ? "Already included" : `Include ${activity.label.toLowerCase()} on ${activity.date}`}
+            {!internal && (cashFlow || included) && activity.date > start && <Button size="sm" disabled={included || !review.canInclude} aria-label={included ? "Already included" : `Include ${activity.label.toLowerCase()} on ${activity.date}`}
               onClick={() => { if (cashFlow) review.onInclude({ ...cashFlow, snaptrade_id: activity.id }); }}>
               {included ? "Included" : "Include transfer"}
             </Button>}

@@ -282,6 +282,7 @@ Deno.test("activity uses the signed root endpoint and offers only eligible dated
       { ...row, id: "div", type: "DIVIDEND", symbol: { symbol: "AAPL" }, fee: 0.5 },
       { ...row, id: "split", type: "REVERSE_SPLIT", amount: null },
       { ...row, id: "transfer", type: "INTERNAL_CASH_TRANSFER_OUT", amount: -10 },
+      { ...row, id: "incoming", type: "INTERNAL_CASH_TRANSFER_IN", amount: 10, currency: { code: "AUD" } },
       { ...row, id: "ambiguous", type: "TRANSFER", amount: -10 },
       { ...row, id: "bad-day", trade_date: null, settlement_date: "2026-01-15" },
       { ...row, id: "outside", trade_date: "2025-12-31" },
@@ -301,8 +302,8 @@ Deno.test("activity uses the signed root endpoint and offers only eligible dated
   assert(calls[0].headers.has("Signature"));
   const body = res.body as { activities: { id: string; cashFlow: unknown; foreignCashFlow: unknown; symbol: string; currency: string; fee: number }[]; omitted: number; nextOffset: number };
   assertEquals(body.omitted, 2);
-  assertEquals(body.nextOffset, 13);
-  assertEquals(body.activities.length, 10);
+  assertEquals(body.nextOffset, 14);
+  assertEquals(body.activities.length, 11);
   assertEquals(body.activities[0].cashFlow, { date: "2026-01-15", kind: "deposit", amount: 620.05 });
   assertEquals(body.activities[1].cashFlow, { date: "2026-01-15", kind: "withdrawal", amount: 22.99 });
   assertEquals(body.activities[2].currency, "CAD");
@@ -310,9 +311,8 @@ Deno.test("activity uses the signed root endpoint and offers only eligible dated
   assertEquals(body.activities[6].foreignCashFlow, null);
   assertEquals(body.activities[6].symbol, "AAPL");
   assertEquals(body.activities[6].fee, 0.5);
-  assertEquals(body.activities[8].cashFlow, { date: "2026-01-15", kind: "withdrawal", amount: 10 });
-  assertEquals(body.activities.slice(2, 8).map((x) => x.cashFlow), Array(6).fill(null));
-  assertEquals(body.activities[9].cashFlow, null);
+  assertEquals(body.activities.slice(2).map((x) => x.cashFlow), Array(9).fill(null));
+  assertEquals(body.activities.slice(8).map((x) => x.foreignCashFlow), Array(3).fill(null));
   assert(body.activities.every((activity) => /^[a-f0-9]{64}$/.test(activity.id)));
   assertFalse(JSON.stringify(res.body).includes("broker-transaction"));
 });
@@ -392,6 +392,29 @@ Deno.test("activity cache uses the signed-in owner and pins subsequent pages to 
   assertEquals(calls.length, 0);
   assertEquals((await handleSnapTradeRequest(USER, { operation: "accountActivities", params: request }, deps)).status, 200);
   assertEquals(calls.length, 1, "a cache miss on the first page falls back to SnapTrade");
+});
+
+Deno.test("published cached activity keeps internal cash rows and strips both old inclusion suggestions", async () => {
+  const { deps, calls } = harness(() => json(200, null));
+  const snapshot = "55555555-5555-5555-5555-555555555555";
+  const date = "2026-01-15";
+  const cashFlow = { date, kind: "withdrawal", amount: 15 };
+  const foreignCashFlow = { date, kind: "deposit", amount: "15", currency: "AUD" };
+  const outgoing = { id: "outgoing", label: "Outgoing cash transfer between accounts", date, amount: -15, cashFlow };
+  const incoming = { id: "incoming", label: "Incoming cash transfer between accounts", date, amount: 15, foreignCashFlow };
+  const contribution = { id: "external", label: "Cash contribution", date, amount: 15, foreignCashFlow };
+  const cache = { activities: [outgoing, incoming, contribution], omitted: 2, nextOffset: 100, snapshot, syncedAt: date };
+  deps.readActivityCache = () => Promise.resolve(cache);
+  const res = await handleSnapTradeRequest(USER, {
+    operation: "accountActivities",
+    params: { accountId: ACCOUNT, startDate: "2026-01-01", endDate: "2026-01-31", offset: 50, snapshot, preferCached: true },
+  }, deps);
+  assertEquals(res, { status: 200, body: { ...cache, activities: [
+    { ...outgoing, cashFlow: null, foreignCashFlow: null },
+    { ...incoming, cashFlow: null, foreignCashFlow: null },
+    contribution,
+  ] } });
+  assertEquals(calls.length, 0);
 });
 
 Deno.test("activity worker pages only provider reads and advances the fenced database lease", async () => {
