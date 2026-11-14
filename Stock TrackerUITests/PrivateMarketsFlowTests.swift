@@ -179,7 +179,10 @@ final class PrivateMarketsFlowTests: XCTestCase {
         for _ in 0..<3 where !source.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(source.isHittable)
         source.tap()
-        XCTAssertTrue(app.staticTexts["This NAV is used for the holding’s carrying value."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Fund statement fixture"].waitForExistence(timeout: 5))
+        let applied = app.staticTexts["This NAV is used for the holding’s carrying value."]
+        for _ in 0..<3 where !applied.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(applied.exists, app.debugDescription)
         app.navigationBars.firstMatch.buttons.firstMatch.tap()
         let discrepancy = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "The statement’s paid-in capital or distributions differ")).firstMatch
         for _ in 0..<4 where !discrepancy.isHittable { app.swipeUp(velocity: .slow) }
