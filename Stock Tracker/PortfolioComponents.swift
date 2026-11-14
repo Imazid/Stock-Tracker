@@ -17,7 +17,7 @@ import SwiftUI
 extension MarketData {
     /// The last quote failed, or none has arrived yet.
     func hasNoLivePrice(_ asset: Asset) -> Bool {
-        quoteFailures.contains(asset.symbol) || asset.looksUnpriced
+        quoteFailed(for: asset) || asset.looksUnpriced
     }
 
     /// "+$12.30" / "−$4.10" in the display currency.

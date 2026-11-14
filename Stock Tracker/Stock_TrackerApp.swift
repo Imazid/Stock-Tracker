@@ -270,6 +270,9 @@ struct StockCryptoTrackerApp: App {
                             marketData: marketData,
                             alertManager: alertManager
                         )
+                        if supabaseAuthManager.authState == .signedIn {
+                            await marketData.refreshSyncedQuotesIfNeeded()
+                        }
                         await SnapTradeViewModel.shared.syncAll()
                         await mfaManager.checkMFAStatus()
                         await referralManager.consumePendingReferralCode()

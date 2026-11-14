@@ -286,6 +286,94 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(try rows("portfolio_holdings", select: "id,shares", token: token).count, original.count)
     }
 
+    func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ISSUER_EXPOSURE"] == "1",
+                          "Start the issuer allocation quote fixture relay")
+        let email = "issuer-exposure-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userId = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let now = ISO8601DateFormatter().string(from: Date())
+        let listings: [(String, String, Double)] = [
+            ("BHP", "ASX", 1), ("BHP", "NYSE", 1), ("TSM", "NYSE", 1),
+            ("QQQ", "NASDAQ", 1), ("AMZN", "NASDAQ", 1), ("BHP", "XTSE", 1),
+        ]
+        let holdings = listings.map { symbol, exchange, quantity in
+            ["id": UUID().uuidString.lowercased(), "user_id": userId, "asset_symbol": symbol,
+             "asset_name": symbol, "asset_kind": "Stock", "asset_exchange": exchange,
+             "shares": quantity, "avg_cost": 10, "date_added": now] as [String: Any]
+        }
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: holdings), token: token).status, 201)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        let allocation = app.buttons["portfolio.segment.allocation"]
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<12 {
+                if element.exists, !element.frame.isEmpty, app.frame.insetBy(dx: 0, dy: 70).contains(element.frame) { return }
+                if element.exists, element.frame.midY < app.frame.midY {
+                    app.swipeDown(velocity: .slow)
+                } else {
+                    app.swipeUp(velocity: .slow)
+                }
+            }
+            XCTAssertTrue(element.isHittable, "Expected \(element)")
+        }
+        XCTAssertTrue(app.buttons["portfolio.privacy"].waitForExistence(timeout: 30))
+        app.swipeDown(velocity: .slow)
+        reveal(allocation)
+        allocation.tap()
+        let grouping = app.buttons["portfolio.allocation.grouping"]
+        func choose(_ name: String) {
+            reveal(grouping)
+            grouping.tap()
+            app.buttons[name].firstMatch.tap()
+        }
+        func slice(_ name: String) -> XCUIElement {
+            app.descendants(matching: .any)["portfolio.allocation.slice.\(name)"].firstMatch
+        }
+        choose("SIC sector")
+        XCTAssertTrue(app.staticTexts["5 of 6 holdings valued."].waitForExistence(timeout: 30))
+        for name in ["Mining and extraction", "Manufacturing", "ETFs", "Unclassified shares"] {
+            reveal(slice(name))
+        }
+        choose("Issuer incorporation")
+        let australia = slice("Australia")
+        reveal(australia)
+        // The ASX leg uses the live ASX quote converted to USD. The controlled US
+        // leg is US$200 and the other three holdings are US$100 each.
+        let amount = try XCTUnwrap(australia.label.firstMatch(of: /\$\s*([0-9]+(?:\.[0-9]+)?)/))
+        let australiaValue = try XCTUnwrap(Double(amount.1))
+        XCTAssertGreaterThan(australiaValue, 210, australia.label)
+        XCTAssertLessThan(australiaValue, 300, australia.label)
+        let weight = australiaValue / (australiaValue + 300) * 100
+        let expected = String(format: "%.1f%%", weight)
+        XCTAssertTrue(australia.label.contains(expected), australia.label)
+        reveal(slice("Taiwan"))
+        let sources = app.buttons["portfolio.allocation.filings"]
+        reveal(sources)
+        sources.tap()
+        XCTAssertTrue(app.navigationBars["Issuer filing sources"].waitForExistence(timeout: 8))
+        for id in ["asx:BHP", "us:BHP", "us:TSM"] {
+            XCTAssertTrue(app.descendants(matching: .any)["portfolio.allocation.filing.\(id)"].firstMatch.exists)
+        }
+        XCTAssertFalse(app.descendants(matching: .any)["portfolio.allocation.filing.us:QQQ"].exists)
+        app.navigationBars["Issuer filing sources"].buttons["Done"].tap()
+        app.buttons["portfolio.privacy"].tap()
+        reveal(australia)
+        XCTAssertTrue(australia.label.contains("••••"), australia.label)
+        XCTAssertTrue(australia.label.contains(expected), australia.label)
+        attach("issuer-incorporation")
+    }
+
     func testReviewedStockTransferSyncsAcrossSignIn() throws {
         // Run scripts/snaptrade-positions-fixture.py with STOCK_TRACKER_UI_TEST_API pointing to it.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STOCK_TRANSFERS"] == "1",

@@ -82,7 +82,7 @@ struct AppleStocksDetailView: View {
     }
 
     private var quoteFailed: Bool {
-        tracked != nil ? marketData.quoteFailures.contains(live.symbol) : model.ownQuoteFailed
+        tracked != nil ? marketData.quoteFailed(for: live) : model.ownQuoteFailed
     }
 
     // MARK: Body
@@ -944,7 +944,7 @@ final class AssetDetailViewModel: ObservableObject {
         case .usStock, .asxStock, .otherStock:
             fresh = await service.refreshStockQuotes(for: [current]).first
         }
-        ownQuoteFailed = service.lastFailedSymbols.contains(seed.symbol) || (kind == .index && fresh == nil)
+        ownQuoteFailed = service.quoteFailed(for: seed) || (kind == .index && fresh == nil)
         if let fresh, fresh.price > 0, !ownQuoteFailed {
             refreshedQuote = fresh
             refreshedAt = Date()

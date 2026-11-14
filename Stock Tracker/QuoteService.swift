@@ -9,6 +9,7 @@
 
 import Foundation
 import OSLog
+import TradingCore
 
 // MARK: - Protocol (enables DI and unit testing)
 
@@ -30,8 +31,7 @@ protocol QuoteServiceProtocol: AnyObject {
         crypto: [Asset]
     ) -> (portfolio: [PortfolioHolding], watchlist: [Asset])
     func mergedAsset(old: Asset, api: Asset) -> Asset
-    /// Symbols whose most recent quote request failed (shown as "No live price").
-    var lastFailedSymbols: Set<String> { get }
+    func quoteFailed(for asset: Asset) -> Bool
 }
 
 // MARK: - Implementation
@@ -82,33 +82,35 @@ final class QuoteService: QuoteServiceProtocol {
 
     // MARK: - Stock Quotes
 
-    nonisolated private static let usExchanges: Set<String> = ["NYSE", "NASDAQ", "US", "AMEX", "ARCA", "NYSEARCA", "BATS", "NYSE AMERICAN", "OTC"]
-
-    /// Whether a stock trades on the ASX. The asset's own exchange wins; the
-    /// popular-ticker list is only a fallback for assets with no exchange
-    /// (otherwise Telstra "TLS" was priced as Telos and BHP's NYSE ADR as BHP.AX).
     private func isASXStock(_ asset: Asset) -> Bool { Self.isASX(asset) }
 
     /// Shared rule (quotes, history and trading hours must agree).
     nonisolated static func isASX(_ asset: Asset) -> Bool {
-        guard asset.kind == .stock else { return false }
-        let exchange = asset.exchange.uppercased()
-        if exchange == "ASX" || asset.symbol.hasSuffix(".AX") { return true }
-        if Self.usExchanges.contains(exchange) || exchange == "INTERNATIONAL" { return false }
-        return Self.popularASXSymbols.contains(asset.symbol.uppercased())
+        asset.listedStock?.venue == .asx
     }
 
-    private(set) var lastFailedSymbols: Set<String> = []
+    private var failedListings: Set<String> = []
+
+    func quoteFailed(for asset: Asset) -> Bool { failedListings.contains(asset.quoteIdentity) }
+
+    private func isUSQuote(_ asset: Asset) -> Bool {
+        asset.listedStock?.venue == .us || asset.isUnresolvedUSQuote
+    }
+
+    private func stockQuote(_ asset: Asset) async throws -> Asset {
+        let quote = try await api.fetchStockQuote(symbol: asset.symbol)
+        return quote.with(exchange: "US")
+    }
 
     /// Refresh live quotes for every stock asset; keeps old metadata on failure.
-    /// ASX stocks are routed through Finnhub; US stocks through Alpaca.
+    /// ASX and international listings use Yahoo; US stocks use Alpaca with a Yahoo fallback.
     func refreshStockQuotes(for stocks: [Asset]) async -> [Asset] {
         var updated = stocks
-        for symbol in stocks.map(\.symbol) { lastFailedSymbols.remove(symbol) }
+        for asset in stocks { failedListings.remove(asset.quoteIdentity) }
 
         // US: one batched Alpaca request instead of one per symbol (they ran one after
         // another: ten holdings = ten round trips before anything updated).
-        let usIndices = updated.indices.filter { !isASXStock(updated[$0]) && updated[$0].exchange != "International" }
+        let usIndices = updated.indices.filter { isUSQuote(updated[$0]) }
         var batch: [String: Asset]?
         if usIndices.count > 1 {
             batch = try? await api.fetchStockQuotes(symbols: usIndices.map { updated[$0].symbol })
@@ -123,7 +125,7 @@ final class QuoteService: QuoteServiceProtocol {
 
         // ASX (Yahoo), a lone US symbol, or the batch failing: one request each, concurrently.
         let singles = updated.indices.filter {
-            isASXStock(updated[$0]) || updated[$0].exchange == "International" || batch?[updated[$0].symbol.uppercased()] == nil
+            !isUSQuote(updated[$0]) || batch?[updated[$0].symbol.uppercased()] == nil
         }
         await withTaskGroup(of: (Int, Asset?).self) { group in
             for index in singles {
@@ -135,10 +137,11 @@ final class QuoteService: QuoteServiceProtocol {
                             return (index, try await self.api.fetchYahooQuote(symbol: yahooSymbol, name: current.name))
                         }
                         // London, Frankfurt, Tokyo… are priced by Yahoo under their suffixed symbol.
-                        if current.exchange == "International" {
-                            return (index, try await self.api.fetchYahooQuote(symbol: current.symbol, name: current.name))
+                        if let yahooSymbol = current.internationalQuoteSymbol {
+                            return (index, try await self.api.fetchYahooQuote(symbol: yahooSymbol, name: current.name))
                         }
-                        return (index, try await self.api.fetchStockQuote(symbol: current.symbol))
+                        guard self.isUSQuote(current) else { return (index, nil) }
+                        return (index, try await self.stockQuote(current))
                     } catch {
                         AppLogger.api.error("Stock quote failed for \(current.symbol): \(error)")
                         return (index, nil)
@@ -149,7 +152,7 @@ final class QuoteService: QuoteServiceProtocol {
                 if let apiAsset {
                     updated[index] = mergedAsset(old: updated[index], api: apiAsset)
                 } else {
-                    lastFailedSymbols.insert(updated[index].symbol)
+                    failedListings.insert(updated[index].quoteIdentity)
                 }
             }
         }
@@ -163,8 +166,8 @@ final class QuoteService: QuoteServiceProtocol {
         // Collect all known CoinGecko IDs in one pass
         let ids = crypto.compactMap { Self.coinGeckoIDMap[$0.symbol] }
         // Coins we can't map to CoinGecko never get a price — say so instead of showing a stale one.
-        for asset in crypto { lastFailedSymbols.remove(asset.symbol) }
-        for asset in crypto where Self.coinGeckoIDMap[asset.symbol] == nil { lastFailedSymbols.insert(asset.symbol) }
+        for asset in crypto { failedListings.remove(asset.quoteIdentity) }
+        for asset in crypto where Self.coinGeckoIDMap[asset.symbol] == nil { failedListings.insert(asset.quoteIdentity) }
         guard !ids.isEmpty else { return crypto }
 
         do {
@@ -172,12 +175,16 @@ final class QuoteService: QuoteServiceProtocol {
             var updated = crypto
             for index in updated.indices {
                 guard let id = Self.coinGeckoIDMap[updated[index].symbol],
-                      let apiAsset = batchResults[id] else { continue }
+                      let apiAsset = batchResults[id] else {
+                    failedListings.insert(updated[index].quoteIdentity)
+                    continue
+                }
                 updated[index] = mergedAsset(old: updated[index], api: apiAsset)
             }
             return updated
         } catch {
             AppLogger.api.error("Crypto batch price fetch failed: \(error)")
+            failedListings.formUnion(crypto.map(\.quoteIdentity))
             return crypto
         }
     }
@@ -261,9 +268,10 @@ final class QuoteService: QuoteServiceProtocol {
                 let yahooSymbol = Self.finnhubASXSymbol(for: asset.symbol)
                 return try await api.fetchYahooHistory(symbol: yahooSymbol, range: range)
             }
-            if asset.exchange == "International" {
-                return try await api.fetchYahooHistory(symbol: asset.symbol, range: range)
+            if let yahooSymbol = asset.internationalQuoteSymbol {
+                return try await api.fetchYahooHistory(symbol: yahooSymbol, range: range)
             }
+            guard isUSQuote(asset) else { throw APIError.noData }
             // US stock: Alpaca primary, Yahoo fallback
             do {
                 return try await api.fetchHistoricalData(symbol: asset.symbol, range: range)
@@ -286,9 +294,10 @@ final class QuoteService: QuoteServiceProtocol {
             let yahooSymbol = Self.finnhubASXSymbol(for: asset.symbol)
             return try await api.fetchYahooCandles(symbol: yahooSymbol, range: range)
         }
-        if asset.exchange == "International" {
-            return try await api.fetchYahooCandles(symbol: asset.symbol, range: range)
+        if let yahooSymbol = asset.internationalQuoteSymbol {
+            return try await api.fetchYahooCandles(symbol: yahooSymbol, range: range)
         }
+        guard isUSQuote(asset) else { throw APIError.noData }
         // US stock: Alpaca primary, Yahoo fallback
         do {
             return try await fetchHistoricalData(symbol: asset.symbol, range: range)
@@ -350,16 +359,17 @@ final class QuoteService: QuoteServiceProtocol {
         stocks: [Asset],
         crypto: [Asset]
     ) -> (portfolio: [PortfolioHolding], watchlist: [Asset]) {
-        // Keyed by kind + symbol: a stock and a coin can share a ticker (LINK, ATOM),
-        // which used to crash `uniqueKeysWithValues`.
-        func key(_ a: Asset) -> String { "\(a.kind.rawValue):\(a.symbol)" }
-        let lookup = Dictionary((stocks + crypto).map { (key($0), $0) }, uniquingKeysWith: { first, _ in first })
+        let lookup = Dictionary((stocks + crypto).map { ($0.quoteIdentity, $0) }, uniquingKeysWith: { first, _ in first })
+        func apply(_ asset: Asset) -> Asset {
+            let quote = lookup[asset.quoteIdentity] ?? (asset.isUnresolvedUSQuote ? lookup["us:\(asset.symbol.uppercased())"] : nil)
+            return quote.map { mergedAsset(old: asset, api: $0) } ?? asset
+        }
         let updatedPortfolio = portfolio.map { holding -> PortfolioHolding in
             var h = holding
-            if let updated = lookup[key(h.asset)] { h.asset = updated }
+            h.asset = apply(h.asset)
             return h
         }
-        let updatedWatchlist = watchlist.map { lookup[key($0)] ?? $0 }
+        let updatedWatchlist = watchlist.map(apply)
         return (updatedPortfolio, updatedWatchlist)
     }
 

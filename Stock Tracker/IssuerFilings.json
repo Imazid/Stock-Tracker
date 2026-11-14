@@ -1,0 +1,162 @@
+{
+  "asx:BHP": {
+    "issuer": "BHP Group",
+    "sic": "1000",
+    "sector": "Mining and extraction",
+    "country": "Australia",
+    "evidence": {
+      "filedOn": "2026-08-18",
+      "url": "https://www.sec.gov/Archives/edgar/data/811809/000119312526354647/0001193125-26-354647-index.htm"
+    }
+  },
+  "us:BHP": {
+    "issuer": "BHP Group",
+    "sic": "1000",
+    "sector": "Mining and extraction",
+    "country": "Australia",
+    "evidence": {
+      "filedOn": "2026-08-18",
+      "url": "https://www.sec.gov/Archives/edgar/data/811809/000119312526354647/0001193125-26-354647-index.htm"
+    }
+  },
+  "asx:CBA": {
+    "issuer": "Commonwealth Bank of Australia",
+    "sic": "6029",
+    "sector": "Finance, insurance and real estate",
+    "country": "Australia",
+    "evidence": {
+      "filedOn": "2026-08-13",
+      "url": "https://www.sec.gov/Archives/edgar/data/8565/000119312526347772/0001193125-26-347772-index.htm"
+    }
+  },
+  "us:AAPL": {
+    "issuer": "Apple",
+    "sic": "3571",
+    "sector": "Manufacturing",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-11-03",
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000026/0000320193-26-000026-index.html"
+    }
+  },
+  "us:ASML": {
+    "issuer": "ASML Holding",
+    "sic": "3559",
+    "sector": "Manufacturing",
+    "country": "Netherlands",
+    "evidence": {
+      "filedOn": "2026-02-25",
+      "url": "https://www.sec.gov/Archives/edgar/data/937966/000162828026011378/0001628280-26-011378-index.htm"
+    }
+  },
+  "euronextAmsterdam:ASML": {
+    "issuer": "ASML Holding",
+    "sic": "3559",
+    "sector": "Manufacturing",
+    "country": "Netherlands",
+    "evidence": {
+      "filedOn": "2026-02-25",
+      "url": "https://www.sec.gov/Archives/edgar/data/937966/000162828026011378/0001628280-26-011378-index.htm"
+    }
+  },
+  "us:GOOG": {
+    "issuer": "Alphabet",
+    "sic": "7370",
+    "sector": "Services",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-10-29",
+      "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000084/0001652044-26-000084-index.html"
+    }
+  },
+  "us:GOOGL": {
+    "issuer": "Alphabet",
+    "sic": "7370",
+    "sector": "Services",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-10-29",
+      "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000084/0001652044-26-000084-index.html"
+    }
+  },
+  "us:JPM": {
+    "issuer": "JPMorgan Chase",
+    "sic": "6021",
+    "sector": "Finance, insurance and real estate",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-11-03",
+      "url": "https://www.sec.gov/Archives/edgar/data/19617/000162828026069523/0001628280-26-069523-index.htm"
+    }
+  },
+  "us:META": {
+    "issuer": "Meta Platforms",
+    "sic": "7370",
+    "sector": "Services",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-10-22",
+      "url": "https://www.sec.gov/Archives/edgar/data/1326801/000162828026066773/0001628280-26-066773-index.html"
+    }
+  },
+  "us:MSFT": {
+    "issuer": "Microsoft",
+    "sic": "7372",
+    "sector": "Services",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-10-28",
+      "url": "https://www.sec.gov/Archives/edgar/data/789019/000119312526436133/0001193125-26-436133-index.htm"
+    }
+  },
+  "us:NVDA": {
+    "issuer": "NVIDIA",
+    "sic": "3674",
+    "sector": "Manufacturing",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-08-26",
+      "url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000075/0001045810-26-000075-index.htm"
+    }
+  },
+  "us:TSLA": {
+    "issuer": "Tesla",
+    "sic": "3711",
+    "sector": "Manufacturing",
+    "country": "United States",
+    "evidence": {
+      "filedOn": "2026-07-23",
+      "url": "https://www.sec.gov/Archives/edgar/data/1318605/000162828026049270/0001628280-26-049270-index.htm"
+    }
+  },
+  "us:TSM": {
+    "issuer": "Taiwan Semiconductor Manufacturing",
+    "sic": "3674",
+    "sector": "Manufacturing",
+    "country": "Taiwan",
+    "evidence": {
+      "filedOn": "2026-04-16",
+      "url": "https://www.sec.gov/Archives/edgar/data/1046179/000162828026025362/0001628280-26-025362-index.html"
+    }
+  },
+  "us:VOD": {
+    "issuer": "Vodafone Group",
+    "sic": "4812",
+    "sector": "Transport, communications and utilities",
+    "country": "United Kingdom",
+    "evidence": {
+      "filedOn": "2026-05-22",
+      "url": "https://www.sec.gov/Archives/edgar/data/839923/000119312526235425/0001193125-26-235425-index.htm"
+    }
+  },
+  "lse:VOD": {
+    "issuer": "Vodafone Group",
+    "sic": "4812",
+    "sector": "Transport, communications and utilities",
+    "country": "United Kingdom",
+    "evidence": {
+      "filedOn": "2026-05-22",
+      "url": "https://www.sec.gov/Archives/edgar/data/839923/000119312526235425/0001193125-26-235425-index.htm"
+    }
+  }
+}
