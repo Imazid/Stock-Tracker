@@ -15,6 +15,7 @@ import type { QuoteResponse } from "@/lib/market-types";
 import type { HoldingBrokerAccount } from "@/lib/portfolio-transfers";
 import { portfolioMovement } from "@/lib/portfolio-movement";
 import { portfolioInstrument } from "@/lib/portfolio-exposure";
+import { BrokerCash } from "./broker-cash";
 import { ExposureCard } from "./exposure-card";
 import { MovementCard } from "./movement-card";
 import { LotReport } from "./lot-report";
@@ -106,6 +107,7 @@ export function PortfolioView() {
           {holdings.length > 0 && <ExposureCard key={userId} holdings={holdings} quoteFor={(id) => quotes.get(id)?.data}
             loading={prices.some((price) => price.isPending)} truncated={portfolio.data?.truncated ?? false} />}
           {userId && <>
+            <BrokerCash key={userId + "-cash"} userId={userId} />
             <PerformanceLedger key={userId} userId={userId} />
             <IncomeLedger key={userId + "-income"} userId={userId} />
             <LotReport key={userId + "-lots"} userId={userId} />
