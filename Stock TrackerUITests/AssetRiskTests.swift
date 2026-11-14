@@ -21,9 +21,13 @@ final class AssetRiskTests: XCTestCase {
         XCTAssertTrue(risk.waitForExistence(timeout: 15))
         risk.tap()
         XCTAssertTrue(app.navigationBars["AAPL Price Risk"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts[expectedDrawdown].waitForExistence(timeout: 35))
-        XCTAssertTrue(app.staticTexts["assetRisk.source"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts[source].firstMatch.exists)
+        let drawdown = app.descendants(matching: .any)["assetRisk.drawdown"].firstMatch
+        XCTAssertTrue(drawdown.waitForExistence(timeout: 35))
+        let drawdownText = "\(drawdown.label) \(drawdown.value as? String ?? "")"
+        XCTAssertTrue(drawdownText.contains(expectedDrawdown), drawdownText)
+        let sourceRow = app.staticTexts["assetRisk.source"].firstMatch
+        XCTAssertTrue(sourceRow.exists)
+        XCTAssertEqual(sourceRow.label, source)
         let oneYear = app.segmentedControls["assetRisk.range"].buttons["1Y"]
         XCTAssertTrue(oneYear.exists)
         oneYear.tap()
