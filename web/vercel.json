@@ -2,5 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": [
     "syd1"
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/company-alerts",
+      "schedule": "*/2 * * * *"
+    }
   ]
 }

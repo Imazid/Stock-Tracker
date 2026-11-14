@@ -169,7 +169,7 @@ export async function yahooQuote(instrument: Instrument): Promise<YahooQuote> {
 }
 
 export function yahooVolumeScope(instrument: Instrument): VolumeScope {
-  return instrument.venue === "crypto" ? "aggregate" : "consolidated";
+  return instrument.venue === "crypto" ? "aggregate" : "unknown";
 }
 
 // MARK: - Search
