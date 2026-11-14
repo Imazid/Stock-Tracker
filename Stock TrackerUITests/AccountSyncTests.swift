@@ -1278,10 +1278,11 @@ final class AccountSyncTests: XCTestCase {
         if !toggle.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(toggle.isHittable)
         toggle.tap()
-        let ethereum = app.descendants(matching: .any)["detail.crypto.platform.ethereum"].firstMatch
-        for _ in 0..<4 where !ethereum.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(ethereum.isHittable)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "0x514910771AF9Ca656af840dff83E8264EcF986CA")).firstMatch.exists)
+        XCTAssertEqual(toggle.value as? String, "Expanded")
+        let ethereum = app.staticTexts["detail.crypto.platform.ethereum"].firstMatch
+        XCTAssertTrue(ethereum.waitForExistence(timeout: 10))
+        XCTAssertEqual(ethereum.label.lowercased(), "0x514910771af9ca656af840dff83e8264ecf986ca")
+        attach("chainlink-network-research")
         XCTAssertFalse(app.descendants(matching: .any)["detail.companyResearch"].exists)
     }
 

@@ -6,6 +6,7 @@ struct CryptoNetworkSection: View {
     let retry: () async -> Void
 
     @Environment(\.theme) private var theme
+    @State private var showContracts = false
 
     var body: some View {
         DetailSection(title: "Network information", identifier: "detail.crypto.network") {
@@ -25,26 +26,34 @@ struct CryptoNetworkSection: View {
                         LedgerRow(label: "Launch date", value: launchedOn)
                     }
                     if !coin.platforms.isEmpty {
-                        DisclosureGroup {
-                            VStack(alignment: .leading, spacing: DS.Space.m) {
-                                ForEach(coin.platforms) { platform in
-                                    VStack(alignment: .leading, spacing: DS.Space.xs) {
-                                        Text(platform.name).font(.subheadline.weight(.semibold))
-                                        Text(platform.contract)
-                                            .font(.caption.monospaced())
-                                            .textSelection(.enabled)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .accessibilityElement(children: .combine)
-                                    .accessibilityIdentifier("detail.crypto.platform.\(platform.id)")
-                                }
-                            }
-                            .padding(.top, DS.Space.m)
+                        Button {
+                            showContracts.toggle()
                         } label: {
-                            Text("Token contracts by network")
-                                .frame(minHeight: 44, alignment: .leading)
+                            HStack {
+                                Text(showContracts ? "Hide token contracts" : "Token contracts by network")
+                                    .multilineTextAlignment(.leading)
+                                Spacer()
+                                Image(systemName: showContracts ? "chevron.up" : "chevron.down")
+                                    .accessibilityHidden(true)
+                            }
+                            .frame(minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityValue(showContracts ? "Expanded" : "Collapsed")
                         .accessibilityIdentifier("detail.crypto.platforms")
+                        if showContracts {
+                            ForEach(coin.platforms) { platform in
+                                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                                    Text(platform.name).font(.subheadline.weight(.semibold))
+                                    Text(platform.contract)
+                                        .font(.caption.monospaced())
+                                        .textSelection(.enabled)
+                                        .accessibilityIdentifier("detail.crypto.platform.\(platform.id)")
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
                     ForEach(coin.explorers, id: \.self) { url in
                         Link(destination: url) {
