@@ -104,6 +104,7 @@ Deno.test("discovery asks the model for filters and enforces the shared AI quota
 });
 
 Deno.test("a model cannot assign a country-derived currency to a raise limit", async () => {
+  const user = "11111111-1111-1111-1111-111111111111";
   const answer = { ...filters, currency: "AUD", max_raise_target: 2_000_000 };
   const deps = {
     config: { openAIKey: "test" },
@@ -111,9 +112,9 @@ Deno.test("a model cannot assign a country-derived currency to a raise limit", a
     fetch: () => Promise.resolve(Response.json({ choices: [{ message: { content: JSON.stringify(answer) } }] })),
   };
   for (const wording of ["AUD2m", "A$2m", "2 million Australian dollars"]) {
-    const explicit = await interpretDiscovery("owner", "Australian startups raising under " + wording, [], deps);
+    const explicit = await interpretDiscovery(user, "Australian startups raising under " + wording, [], deps);
     assertEquals([explicit.currency, explicit.unsupported], ["AUD", []]);
   }
-  const missing = await interpretDiscovery("owner", "Australian startups raising under 2 million", [], deps);
+  const missing = await interpretDiscovery(user, "Australian startups raising under 2 million", [], deps);
   assertEquals([missing.currency, missing.unsupported], ["", ["Currency for the requested amount"]]);
 });
