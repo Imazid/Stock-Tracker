@@ -71,9 +71,10 @@ function ManualCapitalActivity({ owner }: { owner: string }) {
   const published = snapshot?.holdings.flatMap((holding) => (holding.capitalActivity ?? []).map((record) => ({
     ...record, holdingId: holding.id, name: holding.name, currency: holding.currency, origin: "snapshot",
   }))) ?? [];
-  const shared = (account.error ? [] : account.data?.holdings ?? []).flatMap((holding) => [...(holding.cashFlows ?? []), ...(holding.sales ?? [])].map((record) => ({
-    ...record, holdingId: holding.id, name: holding.name, currency: holding.currency, origin: "account",
-  })));
+  const shared = (account.error ? [] : account.data?.holdings ?? []).filter((holding) => !holding.providerMatch)
+    .flatMap((holding) => [...(holding.cashFlows ?? []), ...(holding.sales ?? [])].map((record) => ({
+      ...record, holdingId: holding.id, name: holding.name, currency: holding.currency, origin: "account",
+    })));
   const records = [...shared, ...published];
   const pending = records.filter((record) => record.status === "pending").sort((a, b) => a.date.localeCompare(b.date));
   const history = records.filter((record) => record.status !== "pending").sort((a, b) => b.date.localeCompare(a.date));

@@ -705,7 +705,24 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func openSharedCashFlow() {
+    func testAccountProviderLinkCanBeRemovedOnIPhone() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_PROVIDER_TEST_SESSION")
+        openSharedAccountHolding()
+        let match = app.buttons["private.accountProvider.open"]
+        for _ in 0..<5 where !match.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(match.isHittable, app.debugDescription)
+        XCTAssertEqual(match.label, "Change provider link")
+        XCTAssertTrue(app.staticTexts["Allocation uses the linked provider record."].exists, app.debugDescription)
+        match.tap()
+        let remove = app.buttons["private.accountProvider.remove"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 8), app.debugDescription)
+        remove.tap()
+        XCTAssertTrue(app.navigationBars["Link Provider Record"].waitForNonExistence(timeout: 12), app.debugDescription)
+        XCTAssertTrue(match.wait(for: \.label, toEqual: "Link provider record", timeout: 8), app.debugDescription)
+    }
+
+    @MainActor
+    private func openSharedAccountHolding() {
         openPrivateMarkets()
         app.buttons["private.destination.briefcase"].tap()
         let row = app.buttons.matching(identifier: "private.holding.accountRow")
@@ -716,6 +733,11 @@ final class PrivateMarketsFlowTests: XCTestCase {
         }
         XCTAssertTrue(row.isHittable, app.debugDescription)
         row.tap()
+    }
+
+    @MainActor
+    private func openSharedCashFlow() {
+        openSharedAccountHolding()
         let cash = app.buttons["private.accountCashFlow.open"]
         for _ in 0..<4 where !cash.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(cash.isHittable, app.debugDescription)

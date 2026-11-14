@@ -401,6 +401,10 @@ enum PrivateMarketsAPI {
         let revision: UUID?
         let holdings: [AccountHolding]
     }
+    struct AccountProviderOptions: Decodable {
+        let providers: [AccountHolding.ProviderMatch]
+        let nextOffset: Int?
+    }
     struct DocumentSummary: Decodable, Identifiable {
         let id: UUID
         let title: String
@@ -408,6 +412,17 @@ enum PrivateMarketsAPI {
     struct DocumentList: Decodable { let items: [DocumentSummary] }
     struct AccountHolding: Decodable, Identifiable {
         struct Company: Decodable { let id: UUID; let name: String }
+        struct ProviderMatch: Decodable, Identifiable {
+            let id: UUID
+            let name: String
+            let provider: String
+            let reference: String?
+
+            var sourceLabel: String {
+                let providerName = PrivateProvider.directory.first { $0.id == provider }?.name ?? provider
+                return [providerName, reference].compactMap { $0 }.joined(separator: " · ")
+            }
+        }
         struct Mark: Decodable, Identifiable {
             let value: String
             let date: Date
@@ -474,6 +489,8 @@ enum PrivateMarketsAPI {
         var marks: [Mark] { valuationHistory ?? valuation.map { [$0] } ?? [] }
         let ownershipEvidence: OwnershipEvidence?
         let company: Company?
+        let providerMatch: ProviderMatch?
+        let providerMatchUnavailable: Bool?
         let cashFlows: [CashFlow]?
         let sales: [CashFlow]?
         let remainingUnits: String?
@@ -597,18 +614,26 @@ final class PrivateMarketsStore: ObservableObject {
 
     var independentManualHoldings: [PrivateHolding] { state.holdings.filter { $0.matchingProviderHoldingID == nil } }
     var activeManualHoldings: [PrivateHolding] { independentManualHoldings.filter { $0.closedOn() == nil } }
+    var independentAccountHoldings: [PrivateMarketsAPI.AccountHolding] { accountHoldings.filter { $0.providerMatch == nil } }
     private var accountCompanyIDs: [UUID] {
         accountHoldings.filter { $0.exitedOn == nil }.compactMap { $0.company?.id }
     }
 
     var unavailableLinkedProviderCount: Int {
         let available = Set(providerHoldings.map(\.id))
-        return state.holdings.compactMap(\.matchingProviderHoldingID).filter { !available.contains($0) }.count
+        let local = state.holdings.compactMap(\.matchingProviderHoldingID).filter { !available.contains($0) }.count
+        return local + accountHoldings.filter { providerMatchIsUnavailable($0) }.count
+    }
+
+    func providerMatchIsUnavailable(_ account: PrivateMarketsAPI.AccountHolding) -> Bool {
+        guard let match = account.providerMatch else { return false }
+        return account.providerMatchUnavailable == true ||
+            (hasLoadedProviderHoldings && !providerHoldings.contains { $0.id == match.id })
     }
 
     var allocationHoldings: [PrivateHolding] {
         PrivateFundSnapshot.allocation(manual: state.holdings, confirmed: providerHoldings.filter { !$0.hasExited }.map(\.holding),
-                                       snapshots: angelListSnapshots) + accountHoldings.filter { $0.exitedOn == nil }.map(\.holding)
+                                       snapshots: angelListSnapshots) + independentAccountHoldings.filter { $0.exitedOn == nil }.map(\.holding)
     }
 
     func linkedFundValuation(for holding: PrivateHolding) -> (statement: PrivateFundSnapshot, holding: PrivateHolding)? {
@@ -698,6 +723,13 @@ final class PrivateMarketsStore: ObservableObject {
     func setAccountHoldingCompany(_ company: UUID?, holding: UUID, owner: UUID, revision: UUID?) async throws {
         let value: Any = company.map { $0.uuidString as Any } ?? NSNull()
         try await updateAccountHoldings("set_account_holding_company", fields: ["id": holding.uuidString, "company_id": value],
+                                        owner: owner, revision: revision)
+    }
+
+    func setAccountHoldingProvider(_ provider: UUID?, holding: UUID, owner: UUID, revision: UUID?) async throws {
+        let value: Any = provider.map { $0.uuidString as Any } ?? NSNull()
+        try await updateAccountHoldings("set_account_holding_provider",
+                                        fields: ["id": holding.uuidString, "provider_holding_id": value],
                                         owner: owner, revision: revision)
     }
 
@@ -1226,7 +1258,7 @@ final class PrivateMarketsStore: ObservableObject {
             cancelCapitalReminders(scope: owner)
             return
         }
-        let positions = independentManualHoldings + providerHoldings.map(\.holding) + accountHoldings.map(\.holding)
+        let positions = independentManualHoldings + providerHoldings.map(\.holding) + independentAccountHoldings.map(\.holding)
         let reminders = PrivateMath.capitalCallReminders(in: positions)
         reminderTask = Task {
             await previousTask?.value

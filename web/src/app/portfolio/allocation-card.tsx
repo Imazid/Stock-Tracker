@@ -30,8 +30,10 @@ export function AllocationCard({ owner, holdings, quoteFor, loading, truncated }
   });
   const manual = useQuery(manualPortfolioQuery(owner));
   const account = useQuery(accountHoldingsQuery(owner));
+  const accountHoldings = account.error ? [] : account.data?.holdings ?? [];
+  const missingProviderMatches = accountHoldings.filter((holding) => holding.providerMatchUnavailable).length;
   const manualHoldings = [...(manual.error ? [] : manual.data?.snapshot?.holdings ?? []),
-    ...(account.error ? [] : account.data?.holdings ?? [])];
+    ...accountHoldings.filter((holding) => !holding.providerMatch)];
   const manualBuckets: PrivateAllocationBucket[] = manualHoldings
     .filter((holding) => !holding.exitedOn).map(({ currency, assetClass, valuation }) => ({
       asset_class: assetClass, currency, position_count: 1, valued_count: valuation ? 1 : 0,
@@ -45,7 +47,8 @@ export function AllocationCard({ owner, holdings, quoteFor, loading, truncated }
   const rates = usePortfolioRates(needsRates);
   const listed = portfolioExposure(holdings, quoteFor, currency, needsRates ? rates.data : undefined);
   const allocation = unifiedAllocation(listed, buckets, currency, needsRates ? rates.data : undefined);
-  const partial = truncated || listed.priced < holdings.length || allocation.valued < allocation.positions || privatePositions.isError || manual.isError || account.isError;
+  const partial = truncated || listed.priced < holdings.length || allocation.valued < allocation.positions || missingProviderMatches > 0 ||
+    privatePositions.isError || manual.isError || account.isError;
   const waiting = loading || privatePositions.isPending || manual.isPending || account.isPending || (needsRates && rates.isPending);
   const covered = listed.priced + allocation.valued;
 
@@ -60,6 +63,9 @@ export function AllocationCard({ owner, holdings, quoteFor, loading, truncated }
       </Notice>}
       {account.error && <Notice tone="down">
         Account holding valuations are temporarily unavailable. <Button size="sm" onClick={() => void account.refetch()}>Retry holdings</Button>
+      </Notice>}
+      {missingProviderMatches > 0 && <Notice tone="down">Some linked provider records are unavailable.
+        <ButtonLink size="sm" href="/private-markets?view=portfolio">Review links</ButtonLink>
       </Notice>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <dl>

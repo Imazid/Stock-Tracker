@@ -74,8 +74,8 @@ function OwnershipExcerptContent({ owner, evidence }: { owner: string; evidence:
   </div>;
 }
 
-export function ManualHoldingCard({ owner, holding, now, controls, published = true }: {
-  owner: string; holding: ManualHolding; now: number; controls?: React.ReactNode; published?: boolean;
+export function ManualHoldingCard({ owner, holding, now, controls, published = true, reconciled = false }: {
+  owner: string; holding: ManualHolding; now: number; controls?: React.ReactNode; published?: boolean; reconciled?: boolean;
 }) {
   const { currency, valuation } = holding;
   const money = (value?: string) => value === undefined ? "Unavailable" : currency + " " + groupedDecimal(value);
@@ -83,7 +83,8 @@ export function ManualHoldingCard({ owner, holding, now, controls, published = t
   const hasActivity = Boolean(holding.cashFlows?.length || holding.sales?.length);
   const values = [
     ["Remaining units", units === undefined ? "Undisclosed" : groupedDecimal(units)],
-    ["Carrying value", money(!published && holding.exitedOn ? "0" : valuation?.value)], ["Committed", money(holding.commitment)],
+    [reconciled ? "Self-reported value" : "Carrying value", money(!published && holding.exitedOn ? "0" : valuation?.value)],
+    ["Committed", money(holding.commitment)],
     ...(published || hasActivity ? [["Capital deployed", money(holding.paid)],
       [published ? "Returned capital and proceeds" : "Distributions", money(holding.returned)],
       ...(holding.saleProceeds !== undefined ? [["Net sale proceeds", money(holding.saleProceeds)]] : []),

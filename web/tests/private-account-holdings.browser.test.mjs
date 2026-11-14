@@ -178,6 +178,27 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
       assert.equal(await other.getByRole("button", { name: "Account holdings", exact: true }).count(), 0);
       await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
     }
+    if (process.env.PRIVATE_ACCOUNT_PROVIDER === "1") {
+      await page.goto(new URL("/portfolio", origin).href);
+      const allocation = page.locator("#unified-allocation");
+      await allocation.getByRole("status").filter({ hasText: /2 of 2 private positions valued/ }).waitFor();
+      await page.goto(new URL(portfolio, origin).href);
+      await article.getByRole("button", { name: "Link provider record", exact: true }).click();
+      const options = article.getByLabel("Provider holding for the same investment", { exact: true });
+      await options.selectOption({ label: "Provider portfolio fixture · Birchal · " + process.env.PRIVATE_ACCOUNT_PROVIDER_REFERENCE });
+      await article.getByRole("button", { name: "Save provider link", exact: true }).click();
+      await article.getByText("Allocation uses the linked provider record.", { exact: true }).waitFor();
+      await article.getByText("Self-reported value", { exact: true }).waitFor();
+      const link = article.getByRole("link", { name: "Open linked provider record", exact: true });
+      const href = await link.getAttribute("href");
+      assert.match(href, /^#provider-holding-/);
+      await page.locator(href).getByRole("heading", { name: "Provider portfolio fixture" }).waitFor();
+      await page.goto(new URL("/portfolio", origin).href);
+      await allocation.getByRole("status").filter({ hasText: /1 of 1 private positions valued/ }).waitFor();
+      assert.equal(await allocation.getByText("Venture fund", { exact: true }).count(), 0);
+      await allocation.getByText("Startup equity", { exact: true }).waitFor();
+      await page.goto(new URL(portfolio, origin).href);
+    }
     if (process.env.PRIVATE_ACCOUNT_KEEP_HOLDING !== "1") {
       await article.getByRole("button", { name: "Remove holding", exact: true }).click();
       await article.getByRole("button", { name: "Confirm removal", exact: true }).click();

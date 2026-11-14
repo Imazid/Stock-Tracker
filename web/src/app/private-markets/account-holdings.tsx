@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -8,12 +8,17 @@ import { Field, Input, Select } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { AccountCashFlows, type AccountCashFlow, type CashFlowChange } from "./account-cash-flow";
 import { ManualHoldingCard, type ManualHolding } from "./manual-portfolio";
-import { dateLabel, dayInSydney, groupedDecimal, privateMarkets, type PrivateDeal } from "./private-data";
+import { dateLabel, dayInSydney, groupedDecimal, privateMarkets, providerName, type PrivateDeal } from "./private-data";
 
 type Mark = NonNullable<ManualHolding["valuation"]>;
-type AccountHolding = ManualHolding & { valuationHistory?: Mark[]; cashFlows?: AccountCashFlow[]; company?: CompanyLink };
+type AccountHolding = ManualHolding & {
+  valuationHistory?: Mark[]; cashFlows?: AccountCashFlow[]; company?: CompanyLink;
+  providerMatch?: ProviderMatch; providerMatchUnavailable?: true;
+};
 type CompanyLink = { id: string; name: string };
+type ProviderMatch = { id: string; name: string; provider: string; reference?: string };
 type CompanyChange = { id: string; company_id: string | null };
+type ProviderChange = { id: string; provider_holding_id: string | null };
 type AccountHoldings = { revision: string | null; updated_at: string | null; holdings: AccountHolding[] };
 type ValuationChange = { id: string; valuation: Mark } | { id: string; date: string };
 type EditableHolding = Pick<ManualHolding, "id" | "name" | "assetClass" | "currency" |
@@ -85,7 +90,7 @@ function HoldingForm({ owner, holding, now, busy, save, cancel }: {
       <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
         <Field label="Company or fund name" htmlFor={field("name")}><Input id={field("name")} name="name" required maxLength={160} defaultValue={holding?.name} /></Field>
         <Field label="Asset class" htmlFor={field("assetClass")}><Select id={field("assetClass")} name="assetClass" defaultValue={holding?.assetClass}>{classes.map((name) => <option key={name}>{name}</option>)}</Select></Field>
-        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} readOnly={Boolean(holding?.valuation || holding?.valuationHistory?.length || holding?.cashFlows?.length || holding?.sales?.length)} defaultValue={holding?.currency ?? "AUD"} /></Field>
+        <Field label="Currency" htmlFor={field("currency")}><Input id={field("currency")} name="currency" required maxLength={3} readOnly={Boolean(holding?.valuation || holding?.valuationHistory?.length || holding?.cashFlows?.length || holding?.sales?.length || holding?.providerMatch)} defaultValue={holding?.currency ?? "AUD"} /></Field>
         {numeric.map(([key, label, value]) => <Field key={key} label={label} htmlFor={field(key)}><Input id={field(key)} name={key} inputMode="decimal" maxLength={39} defaultValue={value} /></Field>)}
         <Field label="Share class" htmlFor={field("shareClass")}><Input id={field("shareClass")} name="shareClass" maxLength={160} defaultValue={holding?.shareClass} /></Field>
         <Field label="Lock-up ends" htmlFor={field("lockup")}><Input id={field("lockup")} type="date" name="lockup" defaultValue={holding?.lockupUntil?.slice(0, 10)} /></Field>
@@ -214,7 +219,68 @@ function AccountCompanyLink({ holding, companies, revision, busy, save }: {
   </div>;
 }
 
-export function AccountHoldingsPanel({ owner, deals }: { owner: string; deals: PrivateDeal[] }) {
+function AccountProviderLink({ owner, holding, visibleProviders, revision, busy, save }: {
+  owner: string; holding: AccountHolding; revision: string | null; busy: boolean;
+  visibleProviders: ReadonlySet<string>;
+  save: (change: ProviderChange, revision: string | null) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState<{ revision: string | null; providerID: string }>();
+  const match = holding.providerMatch;
+  const options = useInfiniteQuery({
+    queryKey: ["private-markets", owner, "account-provider-options", holding.id, draft?.revision],
+    enabled: !!draft, gcTime: 0, retry: false, initialPageParam: 0,
+    queryFn: ({ signal, pageParam }) => privateMarkets<{ providers: ProviderMatch[]; next_offset: number | null }>(
+      "account_provider_options", { owner, signal, id: holding.id, offset: pageParam }),
+    getNextPageParam: (page) => page.next_offset ?? undefined,
+  });
+  const choices = options.error ? [] : options.data?.pages.flatMap((page) => page.providers) ?? [];
+  const label = (provider: ProviderMatch) => [provider.name, providerName(provider.provider), provider.reference].filter(Boolean).join(" · ");
+  return <div className="space-y-2 border-t border-border p-4 text-sm">
+    {match && <div className="space-y-1">
+      <p>Linked provider record · {label(match)}</p>
+      <p className="text-text-2">{holding.providerMatchUnavailable
+        ? "This provider record is unavailable. Remove the link to use this holding in allocation."
+        : "Allocation uses the linked provider record."}</p>
+      {!holding.providerMatchUnavailable && visibleProviders.has(match.id) &&
+        <a className="text-primary-fg hover:underline" href={`#provider-holding-${match.id}`}>Open linked provider record</a>}
+    </div>}
+    {!draft && <Button size="sm" disabled={busy} onClick={() => setDraft({ revision, providerID: match?.id ?? "" })}>
+      {match ? "Change provider link" : "Link provider record"}
+    </Button>}
+    {draft && <form className="space-y-2" onSubmit={(event) => {
+      event.preventDefault();
+      if (draft.providerID === (match?.id ?? "")) return;
+      save({ id: holding.id, provider_holding_id: draft.providerID || null }, draft.revision);
+      setDraft(undefined);
+    }}>
+      <Field label="Provider holding for the same investment" htmlFor={id}>
+        <Select id={id} value={draft.providerID} disabled={busy}
+          onChange={(event) => setDraft({ ...draft, providerID: event.target.value })}>
+          <option value="">None</option>
+          {match && !choices.some(({ id }) => id === match.id) && <option value={match.id}>{label(match)}</option>}
+          {choices.map((provider) => <option key={provider.id} value={provider.id}>{label(provider)}</option>)}
+        </Select>
+      </Field>
+      {options.isPending && <p role="status">Loading provider records…</p>}
+      {options.error && <Notice tone="down">{options.error.message}
+        <Button size="sm" type="button" onClick={() => void options.refetch()}>Retry provider records</Button>
+      </Notice>}
+      {options.data && !choices.length && <p>No available provider records in this currency.</p>}
+      {options.hasNextPage && <Button size="sm" type="button" disabled={options.isFetchingNextPage}
+        onClick={() => void options.fetchNextPage()}>Load more provider records</Button>}
+      <p className="text-text-2">Check the provider reference against your records. The link keeps this holding’s history and counts the investment once.</p>
+      <div className="flex gap-2">
+        <Button size="sm" type="submit" disabled={busy || draft.providerID === (match?.id ?? "")}>Save provider link</Button>
+        <Button size="sm" type="button" onClick={() => setDraft(undefined)}>Cancel</Button>
+      </div>
+    </form>}
+  </div>;
+}
+
+export function AccountHoldingsPanel({ owner, deals, visibleProviders }: {
+  owner: string; deals: PrivateDeal[]; visibleProviders: ReadonlySet<string>;
+}) {
   const cache = useQueryClient();
   const options = accountHoldingsQuery(owner);
   const result = useQuery(options);
@@ -223,10 +289,11 @@ export function AccountHoldingsPanel({ owner, deals }: { owner: string; deals: P
   const companies = [...new Map(deals.map(({ round: { company } }) => [company.id, company])).values()]
     .sort((first, second) => first.name.localeCompare(second.name));
   const mutation = useMutation({
-    mutationFn: ({ revision, ...change }: ({ holding: EditableHolding } | { id: string } | ValuationChange | CashFlowChange | CompanyChange) & { revision: string | null }) => {
+    mutationFn: ({ revision, ...change }: ({ holding: EditableHolding } | { id: string } | ValuationChange | CashFlowChange | CompanyChange | ProviderChange) & { revision: string | null }) => {
       const action = "holding" in change ? "save_account_holding" : "valuation" in change ? "save_account_valuation"
         : "date" in change ? "remove_account_valuation" : "cash_flow" in change ? "save_account_cash_flow"
-        : "flow_id" in change ? "remove_account_cash_flow" : "company_id" in change ? "set_account_holding_company" : "remove_account_holding";
+        : "flow_id" in change ? "remove_account_cash_flow" : "company_id" in change ? "set_account_holding_company"
+        : "provider_holding_id" in change ? "set_account_holding_provider" : "remove_account_holding";
       return privateMarkets<AccountHoldings>(action, { owner, expected_revision: revision, ...change });
     },
     onMutate: () => cache.cancelQueries({ queryKey: options.queryKey }),
@@ -246,7 +313,7 @@ export function AccountHoldingsPanel({ owner, deals }: { owner: string; deals: P
   return <section className="min-w-0 space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div><h2 className="font-semibold text-text">Account holdings</h2>
-        <p className="text-sm text-text-2">Self-reported holdings you can edit on the web or iPhone. Enter each position once so allocation counts it once.</p></div>
+        <p className="text-sm text-text-2">Self-reported holdings you can edit on the web or iPhone.</p></div>
       {current && !editor && <Button size="sm" disabled={mutation.isPending} onClick={() => {
         mutation.reset(); setDeleting(undefined); setEditor({ holding: null, revision: current.revision });
       }}>Add private holding</Button>}
@@ -257,13 +324,20 @@ export function AccountHoldingsPanel({ owner, deals }: { owner: string; deals: P
     {editor && <HoldingForm key={editor.holding?.id ?? "new"} owner={owner} holding={editor.holding}
       now={result.dataUpdatedAt} busy={mutation.isPending} save={(holding) => mutation.mutate({ holding, revision: editor.revision })}
       cancel={() => { mutation.reset(); setEditor(undefined); }} />}
-    {current?.holdings.map((holding) => <ManualHoldingCard key={holding.id} owner={owner} holding={holding} now={result.dataUpdatedAt} published={false}
+    {current?.holdings.map((holding) => <ManualHoldingCard key={holding.id} owner={owner} holding={holding} now={result.dataUpdatedAt}
+      published={false} reconciled={!!holding.providerMatch}
       controls={<>
         {(holding.company || companies.length > 0) && <AccountCompanyLink holding={holding} companies={companies}
           revision={current.revision} busy={!!editor || mutation.isPending} save={(change, revision) => {
             mutation.reset();
             mutation.mutate({ ...change, revision });
           }} />}
+        <AccountProviderLink owner={owner} holding={holding} visibleProviders={visibleProviders}
+          revision={current.revision} busy={!!editor || mutation.isPending}
+          save={(change, revision) => {
+            mutation.reset();
+            mutation.mutate({ ...change, revision });
+          }} />
         <AccountCashFlows holding={holding} revision={current.revision} now={result.dataUpdatedAt}
           busy={!!editor || mutation.isPending} save={(change, revision) => {
           mutation.reset();

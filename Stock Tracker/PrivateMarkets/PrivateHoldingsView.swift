@@ -78,7 +78,9 @@ struct PrivateHoldingsView: View {
                                 Text(record.name).font(.headline)
                                 Text(record.assetClass.rawValue + " · Self-reported")
                                     .font(.footnote).foregroundStyle(.secondary)
-                                if let closed = record.exitedOn {
+                                if let match = record.providerMatch {
+                                    Text("Linked to " + match.name).font(.subheadline)
+                                } else if let closed = record.exitedOn {
                                     Text("Exited " + PrivateDeal.Round.Listing.formattedDay(closed))
                                         .font(.subheadline)
                                 } else if let mark = record.holding.valuation() {
@@ -103,7 +105,7 @@ struct PrivateHoldingsView: View {
                     }
                     .disabled(!store.hasLoadedAccountHoldings || store.accountHoldingsError != nil)
                     .accessibilityIdentifier("private.holding.accountAdd")
-                    Text("Account holdings appear on the web and iPhone. Enter each position once.")
+                    Text("Account holdings appear on the web and iPhone.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -197,6 +199,7 @@ private struct AccountPrivateHoldingDetail: View {
     @State private var editError: String?
     @State private var markEditor: AccountValuationEdit?
     @State private var companyEditor: AccountCompanyEdit?
+    @State private var providerEditor: AccountProviderMatchEdit?
     @State private var removeMark: AccountValuationEdit?
     @State private var updatingMark = false
     @State private var markError: String?
@@ -227,7 +230,8 @@ private struct AccountPrivateHoldingDetail: View {
                     }
                 } else if let mark = current.valuation {
                     Section("Recorded valuation") {
-                        LabeledContent("Carrying value", value: current.currency + " " + mark.value)
+                        LabeledContent(current.providerMatch == nil ? "Carrying value" : "Self-reported value",
+                                       value: current.currency + " " + mark.value)
                         LabeledContent("Valuation date", value: PrivateDeal.Round.Listing.formattedDay(CashIncomeDay.string(mark.date)))
                         LabeledContent("Source", value: mark.source)
                         LabeledContent("Method", value: mark.method)
@@ -278,6 +282,25 @@ private struct AccountPrivateHoldingDetail: View {
                     }
                     .accessibilityIdentifier("private.accountCompany.link")
                 }
+                Section("Provider record") {
+                    if let match = current.providerMatch {
+                        Text(match.name)
+                        Text(match.sourceLabel).font(.footnote).foregroundStyle(.secondary)
+                        Text(store.providerMatchIsUnavailable(current)
+                             ? "This provider record is unavailable. Remove the link to use this holding in allocation."
+                             : "Allocation uses the linked provider record.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if !store.providerMatchIsUnavailable(current), store.providerHoldings.contains(where: { $0.id == match.id }) {
+                            NavigationLink("Open linked provider record") {
+                                PrivateHoldingDetail(id: match.id, providerRecord: true)
+                            }
+                        }
+                    }
+                    Button(current.providerMatch == nil ? "Link provider record" : "Change provider link") {
+                        providerEditor = .init(revision: store.accountHoldingsRevision, match: current.providerMatch)
+                    }
+                    .accessibilityIdentifier("private.accountProvider.open")
+                }
                 if let evidence = current.ownershipEvidence {
                     let excerpt = opened?.owner == owner && opened?.excerptID == evidence.excerptID ? opened?.text : nil
                     Section("Reviewed ownership excerpt") {
@@ -319,6 +342,7 @@ private struct AccountPrivateHoldingDetail: View {
             .onChange(of: current.ownershipEvidence?.excerptID) { _, _ in opened = nil; excerptError = nil }
             .sheet(item: $editor) { edit in AccountPrivateHoldingEditor(edit: edit) }
             .sheet(item: $companyEditor) { edit in AccountCompanyEditor(owner: owner, holding: id, edit: edit) }
+            .sheet(item: $providerEditor) { edit in AccountProviderMatchEditor(owner: owner, holding: id, edit: edit) }
             .confirmationDialog("Remove this holding from your account?", isPresented: Binding(
                 get: { removal != nil }, set: { if !$0 { removal = nil } }
             ), titleVisibility: .visible, presenting: removal) { edit in
@@ -446,6 +470,124 @@ private struct AccountCompanyEditor: View {
         defer { saving = false }
         do {
             try await store.setAccountHoldingCompany(companyID, holding: holding, owner: owner, revision: edit.revision)
+            if auth.userId == owner { dismiss() }
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
+            await store.refreshAccountHoldings(for: owner)
+            if auth.userId == owner {
+                changed = true
+                error = failure.localizedDescription
+            }
+        } catch {
+            if auth.userId == owner { self.error = error.localizedDescription }
+        }
+    }
+}
+
+private struct AccountProviderMatchEdit: Identifiable {
+    let id = UUID()
+    let revision: UUID?
+    let match: PrivateMarketsAPI.AccountHolding.ProviderMatch?
+}
+
+private struct AccountProviderMatchEditor: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @Environment(\.dismiss) private var dismiss
+    let owner: UUID
+    let holding: UUID
+    let edit: AccountProviderMatchEdit
+    @State private var selected: UUID?
+    @State private var choices: [PrivateMarketsAPI.AccountHolding.ProviderMatch] = []
+    @State private var nextOffset: Int? = 0
+    @State private var loading = false
+    @State private var saving = false
+    @State private var changed = false
+    @State private var loadError: String?
+    @State private var error: String?
+
+    init(owner: UUID, holding: UUID, edit: AccountProviderMatchEdit) {
+        self.owner = owner
+        self.holding = holding
+        self.edit = edit
+        _selected = State(initialValue: edit.match?.id)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Same investment") {
+                    ForEach(choices) { choice in
+                        Button { selected = choice.id } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(choice.name)
+                                    Text(choice.sourceLabel).font(.footnote).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if selected == choice.id { Image(systemName: "checkmark").accessibilityHidden(true) }
+                            }
+                        }
+                        .accessibilityAddTraits(selected == choice.id ? .isSelected : [])
+                        .accessibilityIdentifier("private.accountProvider.option")
+                    }
+                    if loading { ProgressView("Loading provider records") }
+                    if let loadError { Text(loadError).foregroundStyle(.secondary) }
+                    if nextOffset != nil && !loading && (loadError != nil || !choices.isEmpty) {
+                        Button(loadError == nil ? "Load more provider records" : "Retry provider records") { Task { await load() } }
+                    }
+                    if nextOffset == nil && choices.isEmpty { Text("No available provider records in this currency.") }
+                    Text("Check the provider reference against your records. The link keeps this holding’s history and counts the investment once.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if edit.match != nil {
+                    Button("Remove provider link", role: .destructive) { Task { await save(nil) } }
+                        .disabled(changed)
+                        .accessibilityIdentifier("private.accountProvider.remove")
+                }
+                if let error { Text(error).foregroundStyle(.orange) }
+            }
+            .task { await load() }
+            .disabled(saving || auth.userId != owner)
+            .navigationTitle("Link Provider Record")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Link") { Task { await save(selected) } }
+                        .disabled(saving || changed || auth.userId != owner || selected == nil || selected == edit.match?.id)
+                        .accessibilityIdentifier("private.accountProvider.save")
+                }
+            }
+            .interactiveDismissDisabled(saving)
+            .onChange(of: auth.userId) { _, _ in if auth.userId != owner { dismiss() } }
+        }
+    }
+
+    private func load() async {
+        guard auth.userId == owner, let offset = nextOffset, !loading else { return }
+        loadError = nil
+        loading = true
+        defer { loading = false }
+        do {
+            let page: PrivateMarketsAPI.AccountProviderOptions = try await PrivateMarketsAPI.request(
+                "account_provider_options", ["id": holding.uuidString, "offset": offset], expectedUserID: owner)
+            try Task.checkCancellation()
+            guard auth.userId == owner else { return }
+            let known = Set(choices.map(\.id))
+            choices += page.providers.filter { !known.contains($0.id) }
+            nextOffset = page.nextOffset
+        } catch is CancellationError {
+        } catch { loadError = error.localizedDescription }
+    }
+
+    private func save(_ provider: UUID?) async {
+        guard auth.userId == owner, !saving, !changed else { return }
+        error = nil
+        saving = true
+        defer { saving = false }
+        do {
+            try await store.setAccountHoldingProvider(provider, holding: holding, owner: owner, revision: edit.revision)
             if auth.userId == owner { dismiss() }
         } catch is CancellationError {
         } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
@@ -904,7 +1046,7 @@ private struct AccountPrivateHoldingEditor: View {
                     }
                     TextField("Currency", text: $currency)
                         .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                        .disabled(edit.holding.map { !$0.marks.isEmpty || !$0.activity.isEmpty } ?? false)
+                        .disabled(edit.holding.map { !$0.marks.isEmpty || !$0.activity.isEmpty || $0.providerMatch != nil } ?? false)
                     TextField("Shares or units", text: $units).keyboardType(.decimalPad)
                     TextField("Ownership percentage", text: $ownership).keyboardType(.decimalPad)
                     TextField("Committed capital", text: $commitment).keyboardType(.decimalPad)
@@ -2152,7 +2294,7 @@ struct PrivateCapitalView: View {
                     }
                 }
             }
-            ForEach(store.accountHoldings.filter { !$0.activity.isEmpty }) { holding in
+            ForEach(store.independentAccountHoldings.filter { !$0.activity.isEmpty }) { holding in
                 Section(holding.name + " · Account records") {
                     ForEach(holding.activity.sorted { $0.date > $1.date }) { flow in
                         AccountCashFlowLabel(flow: flow, currency: holding.currency)
@@ -2182,7 +2324,7 @@ struct PrivateCapitalView: View {
             let hasProviderActivity = store.providerHoldings.contains { position in
                 position.calls?.isEmpty == false || position.cancelledCalls?.isEmpty == false || position.distributions?.isEmpty == false
             }
-            if !hasManualActivity && !hasProviderActivity && !store.accountHoldings.contains(where: { !$0.activity.isEmpty }) {
+            if !hasManualActivity && !hasProviderActivity && !store.independentAccountHoldings.contains(where: { !$0.activity.isEmpty }) {
                 ContentUnavailableView("No capital calls or distributions", systemImage: "arrow.left.arrow.right",
                                        description: Text("Record cash flows on a holding to track payments and proceeds."))
             }

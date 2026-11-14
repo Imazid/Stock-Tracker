@@ -13,10 +13,19 @@ export function accountValuationDate(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T00:00:00Z$/.test(value);
 }
 
+export type AccountProviderMatch = {
+  id: string;
+  name: string;
+  companyId?: string;
+  provider: string;
+  reference?: string;
+};
+
 export type SavedAccountHolding = Record<string, unknown> & {
   valuation?: SnapshotValuation; valuationHistory?: SnapshotValuation[]; cashFlows?: AccountCashFlow[];
   sales?: AccountCashFlow[]; lastSaleOn?: string; exitedOn?: string;
   company?: { id: string; name: string };
+  providerMatch?: AccountProviderMatch;
 };
 
 export function accountValuations(holding?: SavedAccountHolding) {

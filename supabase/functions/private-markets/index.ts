@@ -1,6 +1,6 @@
 import { accountCashFlow } from "../_shared/private-markets/account-cash-flow.ts";
 import {
-  accountCashFlows, accountHolding, accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
+  accountCashFlows, accountHolding, type AccountProviderMatch, accountValuation, accountValuationDate, accountValuations, type SavedAccountHolding,
   withAccountCashFlows, withAccountValuations,
 } from "../_shared/private-markets/account-holdings.ts";
 import { validManualSnapshot } from "../_shared/private-markets/manual-snapshot.ts";
@@ -29,7 +29,7 @@ const activeSessionActions = new Set([
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
   "account_holdings", "save_account_holding", "remove_account_holding", "save_account_valuation", "remove_account_valuation",
-  "save_account_cash_flow", "remove_account_cash_flow", "set_account_holding_company",
+  "save_account_cash_flow", "remove_account_cash_flow", "set_account_holding_company", "account_provider_options", "set_account_holding_provider",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -227,6 +227,23 @@ function publishedAnnouncements(admin: ReturnType<typeof serviceClient>) {
   return admin.from("published_private_company_updates")
     .select(`id,title,significance,source_url,source_label,published_at,round_announced_on,
       company_name,company_id,financial_published_on,source_revised_at`);
+}
+
+type ConfirmedAccountPosition = {
+  id: string; name: string; currency: string; company_id: string | null;
+  commitment: { provider: string; provider_reference: string | null };
+};
+
+function confirmedAccountPositions(admin: ReturnType<typeof serviceClient>, userId: string) {
+  return admin.from("private_holdings").select("id,name,currency,company_id," +
+    "commitment:investment_commitments!inner(provider,provider_reference)")
+    .eq("user_id", userId).eq("commitment.user_id", userId).eq("commitment.status", "confirmed")
+    .not("confirmed_at", "is", null).not("settled_amount", "is", null);
+}
+
+function accountProviderMatch(position: ConfirmedAccountPosition): AccountProviderMatch {
+  return { id: position.id, name: position.name, companyId: position.company_id ?? undefined,
+    provider: position.commitment.provider, reference: position.commitment.provider_reference ?? undefined };
 }
 
 function companyUpdate(item: PublishedUpdate) {
@@ -722,20 +739,25 @@ Deno.serve(async (req) => {
       case "remove_account_valuation":
       case "save_account_cash_flow":
       case "set_account_holding_company":
+      case "account_provider_options":
+      case "set_account_holding_provider":
       case "remove_account_cash_flow": {
         const reading = body.action === "account_holdings";
+        const listingProviders = body.action === "account_provider_options";
         const saving = body.action === "save_account_holding";
         const savingMark = body.action === "save_account_valuation";
         const removingMark = body.action === "remove_account_valuation";
         const savingFlow = body.action === "save_account_cash_flow";
         const removingFlow = body.action === "remove_account_cash_flow";
         const settingCompany = body.action === "set_account_holding_company";
+        const settingProvider = body.action === "set_account_holding_provider";
         const expected = body.expected_revision;
-        const allowed = reading ? ["action"] : ["action", "expected_revision", saving ? "holding" : "id",
-          ...(savingMark ? ["valuation"] : removingMark ? ["date"] : savingFlow ? ["cash_flow"] :
-            removingFlow ? ["flow_id"] : settingCompany ? ["company_id"] : [])];
+        const allowed = reading ? ["action"] : listingProviders ? ["action", "id", "offset"]
+          : ["action", "expected_revision", saving ? "holding" : "id",
+            ...(savingMark ? ["valuation"] : removingMark ? ["date"] : savingFlow ? ["cash_flow"] :
+              removingFlow ? ["flow_id"] : settingCompany ? ["company_id"] : settingProvider ? ["provider_holding_id"] : [])];
         if (Object.keys(body).some((key) => !allowed.includes(key)) ||
-          (!reading && expected !== null && (typeof expected !== "string" || !uuid.test(expected)))) {
+          (!reading && !listingProviders && expected !== null && (typeof expected !== "string" || !uuid.test(expected)))) {
           return errorResponse(400, "INVALID_HOLDING", "Review the holding and try again.");
         }
         const { data: current, error } = await admin.from("private_account_holdings")
@@ -744,11 +766,25 @@ Deno.serve(async (req) => {
         const conflict = () => errorResponse(409, "HOLDINGS_CHANGED", "Your account holdings changed. Refresh and review before saving.");
         const invalidSale = () => errorResponse(422, "INVALID_SALE_POSITION",
           "Record opening units before a partial sale and make sure recorded sales stay within the available units.");
-        if (!reading && (current?.revision ?? null) !== expected) return conflict();
+        const invalidProvider = () => errorResponse(422, "INVALID_PROVIDER_MATCH",
+          "Choose an available provider record for the same investment, currency and company.");
+        if (!reading && !listingProviders && (current?.revision ?? null) !== expected) return conflict();
         const holdings: SavedAccountHolding[] = current?.sealed
           ? JSON.parse(await open(await keys(), current.sealed, context("account_holdings", userId, current.revision))) : [];
-        if (reading) return jsonResponse(200, { revision: current?.revision ?? null, updated_at: current?.updated_at ?? null,
-          holdings: holdings.map((holding) => withAccountValuations(holding, accountValuations(holding))) });
+        if (reading) {
+          const linked = holdings.flatMap((holding) => holding.providerMatch ? [holding.providerMatch.id] : []);
+          const available = new Set<string>();
+          if (linked.length) {
+            const { data, error } = await confirmedAccountPositions(admin, userId).in("id", linked).returns<ConfirmedAccountPosition[]>();
+            if (error) throw error;
+            for (const row of data) available.add(row.id);
+          }
+          return jsonResponse(200, { revision: current?.revision ?? null, updated_at: current?.updated_at ?? null,
+            holdings: holdings.map((holding) => ({
+              ...withAccountValuations(holding, accountValuations(holding)),
+              providerMatchUnavailable: holding.providerMatch && !available.has(holding.providerMatch.id) ? true : undefined,
+            })) });
+        }
         if (saving) {
           const holding = accountHolding(body.holding, new Date());
           if (!holding) return errorResponse(400, "INVALID_HOLDING", "Enter a valid name, amount and valuation source.");
@@ -765,10 +801,12 @@ Deno.serve(async (req) => {
           const prior = holdings[existing];
           const marks = accountValuations(prior);
           const cashFlows = accountCashFlows(prior);
+          if (prior?.providerMatch && prior.currency !== holding.currency) return invalidProvider();
           if (prior && (marks.length || cashFlows.length) && prior.currency !== holding.currency) {
             return errorResponse(422, "VALUATION_CURRENCY", "Recorded valuations and cash flows use the holding currency. Remove them before changing it.");
           }
-          const saved = withAccountCashFlows(withAccountValuations({ ...holding, company: prior?.company }, marks, holding.valuation), cashFlows);
+          const saved = withAccountCashFlows(withAccountValuations({ ...holding, company: prior?.company,
+            providerMatch: prior?.providerMatch }, marks, holding.valuation), cashFlows);
           if (!saved) return invalidSale();
           if (existing < 0) {
             if (holdings.length >= 100) return errorResponse(422, "HOLDING_LIMIT", "This account already has 100 account holdings.");
@@ -779,7 +817,41 @@ Deno.serve(async (req) => {
         } else {
           const index = typeof body.id === "string" && uuid.test(body.id) ? holdings.findIndex((item) => item.id === body.id) : -1;
           if (index < 0) return errorResponse(404, "NOT_FOUND", "Holding unavailable.");
-          if (settingCompany) {
+          const holding = holdings[index];
+          if (listingProviders || settingProvider) {
+            const candidates = () => {
+              let query = confirmedAccountPositions(admin, userId).eq("currency", holding.currency);
+              if (holding.company) query = query.or(`company_id.eq.${holding.company.id},company_id.is.null`);
+              const matched = holdings.flatMap((other, position) =>
+                position !== index && other.providerMatch ? [other.providerMatch.id] : []);
+              if (matched.length) query = query.not("id", "in", `(${matched.join(",")})`);
+              return query;
+            };
+            if (listingProviders) {
+              const offset = body.offset ?? 0;
+              if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
+                return errorResponse(400, "INVALID_REQUEST", "Choose a valid provider records page.");
+              }
+              const limit = 25;
+              const { data, error } = await candidates().order("name").order("id").range(offset, offset + limit)
+                .returns<ConfirmedAccountPosition[]>();
+              if (error) throw error;
+              return jsonResponse(200, { providers: data.slice(0, limit).map(accountProviderMatch),
+                next_offset: data.length > limit ? offset + limit : null });
+            }
+            const providerID = body.provider_holding_id;
+            if (providerID !== null && (typeof providerID !== "string" || !uuid.test(providerID))) {
+              return errorResponse(400, "INVALID_PROVIDER_MATCH", "Choose a provider record or remove the link.");
+            }
+            let providerMatch: AccountProviderMatch | undefined;
+            if (providerID !== null) {
+              const { data, error } = await candidates().eq("id", providerID).returns<ConfirmedAccountPosition[]>().maybeSingle();
+              if (error) throw error;
+              if (!data) return invalidProvider();
+              providerMatch = accountProviderMatch(data);
+            }
+            holdings[index] = { ...holding, providerMatch };
+          } else if (settingCompany) {
             const companyID = body.company_id;
             if (companyID !== null && (typeof companyID !== "string" || !uuid.test(companyID))) {
               return errorResponse(400, "INVALID_COMPANY", "Choose a published company or remove the link.");
@@ -790,11 +862,11 @@ Deno.serve(async (req) => {
                 .eq("published", true).lte("verified_at", new Date().toISOString()).maybeSingle();
               if (selected.error) throw selected.error;
               if (!selected.data) return errorResponse(404, "NOT_FOUND", "This company is unavailable in the published catalogue.");
+              if (holding.providerMatch?.companyId && selected.data.id !== holding.providerMatch.companyId) return invalidProvider();
               company = selected.data;
             }
-            holdings[index] = { ...holdings[index], company };
+            holdings[index] = { ...holding, company };
           } else if (savingMark || removingMark) {
-            const holding = holdings[index];
             const marks = accountValuations(holding);
             if (savingMark) {
               const mark = accountValuation(body.valuation, new Date());
@@ -809,7 +881,6 @@ Deno.serve(async (req) => {
               holdings[index] = withAccountValuations(holding, marks, body.date);
             }
           } else if (savingFlow || removingFlow) {
-            const holding = holdings[index];
             const flows = accountCashFlows(holding);
             if (savingFlow) {
               const flow = accountCashFlow(body.cash_flow, new Date());

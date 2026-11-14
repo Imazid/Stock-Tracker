@@ -57,7 +57,7 @@ function HoldingCard({ owner, holding, asOf }: { owner: string; holding: Portfol
     ["XIRR", metrics.xirr === null ? "Unavailable" : percent.format(metrics.xirr)],
   ] : [];
   return (
-    <Card as="article" className="break-words">
+    <Card as="article" id={`provider-holding-${holding.id}`} className="scroll-mt-20 break-words">
       <CardHeader title={holding.name} subtitle={`${providerName(holding.commitment.provider)} · ${holding.asset_class.replaceAll("_", " ")}`}
         actions={<Badge tone={exited ? "neutral" : "primary"}>{exited ? "Exited" : "Provider confirmed"}</Badge>} />
       <div className="space-y-2 border-t border-border p-4 text-sm">
@@ -215,7 +215,7 @@ export function Positions({ owner, deals }: { owner: string; deals: PrivateDeal[
       {holdings.hasNextPage && <Button size="sm" disabled={holdings.isFetchingNextPage} onClick={() => void holdings.fetchNextPage()}>
         {holdings.isFetchingNextPage ? "Loading…" : "Load more holdings"}
       </Button>}
-      <AccountHoldingsPanel owner={owner} deals={deals} />
+      <AccountHoldingsPanel owner={owner} deals={deals} visibleProviders={new Set(positions.map(({ id }) => id))} />
       <ManualPortfolioPanel owner={owner} />
     </section>
     <section className="min-w-0 space-y-3">
