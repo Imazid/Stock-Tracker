@@ -153,7 +153,7 @@ private struct PrivateManualPortfolioPublication: View {
         Form {
             Section {
                 Text("Publish a dated view of your self-reported holdings to your signed-in web portfolio. Publish again after changes to update the web copy.")
-                Text("The snapshot includes holding names, ownership, carrying values, valuation sources and calculated performance.")
+                Text("The encrypted snapshot includes holding names, ownership, manually recorded values and sources, and calculated performance.")
                     .font(.footnote).foregroundStyle(.secondary)
                 if let published = remote?.snapshot?.updatedAt {
                     LabeledContent("Last published", value: published.formatted(date: .abbreviated, time: .shortened))
@@ -178,7 +178,7 @@ private struct PrivateManualPortfolioPublication: View {
         .confirmationDialog("Publish these holdings to your web portfolio?", isPresented: $confirmPublish, titleVisibility: .visible) {
             Button("Publish to web") { Task { await write(removing: false) } }
         } message: {
-            Text("This replaces any existing web snapshot for this account. Holdings linked to a provider record are left out.")
+            Text("This replaces any existing web snapshot for this account. Linked provider positions and imported AngelList data stay in their original records.")
         }
         .confirmationDialog("Remove this snapshot from the web?", isPresented: $confirmRemoval, titleVisibility: .visible) {
             Button("Remove web snapshot", role: .destructive) { Task { await write(removing: true) } }
@@ -217,10 +217,7 @@ private struct PrivateManualPortfolioPublication: View {
                     error = "A web snapshot can contain between 1 and 150 holdings."
                     return
                 }
-                fields["holdings"] = holdings.map { holding in
-                    let linked = PrivateFundSnapshot.linkedValuation(for: holding, snapshots: ledger.angelListSnapshots ?? [])
-                    return snapshot(linked?.holding ?? holding, asOf: date)
-                }
+                fields["holdings"] = holdings.map { snapshot($0, asOf: date) }
             }
             try await PrivateMarketsAPI.send(removing ? "remove_manual_portfolio" : "save_manual_portfolio",
                                              fields, expectedUserID: owner)

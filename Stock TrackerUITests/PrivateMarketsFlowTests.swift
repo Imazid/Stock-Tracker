@@ -464,6 +464,27 @@ final class PrivateMarketsFlowTests: XCTestCase {
         name.typeText("Published iPhone holding")
         app.buttons["private.holding.save"].tap()
 
+        let holding = app.buttons.matching(identifier: "private.holding.row")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Published iPhone holding")).firstMatch
+        XCTAssertTrue(holding.waitForExistence(timeout: 8))
+        holding.tap()
+        let valuation = app.buttons["private.valuation.add"]
+        if !valuation.isHittable { app.swipeUp() }
+        XCTAssertTrue(valuation.waitForExistence(timeout: 5))
+        valuation.tap()
+        let amount = app.textFields["private.ledger.amount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText("2400")
+        let source = app.textFields["private.ledger.source"]
+        source.tap()
+        source.typeText("Manually recorded value")
+        let method = app.textFields["private.ledger.method"]
+        method.tap()
+        method.typeText("Statement value")
+        app.buttons["private.ledger.save"].tap()
+        app.navigationBars.buttons["BackButton"].firstMatch.tap()
+
         let publish = app.buttons["private.portfolio.publish"]
         for _ in 0..<4 where !publish.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(publish.isHittable)
@@ -478,7 +499,6 @@ final class PrivateMarketsFlowTests: XCTestCase {
         confirm.tap()
         XCTAssertTrue(app.buttons["Remove web snapshot"].waitForExistence(timeout: 20), app.debugDescription)
         app.navigationBars["Publish Portfolio"].buttons["BackButton"].tap()
-        let holding = app.buttons["private.holding.row"].firstMatch
         XCTAssertTrue(holding.waitForExistence(timeout: 8))
         XCTAssertTrue(holding.label.contains("Published iPhone holding"))
     }

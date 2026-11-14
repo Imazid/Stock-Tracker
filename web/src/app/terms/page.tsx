@@ -16,7 +16,7 @@ export default function TermsPage() {
       </section>
       <section>
         <h2>Practice trading and investment providers</h2>
-        <p>Practice trades use simulated funds. Connecting a broker can import authorised position and activity records. Separately, an eligible private offer may link to an approved, licensed investment provider. The provider runs its own application, identity, eligibility, payment, withdrawal and settlement process under its terms. Stock Tracker displays ownership only after receiving provider confirmation.</p>
+        <p>Practice trades use simulated funds. Connecting a broker can import authorised position and activity records. Separately, an eligible private offer may link to an approved, licensed investment provider. The provider runs its own application, identity, eligibility, payment, withdrawal and settlement process under its terms. Stock Tracker shows a provider investment as confirmed only after receiving the provider’s confirmation. Manual holdings are labelled self-reported.</p>
         <p>When you use Private Markets research, only save excerpts that you have permission to store. Obtain permission to share them with an AI provider before choosing that option.</p>
       </section>
       <section>
