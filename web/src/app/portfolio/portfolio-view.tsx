@@ -65,7 +65,6 @@ function AccountPortfolio({ recordTransfer, logosEnabled, aiEnabled, userId, sta
                 {groups.data?.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
               </Select>
             </Field>
-            <ButtonLink href="/#portfolio">Manage holdings</ButtonLink>
             <Button disabled={!groups.data || change.isPending} onClick={() => { change.reset(); setDraft(""); setEditing({ action: "create" }); }}>New portfolio</Button>
             {selected && <Button disabled={change.isPending} onClick={() => { change.reset(); setDraft(selected.name); setEditing({ action: "rename", id: selected.id, name: selected.name }); }}>Rename</Button>}
             {selected && selected.id !== mainPortfolioId && <Button variant="ghost" disabled={change.isPending} onClick={() => { change.reset(); setEditing({ action: "delete", id: selected.id, name: selected.name }); }}>Delete</Button>}
@@ -112,6 +111,7 @@ function AccountPortfolio({ recordTransfer, logosEnabled, aiEnabled, userId, sta
           {userId && !selected && holdings.length > 0 && <HoldingEvents key={userId} userId={userId} />}
           {holdings.length > 0 && <ExposureCard key={userId} holdings={holdings} quoteFor={quoteFor}
             loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} />}
+          {holdings.length > 0 && <ButtonLink href="/#portfolio">Manage holdings</ButtonLink>}
           {selected && <p className="text-sm text-text-2">For account-wide cash, statement returns and tax records, choose All portfolios.</p>}
           {userId && !selected && <>
             <GainsCard key={userId + "-gains"} userId={userId} holdings={holdings} quoteFor={currentQuote}
