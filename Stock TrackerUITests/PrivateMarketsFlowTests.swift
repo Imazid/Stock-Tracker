@@ -506,9 +506,15 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(row.isHittable, app.debugDescription)
         XCTAssertTrue(row.label.contains("Browser QA venture fund"))
         row.tap()
-        XCTAssertTrue(app.staticTexts["AUD 1250.4567"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Fund-reported NAV"].exists)
-        XCTAssertTrue(app.staticTexts["0.12345678"].exists)
+        func hasValue(_ value: String) -> Bool {
+            let predicate = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", value, value)
+            return app.descendants(matching: .any).matching(predicate).firstMatch.exists
+        }
+        XCTAssertTrue(app.navigationBars["Browser QA venture fund"].waitForExistence(timeout: 5))
+        XCTAssertTrue(hasValue("0.12345678"), app.debugDescription)
+        for _ in 0..<3 where !hasValue("1250.4567") { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(hasValue("1250.4567"), app.debugDescription)
+        XCTAssertTrue(hasValue("Fund-reported NAV"), app.debugDescription)
         let evidence = app.buttons["Open ownership excerpt"]
         for _ in 0..<3 where !evidence.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(evidence.isHittable)
