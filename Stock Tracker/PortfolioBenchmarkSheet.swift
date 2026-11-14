@@ -88,18 +88,15 @@ struct PortfolioBenchmarkSheet: View {
             List {
                 if let period, let request {
                     Section {
-                        VStack(alignment: .leading, spacing: DS.Space.xs) {
-                            Text("Return period").font(.footnote).foregroundStyle(.secondary)
-                            Picker("Return period", selection: Binding(get: { period.id }, set: { selectedPeriod = $0 })) {
-                                ForEach(periods) { option in Text(option.title).tag(option.id) }
-                            }
-                            .labelsHidden()
-                            .frame(minHeight: 44)
-                            .accessibilityIdentifier("portfolio.returns.benchmark.period")
+                        Picker("Return period", selection: Binding(get: { period.id }, set: { selectedPeriod = $0 })) {
+                            ForEach(periods) { option in Text(option.title).tag(option.id) }
                         }
+                        .pickerStyle(.navigationLink)
+                        .accessibilityIdentifier("portfolio.returns.benchmark.period")
                         Picker("Benchmark", selection: $fund) {
                             ForEach(Fund.allCases, id: \.self) { fund in Text(fund.label).tag(fund) }
                         }
+                        .pickerStyle(.navigationLink)
                         .accessibilityIdentifier("portfolio.returns.benchmark.fund")
                     } footer: {
                         Text("Compares the portfolio’s time-weighted return with the ETF’s distribution-adjusted return in USD. The ETF uses its local market close on or before each date.")

@@ -554,9 +554,15 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ETF closes 2026-08-03 and 2026-10-02."].exists)
 
         app.descendants(matching: .any)["portfolio.returns.benchmark.period"].firstMatch.tap()
-        app.buttons["2026-08-03 to 2026-09-04"].tap()
+        let period = app.staticTexts["2026-08-03 to 2026-09-04"].firstMatch
+        XCTAssertTrue(period.waitForExistence(timeout: 6), app.debugDescription)
+        period.tap()
+        if app.navigationBars["Return period"].exists { app.navigationBars["Return period"].buttons.firstMatch.tap() }
         app.descendants(matching: .any)["portfolio.returns.benchmark.fund"].firstMatch.tap()
-        app.buttons["S&P/ASX 200 ETF (STW)"].tap()
+        let stw = app.staticTexts["S&P/ASX 200 ETF (STW)"].firstMatch
+        XCTAssertTrue(stw.waitForExistence(timeout: 6), app.debugDescription)
+        stw.tap()
+        if app.navigationBars["Benchmark"].exists { app.navigationBars["Benchmark"].buttons.firstMatch.tap() }
         let rates = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "ECB AUD/USD rates observed")).firstMatch
         XCTAssertTrue(rates.waitForExistence(timeout: 25))
         XCTAssertTrue(portfolio.label.contains("10.00%"))
