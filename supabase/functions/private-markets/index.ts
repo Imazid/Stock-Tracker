@@ -255,7 +255,7 @@ type DigestJob = {
   job_id: string;
   owner_id: string;
   lease: string;
-  sources: { id: string; company: string; title: string; summary: string; published_at: string; url: string }[];
+  sources: { id: string; company: string; title: string; summary: string; published_at: string; url: string; is_revision?: boolean }[];
 };
 
 function schedulerAuthorized(req: Request) {
@@ -270,10 +270,14 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
   if (error) throw error;
   if (!Array.isArray(data)) throw new Error("Invalid scheduled research response");
   const jobs = data as DigestJob[];
-  const question = "Summarise recent published announcements and identify what still needs verification.";
   const results = await Promise.allSettled(jobs.map(async (job) => {
+    const includesRevision = job.sources.some((source) => source.is_revision === true);
+    const question = includesRevision
+      ? "Summarise the current published disclosures. Distinguish updated sources from newly included announcements and identify what still needs verification. Describe a specific change only if the source says what changed."
+      : "Summarise recent published announcements and identify what still needs verification.";
     const evidence = job.sources.map((source, index) => announcementEvidence({
-      company_name: source.company, title: source.title, significance: source.summary,
+      company_name: source.company, title: source.is_revision ? "Updated source · " + source.title : source.title,
+      significance: source.summary,
       published_at: source.published_at,
     }, "O" + (index + 1)));
     const report = await buildResearch(job.owner_id, question, evidence, "digest", aiDependencies(admin));

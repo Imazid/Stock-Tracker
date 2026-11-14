@@ -262,6 +262,34 @@ select case when count(*) = 1 and min(kind) = 'monitor_digest'
     and user_id = 'a0000000-0000-0000-0000-000000000001';
 select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
   then 'ok   completion is idempotent' else 'FAIL completed digest saved twice' end from digest_retry;
+reset role;
+update public.private_market_digest_jobs set digest_day = digest_day - 2
+where id in (select job_id from digest_retry);
+set role service_role;
+select case when count(*) = 0 then 'ok   a previous summary suppresses unchanged source content'
+  else 'FAIL unchanged source was claimed again' end from public.claim_private_market_digests();
+update public.corporate_actions set significance = 'The issuer corrected the public notice.'
+where source_url = 'https://example.test/issuer-update';
+create temporary table revised_digest as select * from public.claim_private_market_digests();
+select case when count(*) = 1 and min(sources->0->>'is_revision') = 'true'
+    and min(sources->0->>'summary') = 'The issuer corrected the public notice.'
+  then 'ok   a corrected disclosure can be claimed after its original summary'
+  else 'FAIL corrected disclosure was omitted' end from revised_digest;
+update public.corporate_actions set published = false where source_url = 'https://example.test/issuer-update';
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   withdrawing a corrected disclosure blocks its pending summary'
+  else 'FAIL withdrawn revision was saved' end from revised_digest;
+update public.corporate_actions set published = true where source_url = 'https://example.test/issuer-update';
+select case when public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   a still-published revision can be saved' else 'FAIL valid revision was not saved' end from revised_digest;
+select case when count(*) = 1 then 'ok   the saved summary identifies disclosure updates'
+  else 'FAIL revision summary title' end from public.research_reports
+  where id in (select job_id from revised_digest) and title = 'Private Markets disclosure updates';
+reset role;
+update public.private_market_digest_jobs set digest_day = digest_day - 1 where id in (select job_id from revised_digest);
+set role service_role;
+select case when count(*) = 0 then 'ok   daily selection ignores a revision after it has been summarized'
+  else 'FAIL revision was claimed twice' end from public.claim_private_market_digests();
 select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
   '{}'::uuid[],false,false);
 select case when count(*) = 3 then 'ok   one device may opt out without erasing another device inbox'
