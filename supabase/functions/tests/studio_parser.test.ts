@@ -200,3 +200,38 @@ Deno.test("draft envelope rejects wrong types with the same errors as Swift", ()
   const nullable = decodeDraft(JSON.stringify({ ...envelope, mode: null, budget: null, notes: null }));
   assertEquals([nullable.draft.mode, nullable.draft.budget, nullable.understood], ["paper", 10_000, []]);
 });
+
+
+Deno.test("explicit rules preserve comparisons, grouping, direction and draft settings", () => {
+  const parsed = parse("Buy ETH when RSI(7) drops below 28.5 and price is above its 20-day EMA, or RSI(7) crosses above 35. Sell when RSI rises above 65, with a $5,000 budget, 8% per position and an 18% max drawdown.");
+  const { spec } = parsed.draft;
+  assertEquals(spec.universe.map((asset) => asset.symbol), ["ETH"]);
+  assertEquals(spec.entry, {
+    op: "any", conditions: [{
+      op: "all", conditions: [
+        { op: "below", left: { kind: "rsi", period: 7 }, right: { kind: "constant", value: 28.5 } },
+        { op: "above", left: { kind: "price", field: "close" }, right: { kind: "ema", period: 20 } },
+      ],
+    }, { op: "crossesAbove", left: { kind: "rsi", period: 7 }, right: { kind: "constant", value: 35 } }],
+  });
+  assertEquals(spec.exit, { op: "above", left: { kind: "rsi", period: 14 }, right: { kind: "constant", value: 65 } });
+  assertEquals(parsed.draft.budget, 5000);
+  assertEquals(parsed.draft.maxPositionPct, 8);
+  assertEquals(parsed.draft.riskPolicy?.maxDrawdownPct, 18);
+  assertEquals(parsed.assumptions.includes("Used 14 bars wherever the RSI period was omitted."), true);
+
+  const directed = parse("Buy BTC when its 50-day average crosses below its 20-day average, and sell on the opposite crossover");
+  assertEquals(directed.draft.spec.entry?.op, "crossesBelow");
+  assertEquals(directed.draft.spec.entry?.left?.period, 50);
+  assertEquals(directed.draft.spec.exit?.op, "crossesAbove");
+});
+
+Deno.test("explicit incomplete and unsupported rules need review", () => {
+  const missingExit = parse("Buy ETH when RSI drops below 30");
+  assertEquals(missingExit.draft.spec.entry?.right?.value, 30);
+  assertEquals(missingExit.draft.spec.exit, undefined);
+  const unsupported = parse("Buy ETH when RSI is below 30 and sell when RSI is above 60 and sentiment improves, with a 5% stop loss");
+  assertEquals(unsupported.draft.spec.protections.stopLossPct, 5);
+  assertEquals(unsupported.draft.spec.exit, { op: "all", conditions: [] });
+  assertEquals(parse("Buy ETH when RSI is below or equal to 30 and sell when RSI is above 65").draft.spec.entry, undefined);
+});

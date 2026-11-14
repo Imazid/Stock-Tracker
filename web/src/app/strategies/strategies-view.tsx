@@ -1,6 +1,7 @@
 "use client";
 
 import { UniverseCatalog } from "@engine/catalog.ts";
+import type { AgentDraft } from "@engine/state.ts";
 import type { Instrument, Timeframe } from "@engine/market.ts";
 import { instrumentID } from "@engine/market.ts";
 import { makeSpec, ruleLines, type SizingMode, type StrategyKind, type StrategySpec, validate } from "@engine/strategy.ts";
@@ -32,7 +33,7 @@ const TEMPLATES: { id: string; label: string; make: () => StrategySpec }[] = [
 ];
 
 interface ParseResponse {
-  draft: { spec: StrategySpec; name: string };
+  draft: AgentDraft;
   understood: string[];
   assumptions: string[];
   unrecognisedSymbols: string[];
@@ -81,6 +82,7 @@ export function StrategiesView() {
   const [text, setText] = useState("");
   const [parsing, setParsing] = useState(false);
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
+  const [draftGeneration, setDraftGeneration] = useState(0);
   const [parseError, setParseError] = useState<string | null>(null);
   const [versions, setVersions] = useState<SavedVersion[]>([]);
   const [saveNote, setSaveNote] = useState<string | null>(null);
@@ -103,8 +105,10 @@ export function StrategiesView() {
       const response = await fetch("/api/strategies/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
       const body = await response.json();
       if (!response.ok || body.error) throw new Error(body.error?.message ?? "Couldn't read that.");
-      setParsed(body as ParseResponse);
-      setSpec((body as ParseResponse).draft.spec);
+      const result = body as ParseResponse;
+      setParsed(result);
+      setSpec({ ...result.draft.spec, title: result.draft.name });
+      setDraftGeneration((generation) => generation + 1);
     } catch (error) {
       setParseError(error instanceof Error ? error.message : "Couldn't read that.");
     } finally {
@@ -157,7 +161,7 @@ export function StrategiesView() {
         <div className="flex min-w-0 flex-col gap-5">
           <Card>
             <CardHeader title="Rules" actions={
-              <Select aria-label="Start from a template" value="" onChange={(e) => { const t = TEMPLATES.find((x) => x.id === e.target.value); if (t) { setSpec(t.make()); setParsed(null); } }} className="h-8 w-auto text-xs">
+              <Select aria-label="Start from a template" value="" onChange={(e) => { const t = TEMPLATES.find((x) => x.id === e.target.value); if (t) { setSpec(t.make()); setParsed(null); setDraftGeneration(value => value + 1); } }} className="h-8 w-auto text-xs">
                 <option value="">Start from a template…</option>
                 {TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
               </Select>
@@ -218,7 +222,7 @@ export function StrategiesView() {
             </div>
           </Card>
 
-          <BacktestPanel spec={spec} valid={errors.length === 0} />
+          <BacktestPanel key={draftGeneration} spec={spec} valid={errors.length === 0} capital={parsed?.draft.budget} positionLimit={parsed?.draft.maxPositionPct} />
         </div>
 
         <div className="flex flex-col gap-5">
@@ -242,18 +246,18 @@ export function StrategiesView() {
               <ul className="max-h-72 divide-y divide-border overflow-y-auto border-t border-border">
                 {versions.map((v) => (
                   <li key={v.id} className="flex items-center gap-2 px-4 py-2">
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setSpec(v.spec)} title="Load this version">
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { setSpec(v.spec); setParsed(null); setDraftGeneration(value => value + 1); }} title="Load this version">
                       <span className="block truncate text-[13px] font-medium text-text">{v.name} <span className="text-text-3">v{v.version}</span></span>
                       <span className="block text-[11px] text-text-3">{dateTime(v.savedAt)}</span>
                     </button>
-                    <Button size="sm" variant="ghost" aria-label={`Duplicate ${v.name} v${v.version}`} title="Duplicate" onClick={() => setSpec({ ...v.spec, title: `${v.spec.title} (copy)` })}><Copy className="h-3.5 w-3.5" /></Button>
+                    <Button size="sm" variant="ghost" aria-label={`Duplicate ${v.name} v${v.version}`} title="Duplicate" onClick={() => { setSpec({ ...v.spec, title: `${v.spec.title} (copy)` }); setParsed(null); setDraftGeneration(value => value + 1); }}><Copy className="h-3.5 w-3.5" /></Button>
                     <Button size="sm" variant="ghost" aria-label={`Delete ${v.name} v${v.version}`} title="Delete" onClick={() => setVersions(deleteVersion(v.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
                   </li>
                 ))}
               </ul>
             )}
           </Card>
-          <StartAgent spec={spec} valid={errors.length === 0} />
+          <StartAgent key={draftGeneration} spec={spec} valid={errors.length === 0} parsedDraft={parsed?.draft} />
         </div>
       </div>
     </div>

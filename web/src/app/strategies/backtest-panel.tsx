@@ -87,8 +87,12 @@ function MetricsGrid({ m, currency }: { m: BacktestMetrics; currency: string }) 
   );
 }
 
-export function BacktestPanel({ spec, valid }: { spec: StrategySpec; valid: boolean }) {
-  const [s, setS] = useState<Settings>(DEFAULTS);
+export function BacktestPanel({ spec, valid, capital, positionLimit }: {
+  spec: StrategySpec; valid: boolean; capital?: number; positionLimit?: number;
+}) {
+  const [s, setS] = useState<Settings>(() => ({
+    ...DEFAULTS, startingCash: capital ?? DEFAULTS.startingCash, maxPositionPct: positionLimit ?? DEFAULTS.maxPositionPct,
+  }));
   const [last, setLast] = useState<BacktestResponse | null>(null);
   const [rerunMatch, setRerunMatch] = useState<boolean | null>(null);
   const currency = spec.universe[0]?.currency ?? "USD";
