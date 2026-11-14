@@ -85,7 +85,10 @@ export type ProviderVerification = {
   verified_at: string; expires_at: string; accountant_certificate_reviewed_at: string | null;
   connection: { revoked_at: string | null };
 };
-export type InvestorProfileResponse = { profile: InvestorProfile | null; eligibility: ProviderVerification[] };
+export type InvestorProfileResponse = {
+  profile: InvestorProfile | null; eligibility: ProviderVerification[];
+  link_providers?: { provider: string; jurisdiction: string }[];
+};
 export type Application = {
   id: string; status: string; requested_amount: number; provider_application_amount: number | null;
   currency: string; provider: string; provider_reference: string | null;
@@ -113,7 +116,7 @@ export type MonitorAlert = {
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
   "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "capital_activity" | "valuation_history" | "manual_portfolio" | "remove_manual_portfolio" | "applications" | "allocation" | "updates" |
-  "profile" | "save_profile" | "handoff_check" | "handoff" |
+  "profile" | "save_profile" | "issue_provider_link" | "handoff_check" | "handoff" |
   "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 

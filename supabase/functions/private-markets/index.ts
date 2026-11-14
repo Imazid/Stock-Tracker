@@ -18,7 +18,7 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
-  "profile", "save_profile", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
+  "profile", "save_profile", "issue_provider_link", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
@@ -644,17 +644,36 @@ Deno.serve(async (req) => {
       }
       case "profile": {
         if (Object.keys(body).length !== 1) return errorResponse(400, "INVALID_REQUEST", "Send only the profile action.");
-        const [profile, checks] = await Promise.all([
+        const [profile, checks, links] = await Promise.all([
           admin.from("investor_profiles").select("country,declared_class").eq("user_id", userId).maybeSingle(),
           admin.from("investor_eligibility")
             .select("provider,jurisdiction,verified_class,verified_at,expires_at,accountant_certificate_reviewed_at," +
               "connection:provider_connections!inner(revoked_at)")
             .eq("user_id", userId).eq("connection.user_id", userId)
             .order("provider").order("jurisdiction"),
+          admin.rpc("private_account_link_providers", { p_user: userId }),
         ]);
         if (profile.error) throw profile.error;
         if (checks.error) throw checks.error;
-        return jsonResponse(200, { profile: profile.data, eligibility: checks.data });
+        if (links.error) throw links.error;
+        return jsonResponse(200, { profile: profile.data, eligibility: checks.data, link_providers: links.data });
+      }
+      case "issue_provider_link": {
+        const provider = body.provider;
+        if (Object.keys(body).some((key) => !["action", "provider"].includes(key)) ||
+          typeof provider !== "string" || !["birchal", "onmarket", "angellist", "syndex"].includes(provider)) {
+          return errorResponse(400, "INVALID_PROVIDER", "Choose an available investment provider.");
+        }
+        const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const code = hex(crypto.getRandomValues(new Uint8Array(16)));
+        const digest = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(code))));
+        const { data, error } = await admin.rpc("issue_private_account_link", {
+          p_user: userId, p_session: sessionId(req), p_provider: provider, p_digest: digest,
+        });
+        if (error?.code === "42501") return errorResponse(403, "PROVIDER_LINK_UNAVAILABLE", "Account linking is unavailable for this provider.");
+        if (error?.code === "P0001") return errorResponse(429, "PROVIDER_LINK_RECENT", "Wait a few seconds before generating another code.");
+        if (error) throw error;
+        return jsonResponse(200, { code, expires_at: data });
       }
       case "save_profile": {
         if (Object.keys(body).some((key) => !["action", "country", "declared_class"].includes(key)) ||

@@ -360,9 +360,20 @@ enum PrivateMarketsAPI {
     struct MonitorInbox: Decodable { let alerts: [PrivateMarketAlert] }
     struct PushRegistration: Decodable { let registered: Bool }
     struct Applications: Decodable { let applications: [PrivateApplication] }
+    struct LinkProvider: Decodable, Identifiable {
+        let provider: String
+        let jurisdiction: String
+        var id: String { provider + ":" + jurisdiction }
+        var name: String { PrivateProvider.directory.first { $0.id == provider }?.name ?? provider }
+    }
+    struct ProviderLinkCode: Decodable {
+        let code: String
+        let expiresAt: Date
+    }
     struct InvestorProfile: Decodable {
         let profile: PrivateInvestorProfile?
         let eligibility: [PrivateProviderEligibility]?
+        let linkProviders: [LinkProvider]?
     }
     struct ConfirmedHoldings: Decodable {
         let holdings: [ProviderPrivateHolding]

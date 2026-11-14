@@ -81,7 +81,7 @@ Application details show the requested amount, the amount reported by the provid
 
 ### Provider event delivery
 
-Approved Stock Tracker adapters post one event to `/functions/v1/private-provider-events` over HTTPS. Each adapter authenticates its provider's original message using that provider's documented interface, then translates it to the format below. Use the trusted account-linking flow to establish the provider subject before sending an event. The delivery endpoint resolves the Stock Tracker account from that binding. Never send a Stock Tracker user ID, funding credentials or identity documents.
+Approved Stock Tracker adapters post one event to `/functions/v1/private-provider-events` over HTTPS. Each adapter authenticates its provider's original message using the provider's documented interface, then translates it to the format below. For an agreement covering account linking, enable `account_link_enabled` on the approved provider route after sandbox acceptance. An investor saves their profile, creates a ten-minute code in Investor Profile and enters it in the approved provider flow after signing in there. The adapter hashes the exact lowercase code with SHA-256, then sends the hex digest and fresh verified eligibility in an `account_link` event. The backend checks the original session, provider, jurisdiction and current approval. A successful link records eligibility and consumes the code in the same transaction. Replacing a code invalidates the previous value. Subsequent signed events resolve the Stock Tracker account from the established binding. Send only the opaque provider subject, digest and verification references.
 
 Every request uses the following headers.
 
@@ -96,6 +96,7 @@ Compute the HMAC over the UTF-8 bytes of `stock-tracker-provider-events/v1\n<pro
 
 | Kind | Required details | Other details |
 | --- | --- | --- |
+| `account_link` | `code_digest`, `jurisdiction`, `evidence_reference`, `verified_class`, `expires_at` | `accountant_reviewed_at`. The partner completes the investor’s identity and eligibility checks before sending the event. |
 | `verification` | `jurisdiction`, `evidence_reference`, `verified_class` | `expires_at`, `accountant_reviewed_at`. Send a null class to revoke verification. |
 | `application` | `commitment_id`, `reference`, `status` | `cooling_off_ends_at`, `application_amount`, `application_currency`, `units`, `invested_amount`, `supplementary_deadline`, `supplementary_document_url`. Supply the evidence required by the application transition. |
 | `holding_activity` | `holding_id`, `reference`, `currency`, `source`, `activity` | `amount`, `record_date`, `method`, `settled_on`. Activity is `opening_settlement`, `valuation`, `capital_call`, `capital_call_cancellation`, `distribution` or `distribution_reversal`. |

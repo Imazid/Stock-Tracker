@@ -67,6 +67,34 @@ Deno.test("invalid signature, stale timestamp or substituted provider never reac
   for (const req of invalid) assertEquals((await handleProviderDelivery(req, deps)).status, 401);
 });
 
+Deno.test("account linking forwards only a signed digest and the verification evidence", async () => {
+  const details = {
+    jurisdiction: "AU", evidence_reference: "onboarding-receipt", verified_class: "retail",
+    expires_at: "2027-02-01T00:00:00Z", code_digest: "a".repeat(64),
+  };
+  const event = { ...sample, kind: "account_link", details };
+  let delivered = 0;
+  const deps: Parameters<typeof handleProviderDelivery>[1] = {
+    key: () => toBase64(rawKey), now: () => now,
+    accept: (entry) => {
+      delivered++;
+      assertEquals(entry.p_kind, "account_link");
+      assertEquals(entry.p_details, details);
+      return Promise.resolve("accepted");
+    },
+  };
+  assertEquals((await handleProviderDelivery(await request(JSON.stringify(event)), deps)).status, 200);
+  for (const invalid of [
+    { ...details, code_digest: "a".repeat(32) },
+    { ...details, code: "raw-code" },
+    { ...details, verified_class: null },
+    { ...details, stock_tracker_user_id: sample.details.commitment_id },
+  ]) {
+    assertEquals((await handleProviderDelivery(await request(JSON.stringify({ ...event, details: invalid })), deps)).status, 400);
+  }
+  assertEquals(delivered, 1);
+});
+
 Deno.test("unknown fields, a user ID, loose decimal values and oversized payloads are refused", async () => {
   const deps = {
     key: () => toBase64(rawKey),

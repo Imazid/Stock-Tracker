@@ -32,6 +32,10 @@ const holdingDisposition = {
 
 const shapes = {
   verification: { fields: verification, required: ["jurisdiction", "evidence_reference"] },
+  account_link: {
+    fields: { ...verification, code_digest: /^[a-f0-9]{64}$/ },
+    required: ["jurisdiction", "evidence_reference", "verified_class", "expires_at", "code_digest"],
+  },
   application: { fields: application, required: ["commitment_id", "reference", "status"] },
   holding_activity: { fields: holdingActivity, required: ["holding_id", "reference", "currency", "source", "activity"] },
   holding_disposition: { fields: holdingDisposition, required: ["holding_id", "reference", "currency", "source", "reversed"] },

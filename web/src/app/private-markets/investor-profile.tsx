@@ -10,6 +10,31 @@ import { countryName, dateLabel, privateMarkets, providerName, type InvestorProf
 
 const emptyProfile: InvestorProfile = { country: "AU", declared_class: "unknown" };
 
+function ProviderLinkCode({ owner, provider, jurisdiction, refresh }: {
+  owner: string; provider: string; jurisdiction: string; refresh: () => void;
+}) {
+  const issue = useMutation({
+    mutationFn: () => privateMarkets<{ code: string; expires_at: string }>("issue_provider_link", { owner, provider }),
+    gcTime: 0,
+  });
+  const code = issue.data;
+  return <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
+    <p className="font-medium text-text">{providerName(provider)} · {countryName(jurisdiction)}</p>
+    <p>Use the code in the provider’s account-linking flow after signing in there.</p>
+    <div className="flex flex-wrap gap-2">
+      <Button size="sm" disabled={issue.isPending} onClick={() => issue.mutate()}>
+        {issue.isPending ? "Generating…" : code ? "Replace link code" : "Generate link code"}
+      </Button>
+      {code && <Button size="sm" onClick={refresh}>Refresh verification</Button>}
+    </div>
+    {code && <div role="status" className="space-y-1">
+      <code className="block select-all break-all text-text">{code.code}</code>
+      <p>Expires {dateLabel(code.expires_at, "time")}.</p>
+    </div>}
+    {issue.error && <Notice tone="down">{issue.error.message}</Notice>}
+  </div>;
+}
+
 export function InvestorProfileCard({ owner }: { owner: string }) {
   const cache = useQueryClient();
   const [draft, setDraft] = useState<InvestorProfile | null>(null);
@@ -66,6 +91,9 @@ export function InvestorProfileCard({ owner }: { owner: string }) {
           </form>
           <div className="space-y-2 border-t border-border pt-3">
             <h3 className="font-medium text-text">Provider verification</h3>
+            {profile.data.link_providers?.map(({ provider, jurisdiction }) => <ProviderLinkCode
+              key={`${provider}:${jurisdiction}`} owner={owner} provider={provider} jurisdiction={jurisdiction}
+              refresh={() => void profile.refetch()} />)}
             {!profile.data.eligibility.length && <p>No provider verification on record.</p>}
             {profile.data.eligibility.map((check) => {
               const status = check.connection.revoked_at ? "Connection revoked"

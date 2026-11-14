@@ -7,6 +7,7 @@ struct PrivateInvestorView: View {
     @State private var country = "AU"
     @State private var declaredClass = "unknown"
     @State private var eligibility: [PrivateProviderEligibility] = []
+    @State private var linkProviders: [PrivateMarketsAPI.LinkProvider] = []
     @State private var records: [PrivateApplication] = []
     @State private var recordsOwner: UUID?
     @State private var busy = false
@@ -37,6 +38,12 @@ struct PrivateInvestorView: View {
                 }
                 if recordsOwner == auth.userId {
                     Section("Provider verification") {
+                        if let owner = auth.userId {
+                            ForEach(linkProviders) { provider in
+                                PrivateProviderLinkView(owner: owner, provider: provider, refresh: load)
+                                    .id(owner.uuidString + provider.id)
+                            }
+                        }
                         if eligibility.isEmpty {
                             Text("No provider verification on record.").foregroundStyle(.secondary)
                         }
@@ -88,6 +95,7 @@ struct PrivateInvestorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: auth.userId, initial: true) { _, _ in
             eligibility = []
+            linkProviders = []
             records = []
             recordsOwner = nil
             country = "AU"
@@ -119,6 +127,7 @@ struct PrivateInvestorView: View {
                 declaredClass = saved.declaredClass
             }
             eligibility = saved.eligibility ?? []
+            linkProviders = saved.linkProviders ?? []
             records = tracking.applications
             recordsOwner = owner
         } catch is CancellationError {
@@ -134,10 +143,55 @@ struct PrivateInvestorView: View {
             defer { if auth.userId == owner { busy = false } }
             do {
                 try await PrivateMarketsAPI.send("save_profile", fields, expectedUserID: owner)
-                if auth.userId == owner { feedback = "Investor profile saved." }
+                if auth.userId == owner {
+                    feedback = "Investor profile saved."
+                    await load()
+                }
             } catch is CancellationError {
             } catch { if auth.userId == owner { feedback = error.localizedDescription } }
         }
+    }
+}
+
+private struct PrivateProviderLinkView: View {
+    let owner: UUID
+    let provider: PrivateMarketsAPI.LinkProvider
+    let refresh: () async -> Void
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var link: PrivateMarketsAPI.ProviderLinkCode?
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(provider.name + " · " + provider.jurisdiction).font(.headline)
+            Text("Use the code in the provider’s account-linking flow after signing in there.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Button(link == nil ? "Generate link code" : "Replace link code") {
+                Task { await issue() }
+            }.disabled(busy)
+            if let link {
+                Text(link.code).font(.footnote.monospaced()).textSelection(.enabled)
+                LabeledContent("Expires", value: link.expiresAt.formatted(date: .abbreviated, time: .shortened))
+                Button("Refresh verification") { Task { await refresh() } }
+            }
+            if let error { Text(error).font(.footnote).foregroundStyle(.secondary) }
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private func issue() async {
+        guard !busy, auth.userId == owner else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            let issued: PrivateMarketsAPI.ProviderLinkCode = try await PrivateMarketsAPI.request(
+                "issue_provider_link", ["provider": provider.provider], expectedUserID: owner)
+            try Task.checkCancellation()
+            if auth.userId == owner { link = issued }
+        } catch is CancellationError {
+        } catch { if auth.userId == owner { self.error = error.localizedDescription } }
     }
 }
 
