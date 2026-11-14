@@ -1,9 +1,18 @@
+export type HoldingBrokerAccount = {
+  account_id: string;
+  label: string;
+  institution: string;
+  observed_at: string;
+  tracking: boolean;
+};
+
 export type TransferHolding = {
   id: string;
   asset_symbol: string;
   asset_exchange: string | null;
   asset_kind: string;
   date_added: string;
+  broker_account?: HoldingBrokerAccount | null;
   deleted_at: string | null;
 };
 
@@ -35,7 +44,7 @@ export type StockTransfer = {
   receiving_snapshot: ReceivingSnapshot | null;
 };
 
-export const transferHoldingFields = "id,asset_symbol,asset_exchange,asset_kind,date_added,deleted_at";
+export const transferHoldingFields = "id,asset_symbol,asset_exchange,asset_kind,date_added,deleted_at,broker_account";
 export const receivingSnapshotFields = "id,holding_id,transaction_date,type,shares,trade_provenance,deleted_at";
 export const stockTransferFields = [
   "id,from_holding_id,to_holding_id,sent_on,received_on,shares::text,same_day_order,from_account,to_account,statement_reference,receiving_snapshot_id,updated_at",
@@ -48,6 +57,8 @@ export function sameListedStock(source: TransferHolding | null, destination: Tra
   const exchange = source?.asset_exchange?.trim().toUpperCase();
   return source && destination && source.id !== destination.id && source.asset_kind === "Stock" &&
     destination.asset_kind === "Stock" && Boolean(exchange) &&
+    (!source.broker_account || !destination.broker_account ||
+      source.broker_account.account_id !== destination.broker_account.account_id) &&
     exchange === destination.asset_exchange?.trim().toUpperCase() &&
     source.asset_symbol.trim().toUpperCase() === destination.asset_symbol.trim().toUpperCase();
 }

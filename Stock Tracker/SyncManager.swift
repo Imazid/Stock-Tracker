@@ -55,6 +55,8 @@ final class SyncManager: ObservableObject {
 
     var isSignedIn: Bool { SupabaseManager.auth.currentUser != nil }
 
+    func hasLoadedPortfolio(for userId: UUID) -> Bool { syncedUserId == userId }
+
     private init() {}
 
     /// Resets the initial-sync flag so the next sign-in triggers a full merge.
@@ -265,18 +267,25 @@ final class SyncManager: ObservableObject {
     /// Save mutations before their network request so a relaunch can retry the same trade IDs.
     func queuePortfolioChange(_ holding: PortfolioHolding, changed: Set<UUID> = [], deleted: [Transaction] = [],
                               archived: Bool = false, closedAt: Date? = nil) -> Bool {
-        guard let userId = SupabaseManager.auth.currentUser?.id else { return true }
+        queuePortfolioChanges([PortfolioLedgerChange(revision: UUID(), holding: holding, changed: changed, deleted: deleted,
+                                                     archivedAt: archived ? Date() : nil, closedAt: closedAt)])
+    }
+
+    func queuePortfolioChanges(_ pending: [PortfolioLedgerChange]) -> Bool {
+        guard !pending.isEmpty, let userId = SupabaseManager.auth.currentUser?.id else { return true }
         var queue = persist.loadPortfolioLedgerQueue()
         var changes = queue[userId.uuidString, default: []]
-        let prior = changes.last { $0.holding.id == holding.id }
-        let kept = Set(holding.transactions.map(\.id))
-        let removed = ((prior?.deleted ?? []) + deleted).filter { !kept.contains($0.id) }
-        changes.removeAll { $0.holding.id == holding.id }
-        changes.append(PortfolioLedgerChange(revision: UUID(), holding: holding,
-                                             changed: (prior?.changed ?? []).union(changed),
-                                             deleted: Array(Dictionary(removed.map { ($0.id, $0) },
-                                                                       uniquingKeysWith: { _, latest in latest }).values),
-                                             archivedAt: archived ? Date() : nil, closedAt: closedAt))
+        for change in pending {
+            let prior = changes.last { $0.holding.id == change.holding.id }
+            let kept = Set(change.holding.transactions.map(\.id))
+            let removed = ((prior?.deleted ?? []) + change.deleted).filter { !kept.contains($0.id) }
+            changes.removeAll { $0.holding.id == change.holding.id }
+            changes.append(PortfolioLedgerChange(revision: change.revision, holding: change.holding,
+                                                 changed: (prior?.changed ?? []).union(change.changed),
+                                                 deleted: Array(Dictionary(removed.map { ($0.id, $0) },
+                                                                           uniquingKeysWith: { _, latest in latest }).values),
+                                                 archivedAt: change.archivedAt, closedAt: change.closedAt))
+        }
         queue[userId.uuidString] = changes
         guard persist.savePortfolioLedgerQueue(queue) else {
             syncState = .error("Couldn’t save the portfolio change on this device.")
@@ -289,13 +298,24 @@ final class SyncManager: ObservableObject {
     private func flushPortfolioChanges(userId: UUID) async throws {
         let key = userId.uuidString
         let pending = persist.loadPortfolioLedgerQueue()[key] ?? []
-        for change in pending {
-            try await SupabaseManager.client.rpc("sync_portfolio_ledger", params: change.parameters(userId: userId)).execute()
-            var queue = persist.loadPortfolioLedgerQueue()
-            queue[key]?.removeAll { $0.revision == change.revision }
-            if queue[key]?.isEmpty == true { queue.removeValue(forKey: key) }
-            persist.savePortfolioLedgerQueue(queue)
+        let linked = pending.filter { $0.holding.brokerAccount != nil }
+        if !linked.isEmpty {
+            nonisolated struct Batch: Encodable, Sendable { let p_changes: [PortfolioLedgerChange.Parameters] }
+            try await SupabaseManager.client.rpc("sync_broker_portfolio_ledger",
+                params: Batch(p_changes: linked.map { $0.parameters(userId: userId) })).execute()
+            clearChanges(Set(linked.map(\.revision)), for: key)
         }
+        for change in pending where change.holding.brokerAccount == nil {
+            try await SupabaseManager.client.rpc("sync_portfolio_ledger", params: change.parameters(userId: userId)).execute()
+            clearChanges([change.revision], for: key)
+        }
+    }
+
+    private func clearChanges(_ revisions: Set<UUID>, for key: String) {
+        var queue = persist.loadPortfolioLedgerQueue()
+        queue[key]?.removeAll { revisions.contains($0.revision) }
+        if queue[key]?.isEmpty == true { queue.removeValue(forKey: key) }
+        persist.savePortfolioLedgerQueue(queue)
     }
 
     // MARK: - Soft delete
@@ -433,9 +453,15 @@ final class SyncManager: ObservableObject {
         var closed = holdings.compactMap { row in
             row.toClosedPosition(transactions: (byHolding[row.id] ?? []).map { $0.toDomain() })
         }
-        let openSymbols = Set(open.map { $0.asset.symbol })
+        let manualListings = Set(open.filter { $0.brokerAccount?.tracking != true }.map { [$0.asset.symbol, $0.asset.kind.rawValue, $0.asset.exchange] })
+        let linkedAccounts = Set(open.compactMap { holding in
+            holding.brokerAccount.map { [$0.account_id, holding.asset.symbol, holding.asset.kind.rawValue, holding.asset.exchange] }
+        })
         let localOnly = includeLocal && importLocal ? persist.loadPortfolio().filter {
-            !holdingIds.contains($0.id) && !openSymbols.contains($0.asset.symbol)
+            guard !holdingIds.contains($0.id) else { return false }
+            let listing = [$0.asset.symbol, $0.asset.kind.rawValue, $0.asset.exchange]
+            if let account = $0.brokerAccount { return !linkedAccounts.contains([account.account_id] + listing) }
+            return !manualListings.contains(listing)
         } : []
         for holding in localOnly {
             let change = PortfolioLedgerChange(revision: UUID(), holding: holding, changed: [], deleted: [],

@@ -361,12 +361,17 @@ struct SnapTradeConnectionView: View {
         if !s.skipped.isEmpty {
             parts.append("You already track \(s.skipped.joined(separator: ", ")) yourself, so \(s.skipped.count == 1 ? "it was" : "they were") left alone.")
         }
+        if !s.review.isEmpty {
+            parts.append("Review older combined positions for \(s.review.joined(separator: ", ")). Check their history before removing them and syncing again.")
+        }
         if parts.isEmpty { parts.append("Shares and average cost come from your broker and update each time you sync.") }
         return parts.joined(separator: " ")
     }
 
     private var removalCard: some View {
-        let symbols = vm.pendingRemovals.map(\.asset.symbol)
+        let symbols = vm.pendingRemovals.map { holding in
+            [holding.asset.symbol, vm.institution(for: holding)].compactMap { $0 }.joined(separator: " · ")
+        }
         return VStack(alignment: .leading, spacing: DS.Space.m) {
             HStack(alignment: .top, spacing: DS.Space.m) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -532,9 +537,7 @@ struct SnapTradeConnectionView: View {
     }
 
     private func trackedHolding(for position: BrokerHolding) -> PortfolioHolding? {
-        var symbol = position.symbol.uppercased()
-        if symbol.hasSuffix(".AX") { symbol.removeLast(3) }
-        return marketData.portfolio.first { $0.asset.symbol == symbol && vm.isImported($0) }
+        vm.trackedHolding(for: position, in: marketData.portfolio)
     }
 
     /// A broker amount in the display currency, with an explicit A$ / US$ like everywhere else.

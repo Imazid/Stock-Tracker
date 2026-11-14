@@ -109,6 +109,83 @@ final class AccountSyncTests: XCTestCase {
                        "Other people's codes aren't readable")
     }
 
+    func testBrokerHoldingsKeepAccountsSeparateAfterTransferAndFreshSignIn() throws {
+        let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        let source = "a8cc1385-31a7-4c4d-9955-6789589cc956"
+        let receiver = "0cc77f5f-2b5f-481a-95cb-e44b9c0ad97f"
+
+        func launch() {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                "-UITestBrokerFixture", "-UITestBrokerMultiAccount", "-SupabaseURLOverride", apiURL,
+                "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
+            app.launch()
+            XCTAssertTrue(app.open("Portfolio"))
+            XCTAssertTrue(app.staticTexts["Dividends and distributions"].waitForExistence(timeout: 15) ||
+                app.buttons["portfolio.account.CommSec"].waitForExistence(timeout: 10))
+        }
+        func brokerRows() throws -> [[String: Any]] {
+            try rows("portfolio_holdings", select: "id,asset_symbol,shares,broker_account,deleted_at", token: token)
+                .filter { $0["asset_symbol"] as? String == "BHP" && $0["broker_account"] is [String: Any] }
+        }
+        func byAccount(_ positions: [[String: Any]]) -> [String: Double] {
+            Dictionary(positions.compactMap { row in
+                guard let account = row["broker_account"] as? [String: Any], let id = account["account_id"] as? String,
+                      let shares = row["shares"] as? Double else { return nil }
+                return (id, shares)
+            }, uniquingKeysWith: { _, latest in latest })
+        }
+        func waitForPositions(_ expected: [String: Double]) throws -> [[String: Any]] {
+            for _ in 0..<12 {
+                let current = try brokerRows()
+                if byAccount(current) == expected { return current }
+                Thread.sleep(forTimeInterval: 1)
+            }
+            let current = try brokerRows()
+            XCTAssertEqual(byAccount(current), expected)
+            return current
+        }
+
+        launch()
+        let connect = app.buttons["Connect a broker"].firstMatch
+        XCTAssertTrue(connect.waitForExistence(timeout: 8))
+        connect.tap()
+        let tile = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'broker.popular.'")).firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        tile.tap()
+        let before = try waitForPositions([source: 50, receiver: 20])
+        XCTAssertEqual(before.count, 2)
+        let beforeIDs = Set(before.compactMap { $0["id"] as? String })
+        let original = try rows("transactions", select: "id,holding_id,shares,trade_provenance,deleted_at", token: token)
+            .filter { beforeIDs.contains($0["holding_id"] as? String ?? "") }
+        XCTAssertEqual(original.count, 2)
+        let sync = app.buttons["broker.sync"].firstMatch
+        for _ in 0..<5 where !sync.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(sync.isHittable)
+        sync.tap()
+        let after = try waitForPositions([source: 0, receiver: 70])
+        XCTAssertEqual(Set(after.compactMap { $0["id"] as? String }), beforeIDs)
+        XCTAssertEqual(after.filter { $0["deleted_at"] is NSNull }.count, 2)
+        let retained = try rows("transactions", select: "id,holding_id,shares,trade_provenance,deleted_at", token: token)
+            .filter { beforeIDs.contains($0["holding_id"] as? String ?? "") && $0["deleted_at"] is NSNull }
+        XCTAssertEqual(Set(retained.compactMap { $0["id"] as? String }), Set(original.compactMap { $0["id"] as? String }))
+        XCTAssertEqual(retained.compactMap { $0["shares"] as? Double }.sorted(), [20, 50])
+
+        app.terminate()
+        launch()
+        let holding = app.buttons["portfolio.holding.BHP"].firstMatch
+        for _ in 0..<8 where !holding.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(holding.isHittable)
+        XCTAssertTrue(holding.label.contains("70 shares"), holding.label)
+        XCTAssertTrue(holding.label.contains("4321"), holding.label)
+        XCTAssertEqual(app.buttons.matching(identifier: "portfolio.holding.BHP").count, 1)
+        XCTAssertEqual(try brokerRows().count, 2)
+    }
+
     func testCashIncomeSyncsBetweenAccountAndPhone() throws {
         let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
         let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [

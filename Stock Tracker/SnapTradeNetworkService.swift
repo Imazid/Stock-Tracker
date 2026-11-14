@@ -79,6 +79,12 @@ class SnapTradeNetworkService {
         }
     }
 
+    func registrationStatus() async throws -> Bool {
+        struct Status: Decodable { let registered: Bool }
+        let status: Status = try await viaServer("status")
+        return status.registered
+    }
+
     /// Creates (or confirms) this account's SnapTrade identity on the server.
     func registerOnServer() async throws {
         _ = try await serverData("registerUser")
@@ -220,7 +226,8 @@ class SnapTradeNetworkService {
     ) async throws -> [SnapTradePosition] {
         if isServerBacked {
             let wrapper: SnapTradeAccountHoldingsResponse = try await viaServer("accountHoldings", ["accountId": accountId])
-            return wrapper.positions ?? []
+            guard let positions = wrapper.positions else { throw SnapTradeError.missingData }
+            return positions
         }
         let request = try createRequest(
             path: "/accounts/\(accountId)/holdings",
@@ -228,7 +235,8 @@ class SnapTradeNetworkService {
             queryParams: ["userId": userId, "userSecret": userSecret]
         )
         let wrapper: SnapTradeAccountHoldingsResponse = try await executeRequest(request)
-        return wrapper.positions ?? []
+        guard let positions = wrapper.positions else { throw SnapTradeError.missingData }
+        return positions
     }
 
     /// Fetch ALL positions for an account by merging both endpoints.
@@ -241,58 +249,41 @@ class SnapTradeNetworkService {
     ) async throws -> [SnapTradePosition] {
         SecureLogger.info("Fetching holdings for account")
 
-        // Run both endpoints concurrently; failures fall back to empty.
-        async let positionsResult = (try? fetchPositionsArray(accountId: accountId, userId: userId, userSecret: userSecret)) ?? []
-        async let holdingsResult  = (try? fetchHoldingsWrapper(accountId: accountId, userId: userId, userSecret: userSecret)) ?? []
+        async let positionsResult = fetchPositionsArray(accountId: accountId, userId: userId, userSecret: userSecret)
+        async let holdingsResult = fetchHoldingsWrapper(accountId: accountId, userId: userId, userSecret: userSecret)
+        let (fromPositions, fromHoldings) = try await (positionsResult, holdingsResult)
 
-        let (fromPositions, fromHoldings) = await (positionsResult, holdingsResult)
-
-        // Merge, deduplicating by ticker symbol (prefer /holdings data when both present)
-        var merged: [String: SnapTradePosition] = [:]
-        for p in fromPositions { merged[p.symbol.symbol.symbol] = p }
-        for p in fromHoldings  { merged[p.symbol.symbol.symbol] = p }   // overwrites dupes
-
-        let all = Array(merged.values)
-        SecureLogger.info("Account \(accountId): \(fromPositions.count) from /positions, \(fromHoldings.count) from /holdings → \(all.count) merged")
-        return all
+        // Merge the endpoints by listed instrument within this account.
+        var merged: [[String]: SnapTradePosition] = [:]
+        for position in fromPositions + fromHoldings {
+            let listing = position.symbol.symbol
+            let exchange = position.symbol.exchange?.code ?? listing.exchange?.code ?? ""
+            let venue = ["ASX", "XASX"].contains(exchange.uppercased()) ? "ASX" : exchange.uppercased()
+            merged[[listing.symbol.uppercased(), venue]] = position
+        }
+        return Array(merged.values)
     }
 
-    /// Fetch holdings for all accounts, keyed by account ID
     func fetchAllHoldings(
+        accountIds: [String],
         userId: String,
         userSecret: String
     ) async throws -> [(accountId: String, positions: [SnapTradePosition])] {
-        SecureLogger.info("Fetching all SnapTrade holdings")
-
-        let accounts = try await fetchAccounts(userId: userId, userSecret: userSecret)
-
-        return try await withThrowingTaskGroup(of: (String, [SnapTradePosition])?.self) { group in
-            for account in accounts {
+        try await withThrowingTaskGroup(of: (String, [SnapTradePosition]).self) { group in
+            for accountId in accountIds {
                 group.addTask {
-                    do {
-                        let positions = try await self.fetchAccountHoldings(
-                            accountId: account.id,
-                            userId: userId,
-                            userSecret: userSecret
-                        )
-                        return (account.id, positions)
-                    } catch {
-                        SecureLogger.error("Failed to fetch holdings for account")
-                        return nil
-                    }
+                    let positions = try await self.fetchAccountHoldings(
+                        accountId: accountId, userId: userId, userSecret: userSecret
+                    )
+                    return (accountId, positions)
                 }
             }
-
             var results: [(String, [SnapTradePosition])] = []
-            for try await result in group {
-                if let result = result {
-                    results.append(result)
-                }
-            }
+            for try await result in group { results.append(result) }
             return results
         }
     }
-    
+
     // MARK: - Request Building
     
     private func createRequest(

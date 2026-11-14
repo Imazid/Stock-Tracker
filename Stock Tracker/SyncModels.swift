@@ -113,6 +113,7 @@ struct RemoteHolding: Codable {
     let updatedAt: String
     let deletedAt: String?
     let closedAt: String?
+    let brokerAccount: HoldingBrokerAccount?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -127,6 +128,7 @@ struct RemoteHolding: Codable {
         case updatedAt     = "updated_at"
         case deletedAt     = "deleted_at"
         case closedAt      = "closed_at"
+        case brokerAccount = "broker_account"
     }
 
     var isDeleted: Bool { deletedAt != nil }
@@ -148,7 +150,8 @@ struct RemoteHolding: Codable {
             shares: shares,
             avgCost: avgCost,
             dateAdded: parseDate(dateAdded),
-            transactions: transactions
+            transactions: transactions,
+            brokerAccount: brokerAccount
         )
     }
 
@@ -170,7 +173,8 @@ struct RemoteHolding: Codable {
             asset_exchange: holding.asset.exchange,
             shares:         holding.shares,
             avg_cost:       holding.avgCost,
-            date_added:     iso8601Basic.string(from: holding.dateAdded)
+            date_added:     iso8601Basic.string(from: holding.dateAdded),
+            broker_account: holding.brokerAccount
         )
     }
 }
@@ -185,6 +189,7 @@ nonisolated struct HoldingUpsert: Encodable, Sendable {
     let shares: Double
     let avg_cost: Double
     let date_added: String
+    let broker_account: HoldingBrokerAccount?
 }
 
 // MARK: - RemoteTransaction
