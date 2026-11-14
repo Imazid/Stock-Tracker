@@ -1,5 +1,6 @@
 import { catalogInstruments } from "../../../supabase/functions/_shared/trading/catalog.ts";
 import { makeInstrument, parseYahooSymbol, venueCountry, type Venue } from "../../../supabase/functions/_shared/trading/market.ts";
+import type { IssuerClassification } from "./issuer-classification.ts";
 import type { InstrumentView, QuoteResponse } from "./market-types.ts";
 
 export type ExposureCurrency = "AUD" | "USD";
@@ -7,7 +8,7 @@ export type PortfolioReferenceRates = Record<ExposureCurrency, Record<string, { 
 
 type Holding = { shares: number; instrument: InstrumentView | null };
 type ExposureSlice = { label: string; value: number };
-type Dimension = "asset" | "country" | "currency" | "listing";
+type Dimension = "asset" | "country" | "currency" | "listing" | "sector" | "incorporation";
 
 const assetLabels = { equity: "Listed shares", etf: "ETFs", crypto: "Crypto" };
 
@@ -41,11 +42,15 @@ export function portfolioExposure(
   quoteFor: (id: string) => QuoteResponse | undefined,
   base: ExposureCurrency,
   rates: PortfolioReferenceRates | undefined,
+  issuers: Readonly<Record<string, IssuerClassification>> = {},
 ) {
   const buckets: Record<Dimension, Map<string, ExposureSlice>> = {
     asset: new Map(), country: new Map(), currency: new Map(), listing: new Map(),
+    sector: new Map(), incorporation: new Map(),
   };
+  const issuerSources = new Map<string, { listing: string; classification: IssuerClassification }>();
   const fxDates = new Set<string>();
+  const classifiedValue = { sectors: 0, incorporations: 0 };
   let total = 0;
   let priced = 0;
   let missingRates = 0;
@@ -82,7 +87,20 @@ export function portfolioExposure(
     add("asset", assetClass, assetLabels[assetClass], value);
     add("country", country, country, value);
     add("currency", quote.currency, quote.currency, value);
-    add("listing", instrument.id, `${instrument.symbol} · ${instrument.venueShort}`, value);
+    const listing = `${instrument.symbol} · ${instrument.venueShort}`;
+    add("listing", instrument.id, listing, value);
+
+    if (assetClass !== "equity") {
+      add("sector", assetClass, assetLabels[assetClass], value);
+      add("incorporation", assetClass, assetLabels[assetClass], value);
+      continue;
+    }
+    const classification = issuers[instrument.id];
+    if (classification?.sector) classifiedValue.sectors += value;
+    if (classification?.country) classifiedValue.incorporations += value;
+    add("sector", classification?.sector ?? "unknown", classification?.sector ?? "Unclassified shares", value);
+    add("incorporation", classification?.country ?? "unknown", classification?.country ?? "Unclassified shares", value);
+    if (classification) issuerSources.set(instrument.id, { listing, classification });
   }
 
   const rows = (dimension: Dimension) => [...buckets[dimension].entries()]
@@ -92,5 +110,11 @@ export function portfolioExposure(
   return {
     total, priced, missingRates, oldestQuote, fxDates: [...fxDates].sort(),
     assets: rows("asset"), countries: rows("country"), currencies: rows("currency"), listings: rows("listing"),
+    sectors: rows("sector"), incorporations: rows("incorporation"),
+    classifiedWeight: {
+      sectors: total ? classifiedValue.sectors / total * 100 : 0,
+      incorporations: total ? classifiedValue.incorporations / total * 100 : 0,
+    },
+    issuerSources: [...issuerSources.entries()].sort(([, a], [, b]) => a.listing.localeCompare(b.listing)),
   };
 }

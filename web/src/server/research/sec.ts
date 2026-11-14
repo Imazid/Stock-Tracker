@@ -58,7 +58,7 @@ export function findSecListing(list: SecListing[], symbol: string): SecListing |
   return new Set(matches.map((row) => row.cik)).size === 1 ? matches[0] : undefined;
 }
 
-export interface SecSubmissions { profile: ResearchProfile; events: ResearchEvent[]; archives: string[] }
+export interface SecSubmissions { profile: ResearchProfile; events: ResearchEvent[]; archives: string[]; entityType?: string }
 
 function filings(raw: unknown, cik: string, fetchedAt: string): ResearchEvent[] {
   const table = asObject(raw);
@@ -96,12 +96,15 @@ export async function secSubmissions(listing: SecListing): Promise<SecSubmission
       profile: {
         name: asText(raw.name) ?? listing.name, cik: listing.cik, exchange: listing.exchange,
         industry: asText(raw.sicDescription), headquarters: [asText(business.city), asText(business.stateOrCountryDescription)].filter(Boolean).join(", ") || undefined,
+        sic: asText(raw.sic) ?? (typeof raw.sic === "number" ? String(raw.sic) : undefined),
+        incorporationCode: asText(raw.stateOfIncorporation),
         incorporation: asText(raw.stateOfIncorporationDescription),
         website: safeUrl(raw.website) ?? safeUrl(raw.investorWebsite),
         evidence: evidence(url, fetchedAt),
       },
       events: recent,
       archives,
+      entityType: asText(raw.entityType),
     };
   });
 }
