@@ -544,6 +544,7 @@ final class AccountSyncTests: XCTestCase {
         for _ in 0..<6 where !open.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(open.isHittable)
         open.tap()
+        XCTAssertTrue(app.navigationBars["Benchmark comparison"].waitForExistence(timeout: 8), app.debugDescription)
         let etf = app.descendants(matching: .any)["portfolio.returns.benchmark.etf"].firstMatch
         let portfolio = app.descendants(matching: .any)["portfolio.returns.benchmark.portfolio"].firstMatch
         let difference = app.descendants(matching: .any)["portfolio.returns.benchmark.difference"].firstMatch

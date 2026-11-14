@@ -86,13 +86,19 @@ struct PortfolioPerformanceLedger: View {
     @State private var periods: [PerformancePeriod]?
     @State private var summary: PerformanceSummary?
     @State private var error: String?
-    @State private var editor: Editor?
     @State private var removing: PerformancePeriod?
-    @State private var showingBenchmark = false
+    @State private var sheet: Sheet?
 
-    private struct Editor: Identifiable {
-        var id = UUID()
-        let period: PerformancePeriod?
+    private enum Sheet: Identifiable {
+        case editor(PerformancePeriod?)
+        case benchmark
+
+        var id: String {
+            switch self {
+            case .editor(let period): period?.id.uuidString ?? "new"
+            case .benchmark: "benchmark"
+            }
+        }
     }
 
     var body: some View {
@@ -101,9 +107,10 @@ struct PortfolioPerformanceLedger: View {
                 Text("Portfolio returns").font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 if !valueHidden {
-                    Button("Add period") { editor = Editor(period: nil) }
+                    Button("Add period") { sheet = .editor(nil) }
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier("portfolio.returns.add")
                 }
             }
@@ -129,11 +136,12 @@ struct PortfolioPerformanceLedger: View {
                         returnRows(summary.time_weighted_return_pct, summary.money_weighted_return_pct, summary.return_pct)
                     }
                     Button {
-                        showingBenchmark = true
+                        sheet = .benchmark
                     } label: {
                         Label("Compare with a benchmark", systemImage: "chart.line.uptrend.xyaxis")
                             .frame(minHeight: 44)
                     }
+                    .buttonStyle(.borderless)
                     .accessibilityIdentifier("portfolio.returns.benchmark.open")
                     if periods.count > 100 {
                         Text("Showing the 100 most recent periods.").font(.caption)
@@ -150,12 +158,14 @@ struct PortfolioPerformanceLedger: View {
         .padding(DS.Space.l)
         .frostedCard()
         .task(id: userId) { await load() }
-        .sheet(item: $editor) { item in
-            PerformancePeriodEditor(userId: userId, period: item.period) { await load() }
-        }
-        .sheet(isPresented: $showingBenchmark) {
-            if !valueHidden {
-                PortfolioBenchmarkSheet(userId: userId, periods: benchmarkPeriods)
+        .sheet(item: $sheet) { item in
+            switch item {
+            case .editor(let period):
+                PerformancePeriodEditor(userId: userId, period: period) { await load() }
+            case .benchmark:
+                if !valueHidden {
+                    PortfolioBenchmarkSheet(userId: userId, periods: benchmarkPeriods)
+                }
             }
         }
         .confirmationDialog("Remove this period?", isPresented: Binding(
@@ -184,7 +194,7 @@ struct PortfolioPerformanceLedger: View {
                 Text("\(period.starts_on) to \(period.ends_on)").font(.subheadline.weight(.semibold))
                 Spacer()
                 Menu {
-                    Button("Edit period") { editor = Editor(period: period) }
+                    Button("Edit period") { sheet = .editor(period) }
                     Button("Remove period", role: .destructive) { removing = period }
                 } label: {
                     Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
