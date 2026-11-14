@@ -203,6 +203,7 @@ export function BacktestReport({ last }: { last: BacktestResponse }) {
           <section aria-label="Equity curve">
             <h3 className="mb-2 text-sm font-semibold">Equity curve</h3>
             <EquityChart equity={r.equityCurve.map((p) => ({ time: p.time, value: p.equity }))} benchmark={r.benchmarkCurve.map((p) => ({ time: p.time, value: p.equity }))} benchmarkName={r.benchmarkName} ariaLabel="Backtest equity curve" />
+            <EquityData key={last.ranAt} result={r} currency={currency} />
           </section>
           {last?.chart && chartCandles.length > 0 ? (
             <section aria-label="Entries and exits">
@@ -269,4 +270,28 @@ export function BacktestReport({ last }: { last: BacktestResponse }) {
           <p className="text-[11px] text-text-3">A backtest is a simulation on past prices. It isn&apos;t a forecast, and a good result doesn&apos;t make a strategy safe to trade with real money.</p>
         </div>
   );
+}
+
+function EquityData({ result, currency }: { result: BacktestResponse["result"]; currency: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [page, setPage] = useState(0);
+  const size = 50;
+  const length = Math.ceil(result.equityCurve.length / size);
+  const rows = result.equityCurve.slice(page * size, (page + 1) * size);
+  const benchmark = useMemo(() => new Map(result.benchmarkCurve.map((point) => [point.time, point.equity])), [result]);
+  return <details onToggle={(event) => setExpanded(event.currentTarget.open)} className="text-xs text-text-2">
+    <summary className="w-fit cursor-pointer py-2">Equity data table</summary>
+    {expanded && <>
+      <div className="overflow-auto"><table className="w-full text-left">
+        <thead><tr><th scope="col">Time</th><th scope="col">Equity</th>{result.benchmarkName && <th scope="col">{result.benchmarkName}</th>}</tr></thead>
+        <tbody>{rows.map((row) => <tr key={row.time}><td>{dateTime(new Date(row.time).toISOString())}</td><td>{money(row.equity, currency)}</td>
+          {result.benchmarkName && <td>{money(benchmark.get(row.time), currency)}</td>}</tr>)}</tbody>
+      </table></div>
+      {length > 1 && <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous points</Button>
+        <span aria-live="polite">Page {page + 1} of {length}</span>
+        <Button size="sm" disabled={page + 1 >= length} onClick={() => setPage(page + 1)}>Next points</Button>
+      </div>}
+    </>}
+  </details>;
 }

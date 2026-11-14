@@ -229,7 +229,7 @@ export function PriceChart({ candles, type, indicators, markers, comparison, tim
   }, [candles, type, indicators, markers, comparison, timeZone, intraday, baseline]);
 
   const paneCount = 1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
-  return <div ref={container} role="img" aria-label={ariaLabel} style={{ height: height + (paneCount - 1) * 110 }} className="w-full" />;
+  return <div ref={container} role="group" aria-label={ariaLabel} style={{ height: height + (paneCount - 1) * 110 }} className="w-full" />;
 }
 
 /** Equity curve (and optional benchmark) for a backtest, in the strategy's currency. */
@@ -276,5 +276,5 @@ export function EquityChart({ equity, benchmark, benchmarkName, height = 260, ar
       chart?.remove();
     };
   }, [equity, benchmark, benchmarkName]);
-  return <div ref={container} role="img" aria-label={ariaLabel} style={{ height }} className="w-full" />;
+  return <div ref={container} role="group" aria-label={ariaLabel} style={{ height }} className="w-full" />;
 }

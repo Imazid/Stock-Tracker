@@ -945,10 +945,6 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["backtest.testData"].exists)
         let provider = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Prices: Alpaca")).firstMatch
         XCTAssertTrue(provider.exists, app.debugDescription)
-        let saveReport = app.buttons["backtest.save"]
-        XCTAssertTrue(saveReport.waitForExistence(timeout: 8), app.debugDescription)
-        saveReport.tap()
-        XCTAssertTrue(saveReport.wait(for: \.label, toEqual: "Report saved", timeout: 15), app.debugDescription)
         let assumptions = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "at the next bar's open")).firstMatch
         for _ in 0..<8 where !assumptions.isHittable { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(assumptions.isHittable)
@@ -1022,6 +1018,10 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["backtest.testData"].exists)
         let provider = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Prices: Alpaca")).firstMatch
         XCTAssertTrue(provider.exists, app.debugDescription)
+        let saveReport = app.buttons["backtest.save"]
+        XCTAssertTrue(saveReport.waitForExistence(timeout: 8), app.debugDescription)
+        saveReport.tap()
+        XCTAssertTrue(saveReport.wait(for: \.label, toEqual: "Report saved", timeout: 15), app.debugDescription)
         let assumptions = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "at the next bar's open")).firstMatch
         for _ in 0..<8 where !assumptions.isHittable { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(assumptions.isHittable)
