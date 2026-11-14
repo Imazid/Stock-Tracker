@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Segmented } from "@/components/ui/Segmented";
 import { ago } from "@/lib/format";
 import { describeOmsError, OmsError, Orders } from "@/lib/oms-client";
+import { useOrderUpdates } from "@/hooks/useOrderUpdates";
 import { useSession } from "@/lib/session";
 import { GROUP_LABEL, GROUP_OF, STATUS_LABEL, STATUS_TONE, type StatusGroup } from "./status";
 
@@ -19,6 +20,7 @@ export function OrdersView() {
   const session = useSession();
   const [filter, setFilter] = useState<"all" | StatusGroup>("all");
   const userId = session.status === "signedIn" ? session.user.id : undefined;
+  useOrderUpdates(userId, "intents");
   const list = useQuery({ queryKey: ["intents", userId], queryFn: () => Orders.list("all", userId), enabled: Boolean(userId), retry: false, refetchInterval: 15_000 });
   const header = <PageHeader title="Orders" description="Orders sent to a connected provider. Each one is drafted, risk-checked and approved by you before anything is submitted — and only ever to a paper environment in this build." />;
 

@@ -233,6 +233,44 @@ struct BrokerPaperAPI {
         return try decoder.decode(Envelope<Value>.self, from: data).data
     }
 
+    @MainActor
+    func watchOrderUpdates(refresh: @MainActor () async -> Void) async {
+        guard (try? checkSession()) != nil else { return }
+        let client = SupabaseManager.client
+        let channel = client.channel("broker-orders:\(UUID().uuidString)")
+        let (updates, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let filter = "user_id=eq.\(userID.uuidString.lowercased())"
+        let inserts = channel.onPostgresChange(InsertAction.self, table: "broker_order_updates", filter: filter) { _ in
+            signal.yield()
+        }
+        let changes = channel.onPostgresChange(UpdateAction.self, table: "broker_order_updates", filter: filter) { _ in
+            signal.yield()
+        }
+        let status = channel.onStatusChange { status in
+            if status == .subscribed { signal.yield() }
+        }
+        let subscription = Task { try? await channel.subscribeWithError() }
+        let recovery = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                if !Task.isCancelled { signal.yield() }
+            }
+        }
+        for await _ in updates {
+            // A reconciliation can update both the intent and its receipt in one transaction.
+            try? await Task.sleep(for: .milliseconds(200))
+            guard (try? checkSession()) != nil else { break }
+            await refresh()
+        }
+        recovery.cancel()
+        subscription.cancel()
+        signal.finish()
+        inserts.cancel()
+        changes.cancel()
+        status.cancel()
+        await client.removeChannel(channel)
+    }
+
     private func checkSession() throws {
         try Task.checkCancellation()
         guard SupabaseManager.auth.currentUser?.id == userID else { throw CancellationError() }

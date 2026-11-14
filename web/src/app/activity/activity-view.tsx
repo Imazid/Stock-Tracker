@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { dateTime } from "@/lib/format";
+import { useOrderUpdates } from "@/hooks/useOrderUpdates";
 import { useSession } from "@/lib/session";
 import { browserSupabase } from "@/lib/supabase/client";
 
@@ -47,6 +48,7 @@ async function readEvents(userId: string): Promise<Event[]> {
 export function ActivityView() {
   const session = useSession();
   const userId = session.status === "signedIn" ? session.user.id : undefined;
+  useOrderUpdates(userId, "activity");
   const activity = useQuery({
     queryKey: ["activity", userId],
     enabled: Boolean(userId),

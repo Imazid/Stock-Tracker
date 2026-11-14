@@ -28,6 +28,7 @@ struct BrokerPaperEntry: View {
 }
 
 private struct BrokerPaperWorkspace: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
 
@@ -101,6 +102,14 @@ private struct BrokerPaperWorkspace: View {
             }
             .task(id: selection) {
                 if selection == nil { await reload() }
+            }
+            .task(id: scenePhase) {
+                guard scenePhase == .active, asset == nil else { return }
+                await api.watchOrderUpdates {
+                    if selection == nil, !loading, let latest = try? await api.orders(), selection == nil {
+                        orders = latest
+                    }
+                }
             }
             .refreshable { await reload() }
         }

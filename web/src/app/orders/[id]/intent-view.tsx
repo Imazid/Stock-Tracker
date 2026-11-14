@@ -13,6 +13,7 @@ import { Notice } from "@/components/ui/Notice";
 import { dateTime } from "@/lib/format";
 import { describeOmsError, newIdempotencyKey, OmsError, Orders } from "@/lib/oms-client";
 import { useNow } from "@/hooks/useNow";
+import { useOrderUpdates } from "@/hooks/useOrderUpdates";
 import { useSession } from "@/lib/session";
 import { STATUS_LABEL, STATUS_TONE } from "../status";
 
@@ -44,6 +45,7 @@ type OrderAction = "riskCheck" | "approve" | "reject" | "submit" | "cancel" | "r
 const working = ["submitted", "partially_filled", "reconciliation_required", "submitting"];
 
 function SignedInIntent({ id, userId }: { id: string; userId: string }) {
+  useOrderUpdates(userId, "intent", id);
   const client = useQueryClient();
   const now = useNow();
   const queryKey = ["intent", userId, id];
