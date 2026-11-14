@@ -11,6 +11,7 @@ import {
 } from "@/lib/portfolio-income";
 import { browserSupabase } from "@/lib/supabase/client";
 import { BrokerActivity } from "./broker-activity";
+import { DividendReinvestments } from "./dividend-reinvestments";
 
 type Draft = {
   paid_on: string;
@@ -197,7 +198,7 @@ export function IncomeLedger({ userId }: { userId: string }) {
   }
 
   return <Card>
-    <CardHeader title="Dividends and distributions" subtitle="Cash payments recorded from your statements, in their original currencies." />
+    <CardHeader title="Dividends and distributions" subtitle="Statement payments and reinvestments in their original currencies." />
     <div className="space-y-4 border-t border-border p-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Payments from" htmlFor="income-from">
@@ -320,5 +321,6 @@ export function IncomeLedger({ userId }: { userId: string }) {
       {feedback && <p role="status" className="text-sm text-text-2">{feedback}</p>}
       <p className="text-xs text-text-2">{incomeNotice}</p>
     </div>
+    <DividendReinvestments userId={userId} />
   </Card>;
 }

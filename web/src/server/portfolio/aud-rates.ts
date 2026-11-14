@@ -13,11 +13,12 @@ export type AudReference =
 
 function directAudReference(transaction: TransactionRow, day: string | null, today: string): AudReference | undefined {
   const source = transaction.trade_provenance;
+  const currency = transaction.reinvestment?.currency ?? source?.currency;
   if (source?.source === "broker_position" || source?.source === "csv_position") return { source: "Position snapshot" };
-  if (!source?.currency || !/^[A-Z]{3}$/.test(source.currency)) return { source: "Original currency missing" };
-  if (source.unitPrice == null && source.fees == null) return { source: "Original amounts missing" };
+  if (!currency || !/^[A-Z]{3}$/.test(currency)) return { source: "Original currency missing" };
+  if (!transaction.reinvestment && source?.unitPrice == null && source?.fees == null) return { source: "Original amounts missing" };
   if (!day || day > today) return { source: "Trade date unavailable" };
-  if (source.currency === "AUD") return { source: "AUD input", rate: "1" };
+  if (currency === "AUD") return { source: "AUD input", rate: "1" };
   if (day < ECB_FIRST_DATE) return { source: "No ECB reference rate" };
 }
 
@@ -27,16 +28,17 @@ export async function audReferences(transactions: TransactionRow[], signal: Abor
   type Trade = { id: string; day: string; currency: string };
   const byYear = new Map<string, Trade[]>();
   for (const trade of transactions) {
-    const day = sydneyDate(trade.transaction_date);
+    const day = trade.reinvestment?.acquired_on ?? sydneyDate(trade.transaction_date);
     const direct = directAudReference(trade, day, today);
     if (direct) {
       references.set(trade.id, direct);
       continue;
     }
-    if (!day || !trade.trade_provenance?.currency) continue;
+    const currency = trade.reinvestment?.currency ?? trade.trade_provenance?.currency;
+    if (!day || !currency) continue;
     const year = day.slice(0, 4);
     const batch = byYear.get(year) ?? [];
-    batch.push({ id: trade.id, day, currency: trade.trade_provenance.currency });
+    batch.push({ id: trade.id, day, currency });
     byYear.set(year, batch);
   }
 
