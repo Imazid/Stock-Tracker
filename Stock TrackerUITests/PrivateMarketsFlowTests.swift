@@ -250,9 +250,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         openPrivateMarkets()
         let updates = app.buttons["private.companyUpdates"]
         let monitor = app.switches["private.monitor.enable"]
-        let ready = NSPredicate(format: "exists == true AND enabled == true")
+        let ready = NSPredicate { _, _ in monitor.exists && monitor.isEnabled }
         for _ in 0..<3 {
-            if updates.exists && updates.isHittable { updates.tap() }
+            if updates.waitForExistence(timeout: 3), updates.isHittable { updates.tap() }
             let enabled = XCTNSPredicateExpectation(predicate: ready, object: monitor)
             if await XCTWaiter().fulfillment(of: [enabled], timeout: 8) == .completed { break }
         }
