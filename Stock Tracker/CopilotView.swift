@@ -386,6 +386,11 @@ private struct CopilotScreen: View {
                 }
             }
 
+        case .privateComparison(_, let question):
+            NavigationLink("Choose funding rounds") { PrivateRoundComparison(deals: nil, question: question) }
+                .buttonStyle(SecondaryPillButtonStyle())
+                .accessibilityIdentifier("copilot.privateComparison.open")
+
         case .pauseAll:
             Button(trading.isKillSwitchOn ? "Review pause-all" : "Open Pause all") { showPauseAll = true }
                 .buttonStyle(SecondaryPillButtonStyle())

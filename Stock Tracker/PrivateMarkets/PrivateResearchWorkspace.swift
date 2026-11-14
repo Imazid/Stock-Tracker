@@ -7,7 +7,7 @@ import Vision
 struct PrivateResearchWorkspace: View {
     let deals: [PrivateDeal]
     var selectedDealID: UUID?
-    var compareFundingRounds = false
+    var comparisonQuestion: String?
     var announcements: [PrivateCompanyUpdate] = []
     var refresh: PrivateResearchRefresh?
     var refreshOwner: UUID?
@@ -174,9 +174,9 @@ struct PrivateResearchWorkspace: View {
                     selectedDeals = Set(refresh.deals.map(\.id))
                     selectedAnnouncements = Set(refresh.announcements.map(\.id))
                     documents = refresh.documents
-                } else if compareFundingRounds {
+                } else if let comparisonQuestion {
                     selectedDeals = Set(deals.prefix(3).map(\.id))
-                    question = "Compare the selected funding rounds. Explain the reported valuation basis, any changes in the financing, and what the sources disclose about dilution and investor rights."
+                    question = comparisonQuestion
                 } else if !announcements.isEmpty {
                     selectedAnnouncements = Set(announcements.prefix(3).map(\.id))
                     question = "Summarise these published company updates. Explain what changed, what the sources disclose about dilution, and what remains unanswered."

@@ -397,6 +397,83 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testCopilotOpensPublishedRoundComparison() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
+                          "Run this test with the hosted Private Markets configuration.")
+        openPrivateMarkets()
+        app.buttons["trading.copilot"].firstMatch.tap()
+        let suggestion = app.buttons["copilot.suggestion.Compare startup va"]
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 5))
+        if !suggestion.isHittable { app.swipeUp() }
+        suggestion.tap()
+        let open = app.buttons["copilot.privateComparison.open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8), app.debugDescription)
+        open.tap()
+        XCTAssertTrue(app.navigationBars["Compare Funding Rounds"].waitForExistence(timeout: 8))
+        let choose = app.buttons["private.comparison.choose"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 15))
+        XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: choose)], timeout: 15) == .completed)
+        choose.tap()
+
+        func select(_ id: String) {
+            let button = app.buttons["private.comparison.round.\(id)"]
+            for _ in 0..<6 where !button.isHittable {
+                if button.waitForExistence(timeout: 2) && button.isHittable { break }
+                app.swipeUp()
+            }
+            XCTAssertTrue(button.isHittable, app.debugDescription)
+            button.tap()
+        }
+        select("D72C4060-1AE7-4A2F-8F2E-9F4BF1577E11")
+        select("D72C4060-1AE7-4A2F-8F2E-9F4BF1577E12")
+        select("A581F4AF-A8D0-41FD-A9BE-0E4E1607F202")
+        let fourth = app.buttons["private.comparison.round.D72C4060-1AE7-4A2F-8F2E-9F4BF1577E15"]
+        XCTAssertTrue(fourth.exists && !fourth.isEnabled, app.debugDescription)
+        app.buttons["private.comparison.done"].tap()
+        for _ in 0..<6 where !app.staticTexts["Selected rounds"].isHittable { app.swipeDown() }
+        let reported = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "USD 900,000,000")).firstMatch
+        XCTAssertTrue(reported.exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Methodology undisclosed")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["Read round source"].firstMatch.exists)
+        let undisclosed = app.staticTexts.containing(NSPredicate(format: "label == %@", "Reported valuation, Undisclosed")).firstMatch
+        for _ in 0..<2 where !undisclosed.exists { app.swipeUp() }
+        XCTAssertTrue(undisclosed.exists, app.debugDescription)
+        let originalCurrencies = app.staticTexts["Figures use their original currencies."]
+        for _ in 0..<3 where !originalCurrencies.isHittable { app.swipeUp() }
+        XCTAssertTrue(originalCurrencies.isHittable, app.debugDescription)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "AUD 12,000,000")).firstMatch.exists)
+    }
+
+    @MainActor
+    func testSelectedRoundsOpenCitedComparisonResearch() throws {
+        try launchWithLocalSession("PRIVATE_ROUND_COMPARISON_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.building.2"].tap()
+        let company = app.buttons["private.explorer.company.D72C4060-1AE7-4A2F-8F2E-9F4BF1577E01"]
+        XCTAssertTrue(company.waitForExistence(timeout: 14), app.debugDescription)
+        company.tap()
+        let compare = app.buttons["private.funding.compare"]
+        for _ in 0..<4 where !compare.isHittable { app.swipeUp() }
+        XCTAssertTrue(compare.isHittable, app.debugDescription)
+        compare.tap()
+        let research = app.buttons["private.comparison.research"]
+        for _ in 0..<5 where !research.isHittable { app.swipeUp() }
+        XCTAssertTrue(research.isHittable, app.debugDescription)
+        research.tap()
+        let question = app.descendants(matching: .any)["private.research.question"].firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 8))
+        XCTAssertTrue((question.value as? String)?.contains("reported valuation basis") == true)
+        for stage in ["Series A follow-on", "Series B", "Series C"] {
+            let source = app.switches.containing(NSPredicate(format: "label CONTAINS %@", stage)).firstMatch
+            for _ in 0..<2 where !source.exists { app.swipeUp() }
+            XCTAssertEqual(source.value as? String, "1", app.debugDescription)
+        }
+        let run = app.buttons["Ask a question"]
+        for _ in 0..<4 where !run.isHittable { app.swipeUp() }
+        XCTAssertTrue(run.isHittable && run.isEnabled, app.debugDescription)
+    }
+
+    @MainActor
     func testFundingRoundsShowsDisclosedIPOMilestones() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
                           "Run this test with the hosted Private Markets configuration.")

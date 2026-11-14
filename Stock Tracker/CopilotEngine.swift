@@ -35,6 +35,7 @@ enum CopilotCard: Identifiable {
     case agentChoice(id: UUID, request: String, agentIDs: [UUID])
     case unifiedAllocation(id: UUID)
     case privateUpdates(id: UUID, response: PrivateUpdatesAnswer)
+    case privateComparison(id: UUID, question: String)
     case privateScenario(id: UUID, question: PrivateScenarioQuestion)
     case pauseAll(id: UUID)
 
@@ -42,7 +43,7 @@ enum CopilotCard: Identifiable {
         switch self {
         case .facts(let id, _, _, _), .orders(let id, _, _), .run(let id, _, _), .draft(let id, _),
              .limitChange(let id, _, _, _, _), .backtest(let id, _), .agentChoice(let id, _, _),
-             .unifiedAllocation(let id), .privateUpdates(let id, _), .privateScenario(let id, _), .pauseAll(let id):
+             .unifiedAllocation(let id), .privateUpdates(let id, _), .privateComparison(let id, _), .privateScenario(let id, _), .pauseAll(let id):
             return id
         }
     }
@@ -86,6 +87,7 @@ final class CopilotEngine: ObservableObject {
         "Analyse my portfolio concentration",
         "Show my private investment exposure alongside my listed stocks",
         "Summarise recent updates from the startups I own",
+        "Compare startup valuations and explain their assumptions",
         "Why did my agent stop trading?",
         "Create a paper-trading strategy for BTC and ETH",
         "Backtest my strategy over the last two years",
@@ -156,6 +158,11 @@ final class CopilotEngine: ObservableObject {
                                   ? "Pause-all is already on. No agent can place orders."
                                   : "I can't pause agents for you, but this opens the control. It shows exactly what stops before you confirm.",
                                   cards: [.pauseAll(id: UUID())])
+        }
+        if has("compare", " vs ", " versus ") &&
+            (has("funding round", "financing round") || has("valuation", "raised") && has("startup", "private", "seed", "series ")) {
+            return .init(isUser: false, text: "Select the published rounds you want to compare.",
+                         cards: [.privateComparison(id: UUID(), question: String(text.prefix(700)))])
         }
         if let question = PrivateScenarioQuestion(text) {
             let reply: String

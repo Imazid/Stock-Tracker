@@ -233,6 +233,12 @@ private struct PrivateDiscoveryView: View {
                         Label("Search the catalogue with AI", systemImage: "sparkle.magnifyingglass")
                     }
                 }
+                if !groupCompanies, !loading, Set(filtered.map(\.round.id)).count > 1 {
+                    NavigationLink("Compare funding rounds") {
+                        PrivateRoundComparison(deals: filtered)
+                    }
+                    .accessibilityIdentifier("private.funding.compare")
+                }
             }
             if showFundingHistory, !loading, error == nil {
                 let listings = filtered.filter { $0.round.listing != nil }.sorted(by: listingOrder)
@@ -552,16 +558,161 @@ private struct PrivateCompanyFundingHistory: View {
                 }
             }
             PrivateCompanyFinancialsSections(company: company)
-            if history.count > 1, auth.userId != nil {
-                Section("Research") {
+            if Set(history.map(\.round.id)).count > 1 {
+                Section {
                     NavigationLink("Compare funding rounds") {
-                        PrivateResearchWorkspace(deals: history, compareFundingRounds: true)
+                        PrivateRoundComparison(deals: history, preselectRecentRounds: true)
                     }
+                    .accessibilityIdentifier("private.funding.compare")
                 }
             }
         }
         .navigationTitle(company.name)
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct PrivateRoundComparison: View {
+    let deals: [PrivateDeal]?
+    static let defaultQuestion = "Compare the selected funding rounds qualitatively. Explain the reported valuation basis and any gaps in the financing, dilution and investor rights. Keep amounts in the source citations. Use the word reported or undisclosed for each company. Keep dates and amounts out of the text."
+    var question = PrivateRoundComparison.defaultQuestion
+    var preselectRecentRounds = false
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var catalog: [PrivateDeal] = []
+    @State private var selection: [UUID] = []
+    @State private var configuredSelection = false
+    @State private var showPicker = false
+    @State private var search = ""
+    @State private var loading = false
+    @State private var error: String?
+
+    private var rounds: [PrivateDeal] {
+        var seen: Set<UUID> = []
+        return (deals ?? catalog).sorted(by: fundingRoundOrder).filter { seen.insert($0.round.id).inserted }
+    }
+
+    var body: some View {
+        let available = rounds
+        let selected = selection.compactMap { id in available.first { $0.round.id == id } }
+        List {
+            Section("Selected rounds") {
+                if loading { ProgressView("Loading rounds") }
+                if let error {
+                    Text(error).foregroundStyle(.secondary)
+                    Button("Retry") { Task { await load() } }
+                }
+                if selected.count < 2 { Text("Select two or three published rounds to compare.").foregroundStyle(.secondary) }
+                Button("Choose rounds") { showPicker = true }
+                    .disabled(available.isEmpty)
+                    .accessibilityIdentifier("private.comparison.choose")
+                if selected.count > 1 {
+                    if auth.userId != nil {
+                        NavigationLink("Research selected rounds") {
+                            PrivateResearchWorkspace(deals: selected, comparisonQuestion: question)
+                        }
+                        .accessibilityIdentifier("private.comparison.research")
+                    } else {
+                        Text("Sign in from Account to ask AI about these rounds.").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(selected) { deal in
+                    comparisonRow(deal)
+                }
+                if selected.count > 1, Set(selected.map(\.round.currency)).count > 1 {
+                    Text("Figures use their original currencies.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Compare Funding Rounds")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showPicker) { roundPicker(available) }
+        .task {
+            if deals == nil, catalog.isEmpty, error == nil { await load() }
+            if preselectRecentRounds, !configuredSelection {
+                selection = rounds.prefix(3).map(\.round.id)
+                configuredSelection = true
+            }
+        }
+    }
+
+    private func roundPicker(_ available: [PrivateDeal]) -> some View {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches = available.filter { deal in
+            query.isEmpty || "\(deal.company.name) \(deal.round.stage) \(deal.round.listing?.symbol ?? "")".localizedCaseInsensitiveContains(query)
+        }
+        return NavigationStack {
+            List {
+                Section("\(selection.count) of 3 selected") {
+                    if matches.isEmpty { Text("No published rounds match this search.").foregroundStyle(.secondary) }
+                    ForEach(matches) { deal in
+                        let isSelected = selection.contains(deal.round.id)
+                        Button {
+                            if isSelected { selection.removeAll { $0 == deal.round.id } }
+                            else if selection.count < 3 { selection.append(deal.round.id) }
+                        } label: {
+                            Label("\(deal.company.name) · \(deal.round.stage)", systemImage: isSelected ? "checkmark.circle.fill" : "circle")
+                        }
+                        .disabled(!isSelected && selection.count == 3)
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                        .accessibilityIdentifier("private.comparison.round.\(deal.round.id.uuidString)")
+                    }
+                }
+            }
+            .navigationTitle("Choose Rounds")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $search, prompt: "Company or round")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showPicker = false }
+                        .accessibilityIdentifier("private.comparison.done")
+                }
+            }
+        }
+    }
+
+    private func comparisonRow(_ deal: PrivateDeal) -> some View {
+        let round = deal.round
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            Text("\(deal.company.name) · \(round.stage)").font(.headline)
+            if let date = round.announcedOn {
+                LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+            }
+            LabeledContent("Round status", value: deal.displayedStatus)
+            LabeledContent("Capital raised", value: round.raised.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
+            LabeledContent("Reported valuation", value: round.valuation.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
+            LabeledContent("Valuation basis", value: round.valuationMethod ?? "Undisclosed")
+            if round.shareClasses.isEmpty { LabeledContent("Share class and rights", value: "Undisclosed") }
+            else {
+                ForEach(Array(round.shareClasses.enumerated()), id: \.offset) { _, share in
+                    Text(share.name).font(.subheadline.weight(.semibold))
+                    Text(share.rights).font(.footnote)
+                    if share.sourceUrl.privateSourceIsSafe { Link("Read share-class source", destination: share.sourceUrl) }
+                }
+            }
+            if round.sourceUrl.privateSourceIsSafe { Link("Read round source", destination: round.sourceUrl) }
+            Button("Remove \(deal.company.name) \(round.stage) from comparison", role: .destructive) {
+                selection.removeAll { $0 == round.id }
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, DS.Space.xs)
+    }
+
+    private static func amount(_ amount: Decimal, currency: String) -> String {
+        "\(currency) \(amount.formatted(.number.precision(.fractionLength(0...4))))"
+    }
+
+    private func load() async {
+        loading = true
+        error = nil
+        defer { loading = false }
+        do {
+            let published: PrivateMarketsAPI.Catalog = try await PrivateMarketsAPI.request("catalog")
+            try Task.checkCancellation()
+            catalog = published.deals
+        } catch is CancellationError {
+        } catch { self.error = error.localizedDescription }
     }
 }
 
