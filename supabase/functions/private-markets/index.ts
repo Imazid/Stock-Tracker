@@ -6,7 +6,10 @@ import { buildResearch, type Evidence, ResearchError } from "../_shared/private-
 import { currentStatus, type Discoverable, interpretDiscovery, matchDiscovery } from "../_shared/private-markets/discovery.ts";
 import { ApnsSender, pushEnvironment, type PushEnvironment, validDeviceToken } from "../_shared/private-markets/apns.ts";
 import { advancellCompany, type IssuerNotice, IssuerNewsError, readIssuerNews } from "../_shared/private-markets/issuer-news.ts";
-import { announcementRevision, changedSourceIds, fundingRoundRevision } from "../_shared/private-markets/source-revisions.ts";
+import {
+  announcementBaseline, announcementRevision, changedSourceIds, comparePublishedSources, fundingRoundBaseline,
+  fundingRoundRevision, type SourceBaseline, sourceChangeEvidence,
+} from "../_shared/private-markets/source-revisions.ts";
 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -164,7 +167,7 @@ type Announcement = {
 
 type ReportSource = { id: string; title: string; url?: string };
 type SourceReferences = { document_ids: string[]; opportunity_ids: string[]; announcement_ids: string[]; company_ids: string[];
-  revisions?: Record<string, string> };
+  revisions?: Record<string, string>; baselines?: Record<string, SourceBaseline> };
 type StoredReport = { question: string; source_refs?: SourceReferences } & Record<string, unknown>;
 
 function publicReport({ source_refs, ...report }: StoredReport) {
@@ -234,6 +237,10 @@ async function researchRefresh(admin: ReturnType<typeof serviceClient>, userId: 
     changed_deal_ids: changedDeals,
     changed_announcement_ids: changedAnnouncements,
     revision_tracking_available: refs.revisions !== undefined,
+    source_changes: comparePublishedSources(refs.baselines, Object.fromEntries([
+      ...offers.data.map((item) => [item.id, fundingRoundBaseline(item)] as const),
+      ...notices.data.map((item) => [item.id, announcementBaseline(item)] as const),
+    ])),
   };
 }
 
@@ -277,8 +284,10 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
     const revisions = Object.fromEntries(await Promise.all(job.sources.map(async (source) => [source.id,
       await announcementRevision({ company_name: source.company, title: source.title, significance: source.summary,
         published_at: source.published_at, source_url: source.url })])));
+    const baselines = Object.fromEntries(job.sources.map((source) => [source.id,
+      announcementBaseline({ company_name: source.company, title: source.title, significance: source.summary })]));
     const source_refs: SourceReferences = { document_ids: [], opportunity_ids: [], announcement_ids: announcementIds,
-      company_ids: [...new Set(current.map((item) => item.company_id as string))], revisions };
+      company_ids: [...new Set(current.map((item) => item.company_id as string))], revisions, baselines };
     const payload = { ...report, id: job.job_id, sources, source_refs, question, created_at: new Date().toISOString() };
     const sealed = await seal(keyring, JSON.stringify(payload), context("report", job.owner_id, job.job_id));
     const result = await admin.rpc("finish_private_market_digest", {
@@ -703,10 +712,9 @@ Deno.serve(async (req) => {
         const sources: ReportSource[] = [];
         const companyIds = new Set<string>();
         const revisions: Record<string, string> = {};
-        if (typeof previousId === "string") {
-          const { report } = await savedReport(admin, userId, previousId.toLowerCase());
-          reportSourceReferences(report);
-        }
+        const baselines: Record<string, SourceBaseline> = {};
+        const previous = typeof previousId === "string"
+          ? reportSourceReferences((await savedReport(admin, userId, previousId.toLowerCase())).report) : undefined;
         if (ids.length) {
           const { data, error } = await admin.from("deal_documents").select("id,title,sealed")
             .eq("user_id", userId).in("id", ids);
@@ -728,6 +736,7 @@ Deno.serve(async (req) => {
           const financialIssuers = new Set<string>();
           for (const deal of data) {
             revisions[deal.id] = await fundingRoundRevision(deal);
+            baselines[deal.id] = fundingRoundBaseline(deal);
             companyIds.add(deal.round.company.id);
             const id = `O${sources.length + 1}`;
             const company = deal.round.company.name;
@@ -771,12 +780,20 @@ Deno.serve(async (req) => {
           if (data.length !== announcementIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published announcements are unavailable.");
           for (const item of data) {
             revisions[item.id] = await announcementRevision(item);
+            baselines[item.id] = announcementBaseline(item);
             companyIds.add(item.company_id);
             const id = `O${sources.length + 1}`;
             const entry = announcementEvidence(item, id);
             evidence.push(entry);
             sources.push({ id, title: entry.title, url: item.source_url });
           }
+        }
+        const changes = sourceChangeEvidence(comparePublishedSources(previous?.baselines, baselines));
+        if (changes) {
+          const id = `O${sources.length + 1}`;
+          const title = "Published changes since previous report";
+          evidence.push({ id, title, text: changes });
+          sources.push({ id, title });
         }
         const runId = crypto.randomUUID();
         const run = await admin.from("agent_analysis_runs").insert({ id: runId, user_id: userId, status: "running" });
@@ -787,10 +804,10 @@ Deno.serve(async (req) => {
             const deps = aiDependencies(admin, ids.length && approvedProvider ? documentProvider : undefined);
             if (mode === "committee") deps.config.timeoutMs = 22_000;
             const researchQuestion = typeof previousId === "string" ?
-              `${question.trim()}\nFor this update, identify changes supported by the selected sources, including any changes to financial assumptions. State when the evidence does not establish what changed.` : question;
+              `${question.trim()}\nFor this update, distinguish published changes from new disclosures. Cite the comparison source when it supports a change. State when the evidence does not establish what changed.` : question;
             const report = await buildResearch(userId, researchQuestion, evidence, mode, deps);
             const source_refs: SourceReferences = { document_ids: ids, opportunity_ids: dealIDs,
-              announcement_ids: announcementIDs, company_ids: [...companyIds], revisions };
+              announcement_ids: announcementIDs, company_ids: [...companyIds], revisions, baselines };
             const payload = { ...report, id: runId, sources, source_refs, question,
               previous_report_id: typeof previousId === "string" ? previousId.toLowerCase() : undefined,
               created_at: new Date().toISOString() };

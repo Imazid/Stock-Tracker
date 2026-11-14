@@ -36,3 +36,62 @@ export async function changedSourceIds<T extends { id: string }>(
     Object.hasOwn(saved, item.id) && saved[item.id] !== await revision(item) ? item.id : null));
   return changes.filter((id): id is string => id !== null);
 }
+
+type PublishedRoundTerms = {
+  stage: string; currency: string; raised: number | null; target: number | null;
+  valuation: number | null; valuation_method: string | null; closes_at: string | null;
+};
+
+export type SourceBaseline = { title: string; fields: Record<string, string | null> };
+export type SourceChange = {
+  source_id: string;
+  title: string;
+  fields: { field: string; previous: string | null; current: string | null }[];
+};
+
+export function fundingRoundBaseline(deal: { round: PublishedRoundTerms & { company: { name: string } };
+  status: string; minimum: number | null; eligibility: string; jurisdictions: string[] }): SourceBaseline {
+  const { round } = deal;
+  const money = (value: number | null) => value === null ? null : `${round.currency} ${value}`;
+  return {
+    title: `${round.company.name} · ${round.stage}`,
+    fields: {
+      "Stage": round.stage,
+      "Disclosed valuation": money(round.valuation),
+      "Valuation basis": round.valuation_method,
+      "Capital raised": money(round.raised),
+      "Raise target": money(round.target),
+      "Minimum investment": money(deal.minimum),
+      "Published status": deal.status,
+      "Published deadline": round.closes_at ? new Date(round.closes_at).toISOString() : null,
+      "Eligibility": deal.eligibility,
+      "Jurisdictions": [...deal.jurisdictions].sort().join(", ") || null,
+    },
+  };
+}
+
+export function announcementBaseline(item: { company_name: string; title: string; significance: string }): SourceBaseline {
+  return { title: `${item.company_name} · ${item.title}`,
+    fields: { "Headline": item.title, "Published summary": item.significance.slice(0, 1_600) } };
+}
+
+export function comparePublishedSources(previous: Record<string, SourceBaseline> | undefined,
+  current: Record<string, SourceBaseline>): SourceChange[] {
+  if (!previous) return [];
+  return Object.entries(current).flatMap(([source_id, source]) => {
+    if (!Object.hasOwn(previous, source_id)) return [];
+    const fields = Object.entries(source.fields).flatMap(([field, value]) => {
+      const earlier = previous[source_id].fields;
+      if (!Object.hasOwn(earlier, field) || earlier[field] === value) return [];
+      return [{ field, previous: earlier[field], current: value }];
+    });
+    return fields.length ? [{ source_id, title: source.title, fields }] : [];
+  });
+}
+
+export function sourceChangeEvidence(changes: SourceChange[]): string {
+  return changes.flatMap(({ title, fields }) => fields.map(({ field, previous, current }) => {
+    const excerpt = (value: string | null) => (value ?? "Undisclosed").replace(/\s+/g, " ").slice(0, 70);
+    return `${title.replace(/\s+/g, " ").slice(0, 35)} · ${field}: previously ${excerpt(previous)}; currently ${excerpt(current)}.`;
+  })).slice(0, 15).join("\n");
+}

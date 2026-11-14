@@ -813,6 +813,14 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let question = app.descendants(matching: .any)["private.research.question"].firstMatch
         XCTAssertTrue(question.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(question.value as? String, "Review earlier financing assumptions")
+        if ProcessInfo.processInfo.environment["PRIVATE_REPORT_SOURCE_DIFF_TEST"] == "1" {
+            let changed = app.descendants(matching: .any)["private.research.sourceChange.Disclosed valuation"].firstMatch
+            for _ in 0..<3 where !changed.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(changed.isHittable, app.debugDescription)
+            changed.tap()
+            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "AUD 150000000")).firstMatch.exists)
+            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "AUD 175000000")).firstMatch.exists)
+        }
         let original = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Series B")).firstMatch
         let newer = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Financing assumption update")).firstMatch
         for _ in 0..<3 where !newer.exists { app.swipeUp() }

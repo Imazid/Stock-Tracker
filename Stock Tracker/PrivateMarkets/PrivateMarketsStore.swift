@@ -216,6 +216,18 @@ struct PrivateResearchReport: Decodable {
 }
 
 struct PrivateResearchRefresh: Decodable {
+    struct SourceChange: Decodable, Identifiable {
+        struct Field: Decodable, Identifiable {
+            var id: String { field }
+            let field: String
+            let previous: String?
+            let current: String?
+        }
+        var id: UUID { sourceId }
+        let sourceId: UUID
+        let title: String
+        let fields: [Field]
+    }
     let question: String
     let unavailableSources: Int
     let documents: [PrivateSavedItem]
@@ -225,6 +237,7 @@ struct PrivateResearchRefresh: Decodable {
     let changedDealIds: [UUID]?
     let changedAnnouncementIds: [UUID]?
     let revisionTrackingAvailable: Bool?
+    let sourceChanges: [SourceChange]?
 }
 
 struct PrivateCompanyUpdate: Decodable, Identifiable {

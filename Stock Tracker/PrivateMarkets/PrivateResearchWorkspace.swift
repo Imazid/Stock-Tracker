@@ -56,6 +56,22 @@ struct PrivateResearchWorkspace: View {
                 if refresh?.revisionTrackingAvailable == false {
                     Section { Text("This report was saved before source revision tracking. Review the current sources for changes.") }
                 }
+                if let changes = refresh?.sourceChanges, !changes.isEmpty {
+                    Section("What changed") {
+                        ForEach(changes) { change in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(change.title).font(.headline)
+                                ForEach(change.fields) { field in
+                                    DisclosureGroup(field.field) {
+                                        LabeledContent("Previous", value: field.previous ?? "Undisclosed")
+                                        LabeledContent("Current", value: field.current ?? "Undisclosed")
+                                    }
+                                    .accessibilityIdentifier("private.research.sourceChange.\(field.field)")
+                                }
+                            }
+                        }
+                    }
+                }
                 if refresh != nil, deals.isEmpty, announcements.isEmpty, documents.isEmpty,
                    refresh?.newerAnnouncements.isEmpty == true {
                     Section { Text("No sources are available for this report. Choose new evidence in AI Investment Research.") }
