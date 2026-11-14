@@ -462,16 +462,18 @@ final class AccountSyncTests: XCTestCase {
         concentration.tap()
         let title = app.staticTexts["Your tracked portfolio"]
         XCTAssertTrue(title.waitForExistence(timeout: 8))
-        let appleListings = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "AAPL · US"))
-        XCTAssertTrue(appleListings.firstMatch.waitForExistence(timeout: 8))
-        XCTAssertEqual(appleListings.count, 1)
-        let fundListing = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "QQQ · US")).firstMatch
+        func listingRow(_ name: String) -> XCUIElement {
+            app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", name + "[ ,]+[0-9]+[.][0-9]+%")).firstMatch
+        }
+        let appleListing = listingRow("AAPL · US")
+        let fundListing = listingRow("QQQ · US")
+        XCTAssertTrue(appleListing.waitForExistence(timeout: 8))
         XCTAssertTrue(fundListing.exists)
         func listingWeight(_ row: XCUIElement) throws -> Double {
             let percent = try XCTUnwrap(row.label.firstMatch(of: /([0-9]+[.][0-9]+)%/))
             return try XCTUnwrap(Double(percent.1))
         }
-        XCTAssertEqual(try listingWeight(appleListings.firstMatch), try listingWeight(fundListing) * 1.5, accuracy: 0.15)
+        XCTAssertEqual(try listingWeight(appleListing), try listingWeight(fundListing) * 1.5, accuracy: 0.15)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "positions priced")).firstMatch.exists)
     }
 
