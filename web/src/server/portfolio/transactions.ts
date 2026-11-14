@@ -1,4 +1,5 @@
 import type { serverSupabase } from "@/lib/supabase/server";
+import type { FractionalShareCash } from "../../lib/portfolio-splits.ts";
 import type { Reinvestment } from "../../lib/portfolio-reinvestments.ts";
 
 export type TradeProvenance = {
@@ -21,6 +22,7 @@ export type TransactionRow = {
   fees: number;
   trade_provenance?: TradeProvenance | null;
   reinvestment?: Reinvestment;
+  fractionalCash?: FractionalShareCash;
   portfolio_holdings: {
     asset_symbol: string;
     asset_exchange: string | null;

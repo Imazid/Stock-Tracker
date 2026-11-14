@@ -153,3 +153,41 @@ test("labels lots from archived holdings separately once the report reaches the 
   assert.equal(calculateLots([purchase], undefined, "2026-07-02")[0].kind, "Archived holding lot");
   assert.equal(calculateLots([purchase])[0].kind, "Archived holding lot");
 });
+
+test("cash in lieu removes post-split shares immediately and recognises statement proceeds on the payment date", () => {
+  const adjustment = { ...split("adjustment", "2026-07-01", 1, 2), fraction_shares: "0.5",
+    fraction_paid_on: "2026-07-04", fraction_currency: "AUD", fraction_proceeds: "61", fraction_fees: "1", fraction_net_usd: "40" };
+  const purchase = { ...trade("purchase", "2026-06-25T00:00:00Z", "Buy", 3, 20, 3),
+    trade_provenance: { source: "manual_trade" as const, currency: "AUD", unitPrice: 30, fees: 4.5 } };
+  const prior = calculateLots([purchase], undefined, "2026-07-02", new Map([["purchase", "1"]]), [adjustment]);
+  const open = prior.find((row) => row.kind === "Open lot");
+  assert.ok(open && "transaction" in open);
+  assert.equal(lotNumber(open.units, UNIT_DECIMALS), "1");
+  assert.equal(open.purchaseCost, 4000n);
+  assert.ok(prior.some((row) => "transaction" in row && row.transaction.fractionalCash && row.saleProceeds === undefined));
+
+  const laterSale = trade("sell", "2026-07-02T00:00:00Z", "Sell", 1, 70);
+  const rows = calculateLots([purchase, laterSale], undefined, "2026-07-05", new Map([["purchase", "1"], ["adjustment", "1"]]), [adjustment]);
+  const payment = rows.find((row) => "transaction" in row && row.transaction.fractionalCash);
+  const sale = rows.find((row) => "transaction" in row && row.transaction.id === "sell");
+  assert.ok(payment && "transaction" in payment && sale && "transaction" in sale);
+  assert.deepEqual([payment.purchaseCost, payment.purchaseFee, payment.saleProceeds, payment.saleFee, payment.result],
+    [2000n, 100n, 4000n, 0n, 1900n]);
+  assert.deepEqual(payment.aud, { purchaseCost: 3000n, purchaseFee: 150n, saleProceeds: 6100n, saleFee: 100n, result: 2850n });
+  assert.equal(sale.result, 2800n);
+  assert.equal(rows.filter((row) => row.kind === "Open lot").length, 0);
+});
+
+test("fractional cash adds no USD estimate for unavailable statement FX and refuses inconsistent units", () => {
+  const adjustment = { ...split("adjustment", "2026-07-01", 1, 2), fraction_shares: "0.75",
+    fraction_paid_on: "2026-07-04", fraction_currency: "AUD", fraction_proceeds: "25", fraction_fees: "0", fraction_net_usd: null };
+  const purchase = trade("purchase", "2026-06-25T00:00:00Z", "Buy", 1, 30);
+  const inconsistent = calculateLots([purchase], undefined, undefined, undefined, [adjustment]);
+  assert.deepEqual(inconsistent.map((row) => row.kind), ["Reverse stock split", "Unmatched sale"]);
+  const matched = calculateLots([purchase], undefined, undefined, new Map([["adjustment", "1"]]), [{ ...adjustment, fraction_shares: "0.5" }]);
+  const payment = matched[1];
+  assert.ok("transaction" in payment);
+  assert.equal(payment.saleProceeds, undefined);
+  assert.equal(payment.aud?.saleProceeds, 2500n);
+  assert.equal(payment.result, undefined);
+});

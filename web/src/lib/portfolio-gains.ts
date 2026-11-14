@@ -10,6 +10,7 @@ export type PortfolioGains = {
   sales: number;
   matchedSales: number;
   partialSales: number;
+  fractionalPayments?: number;
   feesUsd: number | null;
   tradeRecords: number;
   feeRecords: number;

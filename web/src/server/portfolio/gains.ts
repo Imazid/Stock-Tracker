@@ -1,3 +1,4 @@
+import { fractionalShareCash } from "../../lib/portfolio-splits.ts";
 import type { OpenCost, PortfolioGains } from "../../lib/portfolio-gains.ts";
 import { calculateLots, ledgerFeeCents, lotNumber, UNIT_DECIMALS, sydneyDate } from "./lots.ts";
 import type { readLotLedger } from "./lot-ledger.ts";
@@ -8,7 +9,12 @@ export function portfolioGains(owner: string, asOf: string, { transactions, spli
   const trades = transactions.filter((trade) => trade.reinvestment ? trade.reinvestment.acquired_on <= day
     : !Number.isFinite(Date.parse(trade.transaction_date)) || Date.parse(trade.transaction_date) <= through);
   const rows = calculateLots(trades, undefined, day, undefined, splits, transfers);
+  const fractionalIds = new Set(splits.filter((split) => {
+    const cash = fractionalShareCash(split);
+    return cash && cash.fraction_paid_on <= day;
+  }).map((split) => split.id));
   const sales = new Map<string, { matched: boolean; missing: boolean }>();
+  for (const id of fractionalIds) sales.set(id, { matched: false, missing: false });
   let realised = 0n;
   let matchedRows = 0;
   let fees = 0n;
@@ -72,7 +78,7 @@ export function portfolioGains(owner: string, asOf: string, { transactions, spli
   } satisfies OpenCost]));
   return {
     owner, asOf, realisedUsd: matchedRows ? Number(lotNumber(realised, 2)) : null,
-    sales: sales.size, matchedSales, partialSales, feesUsd: feeRecords ? Number(lotNumber(fees, 2)) : null,
+    sales: sales.size, matchedSales, partialSales, fractionalPayments: fractionalIds.size, feesUsd: feeRecords ? Number(lotNumber(fees, 2)) : null,
     tradeRecords, feeRecords, archivedLots: archived.size, pendingTransfers, open,
   };
 }

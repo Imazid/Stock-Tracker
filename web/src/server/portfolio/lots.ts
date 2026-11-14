@@ -1,5 +1,5 @@
 import type { TransactionRow } from "./transactions.ts";
-import type { StockSplit } from "../../lib/portfolio-splits.ts";
+import { fractionalShareCash, type StockSplit } from "../../lib/portfolio-splits.ts";
 import { matchesReceivingSnapshot, sameListedStock, sydneyDate, type StockTransfer } from "../../lib/portfolio-transfers.ts";
 import { lotUnits as scaled, UNIT_SCALE } from "../../lib/lot-numbers.ts";
 
@@ -60,6 +60,12 @@ function roundedDivide(numerator: bigint, denominator: bigint) {
 
 function audAmounts(transaction: TransactionRow, units: bigint, rate: bigint | undefined): Amounts {
   if (!rate) return {};
+  if (transaction.fractionalCash) {
+    const gross = scaled(transaction.fractionalCash.fraction_proceeds)!;
+    const fees = scaled(transaction.fractionalCash.fraction_fees)!;
+    return { gross: roundedDivide(gross * rate * 100n, UNIT_SCALE ** 2n),
+      fee: roundedDivide(fees * rate * 100n, UNIT_SCALE ** 2n) };
+  }
   if (transaction.reinvestment) {
     const basis = scaled(transaction.reinvestment.reinvested_amount);
     return { gross: basis === undefined ? undefined : roundedDivide(basis * rate * 100n, UNIT_SCALE ** 2n), fee: 0n };
@@ -163,11 +169,13 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     while (nextSplit < datedSplits.length && datedSplits[nextSplit].effective_date <= through) {
       const split = datedSplits[nextSplit++];
       const factor = factors.get(split.holding_id) ?? 1n;
-      factors.set(split.holding_id, factor / BigInt(split.new_shares) * BigInt(split.old_shares));
+      const postSplitFactor = factor / BigInt(split.new_shares) * BigInt(split.old_shares);
+      factors.set(split.holding_id, postSplitFactor);
       rows.push({
         kind: split.new_shares > split.old_shares ? "Stock split" : "Reverse stock split",
         split, note: "Statement adjustment effective before trades dated that day.",
       });
+      applyFractionalCash(split, postSplitFactor);
     }
   }
   const transferDays = new Map<string, { arrivals: StockTransfer[]; departures: StockTransfer[] }>();
@@ -193,6 +201,66 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     const holding = holdings.get(id) ?? { lots: [], next: 0, invalid: false };
     holdings.set(id, holding);
     return holding;
+  }
+
+  function applyFractionalCash(split: StockSplit, factor: bigint) {
+    const cash = fractionalShareCash(split);
+    if (!cash) return;
+    const holding = holdingFor(split.holding_id);
+    const transaction: TransactionRow = {
+      id: split.id, holding_id: split.holding_id, transaction_date: "",
+      type: "Sell", shares: cash.fraction_shares, price_per_share: 0, fees: 0, fractionalCash: cash,
+      portfolio_holdings: split.portfolio_holdings && { ...split.portfolio_holdings, deleted_at: null },
+    };
+    const tradeUnits = scaled(cash.fraction_shares);
+    const paid = !end || cash.fraction_paid_on <= end;
+    const visible = paid && (!start || cash.fraction_paid_on >= start);
+    let remaining = (tradeUnits ?? 0n) * factor;
+    let displayedRemaining = tradeUnits ?? 0n;
+    const available = holding.lots.slice(holding.next).reduce((sum, lot) => sum + lot.units, 0n);
+    if (holding.invalid || !tradeUnits || available < remaining) {
+      holding.invalid = true;
+      if (visible || (!paid && (!start || split.effective_date >= start))) {
+        rows.push({ kind: "Unmatched sale", transaction, units: tradeUnits,
+          note: "The fractional units could not be matched against pre-split lots. Check the earlier acquisitions and statement quantity." });
+      }
+      return;
+    }
+    const net = scaled(cash.fraction_net_usd);
+    const gross = scaled(cash.fraction_proceeds)!;
+    const fees = scaled(cash.fraction_fees)!;
+    const asCents = (amount: bigint) => roundedDivide(amount * 100n, UNIT_SCALE);
+    const usd: Amounts = !paid ? {} : cash.fraction_currency === "USD"
+      ? { gross: asCents(gross), fee: asCents(fees) }
+      : net === undefined ? {} : { gross: asCents(net), fee: 0n };
+    const aud = paid ? audAmounts(transaction, tradeUnits, scaled(audRates?.get(transaction.id))) : {};
+    while (remaining > 0n) {
+      const lot = holding.lots[holding.next];
+      const matched = remaining < lot.units ? remaining : lot.units;
+      const units = roundedDivide(matched * displayedRemaining, remaining);
+      const purchase = takeAmounts(lot.usd, matched, lot.units);
+      const sale = takeAmounts(usd, matched, remaining);
+      const audPurchase = takeAmounts(lot.aud, matched, lot.units);
+      const audSale = takeAmounts(aud, matched, remaining);
+      if (visible || (!paid && (!start || split.effective_date >= start))) {
+        const usdResult = result(purchase, sale);
+        rows.push({
+          kind: usdResult !== undefined ? "Sale match" : "Unmatched sale", transaction, purchase: lot.purchase, units,
+          transfers: lot.transfers,
+          purchaseCost: purchase.gross, purchaseFee: purchase.fee, saleProceeds: sale.gross, saleFee: sale.fee, result: usdResult,
+          aud: { purchaseCost: audPurchase.gross, purchaseFee: audPurchase.fee, saleProceeds: audSale.gross,
+            saleFee: audSale.fee, result: result(audPurchase, audSale) },
+          note: !paid ? "The fractional units were removed. Payment is after the report end."
+            : usdResult === undefined ? "Review the acquisition cost and the statement USD amount."
+            : cash.fraction_currency === "USD" ? "Statement payment for fractional shares. Review actual lot selection."
+            : "USD proceeds show the statement net amount. Original proceeds and fees are shown in the payment currency.",
+        });
+      }
+      remaining -= matched;
+      displayedRemaining -= units;
+      lot.units -= matched;
+      if (lot.units === 0n) holding.next++;
+    }
   }
 
   function flagTransfer(transfer: StockTransfer, note: string) {
