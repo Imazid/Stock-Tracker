@@ -106,10 +106,16 @@ export function CompanyFacts({ company }: { company: PrivateCompany }) {
 }
 
 function roundFigures(deal: PrivateDeal): [string, number | null][] {
-  return [
-    ["Raise target", deal.round.target], ["Reported raised", deal.round.raised],
-    ["Valuation", deal.round.valuation], ["Minimum investment", deal.minimum],
+  const { round } = deal;
+  const target: [string, number | null] = ["Raise target", round.target];
+  const otherTerms: [string, number | null][] = [
+    ["Valuation", round.valuation], ["Minimum investment", deal.minimum],
   ];
+  if (!round.financing_structure) return [target, ["Reported raised", round.raised], ...otherTerms];
+  const capital: [string, number | null] = round.financing_structure === "fund"
+    ? ["Capital commitments", round.capital_commitments ?? null]
+    : ["Capital raised through the vehicle", round.raised];
+  return [capital, ...[target, ...otherTerms].filter(([, value]) => value !== null)];
 }
 
 export function CompareRounds({ deals, asOf, onRemove }: { deals: PrivateDeal[]; asOf: number; onRemove?: (deal: PrivateDeal) => void }) {
@@ -174,10 +180,11 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
           ))}
         </dl>
         <p className="mt-3 flex flex-wrap gap-x-2 gap-y-1 text-xs text-text-2">
-          <span>{eligibility} eligibility</span>
+          <span>{round.financing_structure && deal.eligibility === "provider review" ? "Eligibility undisclosed" : `${eligibility} eligibility`}</span>
           <span aria-hidden>·</span>
           <span>{round.closes_at ? `Published deadline ${dateLabel(round.closes_at, "time")}` :
-            round.announced_on ? `Announced ${dateLabel(round.announced_on)}` : "Deadline undisclosed"}</span>
+            round.announced_on ? `Announced ${dateLabel(round.announced_on)}` :
+              round.financing_structure ? "Announcement date undisclosed" : "Deadline undisclosed"}</span>
           <span aria-hidden>·</span>
           <span>Verified {dateLabel(deal.verified_at, "time")}</span>
         </p>
@@ -209,12 +216,13 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
       {status === "open" && application}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-[13px] md:px-5">
         <div className="flex flex-wrap gap-x-4 gap-y-1">
-          <SourceLink url={deal.source_url}>{providerName(deal.provider)}</SourceLink>
+          <SourceLink url={deal.source_url}>{round.financing_structure ? "Published disclosure" : providerName(deal.provider)}</SourceLink>
           {deal.offer_document_url && <SourceLink url={deal.offer_document_url}>Offer document</SourceLink>}
         </div>
         <div className="flex flex-wrap gap-2">
           {onCompany && <Button size="sm" onClick={onCompany} aria-label={`Explore ${company.name}`}>Explore company</Button>}
-          <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>
+          {!round.financing_structure &&
+            <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>}
           <Button size="sm" aria-pressed={selected} aria-label={`Select ${company.name} ${round.stage} for research`}
             disabled={!selected && selectionFull} onClick={onSelect}>
             {selected ? "Selected" : "Select for research"}

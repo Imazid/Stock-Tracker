@@ -32,6 +32,24 @@ test("Private Markets renders sourced rounds and keeps research account-scoped",
     await capability.getByText("Audited financial statements", { exact: true }).first().waitFor();
     assert.match(await capability.getByRole("link", { name: "Financial disclosure" }).first().getAttribute("href"), /^https:\/\//);
 
+    const category = page.getByLabel("Category", { exact: true });
+    for (const [kind, name, value, host] of [
+      ["Venture fund", "Blackbird", "AUD 1,050,000,000", "www.blackbird.vc"],
+      ["Private equity", "Pacific Equity Partners", "AUD 3,200,000,000", "www.ocorian.com"],
+      ["Syndicate or SPV", "Secureframe", "Undisclosed", "www.angellist.com"],
+    ]) {
+      await category.selectOption(kind);
+      const historical = page.getByRole("article").filter({ has: page.getByRole("heading", { name, exact: true }) });
+      await historical.getByText("Closed", { exact: true }).waitFor();
+      await historical.getByText(value, { exact: true }).waitFor();
+      await historical.getByText(kind === "Syndicate or SPV" ? "Capital raised through the vehicle" : "Capital commitments",
+        { exact: true }).waitFor();
+      assert.equal(new URL(await historical.getByRole("link", { name: "Published disclosure" }).getAttribute("href")).hostname, host);
+      assert.equal(await historical.getByText("Valuation", { exact: true }).count(), 0);
+      assert.equal(await historical.getByRole("button", { name: "Model scenarios" }).count(), 0);
+      assert.equal(await historical.getByRole("button", { name: /provider application/i }).count(), 0);
+    }
+    await category.selectOption("");
     await page.getByLabel("Availability", { exact: true }).selectOption("closed");
     assert.equal(await capability.isVisible(), true);
     assert.equal(await page.getByRole("heading", { name: "ABC Commodities Limited", exact: true }).count(), 0);

@@ -608,8 +608,8 @@ private struct PrivateFundingRoundRow: View {
                 LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if let raised = deal.round.raised {
-                LabeledContent("Capital raised", value: PrivateInput.money(raised, currency: deal.round.currency))
+            if let capital = deal.round.reportedCapital {
+                LabeledContent(deal.round.capitalLabel, value: PrivateInput.money(capital, currency: deal.round.currency))
                     .font(.footnote.monospacedDigit())
             }
             if let valuation = deal.round.valuation {
@@ -657,7 +657,7 @@ private struct PrivateCompanyFundingHistory: View {
 
 struct PrivateRoundComparison: View {
     let deals: [PrivateDeal]?
-    static let defaultQuestion = "Compare the selected funding rounds qualitatively. Explain the reported valuation basis and any gaps in the financing, dilution and investor rights. Keep amounts in the source citations. Use the word reported or undisclosed for each company. Keep dates and amounts out of the text."
+    static let defaultQuestion = "Compare the selected funding rounds qualitatively. Explain their structures, reported financing and investor rights, and identify missing terms. Apply valuation and dilution concepts where relevant. Keep dates and amounts in the source citations. Use the word reported or undisclosed for each company."
     var question = PrivateRoundComparison.defaultQuestion
     var preselectRecentRounds = false
     @EnvironmentObject private var auth: SupabaseAuthManager
@@ -762,10 +762,14 @@ struct PrivateRoundComparison: View {
                 LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
             }
             LabeledContent("Round status", value: deal.displayedStatus)
-            LabeledContent("Capital raised", value: round.raised.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
-            LabeledContent("Reported valuation", value: round.valuation.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
-            LabeledContent("Valuation basis", value: round.valuationMethod ?? "Undisclosed")
-            if round.shareClasses.isEmpty { LabeledContent("Share class and rights", value: "Undisclosed") }
+            LabeledContent(round.capitalLabel, value: round.reportedCapital.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
+            if round.financingStructure == nil || round.valuation != nil {
+                LabeledContent("Reported valuation", value: round.valuation.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
+                LabeledContent("Valuation basis", value: round.valuationMethod ?? "Undisclosed")
+            }
+            if round.shareClasses.isEmpty {
+                LabeledContent(round.financingStructure == nil ? "Share class and rights" : "Investor rights", value: "Undisclosed")
+            }
             else {
                 ForEach(Array(round.shareClasses.enumerated()), id: \.offset) { _, share in
                     Text(share.name).font(.subheadline.weight(.semibold))
@@ -876,9 +880,13 @@ struct PrivateDealDetail: View {
                         ? "Undisclosed" : deal.jurisdictions.map { Locale.current.localizedString(forRegionCode: $0) ?? $0 }.joined(separator: ", "))
                     LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
                 }
-                LabeledContent("Raise target", value: PrivateInput.money(deal.round.target, currency: deal.round.currency))
-                LabeledContent("Capital raised", value: PrivateInput.money(deal.round.raised, currency: deal.round.currency))
-                LabeledContent("Valuation", value: PrivateInput.money(deal.round.valuation, currency: deal.round.currency))
+                if deal.round.financingStructure == nil || deal.round.target != nil {
+                    LabeledContent("Raise target", value: PrivateInput.money(deal.round.target, currency: deal.round.currency))
+                }
+                LabeledContent(deal.round.capitalLabel, value: PrivateInput.money(deal.round.reportedCapital, currency: deal.round.currency))
+                if deal.round.financingStructure == nil || deal.round.valuation != nil {
+                    LabeledContent("Valuation", value: PrivateInput.money(deal.round.valuation, currency: deal.round.currency))
+                }
                 if let method = deal.round.valuationMethod { LabeledContent("Valuation basis", value: method) }
                 if let traction = deal.round.traction { LabeledContent("Traction", value: traction) }
                 if let deadline = deal.round.closesAt { LabeledContent("Deadline", value: deadline.formatted(date: .abbreviated, time: .shortened)) }
@@ -917,8 +925,10 @@ struct PrivateDealDetail: View {
             }
             Section("Research & applications") {
                 NavigationLink("Research this opportunity") { PrivateResearchWorkspace(deals: [deal], selectedDealID: deal.id) }
-                NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
-                    .accessibilityIdentifier("private.deal.scenarios")
+                if deal.round.financingStructure == nil {
+                    NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
+                        .accessibilityIdentifier("private.deal.scenarios")
+                }
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     if deal.displayedStatus(at: context.date) == "Open at verification", auth.userId != nil,
                        deal.offerDocumentUrl?.privateSourceIsSafe == true {

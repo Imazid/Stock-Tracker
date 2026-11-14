@@ -15,10 +15,31 @@ Deno.test("funding revisions detect corrected terms and ignore verification-only
   const corrected = { ...reverified, round: { ...reverified.round, valuation: 175 } };
   const revision = await fundingRoundRevision(original);
   assertEquals(await fundingRoundRevision(reverified), revision);
+  assertEquals(await fundingRoundRevision({ ...original, round: {
+    ...original.round, financing_structure: null, capital_commitments: null,
+  } }), revision);
   assertNotEquals(await fundingRoundRevision(corrected), revision);
   assertEquals(await changedSourceIds([corrected], { round: revision }, fundingRoundRevision), ["round"]);
   assertEquals(await changedSourceIds([], { round: revision }, fundingRoundRevision), []);
   assertEquals(await changedSourceIds([corrected], undefined, fundingRoundRevision), []);
+});
+
+Deno.test("fund commitment corrections stay distinct from equity pricing in source baselines", async () => {
+  const original = {
+    id: "fund", status: "closed", minimum: null, eligibility: "provider review", jurisdictions: [],
+    round: { stage: "Fund VII", currency: "AUD", valuation: null, valuation_method: null, raised: null,
+      target: null, closes_at: null, company: { name: "Manager" }, share_classes: [],
+      financing_structure: "fund" as const, capital_commitments: 1_000 },
+  };
+  const corrected = { ...original, round: { ...original.round, capital_commitments: 1_200 } };
+  assertNotEquals(await fundingRoundRevision(original), await fundingRoundRevision(corrected));
+  const saved = fundingRoundBaseline(original);
+  assertEquals(saved.fields["Disclosed valuation"], null);
+  assertEquals(saved.fields["Capital raised"], null);
+  assertEquals(comparePublishedSources({ fund: saved }, { fund: fundingRoundBaseline(corrected) }), [{
+    source_id: "fund", title: "Manager · Fund VII",
+    fields: [{ field: "Capital commitments", previous: "AUD 1000", current: "AUD 1200" }],
+  }]);
 });
 
 Deno.test("saved public baselines compare changed terms while excluding missing and unselected sources", () => {

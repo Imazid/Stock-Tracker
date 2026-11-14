@@ -19,6 +19,7 @@ export type PrivateDeal = {
   eligibility: string; jurisdictions: string[]; source_url: string; offer_document_url: string | null; verified_at: string;
   round: {
     id: string; stage: string; raised: number | null; target: number | null; valuation: number | null;
+    financing_structure?: "fund" | "spv" | null; capital_commitments?: number | null;
     valuation_method: string | null; currency: string; announced_on: string | null; closes_at: string | null;
     source_url: string; verified_at: string; traction: string | null;
     company: PrivateCompany;

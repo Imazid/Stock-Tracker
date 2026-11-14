@@ -17,7 +17,11 @@ export function announcementRevision(item: {
   return sourceRevision([item.company_name, item.title, item.significance, Date.parse(item.published_at), item.source_url]);
 }
 
-export function fundingRoundRevision<T extends { round: { share_classes: { name: string; rights: string; source_url?: string }[] } }>(
+export function fundingRoundRevision<T extends { round: {
+  share_classes: { name: string; rights: string; source_url?: string }[];
+  financing_structure?: string | null;
+  capital_commitments?: number | null;
+} }>(
   deal: T,
 ): Promise<string> {
   const shareClasses = deal.round.share_classes.toSorted((a, b) => {
@@ -25,7 +29,13 @@ export function fundingRoundRevision<T extends { round: { share_classes: { name:
     const right = JSON.stringify([b.name, b.rights, b.source_url]);
     return left < right ? -1 : left > right ? 1 : 0;
   });
-  return sourceRevision({ ...deal, round: { ...deal.round, share_classes: shareClasses } });
+  const { financing_structure, capital_commitments, ...round } = deal.round;
+  // Keep hashes comparable with reports saved before these fields were present.
+  return sourceRevision({
+    ...deal,
+    round: { ...round, share_classes: shareClasses, financing_structure: financing_structure ?? undefined,
+      capital_commitments: capital_commitments ?? undefined },
+  });
 }
 
 export async function changedSourceIds<T extends { id: string }>(
@@ -40,6 +50,7 @@ export async function changedSourceIds<T extends { id: string }>(
 type PublishedRoundTerms = {
   stage: string; currency: string; raised: number | null; target: number | null;
   valuation: number | null; valuation_method: string | null; closes_at: string | null;
+  financing_structure?: "fund" | "spv" | null; capital_commitments?: number | null;
 };
 
 export type SourceBaseline = { title: string; fields: Record<string, string | null> };
@@ -57,9 +68,12 @@ export function fundingRoundBaseline(deal: { round: PublishedRoundTerms & { comp
     title: `${round.company.name} · ${round.stage}`,
     fields: {
       "Stage": round.stage,
+      "Financing structure": round.financing_structure === "fund" ? "Fund"
+        : round.financing_structure === "spv" ? "Special-purpose vehicle" : null,
       "Disclosed valuation": money(round.valuation),
       "Valuation basis": round.valuation_method,
       "Capital raised": money(round.raised),
+      "Capital commitments": money(round.capital_commitments ?? null),
       "Raise target": money(round.target),
       "Minimum investment": money(deal.minimum),
       "Published status": deal.status,

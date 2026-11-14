@@ -71,6 +71,8 @@ struct PrivateDeal: Codable, Identifiable {
         let financials: [Financials]?
     }
     struct Round: Codable {
+        enum FinancingStructure: String, Codable { case fund, spv }
+
         struct Listing: Codable {
             enum QuotationStatus: String, Codable {
                 case proposed, anticipated, listed, withdrawn
@@ -123,6 +125,8 @@ struct PrivateDeal: Codable, Identifiable {
         }
         let id: UUID
         let stage: String
+        let financingStructure: FinancingStructure?
+        let capitalCommitments: Decimal?
         let raised: Decimal?
         let target: Decimal?
         let valuation: Decimal?
@@ -136,6 +140,16 @@ struct PrivateDeal: Codable, Identifiable {
         let company: Company
         let shareClasses: [ShareClass]
         let listing: Listing?
+
+        var reportedCapital: Decimal? { financingStructure == .fund ? capitalCommitments : raised }
+
+        var capitalLabel: String {
+            switch financingStructure {
+            case .fund: "Capital commitments"
+            case .spv: "Capital raised through the vehicle"
+            case nil: "Capital raised"
+            }
+        }
     }
     let id: UUID
     let provider: String
@@ -151,6 +165,7 @@ struct PrivateDeal: Codable, Identifiable {
 
     var company: Company { round.company }
     var sourceName: String {
+        if round.financingStructure != nil { return "Published disclosure" }
         if provider == "issuer" { return "Company announcement" }
         return PrivateProvider.directory.first { $0.id == provider }?.name ?? provider
     }

@@ -1094,6 +1094,30 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoricalFundDisplaysCommitmentsAndItsPublishedSource() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
+                          "Run this test with the hosted Private Markets configuration.")
+        openPrivateMarkets()
+        app.buttons["private.destination.building.2"].tap()
+        let blackbird = app.buttons["private.explorer.company.8D0EDEAF-C9B8-41AE-AC04-590D7643BCC0"]
+        XCTAssertTrue(blackbird.waitForExistence(timeout: 20), app.debugDescription)
+        blackbird.tap()
+        let fund = app.buttons["private.funding.round.2026 early-stage and growth funds"]
+        XCTAssertTrue(fund.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(fund.label.contains("Closed"))
+        XCTAssertTrue(fund.label.contains("Capital commitments"))
+        XCTAssertTrue(fund.label.contains("1,050,000,000"))
+        XCTAssertFalse(fund.label.contains("Reported valuation"))
+        fund.tap()
+        let source = app.descendants(matching: .any)["Funding round source"].firstMatch
+        for _ in 0..<3 where !source.isHittable { app.swipeUp() }
+        XCTAssertTrue(source.isHittable, app.debugDescription)
+        XCTAssertTrue(app.buttons["Research this opportunity"].exists)
+        XCTAssertFalse(app.buttons["private.deal.scenarios"].exists)
+        XCTAssertFalse(app.buttons["private.deal.applicationReadiness"].exists)
+    }
+
+    @MainActor
     func testStartupExplorerShowsSourcedFinancialsAndSeparatesRecurringRevenue() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
                           "Run this test with the hosted Private Markets configuration.")
