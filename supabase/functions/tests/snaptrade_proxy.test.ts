@@ -521,10 +521,10 @@ Deno.test("portfolio cash reads signed investment balances once per identified a
     assertEquals(url.searchParams.get("userId"), `st-${USER}`);
     assertEquals(url.searchParams.get("userSecret"), "my-cash-secret");
     if (url.pathname === "/accounts/all") return json(200, { results: [
-      { ...account, id: ACCOUNT, sync_status: { positions: null, balances: newest } },
-      { ...account, id: OTHER, sync_status: { balances: oldest } },
+      { ...account, id: ACCOUNT, sync_status: { positions: null, balances: newest }, net_value: { amount: 4200.21, currency: "USD" } },
+      { ...account, id: OTHER, sync_status: { balances: oldest }, net_value: { amount: 9000, currency: "USD" } },
       { ...account, id: disabled, connection_id: OTHER, institution_account_id: null },
-      { ...account, id: failed, institution_account_id: null },
+      { ...account, id: failed, institution_account_id: null, net_value: { amount: 80, currency: "invalid" } },
       { ...account, id: paper, is_paper: true },
       { ...account, id: USER, status: "closed" },
       { kind: "deposit", id: "unrelated-deposit-account" },
@@ -551,15 +551,15 @@ Deno.test("portfolio cash reads signed investment balances once per identified a
   const result = await handleSnapTradeRequest(USER, request, deps);
   assertEquals(result.status, 200);
   assertEquals(result.body, { duplicatesSkipped: 1, accounts: [
-    { id: ACCOUNT, label: "Broker A ••••4321", paper: false, status: "available", syncedAt: "2023-11-14T10:00:00.000Z",
+    { id: ACCOUNT, label: "Broker A ••••4321", paper: false, status: "available", syncedAt: "2023-11-14T10:00:00.000Z", netValue: { amount: "4200.21", currency: "USD" },
       incomplete: true, balances: [
-        { currency: "AUD", amount: "0" }, { currency: "EUR", amount: null },
-        { currency: "GBP", amount: null }, { currency: "USD", amount: "-12.34" },
+        { currency: "AUD", amount: "0", buyingPower: "41" }, { currency: "EUR", amount: null, buyingPower: null },
+        { currency: "GBP", amount: null, buyingPower: "98" }, { currency: "USD", amount: "-12.34", buyingPower: "999999" },
       ] },
-    { id: disabled, label: "Broker B ••••4321", paper: false, status: "disconnected", syncedAt: null,
-      incomplete: false, balances: [{ currency: "USD", amount: "5" }] },
-    { id: failed, label: "Broker A ••••4321", paper: false, status: "unavailable", syncedAt: null, balances: [] },
-    { id: paper, label: "Broker A ••••4321", paper: true, status: "available", syncedAt: null, incomplete: false, balances: [] },
+    { id: disabled, label: "Broker B ••••4321", paper: false, status: "disconnected", syncedAt: null, netValue: null,
+      incomplete: false, balances: [{ currency: "USD", amount: "5", buyingPower: null }] },
+    { id: failed, label: "Broker A ••••4321", paper: false, status: "unavailable", syncedAt: null, netValue: null, balances: [] },
+    { id: paper, label: "Broker A ••••4321", paper: true, status: "available", syncedAt: null, netValue: null, incomplete: false, balances: [] },
   ] });
   assertEquals(calls.length, 6);
 });

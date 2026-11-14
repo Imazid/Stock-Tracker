@@ -1,31 +1,13 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { dateTime, money } from "@/lib/format";
-import { service } from "@/workspace/lib/backend";
-
-type CashAccount = {
-  id: string;
-  label: string;
-  paper: boolean;
-  status: "available" | "disconnected" | "unavailable";
-  syncedAt: string | null;
-  incomplete?: boolean;
-  balances: { currency: string; amount: string | null }[];
-};
+import { usePortfolioBrokerage } from "@/hooks/portfolio-brokerage";
 
 export function BrokerCash({ userId }: { userId: string }) {
   const [open, setOpen] = useState(false);
-  const cash = useQuery({
-    queryKey: ["portfolio-broker-cash", userId],
-    queryFn: () => service<{ accounts: CashAccount[]; duplicatesSkipped: number }>("brokerage", { operation: "portfolioCash" }),
-    enabled: open,
-    gcTime: 0,
-    staleTime: 60_000,
-    retry: false,
-  });
-  return <Card>
+  const cash = usePortfolioBrokerage(userId, open);
+  return <Card id="brokerage-balances">
     <CardHeader title="Brokerage cash" subtitle="Cash reported by each linked investment account in its original currency." />
     <div className="space-y-3 border-t border-border px-4 py-3">
       <div className="flex flex-wrap gap-2">
@@ -48,13 +30,16 @@ export function BrokerCash({ userId }: { userId: string }) {
               <p className="break-words text-sm font-semibold">{account.label}{account.paper ? " · Paper account" : ""}</p>
               <p className="text-xs text-text-3">
                 {account.status === "disconnected" && "Disconnected · "}
+                {account.status === "unavailable" && "Unavailable · "}
                 {account.syncedAt ? `Last balance sync ${dateTime(account.syncedAt)}` : "Balance sync time unavailable"}
               </p>
             </div>
+            {account.netValue && <p className="text-sm">Reported net value <strong className="tabular">{money(Number(account.netValue.amount), account.netValue.currency)}</strong></p>}
             {account.balances.length ? <dl className="space-y-1">
-              {account.balances.map(({ currency, amount }) => <div key={currency} className="flex flex-wrap justify-between gap-x-2 text-sm">
+              {account.balances.map(({ currency, amount, buyingPower }) => <div key={currency} className="flex flex-wrap justify-between gap-x-2 text-sm">
                 <dt>{currency}</dt>
-                <dd className="tabular">{amount === null ? "Unavailable" : money(Number(amount), currency)}</dd>
+                <dd className="tabular text-right">{amount === null ? "Unavailable" : money(Number(amount), currency)}
+                  {buyingPower != null && <span className="block text-xs text-text-3">Buying power {money(Number(buyingPower), currency)}</span>}</dd>
               </div>)}
             </dl> : <p className="text-sm text-text-2">Cash balance unavailable.</p>}
             {account.incomplete && <p className="text-xs text-text-2">Some balance amounts are unavailable.</p>}

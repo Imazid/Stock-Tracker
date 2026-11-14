@@ -6,8 +6,10 @@ export async function service<T>(
   endpoint: "market" | "trading" | "research" | "brokerage",
   body: Record<string, unknown>,
   idempotencyKey?: string,
+  expectedUserId?: string,
 ): Promise<T> {
   const session = await backend?.auth.getSession();
+  if (expectedUserId && session?.data.session?.user.id !== expectedUserId) throw new Error("The account changed while loading data.");
   const token = session?.data.session?.access_token;
   if (!token) throw new Error("Sign in to continue.");
   const response = await fetch(`/api/workspace-service/${endpoint}`, {

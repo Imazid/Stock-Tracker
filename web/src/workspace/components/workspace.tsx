@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { User } from "@supabase/supabase-js";
 import {
   Activity, ArrowRight, ExternalLink, Bell, Bot, ChartCandlestick, ChevronDown, Command, FlaskConical, KeyRound,
@@ -14,7 +15,7 @@ import Auth from "./auth";
 import { Market } from "./market";
 import Palette from "./palette";
 import { JournalForm, PersonalList, Portfolio } from "./portfolio";
-import { PortfolioHistory } from "./portfolio-history";
+import { PortfolioDashboard } from "./portfolio-dashboard";
 import { Connections, Research } from "./research";
 import { Agents, OrderTicket, PaperDesk, StrategyStudio, type TradeAction, type TradingState } from "./trading";
 import { Brand, Empty, Modal } from "./ui";
@@ -32,7 +33,7 @@ const sections = [
 ] as const;
 
 type Page = typeof sections[number]["id"];
-type Dialog = "login"|"mfa"|"command"|"holdingFinder"|"holding"|"alert"|"order"|null;
+type Dialog = "login"|"mfa"|"command"|"holdingFinder"|"holding"|"alert"|"tradeFinder"|"order"|null;
 
 function initialPage(): Page {
   if (typeof window === "undefined") return "overview";
@@ -40,6 +41,7 @@ function initialPage(): Page {
 }
 
 export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: boolean; brokerageEnabled: boolean }) {
+  const queryClient = useQueryClient();
   const [page,setPage] = useState<Page>("overview");
   const [asset,setAsset] = useState<Instrument>(popular[0]);
   const [collapsed,setCollapsed] = useState(false);
@@ -48,6 +50,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
   const [ready,setReady] = useState(!backend);
   const [verified,setVerified] = useState(false);
   const [dialog,setDialog] = useState<Dialog>(null);
+  const [side, setSide] = useState<"buy" | "sell">("buy");
   const [journal,setJournal] = useState(emptyJournal);
   const [journalError,setJournalError] = useState("");
   const [trading,setTrading] = useState<TradingState>();
@@ -181,9 +184,18 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
   function signIn() { setDialog(user && !verified ? "mfa" : "login"); }
   function showOrder() {
     if (!signedIn) { signIn(); return; }
+    setSide("buy");
     setDialog("order");
   }
-  function saved(text: string) { setNotice({text}); setDialog(null); setRefresh(count => count + 1); }
+  function sync() {
+    setRefresh(count => count + 1);
+    if (userID) void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["portfolio", userID] }),
+      queryClient.invalidateQueries({ queryKey: ["portfolio-gains", userID] }),
+      queryClient.invalidateQueries({ queryKey: ["portfolio-history", userID] }),
+    ]);
+  }
+  function saved(text: string) { setNotice({text}); setDialog(null); sync(); }
 
   async function toggleWatch(item: Instrument) {
     if (!backend || !userID) { signIn(); return; }
@@ -238,7 +250,7 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
       <header className="topbar">
         <div className="crumb"><button className="icon-button side-toggle" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(value => !value)}><Menu size={19}/></button><button ref={menuToggle} className="icon-button mobile-toggle" aria-label="Open navigation" aria-expanded={mobile} aria-controls="workspace-sidebar" onClick={() => setMobile(true)}><Menu size={20}/></button><span>Workspace</span><span className="crumb-slash">/</span><strong>{current.title}</strong></div>
         <div className="top-actions"><button className="search-trigger" onClick={() => setDialog("command")}><Search size={16}/><span className="search-label">Search anything</span><kbd aria-hidden="true"><Command size={12}/> K</kbd></button><button className="icon-button top-bell" aria-label="Price alerts" onClick={() => navigate("watchlist")}><Bell size={18}/></button>
-          {signedIn ? <button className="button secondary small" disabled={syncing} onClick={() => setRefresh(count => count + 1)}>{syncing ? "Syncing…" : "Sync"}</button> : <button className="button primary small sign-button" onClick={signIn}>Sign in <ArrowRight size={15}/></button>}
+          {signedIn ? <button className="button secondary small" disabled={syncing} onClick={sync}>{syncing ? "Syncing…" : "Sync"}</button> : <button className="button primary small sign-button" onClick={signIn}>Sign in <ArrowRight size={15}/></button>}
         </div>
       </header>
       <main ref={main} id="main" className="main" tabIndex={-1}>
@@ -247,7 +259,17 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
           {(page === "strategy" || page === "research") && signedIn && <button className="button secondary" onClick={() => setDialog("command")}><Search size={16}/> Change asset</button>}
         </header>
 
-        {userID && page === "overview" && <PortfolioHistory key={userID} userId={userID} portfolioLink />}
+        {userID && page === "overview" && <>
+          <div className="dashboard-actions" role="group" aria-label="Quick actions">
+            <button type="button" className="button primary small" onClick={() => { setSide("buy"); setDialog("tradeFinder"); }}>Paper buy</button>
+            <button type="button" className="button secondary small" onClick={() => { setSide("sell"); setDialog("tradeFinder"); }}>Paper sell</button>
+            <Link className="button secondary small" href="/portfolio?recordTransfer=1#portfolio-returns">Record external transfer</Link>
+            <button type="button" className="button secondary small" onClick={() => navigate("strategy")}>Create strategy</button>
+          </div>
+          <PortfolioDashboard key={userID} userId={userID} brokerageEnabled={brokerageEnabled} aiEnabled={aiEnabled}
+            pendingApprovals={trading?.proposals.filter(proposal => proposal.status === "pending").length} openAgents={() => navigate("agents")}
+            openConnections={() => navigate("settings")} />
+        </>}
         {marketPage && <Market key={page} asset={asset} onAsset={setAsset} signedIn={signedIn} watch={journal.watch} onWatch={item => void toggleWatch(item)} onTrade={showOrder} onSignIn={signIn} full={page === "markets"}/>}
         {page === "overview" && <div className="overview-bottom">{!signedIn && <div className="overview-callout"><span className="callout-icon"><Wallet size={19}/></span><div><h2>Your investment workspace</h2><p>Open your portfolios, watchlist and paper trades with your Stock Tracker account.</p></div><button className="button secondary small" onClick={signIn}>Connect account<ArrowRight size={15}/></button></div>}<span className="data-note"><Radio size={14}/> Market quotes may be delayed. Check the source timestamp.</span></div>}
         {!marketPage && page !== "settings" && !signedIn && <section className="panel"><Empty icon={<KeyRound size={22}/>} title={ready ? "Sign in to open this workspace" : "Checking your account…"} text={ready ? "Use the same Stock Tracker account you use on iOS." : undefined}>{ready && <button className="button primary" onClick={signIn}>Sign in <ArrowRight size={15}/></button>}</Empty></section>}
@@ -270,15 +292,17 @@ export default function Workspace({ aiEnabled, brokerageEnabled }: { aiEnabled: 
       </main>
     </div>
 
-    {dialog && <Modal title={{login:"Sign in to Stock Tracker",mfa:"Verify your account",command:"Search workspace",holdingFinder:"Choose a holding",holding:holding ? "Edit holding" : "Add holding",alert:"Create price alert",order:"Paper order ticket"}[dialog]} onClose={() => setDialog(null)} palette={dialog === "command" || dialog === "holdingFinder"}>
+    {dialog && <Modal title={{login:"Sign in to Stock Tracker",mfa:"Verify your account",command:"Search workspace",holdingFinder:"Choose a holding",tradeFinder:side === "buy" ? "Choose an asset to buy on paper" : "Choose an asset to sell on paper",holding:holding ? "Edit holding" : "Add holding",alert:"Create price alert",order:"Paper order ticket"}[dialog]} onClose={() => setDialog(null)} palette={dialog === "command" || dialog === "holdingFinder" || dialog === "tradeFinder"}>
       {(dialog === "login" || dialog === "mfa") && <Auth key={dialog} mode={dialog} onDone={async () => {setDialog(null); await validateSession();}}/>}
       {(dialog === "command" || dialog === "holdingFinder") && <Palette connected={signedIn} initial={dialog === "holdingFinder" ? asset.symbol : ""}
         commands={dialog === "holdingFinder" ? [] : sections.map(section => {const Icon = section.icon; return {label:section.title,icon:<Icon size={17}/>,action:() => {navigate(section.id); setDialog(null);}};})}
         choose={item => { if (dialog === "holdingFinder") {setHoldingAsset(item); setDialog("holding");} else if (page === "strategy" || page === "research") selectAsset(item,page); else selectAsset(item); }}
         custom={item => { if (dialog === "holdingFinder") {setHoldingAsset(item); setDialog("holding");} else if (page === "strategy" || page === "research") selectAsset(item,page); else selectAsset(item); }}/>}
+      {dialog === "tradeFinder" && <Palette commands={[]} connected={signedIn}
+        choose={item => { setAsset(item); setDialog("order"); }} custom={item => { setAsset(item); setDialog("order"); }} />}
       {dialog === "holding" && userID && <JournalForm kind="holding" asset={holdingAsset} holding={holding} userID={userID} onDone={saved}/>}
       {dialog === "alert" && userID && <JournalForm kind="alert" asset={asset} userID={userID} onDone={saved}/>}
-      {dialog === "order" && signedIn && <OrderTicket key={trading?.ledgers.map(ledger => ledger.id).join(",") ?? "loading"} state={trading} asset={asset} act={tradeAction} onDone={saved}/>}
+      {dialog === "order" && signedIn && <OrderTicket key={trading?.ledgers.map(ledger => ledger.id).join(",") ?? "loading"} state={trading} asset={asset} initialSide={side} act={tradeAction} onDone={saved}/>}
     </Modal>}
     {notice && <div className={`toast ${notice.error ? "error" : ""}`} role={notice.error ? "alert" : "status"}><span>{notice.text}</span><button aria-label="Dismiss message" className="icon-button" onClick={() => setNotice(undefined)}><X size={16}/></button></div>}
   </div>;

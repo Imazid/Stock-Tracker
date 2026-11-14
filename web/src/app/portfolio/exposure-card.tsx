@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Link from "next/link";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
+import { usePortfolioRates } from "@/hooks/portfolio-metrics";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -8,7 +9,7 @@ import { getJSON } from "@/lib/api";
 import { dateTime, money, percent } from "@/lib/format";
 import { ISSUER_LOOKUP_LIMIT, type IssuerClassificationResponse } from "@/lib/issuer-classification";
 import type { InstrumentView, QuoteResponse } from "@/lib/market-types";
-import { portfolioExposure, type ExposureCurrency, type PortfolioReferenceRates } from "@/lib/portfolio-exposure";
+import { portfolioExposure, type ExposureCurrency } from "@/lib/portfolio-exposure";
 
 const breakdowns = {
   assets: "Asset type", sectors: "SIC sector", countries: "Listing country", incorporations: "Issuer incorporation",
@@ -28,13 +29,7 @@ export function ExposureCard({ holdings, quoteFor, loading, truncated }: {
   const [base, setBase] = useState<ExposureCurrency>("AUD");
   const [breakdown, setBreakdown] = useState<Breakdown>("assets");
   const needsRates = holdings.some(({ instrument }) => instrument !== null && instrument.currency !== base);
-  const rates = useQuery({
-    queryKey: ["portfolio-reference-rates"],
-    queryFn: ({ signal }) => getJSON<PortfolioReferenceRates>("/api/portfolio/reference-rates", signal),
-    enabled: needsRates,
-    staleTime: 15 * 60_000,
-    refetchInterval: 30 * 60_000,
-  });
+  const rates = usePortfolioRates(needsRates);
   const issuerDimension = breakdown === "sectors" || breakdown === "incorporations" ? breakdown : undefined;
   const issuerIds = [...new Set(holdings.flatMap(({ instrument }) => {
     if (!instrument || instrument.venue === "crypto") return [];
