@@ -156,7 +156,14 @@ export interface OrderIntentView extends OrderIntentInput {
   estimate: { notional?: string; fee?: string; feeCurrency?: string; currency: string };
   risk?: RiskEvaluationView;
   approval?: { approvedAt: string; expiresAt: string; consumedAt?: string; aal: "aal1" | "aal2" };
-  brokerOrder?: { providerOrderID: string; status: BrokerOrderStatus; filledQuantity: string; averageFillPrice?: string };
+  brokerOrder?: {
+    providerOrderID: string;
+    status: BrokerOrderStatus;
+    filledQuantity: string;
+    averageFillPrice?: string;
+    submittedAt?: string;
+    updatedAt?: string;
+  };
   transitions: { from: IntentStatus | null; to: IntentStatus; at: string; note?: string }[];
   createdAt: string;
   /** An unapproved intent expires; so does an approval. */

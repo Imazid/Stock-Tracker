@@ -19,7 +19,7 @@ export function OrdersView() {
   const session = useSession();
   const [filter, setFilter] = useState<"all" | StatusGroup>("all");
   const userId = session.status === "signedIn" ? session.user.id : undefined;
-  const list = useQuery({ queryKey: ["intents", userId], queryFn: () => Orders.list("all"), enabled: Boolean(userId), retry: false, refetchInterval: 15_000 });
+  const list = useQuery({ queryKey: ["intents", userId], queryFn: () => Orders.list("all", userId), enabled: Boolean(userId), retry: false, refetchInterval: 15_000 });
   const header = <PageHeader title="Orders" description="Orders sent to a connected provider. Each one is drafted, risk-checked and approved by you before anything is submitted — and only ever to a paper environment in this build." />;
 
   if (session.status === "unconfigured") return <div className="mx-auto max-w-5xl">{header}<Card><EmptyState title="Accounts aren't configured" body="Order routing needs a signed-in account." /></Card></div>;

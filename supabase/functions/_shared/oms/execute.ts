@@ -317,7 +317,11 @@ export async function cancelIntent(deps: ExecutionDeps, intent: IntentRecord, ca
   }
   const ctx: AdapterContext = { ...deps.adapterContext, allowLive: intent.environment === "live" && deps.gates.live_execution.enabled };
   try {
-    await deps.adapter.cancel(ctx, intent.providerOrderID);
+    const cancelled = await deps.adapter.cancel(ctx, intent.providerOrderID);
+    if (!cancelled.accepted) {
+      const latest = await reconcileIntent(deps, intent);
+      return refuse("provider_error", cancelled.message ?? "The provider declined the cancellation.", latest.status);
+    }
   } catch (error) {
     return refuse("provider_error", "The provider didn't accept the cancel request. The order may still be open.", intent.status, brokerDetails(error));
   }

@@ -4,7 +4,7 @@ import type { OrderIntentView } from "@oms/api.ts";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CheckCircle2, CircleAlert, MinusCircle, XCircle } from "lucide-react";
-import { useState } from "react";
+import { useRef } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -34,29 +34,56 @@ function CheckIcon({ status }: { status: string }) {
 
 export function IntentView({ id }: { id: string }) {
   const session = useSession();
-  const client = useQueryClient();
-  const now = useNow();
-  const userId = session.status === "signedIn" ? session.user.id : undefined;
-  const intent = useQuery({ queryKey: ["intent", id], queryFn: () => Orders.get(id), enabled: Boolean(userId), retry: false, refetchInterval: 10_000 });
-  // One idempotency key per button press target, so a double click can't act twice.
-  const [keys] = useState(() => ({ riskCheck: newIdempotencyKey(), approve: newIdempotencyKey(), reject: newIdempotencyKey(), submit: newIdempotencyKey(), cancel: newIdempotencyKey(), reconcile: newIdempotencyKey() }));
-  const act = useMutation({
-    mutationFn: (a: "riskCheck" | "approve" | "reject" | "submit" | "cancel" | "reconcile") => {
-      const view = intent.data!.intent;
-      if (a === "approve") return Orders.act({ action: "approve", intentID: view.id, intentHash: view.intentHash }, keys.approve);
-      return Orders.act({ action: a, intentID: view.id } as Parameters<typeof Orders.act>[0], keys[a]);
-    },
-    onSuccess: (data) => {
-      client.setQueryData(["intent", id], data);
-      client.invalidateQueries({ queryKey: ["intents"] });
-    },
-  });
-
   if (session.status !== "signedIn") {
     return <EmptyState title={session.status === "unconfigured" ? "Accounts aren't configured" : "Sign in to see this order"} />;
   }
+  return <SignedInIntent key={`${session.user.id}:${id}`} id={id} userId={session.user.id} />;
+}
+
+type OrderAction = "riskCheck" | "approve" | "reject" | "submit" | "cancel" | "reconcile";
+const working = ["submitted", "partially_filled", "reconciliation_required", "submitting"];
+
+function SignedInIntent({ id, userId }: { id: string; userId: string }) {
+  const client = useQueryClient();
+  const now = useNow();
+  const queryKey = ["intent", userId, id];
+  const keys = useRef<Partial<Record<OrderAction, string>>>({});
+  const act = useMutation({
+    mutationFn: async ({ action, view }: { action: OrderAction; view: OrderIntentView }) => {
+      const key = keys.current[action] ?? newIdempotencyKey();
+      keys.current[action] = key;
+      try {
+        const request = action === "approve"
+          ? { action, intentID: view.id, intentHash: view.intentHash }
+          : { action, intentID: view.id };
+        const data = await Orders.act(request, key, userId);
+        delete keys.current[action];
+        return data;
+      } catch (error) {
+        if (error instanceof OmsError && !["network", "not_deployed", "internal"].includes(error.code)) delete keys.current[action];
+        throw error;
+      }
+    },
+    onSuccess: async (data) => {
+      await client.cancelQueries({ queryKey, exact: true });
+      client.setQueryData(queryKey, data);
+    },
+    onSettled: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey, exact: true }),
+        client.invalidateQueries({ queryKey: ["intents", userId], exact: true }),
+      ]);
+    },
+  });
+  const intent = useQuery({
+    queryKey,
+    queryFn: () => Orders.get(id, userId),
+    retry: false,
+    refetchInterval: (query) => !act.isPending && working.includes(query.state.data?.intent.status ?? "") ? 10_000 : false,
+  });
+
   if (intent.isLoading) return <div className="mx-auto max-w-4xl space-y-3"><div className="skeleton h-8 w-48" /><div className="skeleton h-80" /></div>;
-  if (intent.isError) {
+  if (intent.isError && !intent.data) {
     const e = describeOmsError(intent.error);
     return <div className="mx-auto max-w-4xl"><Card><EmptyState tone={intent.error instanceof OmsError && intent.error.code === "not_deployed" ? "warn" : "down"} title={e.title} body={e.body} /></Card></div>;
   }
@@ -64,6 +91,7 @@ export function IntentView({ id }: { id: string }) {
   const ccy = v.estimate.currency;
   const riskPassed = v.risk?.result === "pass";
   const err = act.isError ? describeOmsError(act.error) : null;
+  const run = (action: OrderAction) => act.mutate({ action, view: v });
   const approvalExpired = v.approval ? Date.parse(v.approval.expiresAt) < now : false;
 
   return (
@@ -89,7 +117,9 @@ export function IntentView({ id }: { id: string }) {
               {v.stopPrice ? <Row label="Stop price">{v.stopPrice} {ccy}</Row> : null}
               <Row label="Quote currency">{ccy}</Row>
               <Row label="Estimated value">{v.estimate.notional ? `${v.estimate.notional} ${ccy}` : "—"}</Row>
-              <Row label="Estimated fees">{v.estimate.fee ? `${v.estimate.fee} ${v.estimate.feeCurrency ?? ccy}` : "—"}</Row>
+              <Row label="Estimated fees">{v.estimate.fee ? `${v.estimate.fee} ${v.estimate.feeCurrency ?? ccy}` : "Unavailable"}
+                {v.provider === "alpaca" && v.side === "sell" && v.estimate.fee ? <span className="block text-xs text-text-3">Fee estimates exclude regulatory pass-through fees on sells.</span> : null}
+              </Row>
               <Row label="Price used">{v.risk ? <>{v.risk.price.value} {v.risk.price.currency} · {v.risk.price.source} · {dateTime(v.risk.price.observedAt)} <Badge tone={v.risk.price.status === "real_time" ? "up" : "warn"}>{v.risk.price.status.replace("_", "-")}</Badge></> : "Not checked yet"}</Row>
               <Row label="Drafted by">{v.origin.kind === "manual" ? "You" : <>Agent <span className="font-mono text-xs">{v.origin.agentID.slice(0, 8)}</span></>}</Row>
               {v.origin.kind === "agent" ? <Row label="Agent's reasoning"><span className="whitespace-pre-wrap text-text-2">{v.origin.rationale}</span> <span className="block text-[11px] text-text-3">Model-written explanation — not a verified forecast.</span></Row> : null}
@@ -115,18 +145,18 @@ export function IntentView({ id }: { id: string }) {
           <Card>
             <CardHeader title="Next step" />
             <div className="flex flex-col gap-2 border-t border-border p-4">
-              {v.status === "draft" ? <Button variant="primary" onClick={() => act.mutate("riskCheck")} disabled={act.isPending}>Run risk check</Button> : null}
+              {v.status === "draft" ? <Button variant="primary" onClick={() => run("riskCheck")} disabled={act.isPending}>Run risk check</Button> : null}
               {(v.status === "risk_checked" || v.status === "awaiting_approval") && riskPassed ? (
                 <>
-                  <Button variant={v.side === "buy" ? "buy" : "sell"} onClick={() => act.mutate("approve")} disabled={act.isPending}>Approve this {v.side}</Button>
+                  <Button variant={v.side === "buy" ? "buy" : "sell"} onClick={() => run("approve")} disabled={act.isPending}>Approve this {v.side}</Button>
                   <p className="text-[11px] text-text-3">Approving doesn&apos;t send it yet. Submission re-checks the price, your limits and the kill switch first.</p>
                 </>
               ) : null}
               {(v.status === "risk_checked" || v.status === "awaiting_approval") && !riskPassed ? <Notice tone="down">The risk checks failed, so this order can&apos;t be approved. Change it and draft again.</Notice> : null}
-              {v.status === "approved" ? <Button variant="primary" onClick={() => act.mutate("submit")} disabled={act.isPending || approvalExpired}>Submit to {v.provider} {v.environment}</Button> : null}
-              {["draft", "risk_checked", "awaiting_approval", "approved"].includes(v.status) ? <Button variant="ghost" onClick={() => act.mutate("reject")} disabled={act.isPending}>Reject</Button> : null}
-              {["submitted", "partially_filled"].includes(v.status) ? <Button variant="danger" onClick={() => act.mutate("cancel")} disabled={act.isPending}>Request cancel</Button> : null}
-              {["submitted", "partially_filled", "reconciliation_required", "submitting"].includes(v.status) ? <Button onClick={() => act.mutate("reconcile")} disabled={act.isPending}>Check status with broker</Button> : null}
+              {v.status === "approved" ? <Button variant="primary" onClick={() => run("submit")} disabled={act.isPending || approvalExpired}>Submit to {v.provider} {v.environment}</Button> : null}
+              {["draft", "risk_checked", "awaiting_approval", "approved"].includes(v.status) ? <Button variant="ghost" onClick={() => run("reject")} disabled={act.isPending}>Reject</Button> : null}
+              {["submitted", "partially_filled"].includes(v.status) && v.brokerOrder?.status !== "pending_cancel" ? <Button variant="danger" onClick={() => run("cancel")} disabled={act.isPending}>Request cancel</Button> : null}
+              {working.includes(v.status) ? <Button onClick={() => run("reconcile")} disabled={act.isPending}>Check status with broker</Button> : null}
               {v.status === "reconciliation_required" ? <Notice tone="warn" title="Waiting on the broker">The broker&apos;s answer was unclear, so this order is being checked before anything else happens. It is never resent automatically.</Notice> : null}
               {["filled", "rejected", "expired", "cancelled", "failed"].includes(v.status) ? <p className="text-xs text-text-3">This order is finished.</p> : null}
               {err ? <Notice tone="down" title={err.title}>{err.body}</Notice> : null}
@@ -139,6 +169,8 @@ export function IntentView({ id }: { id: string }) {
                 <Row label="Order id"><span className="font-mono text-xs">{v.brokerOrder.providerOrderID}</span></Row>
                 <Row label="Status">{v.brokerOrder.status.replace("_", " ")}</Row>
                 <Row label="Filled">{v.brokerOrder.filledQuantity}{v.brokerOrder.averageFillPrice ? ` @ ${v.brokerOrder.averageFillPrice} ${ccy}` : ""}</Row>
+              {v.brokerOrder.submittedAt ? <Row label="Broker received">{dateTime(v.brokerOrder.submittedAt)}</Row> : null}
+              {v.brokerOrder.updatedAt ? <Row label="Broker updated">{dateTime(v.brokerOrder.updatedAt)}</Row> : null}
               </dl>
             </Card>
           ) : null}

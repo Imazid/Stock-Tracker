@@ -310,20 +310,30 @@ async function handle(request: Request, now: number): Promise<{ response: Respon
   if (!run) throw new HttpError(400, "invalid", "That isn't something the order API can do.");
   const key = idempotencyKey(request);
   const sql = database();
-  const ctx: Ctx = { sql, caller, body, now };
-  if (STATE_CHANGING.has(action)) {
-    const prior = await remembered(sql, caller.userID, key, action);
-    if (prior) return { response: json(prior.status, prior.body), action };
+  const runWith = async (connection: Sql) => {
+    if (STATE_CHANGING.has(action)) {
+      const prior = await remembered(connection, caller.userID, key, action);
+      if (prior) return { response: json(prior.status, prior.body), action };
+    }
+    let result: Result;
+    try {
+      result = await run({ sql: connection, caller, body, now });
+    } catch (error) {
+      if (error instanceof BrokerError) result = refused("provider_error", "The provider couldn't be reached or refused the request.", { providerCode: error.code });
+      else throw error;
+    }
+    if (STATE_CHANGING.has(action)) await remember(connection, caller.userID, key, action, result.status, result.body);
+    return { response: json(result.status, result.body), action };
+  };
+  if (action === "draft" && key) {
+    // A lost response can race a retry. Persist the draft and its replay response together.
+    // This lock is scoped to this key and never wraps a provider order submission.
+    return await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${"oms-draft:" + caller.userID + ":" + key}, 0))`;
+      return runWith(tx as unknown as Sql);
+    });
   }
-  let result: Result;
-  try {
-    result = await run(ctx);
-  } catch (error) {
-    if (error instanceof BrokerError) result = refused("provider_error", "The provider couldn't be reached or refused the request.", { providerCode: error.code });
-    else throw error;
-  }
-  if (STATE_CHANGING.has(action)) await remember(sql, caller.userID, key, action, result.status, result.body);
-  return { response: json(result.status, result.body), action };
+  return runWith(sql);
 }
 
 Deno.serve(async (request) => {

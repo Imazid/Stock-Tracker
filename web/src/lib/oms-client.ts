@@ -33,9 +33,9 @@ export function newIdempotencyKey(): string {
   return uuid();
 }
 
-async function call<T>(fn: "broker-connections" | "broker-orders", body: ConnectionsRequest | OrdersRequest, idempotencyKey?: string): Promise<T> {
+async function call<T>(fn: "broker-connections" | "broker-orders", body: ConnectionsRequest | OrdersRequest, idempotencyKey?: string, expectedUserId?: string): Promise<T> {
   if (!supabaseConfigured) throw new OmsError("not_configured", "Accounts aren't configured for this site.");
-  const token = await accessToken();
+  const token = await accessToken(expectedUserId);
   if (!token) throw new OmsError("signed_out", "Sign in to use order routing.");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -66,7 +66,7 @@ async function call<T>(fn: "broker-connections" | "broker-orders", body: Connect
 }
 
 export const Connections = {
-  list: () => call<{ connections: ConnectionView[] }>("broker-connections", { action: "list" } satisfies ConnectionsRequest),
+  list: (userId?: string) => call<{ connections: ConnectionView[] }>("broker-connections", { action: "list" } satisfies ConnectionsRequest, undefined, userId),
   connect: (request: Extract<ConnectionsRequest, { action: "connect" }>, key?: string) =>
     call<{ connection: ConnectionView }>("broker-connections", request, key),
   sync: (connectionID: string, key?: string) =>
@@ -76,10 +76,10 @@ export const Connections = {
 };
 
 export const Orders = {
-  list: (status: "open" | "closed" | "all" = "all") => call<{ intents: OrderIntentView[] }>("broker-orders", { action: "list", status } satisfies OrdersRequest),
-  get: (intentID: string) => call<{ intent: OrderIntentView }>("broker-orders", { action: "get", intentID } satisfies OrdersRequest),
-  act: (request: Exclude<OrdersRequest, { action: "list" } | { action: "get" }>, key?: string) =>
-    call<Extract<OrdersResponse, { intent: unknown }>>("broker-orders", request, key),
+  list: (status: "open" | "closed" | "all" = "all", userId?: string) => call<{ intents: OrderIntentView[] }>("broker-orders", { action: "list", status } satisfies OrdersRequest, undefined, userId),
+  get: (intentID: string, userId?: string) => call<{ intent: OrderIntentView }>("broker-orders", { action: "get", intentID } satisfies OrdersRequest, undefined, userId),
+  act: (request: Exclude<OrdersRequest, { action: "list" } | { action: "get" }>, key?: string, userId?: string) =>
+    call<Extract<OrdersResponse, { intent: unknown }>>("broker-orders", request, key, userId),
 };
 
 export function describeOmsError(error: unknown): { title: string; body: string; code: OmsErrorCode | "unknown" } {

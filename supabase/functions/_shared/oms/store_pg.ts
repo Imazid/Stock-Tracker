@@ -176,7 +176,8 @@ export async function intentView(sql: Sql, intent: IntentRecord): Promise<OrderI
   const transitions = await sql`select from_status, to_status, note, at from public.order_intent_transitions where intent_id = ${intent.id} order by id`;
   const [approval] = await sql`select approved_at, expires_at, consumed_at, aal from public.order_approvals where intent_id = ${intent.id}`;
   const [order] = intent.providerOrderID
-    ? await sql`select status, filled_quantity, average_fill_price from public.broker_orders where provider_order_id = ${intent.providerOrderID} and connection_id = ${intent.input.connectionID}`
+    ? await sql`select status, filled_quantity, average_fill_price, submitted_at, provider_updated_at from public.broker_orders
+                 where provider_order_id = ${intent.providerOrderID} and connection_id = ${intent.input.connectionID} and user_id = ${intent.userID}`
     : [];
   const estimate = (risk?.estimate ?? {}) as Record<string, string>;
   return {
@@ -191,7 +192,8 @@ export async function intentView(sql: Sql, intent: IntentRecord): Promise<OrderI
     risk: (risk?.risk as RiskEvaluationView | null) ?? undefined,
     approval: approval ? { approvedAt: iso(approval.approved_at)!, expiresAt: iso(approval.expires_at)!, consumedAt: iso(approval.consumed_at), aal: approval.aal } : undefined,
     brokerOrder: order && intent.providerOrderID
-      ? { providerOrderID: intent.providerOrderID, status: order.status, filledQuantity: dec(order.filled_quantity) ?? "0", averageFillPrice: dec(order.average_fill_price) }
+      ? { providerOrderID: intent.providerOrderID, status: order.status, filledQuantity: dec(order.filled_quantity) ?? "0",
+          averageFillPrice: dec(order.average_fill_price), submittedAt: iso(order.submitted_at), updatedAt: iso(order.provider_updated_at) }
       : undefined,
     transitions: transitions.map((t) => ({ from: (t.from_status as IntentStatus | null) ?? null, to: t.to_status as IntentStatus, at: iso(t.at)!, note: t.note ?? undefined })),
     createdAt: new Date(intent.createdAt).toISOString(),

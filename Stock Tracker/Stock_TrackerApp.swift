@@ -331,6 +331,7 @@ struct StockCryptoTrackerApp: App {
                     .environmentObject(marketData)
                     .environmentObject(alertManager)
                     .environmentObject(subscriptionManager)
+                    .environmentObject(supabaseAuthManager)
                     .environmentObject(aiInsightService)
                     .environmentObject(tradingStore)
                     .environmentObject(tradingRouter)
