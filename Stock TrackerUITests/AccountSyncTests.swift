@@ -149,7 +149,7 @@ final class AccountSyncTests: XCTestCase {
         app.buttons["Research"].tap()
         verifyHolding("QQQ")
         openMenu("Research")
-        app.buttons["Income"].tap()
+        app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Income", "portfolio.segment.income")).firstMatch.tap()
         verifyHolding("MSFT")
         openMenu("Income")
         app.buttons["Rename…"].tap()

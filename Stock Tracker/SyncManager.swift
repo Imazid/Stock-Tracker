@@ -585,7 +585,7 @@ final class SyncManager: ObservableObject {
             }
             let row = Value(p_user_id: userId, p_group_id: groupID, p_snapshot_date: day,
                             p_total_value: snapshot.totalValue,
-                            p_observed_at: snapshot.date.ISO8601Format(.iso8601.year().month().day().time(includingFractionalSeconds: true)))
+                            p_observed_at: snapshot.date.ISO8601Format(.iso8601.year().month().day().time(includingFractionalSeconds: true).timeZone(separator: .colon)))
             try await SupabaseManager.client.rpc("save_portfolio_group_value", params: row).execute()
             uploaded = true
         }
