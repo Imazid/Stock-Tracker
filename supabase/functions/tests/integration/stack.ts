@@ -114,7 +114,8 @@ export type Answer = { status: number; ok: boolean; data: any; error?: { code: s
 
 /** Calls the trading API as a signed-in person. */
 export async function api(token: string | undefined, body: Record<string, unknown>, headers: Record<string, string> = {}): Promise<Answer> {
-  const response = await fetch(`${apiURL()}/functions/v1/trading-api`, {
+  const endpoint = Deno.env.get("TRADING_API_TEST_URL") ?? `${apiURL()}/functions/v1/trading-api`;
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json", ...(token === undefined ? {} : { authorization: `Bearer ${token}` }), ...headers },
     body: JSON.stringify(body),

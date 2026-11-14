@@ -25,7 +25,8 @@ import { providerFromEnv } from "../_shared/market/index.ts";
 import { authenticate, type Caller, requireStepUp } from "../_shared/server/auth.ts";
 import { errorResponse, Field, HttpError, logEvent, ok, readJSONObject, refusal, tradingErrorStatus } from "../_shared/server/http.ts";
 import {
-  database, type EngineSession, instrumentsNeedingQuotes, type LoadScope, readStateSnapshot, type Sql, withEngine,
+  database, type EngineSession, instrumentsNeedingQuotes, type LoadScope, readAgentActivity, readAgentActivityDetail, readStateSnapshot,
+  type Sql, withEngine,
 } from "../_shared/server/persistence.ts";
 import { isLoosening } from "../_shared/server/policy.ts";
 import { assertPriced, latestQuotes, marketForOrder, type MarketSource, marketSnapshot } from "../_shared/server/runner.ts";
@@ -421,6 +422,22 @@ const actions: Record<string, (ctx: Context) => Promise<Response>> = {
 
   // Everything the app shows, in the shape Swift's TradingCodec decodes into TradingState.
   state: async (ctx) => ok(await readStateSnapshot(ctx.sql, ctx.caller.userID, ctx.now, ctx.market.allowFixtureData)),
+
+  agentActivity: async (ctx) => {
+    const agentID = Field.optionalUUID(ctx.body.agentID, "agentID");
+    const before = Field.optionalString(ctx.body.before, "before", 19);
+    if (before !== undefined && (!/^[1-9]\d{0,18}$/.test(before) || BigInt(before) > 9_223_372_036_854_775_807n)) {
+      throw new HttpError(400, "bad_request", "The activity page cursor is invalid.");
+    }
+    return ok({ page: await readAgentActivity(ctx.sql, ctx.caller.userID, agentID, before) });
+  },
+
+  agentActivityDetail: async (ctx) => {
+    const runID = Field.uuid(ctx.body.runID, "runID");
+    const detail = await readAgentActivityDetail(ctx.sql, ctx.caller.userID, runID);
+    if (!detail) return errorResponse(TradingError.notFound("That run"));
+    return ok({ detail });
+  },
 
   auditStatus: (ctx) => act(ctx, {}, async ({ tx, userID }) => {
     const [row] = await tx`select * from public.verify_audit_chain(${userID})`;

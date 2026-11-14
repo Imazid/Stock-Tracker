@@ -18,6 +18,7 @@ import postgres from "npm:postgres@3.4.5";
 import {
   type AgentRun, agentSpec, strategyVersion, type TradeProposal, type TradingAgent, type TradingSignal,
 } from "../trading/agent.ts";
+import type { AgentActivityDetail, AgentActivityPage } from "../trading/activity.ts";
 import { type AuditEvent, makeAuditLog, uuidString } from "../trading/audit.ts";
 import type { BrokerEnvironment, BrokerPermission } from "../trading/broker.ts";
 import { TradingEngine } from "../trading/engine.ts";
@@ -440,6 +441,48 @@ export async function readStateSnapshot(sql: Sql, userID: string, now: number, a
     await lock(tx, userID);
     return await readState(tx, userID, now, allowFixtureData);
   }) as StateRead;
+}
+
+/** Insertion order gives tied timestamps and new arrivals a stable page boundary. */
+export async function readAgentActivity(sql: Sql, userID: string, agentID?: string, before?: string): Promise<AgentActivityPage> {
+  const pageSize = 20;
+  const rows = await sql`
+    select r.seq::text, r.id, r.agent_id, a.name as agent_name, r.strategy_version, r.trigger, r.started_at, r.status, r.summary
+    from public.agent_runs r join public.trading_agents a on a.id = r.agent_id and a.user_id = r.user_id
+    where r.user_id = ${userID}
+    ${agentID ? sql`and r.agent_id = ${agentID}` : sql``}
+    ${before ? sql`and r.seq < ${before}::bigint` : sql``}
+    order by r.seq desc limit ${pageSize + 1}`;
+  return {
+    runs: rows.slice(0, pageSize).map((row) => ({
+      id: row.id, agentID: row.agent_id, agentName: row.agent_name, strategyVersion: row.strategy_version,
+      trigger: row.trigger, startedAt: row.started_at.getTime(), status: row.status, summary: row.summary,
+    })),
+    nextCursor: rows.length > pageSize ? rows[pageSize - 1].seq : undefined,
+  };
+}
+
+/** Read the whole chain from one snapshot. A later approval can add an order to a proposal without changing its original run. */
+export async function readAgentActivityDetail(sql: Sql, userID: string, runID: string): Promise<AgentActivityDetail | undefined> {
+  return await sql.begin("isolation level repeatable read read only", async (tx) => {
+    await tx`set local role service_role`;
+    const [row] = await tx`select * from public.agent_runs where user_id = ${userID} and id = ${runID}`;
+    if (!row) return undefined;
+    const run = runFromRow(row);
+    const signals = run.signalIDs.length ? (await tx`select * from public.trading_signals
+      where user_id = ${userID} and agent_id = ${run.agentID} and id in ${tx(run.signalIDs)} order by seq`).map(signalFromRow) : [];
+    const proposals = run.proposalIDs.length ? (await tx`select * from public.trade_proposals
+      where user_id = ${userID} and agent_id = ${run.agentID} and id in ${tx(run.proposalIDs)} order by seq`).map(proposalFromRow) : [];
+    const orderIDs = [...new Set([...run.orderIDs, ...proposals.flatMap((proposal) => proposal.orderID ? [proposal.orderID] : [])])];
+    const orders = orderIDs.length ? (await tx`select * from public.orders
+      where user_id = ${userID} and agent_id = ${run.agentID} and id in ${tx(orderIDs)} order by seq`).map(orderFromRow) : [];
+    const fills = orders.length ? (await tx`select * from public.order_fills
+      where user_id = ${userID} and order_id in ${tx(orders.map((order) => order.id))} order by seq`).map(fillFromRow) : [];
+    const reviews = proposals.length ? (await tx`select *, round(extract(epoch from time) * 1000)::float8 as time_ms
+      from public.audit_events where user_id = ${userID} and proposal_id in ${tx(proposals.map((proposal) => proposal.id))}
+      and kind in ('proposalApproved', 'proposalRejected') order by sequence`).map(auditFromRow) : [];
+    return { run, signals, proposals, orders, fills, reviews };
+  }) as AgentActivityDetail | undefined;
 }
 
 async function save(tx: Tx, userID: string, now: number, engine: TradingEngine, loaded: Loaded): Promise<{ notices: EngineNotice[]; auditEvents: AuditEvent[] }> {
