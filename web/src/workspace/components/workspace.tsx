@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { backend, service } from "../lib/backend";
 import { readJournal } from "../lib/journal";
-import { emptyJournal, fromHolding, fromWatch, instrumentID, message, popular, storedExchange, storedKind, storedTicker, type Holding, type Instrument } from "../lib/models";
+import { emptyJournal, fromHolding, fromTicker, fromWatch, instrumentID, message, popular, storedExchange, storedKind, storedTicker, type Holding, type Instrument } from "../lib/models";
+import { CommandPalette } from "@/components/shell/CommandPalette";
 import Auth from "./auth";
 import { Market } from "./market";
 import Palette from "./palette";
@@ -293,12 +294,15 @@ export default function Workspace({ aiEnabled, brokerageEnabled, logosEnabled }:
       </main>
     </div>
 
-    {dialog && <Modal title={{login:"Sign in to Stock Tracker",mfa:"Verify your account",command:"Search workspace",holdingFinder:"Choose a holding",tradeFinder:side === "buy" ? "Choose an asset to buy on paper" : "Choose an asset to sell on paper",holding:holding ? "Edit holding" : "Add holding",alert:"Create price alert",order:"Paper order ticket"}[dialog]} onClose={() => setDialog(null)} palette={dialog === "command" || dialog === "holdingFinder" || dialog === "tradeFinder"}>
+    <CommandPalette open={dialog === "command"} onClose={() => setDialog(null)}
+      destinations={sections.map(section => ({ label: section.title, href: `/#${section.id}`, select: () => navigate(section.id) }))}
+      onInstrument={page === "strategy" || page === "research" ? item => selectAsset(item, page) : undefined}
+      onCustomTicker={signedIn ? (ticker, venue) => selectAsset(fromTicker(ticker, "", venue),
+        page === "strategy" || page === "research" ? page : "markets") : undefined} />
+    {dialog && dialog !== "command" && <Modal title={{login:"Sign in to Stock Tracker",mfa:"Verify your account",holdingFinder:"Choose a holding",tradeFinder:side === "buy" ? "Choose an asset to buy on paper" : "Choose an asset to sell on paper",holding:holding ? "Edit holding" : "Add holding",alert:"Create price alert",order:"Paper order ticket"}[dialog]} onClose={() => setDialog(null)} palette={dialog === "holdingFinder" || dialog === "tradeFinder"}>
       {(dialog === "login" || dialog === "mfa") && <Auth key={dialog} mode={dialog} onDone={async () => {setDialog(null); await validateSession();}}/>}
-      {(dialog === "command" || dialog === "holdingFinder") && <Palette connected={signedIn} initial={dialog === "holdingFinder" ? asset.symbol : ""}
-        commands={dialog === "holdingFinder" ? [] : sections.map(section => {const Icon = section.icon; return {label:section.title,icon:<Icon size={17}/>,action:() => {navigate(section.id); setDialog(null);}};})}
-        choose={item => { if (dialog === "holdingFinder") {setHoldingAsset(item); setDialog("holding");} else if (page === "strategy" || page === "research") selectAsset(item,page); else selectAsset(item); }}
-        custom={item => { if (dialog === "holdingFinder") {setHoldingAsset(item); setDialog("holding");} else if (page === "strategy" || page === "research") selectAsset(item,page); else selectAsset(item); }}/>}
+      {dialog === "holdingFinder" && <Palette connected={signedIn} initial={asset.symbol} commands={[]}
+        choose={item => { setHoldingAsset(item); setDialog("holding"); }} custom={item => { setHoldingAsset(item); setDialog("holding"); }} />}
       {dialog === "tradeFinder" && <Palette commands={[]} connected={signedIn}
         choose={item => { setAsset(item); setDialog("order"); }} custom={item => { setAsset(item); setDialog("order"); }} />}
       {dialog === "holding" && userID && <JournalForm kind="holding" asset={holdingAsset} holding={holding} userID={userID} onDone={saved} onReload={() => { setDialog(null); sync(); }}/>}
