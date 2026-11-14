@@ -155,41 +155,35 @@ extension BrokerAccount {
 }
 
 extension BrokerHolding {
-    /// Map from SnapTrade position to app model
-    static func from(
-        snapTradePosition: SnapTradePosition,
-        accountId: String
-    ) -> BrokerHolding {
-        // Use fractional units if available, otherwise whole units (both may be null)
-        let quantity = snapTradePosition.fractionalUnits ?? snapTradePosition.units ?? 0
-        
-        // Navigate nested BrokerageSymbol → UniversalSymbol for the ticker
-        let universalSymbol = snapTradePosition.symbol.symbol
+    private static let supportedSnapTradeKinds: Set<String> = [
+        "stock", "preferred_stock", "adr", "etf", "mutualfund", "cef", "crypto", "bond", "other"
+    ]
 
-        // Currency: position-level → brokerage symbol → universal symbol
-        let positionCurrency = snapTradePosition.currency?.code
-        let brokerageCurrency = snapTradePosition.symbol.currency?.code
-        let universalCurrency = universalSymbol.currency?.code
-        let currency = positionCurrency ?? brokerageCurrency ?? universalCurrency ?? "USD"
+    /// Map a supported security from a complete SnapTrade positions response.
+    static func from(snapTradePosition position: SnapTradePosition, accountId: String) throws -> BrokerHolding? {
+        let instrument = position.instrument
+        guard supportedSnapTradeKinds.contains(instrument.kind), position.cashEquivalent != true else { return nil }
+        guard let symbol = instrument.symbol, !symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let units = position.units.flatMap(Double.init), units.isFinite else {
+            throw SnapTradeError.missingData
+        }
 
-        let ticker = universalSymbol.symbol
-        let holdingId = "\(accountId)_\(ticker)_\(UUID().uuidString)"
-
-        let description = snapTradePosition.symbol.description ?? universalSymbol.description
-        let exchange = snapTradePosition.symbol.exchange?.code ?? universalSymbol.exchange?.code
-        let securityType = snapTradePosition.symbol.type?.code ?? universalSymbol.type?.code
+        // Monetary values use the position currency, which can differ from the listing currency.
+        let currency = position.currency ?? instrument.currency
+        let price = currency == nil ? nil : position.price.flatMap(Double.init)
+        let averageCost = currency == nil ? nil : position.costBasis.flatMap(Double.init)
 
         return BrokerHolding(
-            id: holdingId,
+            id: "\(accountId)_\(symbol)_\(UUID().uuidString)",
             accountId: accountId,
-            symbol: ticker,
-            description: description,
-            quantity: quantity,
-            currentPrice: snapTradePosition.price,
-            averageCost: snapTradePosition.averagePurchasePrice,
-            currency: currency,
-            exchange: exchange,
-            securityType: securityType
+            symbol: symbol,
+            description: instrument.description,
+            quantity: units,
+            currentPrice: price?.isFinite == true ? price : nil,
+            averageCost: averageCost?.isFinite == true ? averageCost : nil,
+            currency: currency ?? "USD",
+            exchange: instrument.exchange,
+            securityType: instrument.kind
         )
     }
 }

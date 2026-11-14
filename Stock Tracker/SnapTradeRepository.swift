@@ -208,35 +208,13 @@ class SnapTradeRepository {
     func fetchAllHoldings(accountIds: [String]) async throws -> [BrokerHolding] {
         let identity = try requireIdentity()
 
-        let accountsWithPositions = try await tracked {
+        let holdings = try await tracked {
             try await networkService.fetchAllHoldings(accountIds: accountIds, userId: identity.userId, userSecret: identity.userSecret)
         }
-
-        let allHoldings = accountsWithPositions.flatMap { (accountId, positions) in
-            positions.map { BrokerHolding.from(snapTradePosition: $0, accountId: accountId) }
-        }
-
-        SecureLogger.info("Fetched \(allHoldings.count) total holdings")
-        return allHoldings
-    }
-
-    /// Fetch holdings for a specific account
-    func fetchHoldings(for accountId: String) async throws -> [BrokerHolding] {
-        let identity = try requireIdentity()
-
-        let positions = try await tracked {
-            try await networkService.fetchAccountHoldings(
-                accountId: accountId,
-                userId: identity.userId,
-                userSecret: identity.userSecret
-            )
-        }
-
-        let holdings = positions.map { BrokerHolding.from(snapTradePosition: $0, accountId: accountId) }
-        SecureLogger.info("Fetched \(holdings.count) holdings for account")
+        SecureLogger.info("Fetched \(holdings.count) total holdings")
         return holdings
     }
-    
+
     // MARK: - Data Enrichment
     
     /// Enrich holdings with latest market prices
