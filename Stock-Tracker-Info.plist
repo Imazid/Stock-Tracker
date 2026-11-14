@@ -4,6 +4,8 @@
 <dict>
 	<key>PrivateMarketAPSEnvironment</key>
 	<string>$(PRIVATE_MARKET_APS_ENVIRONMENT)</string>
+	<key>StockTrackerPrivacyPolicyURL</key>
+	<string>$(STOCK_TRACKER_PRIVACY_POLICY_URL)</string>
 	<key>CompanyResearchURL</key>
 	<string>$(COMPANY_RESEARCH_URL)</string>
 	<!-- AdMob: replace with your real AdMob App ID before App Store submission -->

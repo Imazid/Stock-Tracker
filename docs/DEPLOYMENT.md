@@ -118,6 +118,12 @@ Copy `Stock Tracker/SecretsConfig.swift.template` to `Stock Tracker/SecretsConfi
 
 Set the SnapTrade partner credentials, AI credentials and optional market provider keys in Supabase. The complete names are in `supabase/functions/.env.example`. Use distinct encryption key rings for the SnapTrade and provider-order vaults. The hosted project has Keychain recovery copies in `stock-tracker-credential-kek` and `stock-tracker-broker-credential-kek`.
 
+### Privacy policy and App Store details
+
+The iPhone Settings screen includes the privacy notice and service terms. The web routes `/privacy` and `/terms` render the review copy without a Stock Tracker account. Deployment-level Vercel authentication still applies on the private workspace. Use a public host for the approved copies and check both URLs in a signed-out browser before submitting. Set `STOCK_TRACKER_PRIVACY_EMAIL` on the legal-page build to the monitored privacy contact. Set the iOS build variable `STOCK_TRACKER_PRIVACY_POLICY_URL` to the same approved HTTPS privacy URL used in App Store Connect. The app also keeps the notice readable offline.
+
+The app’s privacy manifest declares its use of app-local and App Group preferences. The widget has its own App Group declaration. iPhone account identity, synced financial information, research content, push tokens and subscriptions are covered by the app’s first-party manifest. Review the bundled Google Mobile Ads and User Messaging Platform manifests alongside the first-party declaration before completing App Store privacy labels. Confirm the public legal entity name, monitored contact, recipients and processing locations, retention and backup policy, and account-data request procedure during release review. [Apple App Store privacy details](https://developer.apple.com/app-store/app-privacy-details/) · [OAIC APP 1 guidance](https://www.oaic.gov.au/privacy/australian-privacy-principles/australian-privacy-principles-guidelines/chapter-1-app-1-open-and-transparent-management-of-personal-information)
+
 ## 8. Provider maintenance
 
 Enable `pg_cron` and `pg_net` before applying the provider maintenance migration. If the extensions are enabled later, register the job using `select cron.schedule('provider-maintenance', '* * * * *', 'select public.invoke_provider_maintenance()');`. The job checks up to four due order intents and syncs fills for up to two connections on each run. The worker has no execution or cancellation path.

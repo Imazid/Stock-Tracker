@@ -512,7 +512,7 @@ struct PrivacyView: View {
     var body: some View {
         List {
             Section {
-                Text("Your watchlists, holdings, alerts and history are stored on this iPhone, protected by the Keychain. If you sign in, they're also synced to your account so they're on your other devices — free accounts sync watchlists only.")
+                Text("Stock Tracker stores your watchlists, holdings, alerts and history on this iPhone. When you sign in, eligible listed-market records can sync to your account. Manual private holdings and imported AngelList statements stay on this iPhone. Saved Private Markets research, monitoring settings and provider records use your signed-in account.")
                     .font(.subheadline)
                     .foregroundStyle(theme.secondaryText)
             } header: { Text("Your data") }
@@ -524,10 +524,10 @@ struct PrivacyView: View {
                 DataProcessorRow(name: "Financial Modeling Prep · Fiscal.ai", purpose: "Company fundamentals and logos", dataSent: "Ticker symbols", link: "https://site.financialmodelingprep.com/privacy-policy")
                 DataProcessorRow(name: "Finnhub", purpose: "News, earnings and analyst ratings", dataSent: "Ticker symbols", link: "https://finnhub.io/privacy")
                 DataProcessorRow(name: "Frankfurter", purpose: "Currency exchange rates", dataSent: "Currency codes", link: "https://www.frankfurter.app")
-                DataProcessorRow(name: "Google Gemini · OpenAI", purpose: "AI insights and the AI assistant", dataSent: "Your question and a summary of the stocks involved, when you use AI", link: "https://policies.google.com/privacy")
+                DataProcessorRow(name: "Google Gemini · OpenAI", purpose: "AI insights, the assistant and Private Markets research", dataSent: "Your question and relevant evidence. Selected private excerpts require separate permission.", link: "https://policies.google.com/privacy")
                 DataProcessorRow(name: "SnapTrade", purpose: "Connecting a brokerage account", dataSent: "Read-only holdings you choose to connect", link: "https://snaptrade.com/privacy")
-                DataProcessorRow(name: "Supabase", purpose: "Your account and sync", dataSent: "Email and the lists you sync", link: "https://supabase.com/privacy")
-                DataProcessorRow(name: "Google AdMob", purpose: "Ads on the Free plan", dataSent: "Device and ad-interaction data; the advertising identifier only if you allow tracking", link: "https://policies.google.com/privacy")
+                DataProcessorRow(name: "Supabase", purpose: "Account, sync and signed-in Private Markets features", dataSent: "Email, synced records and the research, alerts or provider records you use", link: "https://supabase.com/privacy")
+                DataProcessorRow(name: "Google AdMob", purpose: "Ads on the Free plan", dataSent: "Device, approximate location, ad interaction and diagnostics. Tracking requires your permission.", link: "https://policies.google.com/privacy")
             } header: { Text("Services we use") } footer: { Text("Tap a service to read its privacy policy.") }
 
             Section {
@@ -547,7 +547,7 @@ struct PrivacyView: View {
 
             Section {
                 InfoRow2(title: "Ads", value: "Free plan only")
-                InfoRow2(title: "Analytics", value: "None")
+                InfoRow2(title: "Ad measurement", value: "Google AdMob")
             } header: { Text("Ads & analytics") } footer: { Text("Change tracking any time in Settings → Privacy & Security → Tracking.") }
         }
         .listStyle(.insetGrouped)
@@ -601,14 +601,14 @@ struct BuiltInTermsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Last updated: October 2026")
+                Text("Last updated November 2026")
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
 
                 section("1. Acceptance of Terms",
                     "By downloading, installing, or using Stock Tracker (\"the App\"), you agree to be bound by these Terms of Service. If you do not agree, do not use the App.")
                 section("2. Description of Service",
-                    "Stock Tracker provides market data, portfolio tracking, watchlists, price alerts and related tools for informational purposes only. The App is not a financial adviser, broker, or investment service, and you can't buy or sell investments in it.")
+                    "Stock Tracker provides market data, research, portfolio tracking, alerts and practice-trading tools. Practice trades use simulated funds. Where an eligible private offer has an approved route, the licensed provider manages the application, eligibility checks, payment, withdrawal and settlement. Stock Tracker displays ownership after provider confirmation.")
                 section("3. No Financial Advice",
                     "All data, charts, AI-generated insights, and information displayed in the App are for informational and educational purposes only. They do not constitute financial advice, investment recommendations, or solicitations to buy or sell securities. Always consult a qualified financial adviser before making investment decisions.")
                 section("4. Data Accuracy",
@@ -618,11 +618,11 @@ struct BuiltInTermsView: View {
                 section("6. Subscriptions",
                     "The App offers optional paid subscriptions (Pro, Black) that unlock additional features. Subscriptions are billed through Apple's App Store, renew automatically unless cancelled at least 24 hours before the end of the period, and are subject to Apple's terms. You can manage or cancel them in your Apple ID settings.")
                 section("7. Brokerage Connections",
-                    "The App may allow you to connect third-party brokerage accounts via SnapTrade. We do not store your brokerage credentials and have read-only access to your holdings. We are not responsible for any actions taken by third-party services.")
+                    "The App may allow you to connect third-party brokerage accounts via SnapTrade. SnapTrade supplies holdings, transactions and related account information you authorise. Your connection is governed by the provider’s terms. You can disconnect it in Stock Tracker.")
                 section("8. Intellectual Property",
                     "All content, design, and code within the App are the property of the developer. You may not copy, modify, distribute, or reverse-engineer any part of the App.")
-                section("9. Limitation of Liability",
-                    "To the maximum extent permitted by law, the developer shall not be liable for any direct, indirect, incidental, or consequential damages arising from your use of the App, including but not limited to financial losses from investment decisions.")
+                section("9. Consumer rights",
+                    "Your rights and remedies under applicable law, including the Australian Consumer Law, continue to apply.")
                 section("10. Changes to Terms",
                     "We may modify these terms at any time. Continued use of the App after changes constitutes acceptance of the updated terms.")
             }
@@ -646,34 +646,44 @@ struct BuiltInPrivacyPolicyView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Last updated: October 2026")
+                Text("Last updated November 2026")
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
 
-                LegalSection(title: "Data Storage",
-                    text: "Your holdings, watchlists, price alerts and history are stored in the iOS Keychain on your device.")
-                LegalSection(title: "Cloud Sync",
-                    text: "If you sign in, selected data is synced to our cloud service (Supabase) for cross-device access. Free accounts sync watchlists only; paid accounts sync all portfolio data. Data is encrypted in transit.")
-                LegalSection(title: "Third-Party Services",
-                    text: "To show market data the App sends ticker symbols and search text (never your holdings' quantities) to: Alpaca Markets (US prices), Yahoo Finance (ASX prices and search), CoinGecko (crypto), Financial Modeling Prep and Fiscal.ai (company data and logos), Finnhub (news and earnings) and Frankfurter (exchange rates). AI features send your question and a summary of the stocks involved to Google Gemini or OpenAI. SnapTrade is used if you connect a broker. Supabase hosts accounts and sync.")
+                LegalSection(title: "Account and device records",
+                    text: "Your account uses an email address and account identifier. Your iPhone stores settings and portfolio records. Sign-in enables selected listed-portfolio and watchlist sync. Supabase hosts account and synced records in Australia. In the web workspace, cookies keep you signed in and browser storage saves preferences.")
+                LegalSection(title: "Private Markets",
+                    text: "Manual holdings, valuations, cash flows and saved AngelList statements stay on this iPhone. AngelList receives the requests you authorise and the app stores its connection token in Keychain. When you use cloud features, Stock Tracker stores your selected company IDs, monitoring preferences, saved research and any excerpts you choose to save. Approved partners can report your jurisdiction, investor status, application, holding and activity records. The provider handles identity documents and payments.")
+                LegalSection(title: "Research and AI",
+                    text: "When you request AI research, the AI service receives your question and relevant selected evidence. A separate setting lets you share listed-portfolio context with the assistant. Stock Tracker extracts PDF or text excerpts on your device, saves the reviewed excerpt encrypted after you confirm permission, and asks for separate permission before sending selected private excerpts to an approved AI service. If you turn on daily Private Markets summaries, the AI service receives published company information selected from your tracked companies.")
+                LegalSection(title: "Services and overseas processing",
+                    text: "We send symbols, search text and currency codes to the services that supply market data. SnapTrade handles the broker connections you authorise. Apple handles subscriptions, optional speech recognition and push delivery. AI, advertising, brokerage and market-data services can process information outside Australia, including in the United States. See Privacy & data in Settings for service links.")
                 LegalSection(title: "Advertising & Tracking",
-                    text: "The Free plan shows ads from Google AdMob, which may collect device and ad-interaction data. The advertising identifier is only used if you allow tracking when asked; you can change this any time in Settings → Privacy & Security → Tracking. Paid plans have no ads. The App doesn't use analytics SDKs.")
-                LegalSection(title: "Device Permissions",
-                    text: "Notifications — price alerts and summaries you turn on.\nMicrophone and Speech Recognition — voice search; audio is processed by Apple and not stored by us.\nFace ID — optional app lock; biometric data never leaves your device.")
-                LegalSection(title: "Data Retention",
-                    text: "Local data stays until you delete the App. Cloud data can be deleted from Account settings or by contacting support; we don't retain it after account deletion.")
-                LegalSection(title: "Children's Privacy",
-                    text: "The App is not intended for children under 13. We do not knowingly collect personal information from children.")
-                LegalSection(title: "Your Rights",
-                    text: "You can access, correct, or delete your personal data at any time from Account settings, or by contacting us.")
-                LegalSection(title: "Contact",
-                    text: "For privacy questions or deletion requests, contact us through the App Store listing.")
+                    text: "Google AdMob serves ads on the Free plan and can use device, approximate location, interaction and diagnostic data to deliver and measure ads. Tracking requires your permission. You can change it in iPhone Settings under Privacy & Security, then Tracking.")
+                LegalSection(title: "Notifications and permissions",
+                    text: "You choose which alerts and summaries to enable. When remote Private Markets notifications are available and enabled, Stock Tracker stores an encrypted device token for delivery. Voice search uses Apple speech recognition when you grant access. Face ID for app lock is optional and Stock Tracker receives the authentication result.")
+                LegalSection(title: "Access, correction and deletion",
+                    text: "Use Settings → Account to export Private Markets records. The Portfolio tab offers separate exports for selected listed records. The app also offers Delete Account for signed-in users. Deletion removes active account records and clears this account’s app data on this iPhone. Files you exported, records held by external providers and Apple subscriptions are managed separately.")
+                LegalSection(title: "Children’s privacy",
+                    text: "Stock Tracker is intended for people aged 13 and older.")
+                LegalSection(title: "Privacy questions and complaints",
+                    text: "Use App Support on the Stock Tracker App Store listing to ask for access or correction, request a copy of this policy or raise a privacy complaint. Describe what happened and how we can respond. We may verify your identity and will respond through the contact details you provide.")
+                if let policyURL {
+                    Link("Read the privacy policy online", destination: policyURL)
+                        .accessibilityIdentifier("settings.privacyPolicy.online")
+                }
             }
             .padding(DS.Space.gutter)
         }
         .dsScreenBackground()
         .navigationTitle("Privacy Policy")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var policyURL: URL? {
+        guard let address = Bundle.main.object(forInfoDictionaryKey: "StockTrackerPrivacyPolicyURL") as? String,
+              let url = URL(string: address), url.scheme == "https", url.host != nil else { return nil }
+        return url
     }
 }
 
