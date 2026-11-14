@@ -175,5 +175,6 @@ test("uses the broker listing for bare international symbols and rejects conflic
   assert.equal(portfolioInstrument({ ...stock, symbol: "AAPL", exchange: null })?.venue, "us");
   assert.equal(portfolioInstrument({ ...stock, symbol: "SPY", exchange: "NYSE ARCA" })?.assetClass, "etf");
   assert.equal(portfolioInstrument({ ...stock, symbol: "STW.AX", exchange: "ASX" })?.assetClass, "etf");
+  assert.equal(portfolioInstrument({ ...stock, symbol: "IVV", exchange: null }), null);
   assert.equal(portfolioInstrument({ ...stock, symbol: "UNMAPPED", exchange: null }), null);
 });

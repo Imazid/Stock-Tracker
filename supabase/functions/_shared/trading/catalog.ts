@@ -47,7 +47,7 @@ export const UniverseCatalog = {
   balancedETFs: [etf("VTI", "Total US Market ETF"), etf("VXUS", "Total International ETF"), etf("BND", "Total Bond Market ETF")],
   otherETFs: [
     etf("VOO", "S&P 500 ETF"), etf("DIA", "Dow Jones ETF"), etf("GLD", "Gold ETF"), etf("TLT", "20+ Year Treasury ETF"),
-    etf("XLK", "Technology Sector ETF"), etf("IVV", "iShares Core S&P 500 ETF"),
+    etf("XLK", "Technology Sector ETF"),
   ],
   cryptoMajors: [coin("BTC", "Bitcoin"), coin("ETH", "Ethereum"), coin("SOL", "Solana")],
   otherCrypto: [
@@ -57,14 +57,6 @@ export const UniverseCatalog = {
   asxBlueChips: [
     asx("BHP", "BHP Group"), asx("CBA", "Commonwealth Bank"), asx("CSL", "CSL"), asx("NAB", "National Australia Bank"),
     asx("WBC", "Westpac"), asx("ANZ", "ANZ Group"), asx("WES", "Wesfarmers"), asx("MQG", "Macquarie Group"),
-  ],
-  asxETFs: [
-    make("STW", "S&P/ASX 200 ETF", "etf", "asx"),
-    make("VAS", "Vanguard Australian Shares", "etf", "asx"),
-    make("VGS", "Vanguard MSCI International Shares", "etf", "asx"),
-    make("IVV", "iShares S&P 500 ETF", "etf", "asx"),
-    make("NDQ", "Betashares Nasdaq 100 ETF", "etf", "asx"),
-    make("A200", "Betashares Australia 200 ETF", "etf", "asx"),
   ],
   ukBlueChips: [
     on("lse", "AZN", "AstraZeneca"), on("lse", "SHEL", "Shell"), on("lse", "HSBA", "HSBC Holdings"), on("lse", "ULVR", "Unilever"),
@@ -120,7 +112,7 @@ export const catalogInstruments: Instrument[] = (() => {
   const out: Instrument[] = [];
   const c = UniverseCatalog;
   for (const list of [c.technology, c.semiconductors, c.financials, c.healthcare, c.energy, c.otherUS, c.broadETFs,
-    c.balancedETFs, c.otherETFs, c.cryptoMajors, c.otherCrypto, c.asxBlueChips, c.asxETFs, c.ukBlueChips, c.germanBlueChips,
+    c.balancedETFs, c.otherETFs, c.cryptoMajors, c.otherCrypto, c.asxBlueChips, c.ukBlueChips, c.germanBlueChips,
     c.frenchBlueChips, c.dutchBlueChips, c.swissBlueChips, c.japanBlueChips, c.hongKongBlueChips, c.singaporeBlueChips,
     c.koreaBlueChips, c.indiaBlueChips]) {
     for (const instrument of list) {

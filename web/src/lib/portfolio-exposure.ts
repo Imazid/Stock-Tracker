@@ -1,6 +1,6 @@
-import { catalogInstruments } from "../../../supabase/functions/_shared/trading/catalog.ts";
 import { makeInstrument, parseYahooSymbol, venueCountry, type Venue } from "../../../supabase/functions/_shared/trading/market.ts";
 import type { IssuerClassification } from "./issuer-classification.ts";
+import { marketCatalog } from "./market-catalog.ts";
 import type { InstrumentView, QuoteResponse, QuoteView } from "./market-types.ts";
 
 export type ExposureCurrency = "AUD" | "USD";
@@ -32,11 +32,11 @@ export function portfolioInstrument(row: { symbol: string; name: string; kind: "
   const listingVenue = suffix?.venue ?? venue;
   if (listingVenue) {
     const ticker = suffix?.symbol ?? symbol;
-    const known = catalogInstruments.find((item) => item.venue === listingVenue && item.symbol === ticker);
+    const known = marketCatalog.find((item) => item.venue === listingVenue && item.symbol === ticker);
     return makeInstrument(ticker, known?.assetClass ?? "equity", listingVenue, row.name || known?.name);
   }
   if (exchange) return null;
-  const known = catalogInstruments.filter((item) => item.venue !== "crypto" && item.symbol === symbol);
+  const known = marketCatalog.filter((item) => item.venue !== "crypto" && item.symbol === symbol);
   return known.length === 1 ? { ...known[0], name: row.name || known[0].name } : null;
 }
 

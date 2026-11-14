@@ -1,7 +1,6 @@
 // Canonical instruments. A ticker isn't globally unique ("BHP" trades in Sydney and
 // London), so everything is keyed by the engine's instrumentID: `${venue}:${symbol}`.
 
-import { lookupInstrument } from "@engine/catalog.ts";
 import { MarketCalendar } from "@engine/calendar.ts";
 import {
   type Instrument,
@@ -10,6 +9,7 @@ import {
   VENUES,
 } from "@engine/market.ts";
 import { toView as clientToView } from "@/lib/instrument-view";
+import { marketCatalog } from "@/lib/market-catalog";
 import type { InstrumentView, MarketStateView } from "@/lib/market-types";
 
 const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9.\-&]{0,19}$/;
@@ -25,8 +25,8 @@ export function parseInstrumentID(raw: string): Instrument {
   const symbol = decoded.slice(colon + 1).toUpperCase();
   if (!VENUES.includes(venue)) throw new BadInstrumentError(`Unknown venue "${decoded.slice(0, colon)}".`);
   if (!SYMBOL_PATTERN.test(symbol)) throw new BadInstrumentError("That symbol isn't valid.");
-  const known = lookupInstrument(symbol, venue);
-  if (known && known.venue === venue) return known;
+  const known = marketCatalog.find((instrument) => instrument.symbol === symbol && instrument.venue === venue);
+  if (known) return known;
   return makeInstrument(symbol, venue === "crypto" ? "crypto" : "equity", venue);
 }
 
