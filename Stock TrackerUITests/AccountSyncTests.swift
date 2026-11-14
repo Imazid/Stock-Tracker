@@ -342,6 +342,15 @@ final class AccountSyncTests: XCTestCase {
             reveal(slice(name))
         }
         choose("Issuer incorporation")
+        let sources = app.buttons["portfolio.allocation.filings"]
+        reveal(sources)
+        sources.tap()
+        XCTAssertTrue(app.navigationBars["Issuer filing sources"].waitForExistence(timeout: 8))
+        for id in ["asx:BHP", "us:BHP", "us:TSM"] {
+            XCTAssertTrue(app.descendants(matching: .any)["portfolio.allocation.filing.\(id)"].firstMatch.exists)
+        }
+        XCTAssertFalse(app.descendants(matching: .any)["portfolio.allocation.filing.us:QQQ"].exists)
+        app.navigationBars["Issuer filing sources"].buttons["Done"].tap()
         let australia = slice("Australia")
         reveal(australia)
         // The ASX leg uses the live ASX quote converted to USD. The controlled US
@@ -354,15 +363,6 @@ final class AccountSyncTests: XCTestCase {
         let expected = String(format: "%.1f%%", weight)
         XCTAssertTrue(australia.label.contains(expected), australia.label)
         reveal(slice("Taiwan"))
-        let sources = app.buttons["portfolio.allocation.filings"]
-        reveal(sources)
-        sources.tap()
-        XCTAssertTrue(app.navigationBars["Issuer filing sources"].waitForExistence(timeout: 8))
-        for id in ["asx:BHP", "us:BHP", "us:TSM"] {
-            XCTAssertTrue(app.descendants(matching: .any)["portfolio.allocation.filing.\(id)"].firstMatch.exists)
-        }
-        XCTAssertFalse(app.descendants(matching: .any)["portfolio.allocation.filing.us:QQQ"].exists)
-        app.navigationBars["Issuer filing sources"].buttons["Done"].tap()
         app.buttons["portfolio.privacy"].tap()
         reveal(australia)
         XCTAssertTrue(australia.label.contains("••••"), australia.label)

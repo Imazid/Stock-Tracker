@@ -129,14 +129,14 @@ struct PortfolioAllocationTab: View {
                 if let issuer, let dimension {
                     issuerCoverage(issuer, dimension: dimension, valued: holdings.count, open: open.count, total: chartTotal)
                 }
+                if let issuer, !issuer.sources.isEmpty {
+                    issuerSources(issuer.sources)
+                }
                 if chartTotal.isFinite, chartTotal > 0 {
                     donutCard(slices(holdings: holdings, issuer: issuer), total: chartTotal, count: holdings.count)
                 } else {
                     EmptyStateCard(systemImage: "chart.pie", title: "Allocation unavailable",
                                    message: "The breakdown appears when holdings have usable prices.")
-                }
-                if let issuer, !issuer.sources.isEmpty {
-                    issuerSources(issuer.sources)
                 }
                 if total > 0 {
                     concentrationCard
@@ -197,7 +197,6 @@ struct PortfolioAllocationTab: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("portfolio.allocation.filings")
-        .dsCard()
         .sheet(isPresented: $showingIssuerSources) {
             NavigationStack {
                 List {
