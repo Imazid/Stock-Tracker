@@ -286,6 +286,127 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(try rows("portfolio_holdings", select: "id,shares", token: token).count, original.count)
     }
 
+    func testHoldingsComparisonSearchFiltersAndRespectsHiddenBalances() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_HOLDINGS_COMPARISON"] == "1",
+                          "Start the holdings comparison quote fixture relay")
+        let email = "holdings-comparison-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userId = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let now = ISO8601DateFormatter().string(from: Date())
+        func holding(_ symbol: String, name: String, kind: String, exchange: String, units: Double, account: String? = nil) -> [String: Any] {
+            var row: [String: Any] = [
+                "id": UUID().uuidString.lowercased(), "user_id": userId, "asset_symbol": symbol,
+                "asset_name": name, "asset_kind": kind, "asset_exchange": exchange,
+                "shares": units, "avg_cost": 40, "date_added": now,
+                "broker_account": NSNull(),
+            ]
+            if let account {
+                row["broker_account"] = [
+                    "account_id": UUID().uuidString.lowercased(), "label": "Test Broker ••••\(account)",
+                    "institution": "Test Broker", "observed_at": now, "tracking": true,
+                ] as [String: Any]
+            }
+            return row
+        }
+        let holdings = [
+            holding("AAPL", name: "Apple", kind: "Stock", exchange: "NASDAQ", units: 2, account: "1212"),
+            holding("AAPL", name: "Apple", kind: "Stock", exchange: "NASDAQ", units: 1, account: "3434"),
+            holding("QQQ", name: "Invesco Nasdaq 100", kind: "Stock", exchange: "NASDAQ", units: 1),
+            holding("BTC", name: "Bitcoin", kind: "Crypto", exchange: "Crypto", units: 0.001),
+        ]
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: holdings), token: token).status, 201)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-portfolioSegment", "holdings",
+            "-preferredCurrency", "USD"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<16 {
+                let frame = element.exists ? element.frame : .zero
+                if !frame.isEmpty && app.frame.insetBy(dx: 0, dy: 90).contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
+                let down = !frame.isEmpty && frame.midY < app.frame.midY
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.37 : 0.65))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.63 : 0.38))
+                start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            }
+            XCTAssertTrue(element.isHittable, "Expected \(element)")
+        }
+
+        let search = app.textFields["portfolio.holdings.search"]
+        let filter = app.buttons["portfolio.holdings.filter"]
+        let sort = app.buttons["portfolio.sort"]
+        let appleRows = app.buttons.matching(identifier: "portfolio.holding.AAPL")
+        let apple = appleRows.matching(NSPredicate(format: "label CONTAINS '1212'")).firstMatch
+        let secondApple = appleRows.matching(NSPredicate(format: "label CONTAINS '3434'")).firstMatch
+        let fund = app.buttons["portfolio.holding.QQQ"]
+        let bitcoin = app.buttons["portfolio.holding.BTC"]
+        reveal(apple)
+        let quoted = NSPredicate(format: "label CONTAINS 'Price per unit US$50.00'")
+        let observation = expectation(for: quoted, evaluatedWith: apple)
+        XCTAssertEqual(XCTWaiter.wait(for: [observation], timeout: 25), .completed, apple.label)
+        XCTAssertTrue(apple.label.contains("Apple") && apple.label.contains("2 shares"), apple.label)
+        XCTAssertTrue(apple.label.contains("Position value US$100.00"), apple.label)
+        XCTAssertTrue(apple.label.contains("Average cost US$40.00"), apple.label)
+        XCTAssertTrue(apple.label.contains("Unrealised gain or loss +US$20.00"), apple.label)
+        let weight = try XCTUnwrap(apple.label.firstMatch(of: /[0-9.]+ percent of portfolio/)).0
+        reveal(secondApple)
+
+        reveal(search)
+        search.tap()
+        search.typeText("apple 1212")
+        app.keyboards.buttons["Done"].tap()
+        reveal(apple)
+        XCTAssertTrue(apple.label.contains(weight))
+        XCTAssertFalse(secondApple.exists)
+        XCTAssertFalse(fund.exists)
+        attach("holdings-search")
+        app.buttons["portfolio.privacy"].tap()
+        let masked = expectation(for: NSPredicate(format: "label CONTAINS 'Position figures hidden'"), evaluatedWith: apple)
+        XCTAssertEqual(XCTWaiter.wait(for: [masked], timeout: 5), .completed, apple.label)
+        XCTAssertTrue(apple.label.contains("Price per unit US$50.00"), apple.label)
+        for privateValue in ["2 shares", "US$100.00", "US$40.00", "+US$20.00"] {
+            XCTAssertFalse(apple.label.contains(privateValue), apple.label)
+        }
+        app.buttons["portfolio.privacy"].tap()
+
+        let clear = app.buttons["Clear holdings search"]
+        reveal(clear)
+        clear.tap()
+        reveal(filter)
+        filter.tap()
+        app.buttons["ETFs"].firstMatch.tap()
+        reveal(fund)
+        XCTAssertTrue(fund.label.contains("ETF"), fund.label)
+        XCTAssertFalse(appleRows.firstMatch.exists)
+        XCTAssertFalse(bitcoin.exists)
+        reveal(filter)
+        filter.tap()
+        app.buttons["Crypto"].firstMatch.tap()
+        reveal(bitcoin)
+        XCTAssertFalse(fund.exists)
+        reveal(filter)
+        filter.tap()
+        app.buttons["Stocks"].firstMatch.tap()
+        reveal(sort)
+        sort.tap()
+        app.buttons["Unrealised gain or loss"].firstMatch.tap()
+        reveal(apple)
+        XCTAssertTrue(sort.label.contains("Unrealised gain or loss"), sort.label)
+        XCTAssertTrue(appleRows.firstMatch.label.contains("1212"), appleRows.firstMatch.label)
+        apple.tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["holding.position"].waitForExistence(timeout: 8))
+    }
+
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ISSUER_EXPOSURE"] == "1",
                           "Start the issuer allocation quote fixture relay")

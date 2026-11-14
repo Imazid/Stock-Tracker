@@ -805,7 +805,8 @@ extension APIService {
                 id: displaySymbol,
                 exchange: exchange,
                 region: exchDisp,
-                currency: q["currency"] as? String ?? "USD"
+                currency: q["currency"] as? String ?? "USD",
+                isETF: quoteType == "ETF"
             )
         }
     }
@@ -887,7 +888,8 @@ extension APIService {
             guard !name.isEmpty, name != quote.symbol else { return quote }
             return Asset(id: quote.id, symbol: quote.symbol, name: name, price: quote.price, change: quote.change,
                          changePercent: quote.changePercent, volume: quote.volume, kind: quote.kind,
-                         week52High: quote.week52High, week52Low: quote.week52Low, exchange: quote.exchange)
+                         week52High: quote.week52High, week52Low: quote.week52Low, exchange: quote.exchange,
+                         isETF: quote.isETF)
         case .crypto:
             return try await fetchCryptoPrice(id: identifier)
         }
@@ -1381,7 +1383,9 @@ extension APIService {
             kind: .stock,
             week52High: fiftyTwoWeekHigh,
             week52Low: fiftyTwoWeekLow,
-            exchange: exchange
+            exchange: exchange,
+            isETF: (meta["symbol"] as? String)?.uppercased() == sanitized.uppercased()
+                ? (meta["instrumentType"] as? String).map { $0 == "ETF" } : nil
         )
     }
 
@@ -1658,14 +1662,17 @@ struct SearchResult {
     let exchange: String
     let region: String
     let currency: String
+    let isETF: Bool?
 
-    init(symbol: String, name: String, id: String, exchange: String = "", region: String = "", currency: String = "USD") {
+    init(symbol: String, name: String, id: String, exchange: String = "", region: String = "", currency: String = "USD",
+         isETF: Bool? = nil) {
         self.symbol = symbol
         self.name = name
         self.id = id
         self.exchange = exchange
         self.region = region
         self.currency = currency
+        self.isETF = isETF
     }
 
     /// Whether this result represents an Australian Securities Exchange listing.
