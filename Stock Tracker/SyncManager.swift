@@ -44,10 +44,12 @@ final class SyncManager: ObservableObject {
     static let shared = SyncManager()
 
     @Published var syncState: SyncState = .idle
+    @Published private(set) var holdingConflicts: [PortfolioLedgerChange] = []
 
     private let persist = DataPersistenceManager.shared
     private var debounceTask: Task<Void, Never>?
     private var isRunning = false
+    private var savedHoldingRevisions: [UUID: UUID] = [:]
     private weak var marketData: MarketData?
 
     /// Tracks whether the initial full sync has been performed this session.
@@ -63,6 +65,8 @@ final class SyncManager: ObservableObject {
     /// Resets the initial-sync flag so the next sign-in triggers a full merge.
     func resetInitialSyncFlag() {
         syncedUserId = nil
+        holdingConflicts = []
+        savedHoldingRevisions = [:]
         debounceTask?.cancel()
         debounceTask = nil
     }
@@ -104,7 +108,7 @@ final class SyncManager: ObservableObject {
             syncedUserId = userId
             try await WatchlistSync.shared.exchange(owner: userId, marketData: marketData)
             guard SupabaseManager.auth.currentUser?.id == userId else { return }
-            syncState = .lastSyncedAt(now)
+            reportSync(at: now)
             AppLogger.sync.info("First-sign-in sync complete")
 
         } catch is CancellationError {
@@ -137,7 +141,7 @@ final class SyncManager: ObservableObject {
         let account = portfolios.cached(owner: userId)
         if !force, !account.needsUpload,
            !WatchlistSync.shared.hasPending(owner: userId),
-           (persist.loadPortfolioLedgerQueue()[userId.uuidString]?.isEmpty ?? true),
+           !hasPendingHoldings(userId),
            let lastSync = persist.loadLastSyncDate(),
            Date().timeIntervalSince(lastSync) < Constants.Sync.foregroundPullThrottle {
             AppLogger.sync.debug("Foreground pull skipped — within throttle window")
@@ -175,7 +179,7 @@ final class SyncManager: ObservableObject {
             persist.saveLastSyncDate(now)
             try await WatchlistSync.shared.exchange(owner: userId, marketData: marketData)
             guard SupabaseManager.auth.currentUser?.id == userId else { return }
-            syncState = .lastSyncedAt(now)
+            reportSync(at: now)
             AppLogger.sync.info("Incremental pull complete")
 
         } catch is CancellationError {
@@ -216,7 +220,7 @@ final class SyncManager: ObservableObject {
         syncState = .syncing
         do {
             if let marketData, marketData.portfolioOwner == userId,
-               portfolios.cached(owner: userId).needsUpload || !(persist.loadPortfolioLedgerQueue()[userId.uuidString]?.isEmpty ?? true) {
+               portfolios.cached(owner: userId).needsUpload || hasPendingHoldings(userId) {
                 try await exchangePortfolios(userId: userId, marketData: marketData)
             }
             if let marketData, marketData.watchlistOwner == userId, WatchlistSync.shared.hasPending(owner: userId) {
@@ -228,7 +232,7 @@ final class SyncManager: ObservableObject {
             }
             guard SupabaseManager.auth.currentUser?.id == userId else { return }
             let now = Date()
-            syncState = .lastSyncedAt(now)
+            reportSync(at: now)
             AppLogger.sync.info("Background upload complete")
         } catch is CancellationError {
             return
@@ -247,20 +251,62 @@ final class SyncManager: ObservableObject {
                                                      archivedAt: archived ? Date() : nil, closedAt: closedAt, groupID: groupID)], owner: owner)
     }
 
+    private func hasPendingHoldings(_ owner: UUID) -> Bool {
+        (persist.loadPortfolioLedgerQueue()[owner.uuidString] ?? []).contains { $0.conflicted != true }
+    }
+
+    private func reportSync(at date: Date) {
+        syncState = holdingConflicts.isEmpty ? .lastSyncedAt(date)
+            : .error("Review the unsynced holding changes in Portfolio.")
+    }
+
+    func discardHoldingConflict(_ change: PortfolioLedgerChange, owner: UUID?) {
+        guard let owner, marketData?.portfolioOwner == owner, SupabaseManager.auth.currentUser?.id == owner else { return }
+        let key = owner.uuidString
+        var queue = persist.loadPortfolioLedgerQueue()
+        queue[key]?.removeAll { $0.holding.id == change.holding.id && $0.conflicted == true }
+        guard persist.savePortfolioLedgerQueue(queue) else { return }
+        refreshHoldingConflicts(owner)
+        reportSync(at: persist.loadLastSyncDate() ?? Date())
+        scheduleUpload()
+    }
+
+    private func refreshHoldingConflicts(_ owner: UUID) {
+        guard marketData?.portfolioOwner == owner else { return }
+        let saved = (persist.loadPortfolioLedgerQueue()[owner.uuidString] ?? []).filter { $0.conflicted == true }
+        let followed = Set(saved.compactMap(\.follows))
+        holdingConflicts = saved.filter { !followed.contains($0.revision) }.map { last in
+            let chain = saved.filter { $0.holding.id == last.holding.id }
+            guard chain.count > 1 else { return last }
+            let allChanged = chain.reduce(into: Set<UUID>()) { $0.formUnion($1.changed) }
+            let allDeleted = Dictionary(chain.flatMap(\.deleted).map { ($0.id, $0) },
+                                        uniquingKeysWith: { _, latest in latest })
+            return PortfolioLedgerChange(revision: last.revision, holding: last.holding,
+                                         changed: allChanged, deleted: Array(allDeleted.values),
+                                         archivedAt: last.archivedAt, closedAt: last.closedAt, groupID: last.groupID)
+        }
+    }
+
     func queuePortfolioChanges(_ pending: [PortfolioLedgerChange], owner: UUID?) -> Bool {
         guard !pending.isEmpty, let userId = owner else { return true }
         var queue = persist.loadPortfolioLedgerQueue()
         var changes = queue[userId.uuidString, default: []]
         for change in pending {
-            let prior = changes.last { $0.holding.id == change.holding.id }
+            let prior = changes.last { $0.holding.id == change.holding.id && $0.conflicted != true }
+            let coalesce = prior?.submitted != true ? prior : nil
             let kept = Set(change.holding.transactions.map(\.id))
-            let removed = ((prior?.deleted ?? []) + change.deleted).filter { !kept.contains($0.id) }
-            changes.removeAll { $0.holding.id == change.holding.id }
-            changes.append(PortfolioLedgerChange(revision: change.revision, holding: change.holding,
-                                                 changed: (prior?.changed ?? []).union(change.changed),
-                                                 deleted: Array(Dictionary(removed.map { ($0.id, $0) },
-                                                                           uniquingKeysWith: { _, latest in latest }).values),
-                                                 archivedAt: change.archivedAt, closedAt: change.closedAt, groupID: change.groupID ?? prior?.groupID))
+            let removed = ((coalesce?.deleted ?? []) + change.deleted).filter { !kept.contains($0.id) }
+            if let coalesce { changes.removeAll { $0.revision == coalesce.revision } }
+            var queued = PortfolioLedgerChange(revision: change.revision, holding: change.holding,
+                                               changed: (coalesce?.changed ?? []).union(change.changed),
+                                               deleted: Array(Dictionary(removed.map { ($0.id, $0) },
+                                                                         uniquingKeysWith: { _, latest in latest }).values),
+                                               archivedAt: change.archivedAt, closedAt: change.closedAt,
+                                               groupID: change.groupID ?? prior?.groupID)
+            queued.follows = prior?.submitted == true ? prior?.revision : coalesce?.follows
+            queued.holding.ledgerRevision = prior == nil
+                ? (savedHoldingRevisions[change.holding.id] ?? change.holding.ledgerRevision) : prior?.holding.ledgerRevision
+            changes.append(queued)
         }
         queue[userId.uuidString] = changes
         guard persist.savePortfolioLedgerQueue(queue) else {
@@ -271,21 +317,66 @@ final class SyncManager: ObservableObject {
         return true
     }
 
+    private struct LedgerResult: Decodable {
+        let status: String
+        let revision: UUID?
+        let merged: Bool?
+    }
+
     private func flushPortfolioChanges(_ pending: [PortfolioLedgerChange], userId: UUID) async throws {
         let key = userId.uuidString
         try requirePortfolioOwner(userId)
-        let linked = pending.filter { $0.holding.brokerAccount != nil }
+        let linked = pending.filter {
+            $0.holding.brokerAccount?.tracking == true && $0.changed.isEmpty && $0.deleted.isEmpty
+                && $0.archivedAt == nil && $0.follows == nil
+        }
         if !linked.isEmpty {
             nonisolated struct Batch: Encodable, Sendable { let p_changes: [PortfolioLedgerChange.Parameters] }
             try await SupabaseManager.client.rpc("sync_broker_portfolio_ledger",
                 params: Batch(p_changes: linked.map { $0.parameters(userId: userId) })).execute()
             clearChanges(Set(linked.map(\.revision)), for: key)
         }
-        for change in pending where change.holding.brokerAccount == nil {
+        let linkedIDs = Set(linked.map(\.revision))
+        for item in pending where !linkedIDs.contains(item.revision) {
             try requirePortfolioOwner(userId)
-            try await SupabaseManager.client.rpc("sync_portfolio_ledger", params: change.parameters(userId: userId)).execute()
-            clearChanges([change.revision], for: key)
+            var queue = persist.loadPortfolioLedgerQueue()
+            guard let idx = queue[key]?.firstIndex(where: { $0.revision == item.revision }),
+                  var change = queue[key]?[idx], change.conflicted != true, change.follows == nil else { continue }
+            change.groupID = item.groupID
+            change.submitted = true
+            queue[key]?[idx] = change
+            guard persist.savePortfolioLedgerQueue(queue) else { throw CocoaError(.fileWriteUnknown) }
+
+            let result: LedgerResult = try await SupabaseManager.client.rpc("apply_portfolio_ledger_change",
+                params: PortfolioLedgerChange.GuardedParameters(change: change.parameters(userId: userId),
+                    p_mutation_id: change.revision, p_expected_revision: change.holding.ledgerRevision)).execute().value
+            try requirePortfolioOwner(userId)
+            queue = persist.loadPortfolioLedgerQueue()
+            if result.status == "applied", let revision = result.revision {
+                if result.merged == true {
+                    savedHoldingRevisions[change.holding.id] = nil
+                } else {
+                    savedHoldingRevisions[change.holding.id] = revision
+                }
+                queue[key]?.removeAll { $0.revision == change.revision }
+                if let next = queue[key]?.firstIndex(where: { $0.follows == change.revision }) {
+                    queue[key]?[next].follows = nil
+                    if result.merged != true { queue[key]?[next].holding.ledgerRevision = revision }
+                }
+            } else if result.status == "conflict" {
+                var conflictedIDs: Set<UUID> = [change.revision]
+                for i in (queue[key]?.indices ?? 0..<0) {
+                    guard let queued = queue[key]?[i],
+                          conflictedIDs.contains(queued.revision) || queued.follows.map(conflictedIDs.contains) == true else { continue }
+                    conflictedIDs.insert(queued.revision)
+                    queue[key]?[i].conflicted = true
+                }
+            } else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            guard persist.savePortfolioLedgerQueue(queue) else { throw CocoaError(.fileWriteUnknown) }
         }
+        refreshHoldingConflicts(userId)
     }
 
     private func clearChanges(_ revisions: Set<UUID>, for key: String) {
@@ -347,8 +438,9 @@ final class SyncManager: ObservableObject {
 
     private func exchangePortfolios(userId: UUID, marketData: MarketData) async throws {
         try requirePortfolioOwner(userId)
+        refreshHoldingConflicts(userId)
         let account = portfolios.cached(owner: userId)
-        let pending = persist.loadPortfolioLedgerQueue()[userId.uuidString] ?? []
+        let pending = (persist.loadPortfolioLedgerQueue()[userId.uuidString] ?? []).filter { $0.conflicted != true }
         // Publish metadata before a holding references it.
         for change in account.pendingGroups where change.action != .delete {
             try requirePortfolioOwner(userId)
@@ -366,12 +458,14 @@ final class SyncManager: ObservableObject {
 
         if account.needsImport {
             let existing: [RemoteHolding] = try await portfolioRows("portfolio_holdings", userId: userId)
-            try await importPortfolioLedger(account.groups, existing: existing, userId: userId)
+            let retainedEdits = Set(holdingConflicts.map { $0.holding.id })
+            try await importPortfolioLedger(account.groups, existing: existing, excluding: retainedEdits, userId: userId)
         }
 
         var deletionFailure: PostgrestError?
         for change in account.pendingGroups where change.action == .delete {
             try requirePortfolioOwner(userId)
+            if holdingConflicts.contains(where: { $0.groupID == change.groupID }) { continue }
             do {
                 try await SupabaseManager.client.rpc("apply_portfolio_group_change", params: change.parameters(owner: userId)).execute()
             } catch let error as PostgrestError where error.code == "22023" {
@@ -382,10 +476,8 @@ final class SyncManager: ObservableObject {
         }
 
         let metadata: [RemoteGroup] = try await portfolioRows("portfolio_groups", userId: userId)
-        let remoteHoldings: [RemoteHolding] = try await portfolioRows("portfolio_holdings", userId: userId)
-        let transactions: [RemoteTransaction] = try await portfolioRows("transactions", userId: userId)
-        let byHolding = Dictionary(grouping: transactions.filter { !$0.isDeleted }, by: \.holdingId)
-        let byGroup = Dictionary(grouping: remoteHoldings) { $0.groupID ?? PortfolioGroup.defaultID }
+        let remoteLedger = try await readLedger(userId)
+        let byGroup = Dictionary(grouping: remoteLedger) { $0.holding.groupID ?? PortfolioGroup.defaultID }
         let defaultGroup = metadata.first { $0.id == PortfolioGroup.defaultID && $0.deleted_at == nil }?.domain
             ?? PortfolioGroup(id: PortfolioGroup.defaultID, name: "Main Portfolio")
         var groups = [defaultGroup] + metadata.filter { $0.id != PortfolioGroup.defaultID && $0.deleted_at == nil }
@@ -393,21 +485,20 @@ final class SyncManager: ObservableObject {
         for index in groups.indices {
             let id = groups[index].id
             let remote = byGroup[id] ?? []
-            groups[index].holdings = remote.filter { !$0.isDeleted }.map { row in
-                row.toDomain(transactions: (byHolding[row.id] ?? []).map { $0.toDomain() })
-            }
-            groups[index].closedPositions = remote.compactMap { row in
-                row.toClosedPosition(transactions: (byHolding[row.id] ?? []).map { $0.toDomain() })
-            }
+            groups[index].holdings = remote.filter { !$0.holding.isDeleted }.map(\.openHolding)
+            groups[index].closedPositions = remote.compactMap(\.closedPosition)
             let local = account.groups.first { $0.id == id }?.history ?? []
-            let queued = account.pendingValuations[id.uuidString] ?? [:]
-            groups[index].history = try await syncHistory(groupID: id, userId: userId, local: local,
+            let hasConflict = holdingConflicts.contains { $0.groupID == id }
+            let queued = hasConflict ? [:] : account.pendingValuations[id.uuidString] ?? [:]
+            let localHistory = hasConflict ? local.filter { account.pendingValuations[id.uuidString]?[$0.utcDay] == nil } : local
+            groups[index].history = try await syncHistory(groupID: id, userId: userId, local: localHistory,
                                                           importing: account.needsImport, queued: queued)
         }
 
         try requirePortfolioOwner(userId)
-        let completed = Set(account.pendingGroups.map(\.id))
-        let ledger = persist.loadPortfolioLedgerQueue()[userId.uuidString] ?? []
+        let blockedGroups = Set(holdingConflicts.compactMap(\.groupID))
+        let completed = Set(account.pendingGroups.filter { $0.action != .delete || !blockedGroups.contains($0.groupID) }.map(\.id))
+        let ledger = (persist.loadPortfolioLedgerQueue()[userId.uuidString] ?? []).filter { $0.conflicted != true }
         let withQuotes = marketData.portfolioGroupsWithQuotes(groups)
         guard portfolios.update(owner: userId, { stored in
             stored.pendingGroups.removeAll { completed.contains($0.id) }
@@ -421,13 +512,15 @@ final class SyncManager: ObservableObject {
             }
             stored.needsImport = false
             var next = withQuotes
-            for change in stored.pendingGroups { change.apply(to: &next) }
+            for change in stored.pendingGroups where change.action != .delete || !blockedGroups.contains(change.groupID) { change.apply(to: &next) }
             for i in next.indices {
                 let group = next[i].id
-                let edits = ledger.filter {
+                let edits = ledger.reversed().filter {
                     ($0.groupID ?? groupForHolding[$0.holding.id] ?? PortfolioGroup.defaultID) == group
-                }
-                if let queued = stored.pendingValuations[group.uuidString] {
+                }.reduce(into: [UUID: PortfolioLedgerChange]()) { result, change in
+                    if result[change.holding.id] == nil { result[change.holding.id] = change }
+                }.values
+                if !blockedGroups.contains(group), let queued = stored.pendingValuations[group.uuidString] {
                     next[i].history = snapshotsByDay(next[i].history + Array(queued.values)).values.sorted { $0.date < $1.date }
                 }
                 let ids = Set(edits.map { $0.holding.id })
@@ -446,10 +539,44 @@ final class SyncManager: ObservableObject {
             if !next.contains(where: { $0.id == stored.selected }) { stored.selected = PortfolioGroup.defaultID }
         }) else { throw CocoaError(.fileWriteUnknown) }
         marketData.showPortfolios(portfolios.cached(owner: userId))
+        savedHoldingRevisions = [:]
         if let deletionFailure { throw deletionFailure }
     }
 
-    private func importPortfolioLedger(_ groups: [PortfolioGroup], existing: [RemoteHolding], userId: UUID) async throws {
+    private struct LedgerRow: Decodable {
+        let holding: RemoteHolding
+        let transactions: [RemoteTransaction]
+
+        var openHolding: PortfolioHolding { holding.toDomain(transactions: transactions.map { $0.toDomain() }) }
+        var closedPosition: ClosedPosition? { holding.toClosedPosition(transactions: transactions.map { $0.toDomain() }) }
+    }
+
+    private func readLedger(_ owner: UUID) async throws -> [LedgerRow] {
+        nonisolated struct Page: Encodable, Sendable {
+            let p_user_id: UUID
+            let p_after: UUID?
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(p_user_id, forKey: .p_user_id)
+                try container.encode(p_after, forKey: .p_after)
+            }
+
+            private enum CodingKeys: String, CodingKey { case p_user_id, p_after }
+        }
+        var rows: [LedgerRow] = []
+        var after: UUID?
+        while true {
+            try requirePortfolioOwner(owner)
+            let page: [LedgerRow] = try await SupabaseManager.client.rpc("read_portfolio_ledger_page",
+                params: Page(p_user_id: owner, p_after: after)).execute().value
+            rows += page
+            guard page.count == 100, let last = page.last, let id = UUID(uuidString: last.holding.id) else { return rows }
+            after = id
+        }
+    }
+
+    private func importPortfolioLedger(_ groups: [PortfolioGroup], existing: [RemoteHolding], excluding: Set<UUID>, userId: UUID) async throws {
         let byID = Dictionary(uniqueKeysWithValues: existing.compactMap { row in UUID(uuidString: row.id).map { ($0, row) } })
         let byGroup = Dictionary(grouping: existing.filter { !$0.isDeleted }) { $0.groupID ?? PortfolioGroup.defaultID }
         for group in groups {
@@ -457,7 +584,7 @@ final class SyncManager: ObservableObject {
                 [row.assetSymbol, row.assetKind, row.assetExchange ?? "", row.brokerAccount?.account_id ?? ""]
             })
             let rows = group.holdings.filter { holding in
-                byID[holding.id] == nil && !signatures.contains([holding.asset.symbol, holding.asset.kind.rawValue,
+                !excluding.contains(holding.id) && byID[holding.id] == nil && !signatures.contains([holding.asset.symbol, holding.asset.kind.rawValue,
                                                                 holding.asset.exchange, holding.brokerAccount?.account_id ?? ""])
             }
             for holding in rows {
@@ -466,7 +593,7 @@ final class SyncManager: ObservableObject {
                                                    archivedAt: nil, closedAt: nil, groupID: group.id)
                 try await SupabaseManager.client.rpc("sync_portfolio_ledger", params: change.parameters(userId: userId)).execute()
             }
-            for position in group.closedPositions where position.transactions.contains(where: { $0.type == .sell }) {
+            for position in group.closedPositions where !excluding.contains(position.id) && position.transactions.contains(where: { $0.type == .sell }) {
                 let row = byID[position.id]
                 guard row == nil || ((row?.groupID ?? PortfolioGroup.defaultID) == group.id &&
                                      row?.deletedAt != nil && row?.closedAt == nil) else { continue }

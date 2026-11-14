@@ -52,6 +52,7 @@ struct RemoteHolding: Codable {
     let closedAt: String?
     let brokerAccount: HoldingBrokerAccount?
     let groupID: UUID?
+    let ledgerRevision: UUID?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -68,6 +69,7 @@ struct RemoteHolding: Codable {
         case closedAt      = "closed_at"
         case brokerAccount = "broker_account"
         case groupID       = "portfolio_group_id"
+        case ledgerRevision = "ledger_revision"
     }
 
     var isDeleted: Bool { deletedAt != nil }
@@ -90,7 +92,8 @@ struct RemoteHolding: Codable {
             avgCost: avgCost,
             dateAdded: parseDate(dateAdded),
             transactions: transactions,
-            brokerAccount: brokerAccount
+            brokerAccount: brokerAccount,
+            ledgerRevision: ledgerRevision
         )
     }
 
@@ -214,12 +217,30 @@ nonisolated struct TransactionUpsert: Encodable, Sendable {
 
 struct PortfolioLedgerChange: Codable {
     let revision: UUID
-    let holding: PortfolioHolding
+    var holding: PortfolioHolding
     let changed: Set<UUID>
     let deleted: [Transaction]
     let archivedAt: Date?
     let closedAt: Date?
     var groupID: UUID? = nil
+    var submitted: Bool? = nil
+    var follows: UUID? = nil
+    var conflicted: Bool? = nil
+
+    nonisolated struct GuardedParameters: Encodable, Sendable {
+        let change: Parameters
+        let p_mutation_id: UUID
+        let p_expected_revision: UUID?
+
+        func encode(to encoder: Encoder) throws {
+            try change.encode(to: encoder)
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(p_mutation_id, forKey: .p_mutation_id)
+            try container.encode(p_expected_revision, forKey: .p_expected_revision)
+        }
+
+        private enum CodingKeys: String, CodingKey { case p_mutation_id, p_expected_revision }
+    }
 
     nonisolated struct Parameters: Encodable, Sendable {
         let p_user_id: UUID

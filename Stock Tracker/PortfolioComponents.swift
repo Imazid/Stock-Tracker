@@ -99,7 +99,7 @@ extension MarketData {
     /// rebuilds shares + average cost from it. Refuses lists that would ever sell
     /// more than was held, or that leave nothing.
     @discardableResult
-    func replaceTransactions(holdingID: UUID, with transactions: [Transaction]) -> HoldingChange {
+    func replaceTransactions(holdingID: UUID, with transactions: [Transaction], basedOn original: PortfolioHolding) -> HoldingChange {
         guard let index = portfolio.firstIndex(where: { $0.id == holdingID }) else {
             return .invalid("That holding no longer exists.")
         }
@@ -116,6 +116,10 @@ extension MarketData {
         }
         var holding = portfolio[index]
         let before = Dictionary(holding.transactions.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let opened = Dictionary(original.transactions.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        guard opened == before, original.shares == holding.shares, original.avgCost == holding.avgCost else {
+            return .invalid("This holding changed while you were editing. Reopen the trade to review the latest details.")
+        }
         let kept = Set(transactions.map(\.id))
         let deleted = holding.transactions.filter { !kept.contains($0.id) }
         let changed = Set(transactions.filter { before[$0.id] != $0 }.map(\.id))
