@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
-import { dateLabel, privateMarkets, dayInSydney } from "./private-data";
+import { dateLabel, groupedDecimal, privateMarkets, dayInSydney } from "./private-data";
 
 type ManualHolding = {
   id: string; name: string; assetClass: string; currency: string; units?: string; ownership?: string;
@@ -24,11 +24,6 @@ export function manualPortfolioQuery(owner: string) {
   };
 }
 
-function decimal(value: string) {
-  const [whole, fraction] = value.split(".");
-  return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (fraction ? "." + fraction : "");
-}
-
 const ratio = new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 2 });
 
@@ -38,9 +33,9 @@ export function manualValuationIsStale(date: string, now: number) {
 
 function ManualHoldingCard({ holding, now }: { holding: ManualHolding; now: number }) {
   const { currency, valuation } = holding;
-  const money = (value?: string) => value === undefined ? "Unavailable" : currency + " " + decimal(value);
+  const money = (value?: string) => value === undefined ? "Unavailable" : currency + " " + groupedDecimal(value);
   const values = [
-    ["Remaining units", holding.units === undefined ? "Undisclosed" : decimal(holding.units)],
+    ["Remaining units", holding.units === undefined ? "Undisclosed" : groupedDecimal(holding.units)],
     ["Carrying value", money(valuation?.value)], ["Committed", money(holding.commitment)],
     ["Capital deployed", money(holding.paid)], ["Returned capital and proceeds", money(holding.returned)],
     ["Pending calls at publication", money(holding.pendingCalls)],
@@ -63,7 +58,7 @@ function ManualHoldingCard({ holding, now }: { holding: ManualHolding; now: numb
       </dl>
       {holding.exitedOn ? <p className="text-xs text-text-2">Exited {dateLabel(holding.exitedOn)}</p> : <>
         <p className="text-xs text-text-2">
-          {holding.ownership !== undefined && `Ownership ${decimal(holding.ownership)}% · `}
+          {holding.ownership !== undefined && `Ownership ${groupedDecimal(holding.ownership)}% · `}
           {holding.shareClass && `${holding.shareClass} · `}
           {holding.lockupUntil ? `Recorded lock-up through ${dateLabel(holding.lockupUntil)}.` : "Liquidity depends on the investment terms."}
         </p>

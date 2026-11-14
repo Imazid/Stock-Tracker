@@ -7,21 +7,14 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { SourceLink } from "./catalog";
-import { dateLabel, privateMarkets, providerName, sourceHref, type CapitalActivityItem } from "./private-data";
+import { dateLabel, groupedDecimal, privateMarkets, providerName, sourceHref, type CapitalActivityItem } from "./private-data";
 
 type Section = "calls" | "history";
 type CapitalActivityPage = { items: CapitalActivityItem[]; next_offset: number | null };
 
 const statusLabels = {
-  upcoming: "Upcoming", overdue: "Overdue", paid: "Paid", cancelled: "Cancelled", distribution: "Distribution",
+  upcoming: "Upcoming", overdue: "Overdue", paid: "Paid", cancelled: "Cancelled", distribution: "Distribution", sale: "Settled sale",
 };
-
-function formattedAmount(currency: string, amount: string) {
-  // Preserve the ledger's decimal amount without converting large values to a binary float.
-  const [whole, fraction] = amount.split(".");
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${currency} ${grouped}${fraction ? "." + fraction : ""}`;
-}
 
 function CapitalActivityList({ owner, section, title, empty }: { owner: string; section: Section; title: string; empty: string }) {
   const activity = useInfiniteQuery({
@@ -49,7 +42,7 @@ function CapitalActivityList({ owner, section, title, empty }: { owner: string; 
           {statusLabels[item.status]}
         </Badge>
       </div>
-      <p className="break-words font-medium tabular-nums">{formattedAmount(item.currency, item.amount)}</p>
+      <p className="break-words font-medium tabular-nums">{item.currency} {groupedDecimal(item.amount)}</p>
       <p className="text-xs text-text-2">
         {providerName(item.provider)} · {section === "calls" ? "Due " : ""}{dateLabel(item.occurred_on)}
         {section === "history" && item.due_on && ` · Originally due ${dateLabel(item.due_on)}`}
@@ -69,7 +62,7 @@ function CapitalActivityList({ owner, section, title, empty }: { owner: string; 
 export function CapitalActivity({ owner }: { owner: string }) {
   return <section aria-labelledby="capital-activity-heading" className="space-y-4">
     <div>
-      <h2 id="capital-activity-heading" className="font-semibold text-text">Capital Calls &amp; Distributions</h2>
+      <h2 id="capital-activity-heading" className="font-semibold text-text">Capital Activity</h2>
       <p className="text-sm text-text-2">Activity from provider-confirmed holdings. Dates use Sydney time and amounts use the original currency.</p>
     </div>
     <div className="grid items-start gap-4 lg:grid-cols-2">

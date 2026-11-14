@@ -75,7 +75,7 @@ export type PortfolioHolding = {
 };
 export type CapitalActivityItem = {
   id: string; holding_id: string; holding_name: string; provider: string; currency: string; amount: string;
-  status: "upcoming" | "overdue" | "paid" | "cancelled" | "distribution";
+  status: "upcoming" | "overdue" | "paid" | "cancelled" | "distribution" | "sale";
   due_on: string | null; occurred_on: string; source: string;
 };
 export type PortfolioPage = { holdings: PortfolioHolding[]; next_offset: number | null };
@@ -112,7 +112,7 @@ export type MonitorAlert = {
 };
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
-  "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "capital_activity" | "manual_portfolio" | "remove_manual_portfolio" | "applications" | "allocation" | "updates" |
+  "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "capital_activity" | "valuation_history" | "manual_portfolio" | "remove_manual_portfolio" | "applications" | "allocation" | "updates" |
   "profile" | "save_profile" | "handoff_check" | "handoff" |
   "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
@@ -194,6 +194,12 @@ export function dateLabel(value: string | null | undefined, style: "day" | "time
 
 export function amount(value: number | null, currency: string) {
   return value == null ? "Undisclosed" : `${currency} ${numberFormat.format(value)}`;
+}
+
+// The ledger returns decimal text so display preserves provider precision.
+export function groupedDecimal(value: string) {
+  const [whole, fraction] = value.split(".");
+  return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (fraction ? "." + fraction : "");
 }
 
 const countryNames = new Intl.DisplayNames(["en-AU"], { type: "region" });

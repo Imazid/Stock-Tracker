@@ -36,7 +36,7 @@ test("Capital activity shows owner-scoped outstanding calls and paginated posted
     await page.getByLabel("Password", { exact: true }).fill(secret);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.waitForURL(capital);
-    await page.getByRole("heading", { name: "Capital Calls & Distributions", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Capital Activity", exact: true }).waitFor();
   }
 
   try {
@@ -56,8 +56,12 @@ test("Capital activity shows owner-scoped outstanding calls and paginated posted
     const paid = page.getByText("USD 515.1250", { exact: true }).locator("xpath=ancestor::li");
     await paid.getByText("Distribution", { exact: true }).waitFor();
     assert.match(await paid.getByRole("link", { name: "Read provider source" }).getAttribute("href"), /^https:\/\//);
+    const sale = row(page, "Settled sale receipt");
+    await sale.getByText("Settled sale", { exact: true }).waitFor();
+    await sale.getByText("AUD 900,719,925,474,099.1234", { exact: true }).waitFor();
     assert.equal(await page.getByText("Reversed fixture", { exact: true }).count(), 0);
     assert.equal(await page.getByText("Future fixture", { exact: true }).count(), 0);
+    assert.equal(await page.getByText("Reversed sale fixture", { exact: true }).count(), 0);
 
     await page.getByRole("button", { name: "Load more activity" }).click();
     await row(page, "Archive statement 29").getByText("Distribution", { exact: true }).waitFor();
@@ -69,9 +73,33 @@ test("Capital activity shows owner-scoped outstanding calls and paginated posted
     });
     assert.equal(spoofed.status(), 400);
     const other = await signedOut();
+    const otherCapitalRequest = other.waitForRequest(isCapitalCall);
     await signIn(other, otherEmail, otherPassword);
     await other.getByText("No outstanding capital calls", { exact: true }).waitFor();
     await other.getByText("No confirmed capital activity", { exact: true }).waitFor();
+
+    await page.goto(new URL("/private-markets?view=portfolio", origin).href);
+    const holding = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Australian fund fixture", exact: true }) });
+    const requestedHistory = page.waitForRequest((request) => request.url() === api && request.postDataJSON()?.action === "valuation_history");
+    await holding.getByText("Valuation history", { exact: true }).click();
+    const historyRequest = await requestedHistory;
+    const { authorization: otherAuthorization } = await (await otherCapitalRequest).allHeaders();
+    const current = holding.getByText(/Current NAV/).locator("xpath=ancestor::li");
+    await current.getByText("Used for carrying value", { exact: true }).waitFor();
+    const historical = holding.getByText("AUD 900,719,925,474,099.2345", { exact: true }).locator("xpath=ancestor::li");
+    await historical.getByRole("link", { name: "Read valuation source", exact: true }).waitFor();
+    assert.equal(await historical.getByText("Used for carrying value", { exact: true }).count(), 0);
+    assert.equal(await holding.getByText(/Future valuation fixture/).count(), 0);
+    await holding.getByRole("button", { name: "Load older valuations", exact: true }).click();
+    await holding.getByText(/Archived NAV 35/).waitFor();
+    assert.match(await historical.getByRole("link", { name: "Read valuation source", exact: true }).getAttribute("href"), /^https:\/\//);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    assert.ok(otherAuthorization);
+    const another = await other.request.post(api, {
+      headers: { ...previewHeaders, authorization: otherAuthorization }, data: historyRequest.postDataJSON(),
+    });
+    assert.equal(another.status(), 200);
+    assert.deepEqual(await another.json(), { items: [], next_offset: null });
   } finally {
     await browser.close();
   }

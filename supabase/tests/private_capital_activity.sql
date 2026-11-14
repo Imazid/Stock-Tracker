@@ -66,6 +66,33 @@ insert into public.distributions (user_id,holding_id,amount,received_on,source,p
 select f.owner,f.holding,90,(now() at time zone 'Australia/Sydney')::date-age,'Earlier distribution ' || age,now()-age*interval '1 day'
 from capital_fixture f cross join generate_series(10,37) age where f.name='Second fund';
 
+insert into public.private_holding_dispositions
+  (user_id,holding_id,provider_reference,provider_event_at,sold_units,net_proceeds,settled_on,source,reversed)
+select f.owner,f.holding,d.source,now()+d.reported*interval '1 day',1,900719925474099.1234,
+  (now() at time zone 'Australia/Sydney')::date+d.settled,d.source,d.reversed
+from capital_fixture f join (values
+  ('First fund','Signed sale receipt',0,0,false),
+  ('First fund','Reversed sale receipt',-3,-1,true),
+  ('First fund','Future sale settlement',1,0,false),
+  ('First fund','Future sale report',0,1,false),
+  ('Other account fund','Other account sale',0,0,false)
+) d(name,source,settled,reported,reversed) on d.name=f.name;
+
+insert into public.valuation_history (user_id,holding_id,value,valued_on,source,methodology,provider_event_at)
+select f.owner,f.holding,900719925474099.1234,
+  (now() at time zone 'Australia/Sydney')::date-v.age,v.source,'Provider NAV',now()+v.reported*interval '1 day'
+from capital_fixture f join (values
+  ('First fund','Provider dated mark',1,0),
+  ('First fund','Older same-day report',1,-1),
+  ('First fund','Future valuation',-2,0),
+  ('First fund','Future valuation report',2,1),
+  ('Future confirmation','Unconfirmed valuation',1,0),
+  ('Other account fund','Other valuation',1,0)
+) v(name,source,age,reported) on v.name=f.name;
+insert into public.valuation_history (user_id,holding_id,value,valued_on,source,methodology)
+select f.owner, f.holding, 0, (now() at time zone 'Australia/Sydney')::date-age, 'Archived valuation ' || age, 'Provider NAV'
+from capital_fixture f cross join generate_series(3,30) age where f.name='First fund';
+
 select case when not has_function_privilege('anon','public.private_capital_activity(uuid,text,integer)','execute')
   and not has_function_privilege('authenticated','public.private_capital_activity(uuid,text,integer)','execute')
   and has_function_privilege('service_role','public.private_capital_activity(uuid,text,integer)','execute')
@@ -80,20 +107,40 @@ select case when array_agg(source) = array['Overdue notice','Due today','Beyond 
   else 'FAIL outstanding call order, filters or amount precision' end
 from public.private_capital_activity('ca000000-0000-4000-8000-000000000001','calls');
 
-select case when (array_agg(status))[1:3] = array['distribution','paid','cancelled']
-  and (array_agg(source))[1:3] = array['Distribution advice','Paid receipt','Provider cancellation notice']
-  and not bool_or(source in ('Future payment','Reversed distribution'))
+select case when (array_agg(status))[1:4] = array['sale','distribution','paid','cancelled']
+  and (array_agg(source))[1:4] = array['Signed sale receipt','Distribution advice','Paid receipt','Provider cancellation notice']
+  and bool_or(status='sale' and amount='900719925474099.1234' and currency='AUD')
+  and not bool_or(source in ('Future payment','Reversed distribution','Reversed sale receipt','Future sale settlement','Future sale report','Other account sale'))
   and count(*)=26
   then 'ok history shows posted activity with corrected evidence and a pagination sentinel'
   else 'FAIL history order, filtering or page size' end
 from public.private_capital_activity('ca000000-0000-4000-8000-000000000001','history');
 
-select case when count(*)=6 and min(occurred_on)=(now() at time zone 'Australia/Sydney')::date-37
+select case when count(*)=7 and min(occurred_on)=(now() at time zone 'Australia/Sydney')::date-37
   then 'ok older history stays available on the next page' else 'FAIL older history missing' end
 from public.private_capital_activity('ca000000-0000-4000-8000-000000000001','history',25);
 
 select case when count(*)=1 and bool_and(source='Other account call')
   then 'ok a second account sees only its own obligations' else 'FAIL capital activity crossed account boundaries' end
 from public.private_capital_activity('ca000000-0000-4000-8000-000000000002','calls');
+
+select case when not has_function_privilege('authenticated','public.private_valuation_history(uuid,uuid,integer)','execute')
+  and not has_function_privilege('anon','public.private_valuation_history(uuid,uuid,integer)','execute')
+  then 'ok valuation history requires the service role' else 'FAIL valuation history grants' end;
+select case when count(*)=26 and (array_agg(source))[1:2]=array['Provider dated mark','Older same-day report']
+  and bool_or(source='Provider dated mark' and value='900719925474099.1234')
+  and not bool_or(source in ('Future valuation','Future valuation report'))
+  then 'ok valuation history preserves dates, revisions and exact provider amounts'
+  else 'FAIL valuation history precision, sorting or date filtering' end
+from public.private_valuation_history('ca000000-0000-4000-8000-000000000001','ca000000-0000-4000-8000-000000000010');
+select case when count(*)=5 and bool_or(source='Archived valuation 30' and value='0.0000')
+  then 'ok earlier valuations remain available and zero is preserved' else 'FAIL missing archived valuations' end
+from public.private_valuation_history('ca000000-0000-4000-8000-000000000001','ca000000-0000-4000-8000-000000000010',25);
+select case when
+  not exists (select from public.private_valuation_history('ca000000-0000-4000-8000-000000000001','ca000000-0000-4000-8000-000000000013'))
+  and not exists (select from public.private_valuation_history('ca000000-0000-4000-8000-000000000002','ca000000-0000-4000-8000-000000000010'))
+  and not exists (select from public.private_valuation_history('ca000000-0000-4000-8000-000000000001','ca000000-0000-4000-8000-000000000012'))
+  then 'ok valuation history is restricted to the owning account and confirmed holdings'
+  else 'FAIL valuation history crossed its access boundary' end;
 reset role;
 rollback;

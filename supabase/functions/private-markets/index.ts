@@ -18,7 +18,7 @@ const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
 const activeSessionActions = new Set([
   "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests", "allocation",
-  "profile", "save_profile", "applications", "confirmed_holdings", "capital_activity",
+  "profile", "save_profile", "applications", "confirmed_holdings", "capital_activity", "valuation_history",
   "documents", "document", "save_document", "delete_document", "research_capabilities",
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
@@ -716,6 +716,21 @@ Deno.serve(async (req) => {
         }
         const { data, error } = await admin.rpc("private_capital_activity", {
           p_user: userId, p_section: section, p_offset: offset,
+        });
+        if (error) throw error;
+        return jsonResponse(200, {
+          items: data.slice(0, 25), next_offset: data.length > 25 ? offset + 25 : null,
+        });
+      }
+      case "valuation_history": {
+        const { holding_id: holding, offset = 0 } = body;
+        if (Object.keys(body).some((key) => !["action", "holding_id", "offset"].includes(key)) ||
+          typeof holding !== "string" || !uuid.test(holding) ||
+          typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
+          return errorResponse(400, "INVALID_REQUEST", "Choose a holding and a valid valuation page.");
+        }
+        const { data, error } = await admin.rpc("private_valuation_history", {
+          p_user: userId, p_holding: holding, p_offset: offset,
         });
         if (error) throw error;
         return jsonResponse(200, {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -11,9 +11,10 @@ import { SourceLink } from "./catalog";
 import { ManualPortfolioPanel } from "./manual-portfolio";
 import { InvestorProfileCard } from "./investor-profile";
 import {
-  amount, dateLabel, privateMarkets, providerName, dayInSydney, type Application, type PortfolioHolding, type PortfolioPage,
+  amount, dateLabel, privateMarkets, providerName, dayInSydney, sourceHref, type Application, type PortfolioHolding, type PortfolioPage,
 } from "./private-data";
 import { privatePositionPerformance } from "./private-performance";
+import { ValuationHistory } from "./valuation-history";
 
 const percent = new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 2 });
 const ratio = new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -25,12 +26,14 @@ function LedgerSection({ title, children }: { title: string; children: ReactNode
   </section>;
 }
 
-function HoldingCard({ holding, asOf }: { holding: PortfolioHolding; asOf: number }) {
+function HoldingSource({ value }: { value: string }) {
+  return sourceHref(value) ? <SourceLink url={value}>Read provider source</SourceLink> : value;
+}
+
+function HoldingCard({ owner, holding, asOf }: { owner: string; holding: PortfolioHolding; asOf: number }) {
+  const [showHistory, setShowHistory] = useState(false);
   const { currency } = holding;
   const { exited, mark, stale, metrics, completeActivity, fund } = privatePositionPerformance(holding, dayInSydney(asOf), asOf);
-  const acquisition = holding.settled_on
-    ? `Settled ${dateLabel(holding.settled_on)} · ${holding.settlement_source ?? "Provider confirmation"}`
-    : "Provider confirmation";
   const units = holding.remaining_units ?? holding.units;
   const capital = [
     ["Committed", amount(holding.committed_amount, currency)], ["Settled", amount(holding.settled_amount, currency)],
@@ -61,17 +64,25 @@ function HoldingCard({ holding, asOf }: { holding: PortfolioHolding; asOf: numbe
             <dt className="text-xs text-text-3">{label}</dt><dd className="break-words font-medium tabular-nums text-text">{value}</dd>
           </div>)}
         </dl>
-        <p className="text-xs text-text-2">{acquisition}</p>
+        <p className="text-xs text-text-2">
+          {holding.settled_on && `Settled ${dateLabel(holding.settled_on)} · `}
+          <HoldingSource value={holding.settlement_source ?? "Provider confirmation"} />
+        </p>
         {holding.last_disposition_on === null && holding.ownership_percent != null &&
           <p className="text-xs text-text-2">Reported ownership {percent.format(holding.ownership_percent / 100)}</p>}
         {holding.commitment.provider_reference && <p className="break-words text-xs text-text-3">Provider reference {holding.commitment.provider_reference}</p>}
         {mark && <div className="flex flex-wrap items-center gap-2">
-          <p className="text-xs text-text-2">Valued {dateLabel(mark.valued_on)} · {mark.methodology} · {mark.source}</p>
+          <p className="text-xs text-text-2">Valued {dateLabel(mark.valued_on)} · {mark.methodology} · <HoldingSource value={mark.source} /></p>
           {stale && <Badge tone="warn">Stale valuation</Badge>}
         </div>}
-        {exited && <p className="text-xs text-text-2">Exit recorded {dateLabel(holding.last_disposition_on)} · {holding.exit_source}</p>}
+        {exited && <p className="text-xs text-text-2">Exit recorded {dateLabel(holding.last_disposition_on)} · <HoldingSource value={holding.exit_source ?? "Provider confirmation"} /></p>}
         {!exited && <p className="text-xs text-text-2">Private holding · Liquidity depends on the investment terms.</p>}
       </div>
+      <details className="border-t border-border px-4 py-3 text-[13px] text-text-2"
+        onToggle={(event) => setShowHistory(event.currentTarget.open)}>
+        <summary className="cursor-pointer font-medium text-text">Valuation history</summary>
+        {showHistory && <ValuationHistory owner={owner} holdingID={holding.id} currency={currency} currentMarkID={mark?.id} />}
+      </details>
       <details className="border-t border-border px-4 py-3 text-[13px] text-text-2">
         <summary className="cursor-pointer font-medium text-text">Performance</summary>
         {metrics ? <div className="mt-3 space-y-3">
@@ -90,16 +101,16 @@ function HoldingCard({ holding, asOf }: { holding: PortfolioHolding; asOf: numbe
           <summary className="cursor-pointer font-medium text-text">Capital activity</summary>
           <div className="mt-3 space-y-3">
             {!!holding.calls.length && <LedgerSection title="Capital calls">{holding.calls.slice(0, 100).map((call) => (
-              <li key={call.id}>{amount(call.amount, currency)} · {call.settled_on ? `Paid ${dateLabel(call.settled_on)}` : `Due ${dateLabel(call.due_on)}`} · {call.source}</li>
+              <li key={call.id}>{amount(call.amount, currency)} · {call.settled_on ? `Paid ${dateLabel(call.settled_on)}` : `Due ${dateLabel(call.due_on)}`} · <HoldingSource value={call.source} /></li>
             ))}</LedgerSection>}
             {!!holding.cancelled_calls.length && <LedgerSection title="Cancelled calls">{holding.cancelled_calls.map((call) => (
-              <li key={call.id}>{amount(call.amount, currency)} · Cancelled {dateLabel(call.cancelled_at)} · {call.cancellation_source}</li>
+              <li key={call.id}>{amount(call.amount, currency)} · Cancelled {dateLabel(call.cancelled_at)} · <HoldingSource value={call.cancellation_source} /></li>
             ))}</LedgerSection>}
             {!!holding.distributions.length && <LedgerSection title="Distributions">{holding.distributions.slice(0, 100).map((record) => (
-              <li key={record.id}>{amount(record.amount, currency)} · {dateLabel(record.received_on)} · {record.source}</li>
+              <li key={record.id}>{amount(record.amount, currency)} · {dateLabel(record.received_on)} · <HoldingSource value={record.source} /></li>
             ))}</LedgerSection>}
             {!!holding.dispositions.length && <LedgerSection title="Settled sales">{holding.dispositions.slice(0, 100).map((sale) => (
-              <li key={sale.id}>{sale.sold_units} units · {amount(sale.net_proceeds, currency)} · {dateLabel(sale.settled_on)} · {sale.source}</li>
+              <li key={sale.id}>{sale.sold_units} units · {amount(sale.net_proceeds, currency)} · Settled {dateLabel(sale.settled_on)} · <HoldingSource value={sale.source} /></li>
             ))}</LedgerSection>}
           </div>
         </details>}
@@ -172,7 +183,7 @@ export function Positions({ owner }: { owner: string }) {
       {holdings.isPending && <p className="text-sm text-text-2" role="status">Loading holdings…</p>}
       {holdings.error && <Notice tone="down">{holdings.error.message} <Button size="sm" onClick={() => void holdings.refetch()}>Retry holdings</Button></Notice>}
       {holdings.data && !positions.length && <Card><EmptyState title="No provider-confirmed holdings" /></Card>}
-      {positions.map((item) => <HoldingCard key={item.id} holding={item} asOf={holdings.dataUpdatedAt} />)}
+      {positions.map((item) => <HoldingCard key={item.id} owner={owner} holding={item} asOf={holdings.dataUpdatedAt} />)}
       {holdings.hasNextPage && <Button size="sm" disabled={holdings.isFetchingNextPage} onClick={() => void holdings.fetchNextPage()}>
         {holdings.isFetchingNextPage ? "Loading…" : "Load more holdings"}
       </Button>}
