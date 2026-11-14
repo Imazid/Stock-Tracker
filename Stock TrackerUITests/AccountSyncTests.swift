@@ -514,8 +514,23 @@ final class AccountSyncTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.open("Portfolio"))
         let visit = app.buttons["portfolio.intelligence.visit"]
-        for _ in 0..<4 where !visit.exists { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(visit.waitForExistence(timeout: 15), app.debugDescription)
+        func revealVisit(lookingAbove: Bool = false) {
+            for _ in 0..<12 {
+                let frame = visit.exists ? visit.frame : .zero
+                if !frame.isEmpty, app.frame.insetBy(dx: 0, dy: 90).contains(CGPoint(x: frame.midX, y: frame.midY)) {
+                    return
+                }
+                let down = frame.isEmpty ? lookingAbove : frame.midY < app.frame.midY
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: down ? 0.36 : 0.64))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: down ? 0.65 : 0.35))
+                start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            }
+            XCTAssertTrue(visit.isHittable, app.debugDescription)
+        }
+        let movement = app.buttons["portfolio.intelligence.movement"]
+        for _ in 0..<6 where !movement.exists { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(movement.waitForExistence(timeout: 15))
+        revealVisit(lookingAbove: true)
         let firstVisit = NSPredicate(format: "label == %@", "First portfolio visit on this device")
         XCTAssertTrue(firstVisit.evaluate(with: visit), visit.label)
 
@@ -524,12 +539,12 @@ final class AccountSyncTests: XCTestCase {
         try update(fundID, ["deleted_at": date])
         try insert([position(UUID().uuidString.lowercased(), "AMZN", 1)])
         XCTAssertTrue(app.open("Portfolio"))
-        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.23))
-        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.74))
-        for _ in 0..<3 { top.press(forDuration: 0.05, thenDragTo: bottom) }
-
+        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.19))
+        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.84))
+        top.press(forDuration: 0.08, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 0)
+        top.press(forDuration: 0.08, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 0)
+        revealVisit()
         let changed = NSPredicate(format: "label == %@", "3 positions changed since your last visit")
-        for _ in 0..<4 where !visit.exists { app.swipeUp(velocity: .slow) }
         XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: changed, evaluatedWith: visit)], timeout: 20), .completed, visit.label)
         visit.tap()
         let summary = app.staticTexts["portfolio.visit.summary"]
