@@ -824,7 +824,10 @@ final class AccountSyncTests: XCTestCase {
         result.tap()
         let chart = app.descendants(matching: .any)["detail.chart"].firstMatch
         XCTAssertTrue(chart.waitForExistence(timeout: 25))
-        app.buttons["1M"].firstMatch.tap()
+        let month = app.buttons["1 month"].firstMatch
+        XCTAssertTrue(month.waitForExistence(timeout: 10))
+        month.tap()
+        XCTAssertTrue(month.isSelected)
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             chart.exists && !self.app.staticTexts["Chart unavailable"].exists &&
                 !self.app.staticTexts["No price history for this period"].exists &&
@@ -853,15 +856,23 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Ask about AAPL"].waitForExistence(timeout: 10))
         let question = app.descendants(matching: .any)["companyQuestion.input"].firstMatch
         question.tap()
-        question.typeText("What does the annual filing show about Apple’s net sales?")
+        question.typeText("What does the annual filing show about net sales?")
+        XCTAssertTrue((question.value as? String)?.contains("net sales") == true, app.debugDescription)
+        app.navigationBars["Ask about AAPL"].staticTexts["Ask about AAPL"].tap()
         let send = app.buttons["companyQuestion.ask"]
         XCTAssertFalse(send.isEnabled)
-        app.switches["companyQuestion.consent"].tap()
-        XCTAssertTrue(send.isEnabled)
+        let consent = app.switches["companyQuestion.consent"]
+        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertTrue(send.wait(for: \.isEnabled, toEqual: true, timeout: 5), app.debugDescription)
         send.tap()
         let answer = app.staticTexts["companyQuestion.answer"]
-        XCTAssertTrue(answer.waitForExistence(timeout: 55), app.debugDescription)
-        let citation = app.descendants(matching: .any)["companyQuestion.citation"].firstMatch
+        let error = app.staticTexts["companyQuestion.error"]
+        let response = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in answer.exists || error.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [response], timeout: 55), .completed)
+        XCTAssertTrue(answer.exists, error.exists ? error.label : app.debugDescription)
+        XCTAssertTrue(answer.label.contains("478,834,000,000"), answer.label)
+        let citation = app.descendants(matching: .any).matching(identifier: "companyQuestion.citation")
+            .matching(NSPredicate(format: "label CONTAINS[c] 'net sales'")).firstMatch
         XCTAssertTrue(citation.exists)
         XCTAssertTrue(citation.label.localizedCaseInsensitiveContains("net sales"), citation.label)
         attach("research-journey-cited-answer")
