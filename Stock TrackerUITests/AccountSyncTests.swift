@@ -14,7 +14,7 @@
 import XCTest
 
 final class AccountSyncTests: XCTestCase {
-    private let apiURL = "http://127.0.0.1:58321"
+    private let apiURL = ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_API"] ?? "http://127.0.0.1:58321"
     private let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
     private let password = "Stock-tracker-e2e-1"
     private var app: XCUIApplication!
@@ -107,6 +107,123 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(try rows("referral_codes", select: "code", token: friendToken)
                         .compactMap { $0["code"] as? String }.contains(code), false,
                        "Other people's codes aren't readable")
+    }
+
+    func testCashIncomeSyncsBetweenAccountAndPhone() throws {
+        let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let user = try XCTUnwrap(account["user"] as? [String: Any])
+        let userId = try XCTUnwrap(user["id"] as? String)
+        let token = try signIn(email: email)
+        let table = "portfolio_cash_income"
+        let path = "/rest/v1/\(table)"
+        let probe = try request("GET", path + "?select=id&limit=1", token: token)
+        try XCTSkipIf(probe.status == 404, "Apply the cash income migration to the local stack first.")
+        XCTAssertEqual(probe.status, 200)
+        let fixture: [String: String] = [
+            "user_id": userId, "paid_on": "2025-06-30", "kind": "dividend", "payer": "Web issuer",
+            "currency": "USD", "cash_received": "8.12345678", "gross_amount": "10.12345678", "withholding": "2",
+            "snaptrade_activity_id": String(repeating: "a", count: 64), "snaptrade_reported_on": "2025-07-01",
+            "snaptrade_reported_currency": "USD", "snaptrade_reported_amount": "10.12345678",
+        ]
+        XCTAssertEqual(try request("POST", path, body: JSONSerialization.data(withJSONObject: fixture), token: token).status, 201)
+
+        func launchAccount() {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                                   "-portfolioValueHidden", "NO", "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                                   "-UITestSignIn", "\(email):\(password)"]
+            app.launch()
+            XCTAssertTrue(app.open("Portfolio"))
+        }
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<8 where !element.isHittable { app.swipeUp(velocity: .slow) }
+            if !element.isHittable { attach("cash-income-control-unreachable") }
+            XCTAssertTrue(element.isHittable, element.debugDescription)
+        }
+        func replace(_ id: String, with text: String) {
+            let field = app.textFields["portfolio.cashIncome.\(id)"].firstMatch
+            reveal(field)
+            field.tap()
+            if let current = field.value as? String, !current.isEmpty, current != field.placeholderValue {
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+            }
+            field.typeText(text)
+            let done = app.buttons["portfolio.cashIncome.keyboardDone"].firstMatch
+            if done.exists { done.tap() }
+        }
+
+        launchAccount()
+        let webOptions = app.buttons["portfolio.cashIncome.options.Web issuer"].firstMatch
+        reveal(webOptions)
+        let total = app.staticTexts["portfolio.cashIncome.total.USD"].firstMatch
+        XCTAssertTrue(total.label.contains("8.12345678"))
+        webOptions.tap()
+        app.buttons["Edit payment"].tap()
+        XCTAssertTrue(app.textFields["portfolio.cashIncome.cash"].firstMatch.waitForExistence(timeout: 5))
+        replace("cash", with: "7.12345678")
+        app.buttons["portfolio.cashIncome.save"].tap()
+        XCTAssertTrue(app.buttons["portfolio.cashIncome.save"].waitForNonExistence(timeout: 12))
+        let projection = "id,payer,currency,cash_received::text,franking_credit_aud::text,snaptrade_reported_amount::text,snaptrade_reported_on"
+        let edited = try XCTUnwrap(try rows(table, select: projection, token: token).first)
+        XCTAssertEqual(edited["cash_received"] as? String, "7.12345678")
+        XCTAssertEqual(edited["snaptrade_reported_amount"] as? String, "10.12345678")
+        XCTAssertEqual(edited["snaptrade_reported_on"] as? String, "2025-07-01")
+
+        let add = app.buttons["portfolio.cashIncome.add"].firstMatch
+        reveal(add)
+        add.tap()
+        replace("payer", with: "Phone fund")
+        replace("cash", with: "0.10000001")
+        replace("credit", with: "0.05")
+        app.buttons["portfolio.cashIncome.save"].tap()
+        XCTAssertTrue(app.buttons["portfolio.cashIncome.save"].waitForNonExistence(timeout: 12))
+        let phone = try XCTUnwrap(try rows(table, select: projection, token: token).first { $0["payer"] as? String == "Phone fund" })
+        XCTAssertEqual(phone["cash_received"] as? String, "0.10000001")
+        XCTAssertEqual(phone["franking_credit_aud"] as? String, "0.05")
+        XCTAssertEqual(phone["currency"] as? String, "AUD")
+
+        app.terminate()
+        launchAccount()
+        let phoneOptions = app.buttons["portfolio.cashIncome.options.Phone fund"].firstMatch
+        reveal(phoneOptions)
+        phoneOptions.tap()
+        app.buttons["Remove payment"].tap()
+        app.buttons["Remove payment"].tap()
+        XCTAssertTrue(phoneOptions.waitForNonExistence(timeout: 12))
+        XCTAssertEqual(try rows(table, select: "payer", token: token).compactMap { $0["payer"] as? String }, ["Web issuer"])
+
+        if ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_INCOME_BROKER"] == "1" {
+            reveal(add)
+            add.tap()
+            let lookup = app.buttons["portfolio.cashIncome.brokerLookup"].firstMatch
+            reveal(lookup)
+            lookup.tap()
+            let find = app.buttons["Find linked accounts"].firstMatch
+            XCTAssertTrue(find.waitForExistence(timeout: 5))
+            reveal(find)
+            find.tap()
+            let load = app.buttons["Load broker activity"].firstMatch
+            reveal(load)
+            load.tap()
+            let review = app.buttons["Review payment"].firstMatch
+            reveal(review)
+            review.tap()
+            let cash = app.textFields["portfolio.cashIncome.cash"].firstMatch
+            reveal(cash)
+            let displayedCash = cash.value as? String ?? ""
+            XCTAssertTrue(displayedCash.isEmpty || displayedCash == cash.placeholderValue)
+            replace("cash", with: "5.10")
+            app.buttons["portfolio.cashIncome.save"].tap()
+            XCTAssertTrue(app.buttons["portfolio.cashIncome.save"].waitForNonExistence(timeout: 12))
+            let reviewed = try XCTUnwrap(try rows(table, select: projection, token: token).first { $0["payer"] as? String == "Broker issuer" })
+            XCTAssertEqual(reviewed["cash_received"] as? String, "5.10")
+            XCTAssertEqual(reviewed["snaptrade_reported_amount"] as? String, "5.25")
+            XCTAssertEqual(reviewed["currency"] as? String, "USD")
+        }
     }
 
     func testClosingSaleAndDeletedTransactionSync() throws {

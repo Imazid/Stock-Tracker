@@ -9,8 +9,7 @@
 //  start of the period, plus what moved the portfolio. The benchmark line is a
 //  Black feature; everyone sees their own line. No mock data, ever.
 //
-//  Income: estimated dividend income from trailing yields — clearly labelled
-//  as an estimate, with an honest empty state when there's no data.
+//  Income estimates dividend income from trailing yields.
 //
 
 import SwiftUI
@@ -473,6 +472,7 @@ private extension TimeRange {
 
 struct PortfolioIncomeTab: View {
     @EnvironmentObject private var marketData: MarketData
+    @EnvironmentObject private var authManager: SupabaseAuthManager
     @Environment(\.theme) private var theme
     @AppStorage("portfolioValueHidden") private var valueHidden = false
     @State private var isLoading = false
@@ -495,6 +495,9 @@ struct PortfolioIncomeTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
+            if authManager.authState == .signedIn, let userId = authManager.userId {
+                PortfolioCashIncomeLedger(userId: userId).id(userId)
+            }
             if payers.isEmpty && !noData.isEmpty && (isLoading || !didLoad) {
                 VStack(alignment: .leading, spacing: DS.Space.m) {
                     Text("Estimated yearly income").font(.subheadline.weight(.medium))
@@ -507,7 +510,7 @@ struct PortfolioIncomeTab: View {
             } else if payers.isEmpty {
                 EmptyStateCard(
                     systemImage: "dollarsign.circle",
-                    title: "No dividend income found",
+                    title: "No dividend estimate available",
                     message: emptyMessage
                 )
                 .accessibilityIdentifier("portfolio.income.empty")

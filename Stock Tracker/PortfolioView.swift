@@ -135,6 +135,9 @@ struct PortfolioView: View {
                         PortfolioPerformanceLedger(userId: userId)
                             .id(userId)
                             .portfolioRow(bottom: DS.Space.l)
+                        PortfolioCashIncomeLedger(userId: userId)
+                            .id("cash-income-\(userId)")
+                            .portfolioRow(bottom: DS.Space.l)
                     }
                 } else {
                     PortfolioPerformanceChart(
