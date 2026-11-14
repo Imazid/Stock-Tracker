@@ -234,7 +234,7 @@ function rank(query: string, r: SearchResult): number {
   return 4;
 }
 
-export async function search(query: string, { allowLicensedIdentifiers = true } = {}): Promise<SearchResponse> {
+export async function search(query: string, { allowLicensedIdentifiers = true, includeIndexes = false } = {}): Promise<SearchResponse> {
   const q = query.trim();
   if (q === "") return { query: q, results: [] };
   const decoded = decodeSearch(q);
@@ -250,7 +250,7 @@ export async function search(query: string, { allowLicensedIdentifiers = true } 
     for (const [sym, name] of Object.entries(COIN_NAMES)) {
       if (sym.startsWith(upper) || name.toUpperCase().includes(upper)) add({ ...toView(makeInstrument(sym, "crypto", "crypto", name)), origin: "catalog", exchangeLabel: "Crypto" });
     }
-    for (const instrument of [...marketIndexes, ...catalogInstruments]) {
+    for (const instrument of includeIndexes ? [...marketIndexes, ...catalogInstruments] : catalogInstruments) {
       if (instrument.symbol.startsWith(upper) || instrument.name.toUpperCase().includes(upper)) {
         add({ ...toView(instrument), origin: "catalog", exchangeLabel: instrument.venue.toUpperCase() });
       }

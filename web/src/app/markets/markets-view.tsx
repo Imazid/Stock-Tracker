@@ -50,7 +50,7 @@ export function MarketsView() {
   const [theme, setTheme] = useState<ThemeKey>("tech");
   const [scope, setScope] = useState<SearchScope>("all");
   const [recent, setRecent] = useState<RecentInstrument[]>([]);
-  const search = useSearch(query);
+  const search = useSearch(query, { includeIndexes: true });
   useEffect(() => {
     // Browser storage is only readable after hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
