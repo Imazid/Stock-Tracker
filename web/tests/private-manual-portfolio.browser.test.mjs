@@ -71,7 +71,7 @@ test("Published iPhone holdings are dated, owner-scoped, included in allocation 
       await page.getByRole("button", { name: /Published ownership fixture/ }).click();
       await page.getByRole("button", { name: "Delete excerpt", exact: true }).click();
       await page.getByRole("button", { name: "Confirm deletion", exact: true }).click();
-      await page.getByRole("heading", { name: "No excerpts saved", exact: true }).waitFor();
+      await page.getByText("No excerpts saved", { exact: true }).waitFor();
       await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
       await source.click();
       await holding.getByText("This excerpt is no longer available in your Deal Room.", { exact: true }).waitFor();
