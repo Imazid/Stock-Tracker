@@ -169,6 +169,8 @@ Deploy `snaptrade-activity-sync` and `snaptrade-proxy`. Set a dedicated secret o
 
 ## Account deletion
 
+For a password-based account, open **Settings → Delete account** on the web, or **Settings → Account → Delete Account** on iPhone. Web deletion signs out the current browser when the server confirms deletion. For a linked Apple account, use the iPhone flow.
+
 Apply the database migrations before deploying `account-deletion`. The function verifies the Supabase user and active session, and requires password confirmation or a fresh Sign in with Apple authorization code. An account with verified MFA must use an elevated session. The server removes an active SnapTrade connection before deleting the Supabase user and its dependent data.
 
 For Sign in with Apple, enable the capability for the iOS app identifier `Cubeplay.Stock-Tracker` and add it to the Stock Tracker target in Xcode. Regenerate the signing profiles and verify that the signed iOS app includes the Sign in with Apple entitlement. Configure the server secrets `ACCOUNT_DELETION_APPLE_TEAM_ID`, `ACCOUNT_DELETION_APPLE_KEY_ID` and `ACCOUNT_DELETION_APPLE_PRIVATE_KEY` using a Sign in with Apple key for the app. Test from Account settings with a disposable Apple sign-in and verify Apple token revocation and Supabase account deletion. [Apple’s signing configuration](https://developer.apple.com/documentation/xcode/configuring-sign-in-with-apple) · [Apple’s account deletion requirements](https://developer.apple.com/support/offering-account-deletion-in-your-app/)

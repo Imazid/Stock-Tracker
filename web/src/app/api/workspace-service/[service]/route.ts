@@ -9,6 +9,7 @@ const services = {
   brokerage: "snaptrade-proxy",
   "private-markets": "private-markets",
   "account-export": "account-export",
+  "account-deletion": "account-deletion",
 } as const;
 
 const privateMarketActions = new Set([

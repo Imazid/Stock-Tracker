@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { test } from "node:test";
 import { chromium } from "playwright-core";
+import { freshAuthenticatorCode } from "./authenticator-code.mjs";
 
 const {
   ACCOUNT_EXPORT_TEST_ORIGIN: origin,
@@ -9,16 +9,6 @@ const {
   ACCOUNT_EXPORT_TEST_ACCOUNTS: accountData,
   VERCEL_OIDC_TOKEN: previewToken,
 } = process.env;
-
-function currentCode(secret) {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  const bits = [...secret.toUpperCase().replaceAll("=", "")].map((char) => alphabet.indexOf(char).toString(2).padStart(5, "0")).join("");
-  const key = Buffer.from(bits.match(/.{8}/g).map((octet) => Number.parseInt(octet, 2)));
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000)));
-  const digest = createHmac("sha1", key).update(counter).digest();
-  return String((digest.readUInt32BE(digest[19] & 15) & 0x7fffffff) % 1_000_000).padStart(6, "0");
-}
 
 test("Web account export verifies the owner, pages through their records and enforces MFA", {
   skip: !origin || !executablePath || !accountData,
@@ -111,10 +101,7 @@ test("Web account export verifies the owner, pages through their records and enf
     await protectedPage.getByText("Verify your authenticator before exporting your account.", { exact: true }).waitFor();
     const code = protectedPage.getByLabel("Authenticator code", { exact: true });
     assert.ok(await protectedPage.getByRole("button", { name: "Verify and download", exact: true }).isDisabled());
-    if (Date.now() % 30_000 > 25_000) {
-      await new Promise((resolve) => setTimeout(resolve, 30_500 - Date.now() % 30_000));
-    }
-    await code.fill(currentCode(other.secret));
+    await code.fill(await freshAuthenticatorCode(other.secret));
     const isolated = await download(protectedPage, "Verify and download");
     assert.equal(isolated.cloud_records.account[0].id, other.id);
     assert.equal(isolated.cloud_records.account[0].authenticator_enabled, true);
