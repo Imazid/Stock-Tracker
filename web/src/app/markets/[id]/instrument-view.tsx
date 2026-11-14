@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChangeText } from "@/components/market/Change";
 import { MarketChip, SourceLine, StatusChip } from "@/components/market/DataChips";
 import { type ChartType, DEFAULT_INDICATORS, type IndicatorSet, PriceChart } from "@/components/market/PriceChart";
+import { ListingPositions } from "@/components/portfolio/listing-positions";
 import { CryptoResearch } from "@/components/research/CryptoResearch";
 import { CompanyResearch, useCompanyProfile } from "@/components/research/CompanyResearch";
 import { Badge } from "@/components/ui/Badge";
@@ -252,6 +253,7 @@ export function InstrumentView({ id }: { id: string }) {
           ) : null}
         </div>
       </div>
+      {instrument && !index && <ListingPositions instrument={instrument} quote={q} />}
       {instrument?.venue === "crypto" ? <CryptoResearch key={id} id={instrument.id} /> : null}
       {instrument && !index && instrument.venue !== "crypto" ? <CompanyResearch key={id} id={id} symbol={instrument.symbol} overview={profile.data} overviewError={profile.isError} retryOverview={() => { void profile.refetch(); }} /> : null}
     </div>

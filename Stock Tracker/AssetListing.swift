@@ -41,7 +41,10 @@ extension Asset {
     }
 
     nonisolated var quoteIdentity: String {
-        if kind == .crypto { return "crypto:\(symbol.uppercased())" }
+        if kind == .crypto {
+            let ticker = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            return "crypto:\(ticker.hasSuffix("/USD") ? String(ticker.dropLast(4)) : ticker)"
+        }
         if let listedStock { return "\(listedStock.venue.rawValue):\(listedStock.symbol)" }
         return "\(kind.rawValue):\(exchange.uppercased()):\(symbol.uppercased())"
     }
