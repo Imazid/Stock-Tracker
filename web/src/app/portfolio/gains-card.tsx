@@ -46,27 +46,33 @@ export function GainsCard({ userId, holdings, quoteFor, loading, truncated }: {
         : ledger.isError ? <EmptyState title="Couldn’t load gains" actions={<Button size="sm" onClick={() => void ledger.refetch()}>Retry</Button>} />
         : report && current && <>
           {!report.tradeRecords && !holdings.length ? <EmptyState title="No holdings or trade records yet" /> : <>
-            <dl className="grid gap-4 tabular sm:grid-cols-3">
+            <div className="grid gap-4 tabular sm:grid-cols-3">
               <div>
-                <dt className="text-xs text-text-2">Realised gain or loss</dt>
-                <dd className="text-lg font-semibold">{report.realisedUsd === null ? "Unavailable" : signedMoney(report.realisedUsd, "USD")}</dd>
-                <dd className="text-xs text-text-3">{report.sales ? `${report.matchedSales} of ${report.sales} sales fully matched.` : "No recorded sales."}
-                  {report.partialSales > 0 && ` ${report.partialSales} partially matched.`}</dd>
+                <dl>
+                  <dt className="text-xs text-text-2">Realised gain or loss</dt>
+                  <dd className="text-lg font-semibold">{report.realisedUsd === null ? "Unavailable" : signedMoney(report.realisedUsd, "USD")}</dd>
+                </dl>
+                <p className="text-xs text-text-3">{report.sales ? `${report.matchedSales} of ${report.sales} sales fully matched.` : "No recorded sales."}
+                  {report.partialSales > 0 && ` ${report.partialSales} partially matched.`}</p>
               </div>
               <div>
-                <dt className="text-xs text-text-2">Unrealised gain or loss</dt>
-                <dd className="text-lg font-semibold">{current.total === null ? "Unavailable" : signedMoney(current.total, "USD")}</dd>
-                <dd className="text-xs text-text-3" role="status">
+                <dl>
+                  <dt className="text-xs text-text-2">Unrealised gain or loss</dt>
+                  <dd className="text-lg font-semibold">{current.total === null ? "Unavailable" : signedMoney(current.total, "USD")}</dd>
+                </dl>
+                <p className="text-xs text-text-3" role="status">
                   {covered} of {holdings.length} {truncated ? "displayed " : ""}holdings covered.
                   {waiting && " Checking prices and rates…"}
-                </dd>
+                </p>
               </div>
               <div>
-                <dt className="text-xs text-text-2">Recorded trading fees</dt>
-                <dd className="text-lg font-semibold">{report.feesUsd === null ? "Unavailable" : money(report.feesUsd, "USD")}</dd>
-                <dd className="text-xs text-text-3">Fees from {report.feeRecords} of {report.tradeRecords} synced trade records.</dd>
+                <dl>
+                  <dt className="text-xs text-text-2">Recorded trading fees</dt>
+                  <dd className="text-lg font-semibold">{report.feesUsd === null ? "Unavailable" : money(report.feesUsd, "USD")}</dd>
+                </dl>
+                <p className="text-xs text-text-3">Fees from {report.feeRecords} of {report.tradeRecords} synced trade records.</p>
               </div>
-            </dl>
+            </div>
             <p className="text-xs text-text-2">Realised gains use matched sale quantities after purchase and sale fees. Unrealised gains use open lots with a known cost, matching quantities and usable prices. Purchase fees are included in open lot costs. Use tax-lot records and statements for tax reporting.</p>
             {(current.basisMissing > 0 || current.pricesMissing > 0 || current.fxMissing > 0) && <p className="text-xs text-text-2">
               {current.basisMissing > 0 && `${current.basisMissing} holdings need a reconciled acquisition cost or quantity. `}
