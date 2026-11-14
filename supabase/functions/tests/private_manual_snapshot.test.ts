@@ -26,3 +26,25 @@ Deno.test("manual portfolio snapshots accept precise amounts and decline data ou
   assertEquals(validManualSnapshot([holding, { ...holding, id: holding.id.toUpperCase() }]), false);
   assertEquals(validManualSnapshot([]), false);
 });
+
+Deno.test("manual publication keeps capital call history and protects the snapshot format", () => {
+  const pending = { id: holding.id, status: "pending", amount: "500.4321", date: "2026-11-30", source: "Original call notice" };
+  const cancelled = { ...pending, id: "ed000000-0000-4000-8000-000000000012", status: "cancelled",
+    date: "2026-10-04", dueOn: pending.date, resolutionSource: "Cancellation notice" };
+  const record = (capitalActivity: unknown) => validManualSnapshot([{ ...holding, capitalActivity }]);
+  assertEquals(record([]), true);
+  assertEquals(record([pending, cancelled]), true);
+  assertEquals(record([{ ...cancelled, status: "paid" }]), true);
+  assertEquals(record([{ ...pending, status: "paid" }]), true);
+  assertEquals(record([{ ...pending, status: "distribution" }]), true);
+  assertEquals(record([{ ...pending, status: "sale", amount: "0" }]), true);
+  for (const malformed of [
+    [{ ...pending, status: "provider-confirmed" }], [{ ...pending, date: "2026-02-29" }],
+    [{ ...pending, dueOn: pending.date }], [{ ...pending, amount: 500.4321 }],
+    [{ ...pending, detail: "Do not accept arbitrary fields" }], [pending, { ...pending, id: holding.id.toUpperCase() }],
+    [{ ...cancelled, resolutionSource: undefined }], [{ ...cancelled, dueOn: undefined }],
+    [{ ...cancelled, resolutionSource: " " }], { data: [pending] },
+  ]) {
+    assertEquals(record(malformed), false, JSON.stringify(malformed));
+  }
+});

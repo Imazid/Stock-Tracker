@@ -526,6 +526,10 @@ final class PrivateMarketsFlowTests: XCTestCase {
         method.tap()
         method.typeText("Statement value")
         app.buttons["private.ledger.save"].tap()
+        let publishCapital = ProcessInfo.processInfo.environment["PRIVATE_MANUAL_CAPITAL_FIXTURE"] == "1"
+        if publishCapital {
+            addPendingCall("500.4321", source: "iPhone capital call notice")
+        }
         app.navigationBars.buttons["BackButton"].firstMatch.tap()
 
         let publish = app.buttons["private.portfolio.publish"]
@@ -536,6 +540,14 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(current.waitForExistence(timeout: 10))
         if ProcessInfo.processInfo.environment["PRIVATE_MANUAL_OWNERSHIP_FIXTURE"] == "1" {
             let include = app.switches["private.portfolio.publish.evidence"]
+            XCTAssertTrue(include.waitForExistence(timeout: 5))
+            XCTAssertEqual(include.value as? String, "0")
+            let control = include.switches.firstMatch
+            (control.exists ? control : include).tap()
+            XCTAssertEqual(include.value as? String, "1")
+        }
+        if publishCapital {
+            let include = app.switches["private.portfolio.publish.capital"]
             XCTAssertTrue(include.waitForExistence(timeout: 5))
             XCTAssertEqual(include.value as? String, "0")
             let control = include.switches.firstMatch

@@ -8,6 +8,11 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
 import { dateLabel, groupedDecimal, privateMarkets, dayInSydney, PrivateMarketsError } from "./private-data";
 
+type ManualCapitalRecord = {
+  id: string; status: "pending" | "paid" | "cancelled" | "distribution" | "sale";
+  amount: string; date: string; source: string; dueOn?: string; resolutionSource?: string;
+};
+
 type ManualHolding = {
   id: string; name: string; assetClass: string; currency: string; units?: string; ownership?: string;
   shareClass?: string; lockupUntil?: string; commitment?: string; paid: string; returned: string;
@@ -15,6 +20,7 @@ type ManualHolding = {
   valuation?: { value: string; date: string; source: string; method: string };
   netGain?: string; realizedGain?: string; unrealizedGain?: string; multiple?: string; dpi?: string; xirr?: string;
   ownershipEvidence?: { excerptID: string; reviewedOn: string };
+  capitalActivity?: ManualCapitalRecord[];
 };
 export type ManualPortfolio = { revision: string | null; snapshot: { updated_at: string; holdings: ManualHolding[] } | null };
 

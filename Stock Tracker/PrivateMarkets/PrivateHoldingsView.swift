@@ -149,6 +149,7 @@ private struct PrivateManualPortfolioPublication: View {
     @State private var remote: Remote?
     @State private var busy = false
     @State private var includeOwnershipEvidence = false
+    @State private var includeCapitalActivity = false
     @State private var confirmPublish = false
     @State private var confirmRemoval = false
     @State private var error: String?
@@ -164,6 +165,15 @@ private struct PrivateManualPortfolioPublication: View {
                         .accessibilityIdentifier("private.portfolio.publish.evidence")
                         .disabled(busy)
                     Text("The web portfolio can open linked excerpts already saved in your Deal Room.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if store.independentManualHoldings.contains(where: { holding in
+                    holding.cashFlows.contains { $0.kind != .contribution }
+                }) {
+                    Toggle("Include capital activity", isOn: $includeCapitalActivity)
+                        .accessibilityIdentifier("private.portfolio.publish.capital")
+                        .disabled(busy)
+                    Text("Capital calls, distributions and sales will appear on the web with their dates, amounts and source notes.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if let published = remote?.snapshot?.updatedAt {
@@ -228,7 +238,12 @@ private struct PrivateManualPortfolioPublication: View {
                     error = "A web snapshot can contain between 1 and 150 holdings."
                     return
                 }
-                fields["holdings"] = holdings.map { snapshot($0, asOf: date) }
+                let snapshot = holdings.map { snapshot($0, asOf: date) }
+                if includeCapitalActivity, try JSONSerialization.data(withJSONObject: snapshot).count > 110_000 {
+                    error = "This snapshot is too large. Turn off Include capital activity to publish holdings and balances."
+                    return
+                }
+                fields["holdings"] = snapshot
             }
             try await PrivateMarketsAPI.send(removing ? "remove_manual_portfolio" : "save_manual_portfolio",
                                              fields, expectedUserID: owner)
@@ -264,6 +279,39 @@ private struct PrivateManualPortfolioPublication: View {
         if includeOwnershipEvidence, let excerptID = holding.ownershipEvidenceID,
            let reviewedOn = holding.ownershipReviewedOn, reviewedOn <= asOf {
             fields["ownershipEvidence"] = ["excerptID": excerptID.uuidString, "reviewedOn": iso.string(from: reviewedOn)]
+        }
+        if includeCapitalActivity {
+            let localDay = ISO8601DateFormatter()
+            localDay.formatOptions = [.withFullDate]
+            localDay.timeZone = .current
+            fields["capitalActivity"] = holding.cashFlows.compactMap { flow -> [String: String]? in
+                let dueDate = flow.originalDueDate ?? flow.date
+                var activity = ["id": flow.id.uuidString, "amount": number(flow.amount), "source": flow.source]
+                switch flow.kind {
+                case .contribution:
+                    return nil
+                case .capitalCall:
+                    if let cancellation = flow.cancellation, cancellation.date <= asOf {
+                        activity["status"] = "cancelled"
+                        activity["date"] = localDay.string(from: cancellation.date)
+                        activity["resolutionSource"] = cancellation.source
+                        activity["dueOn"] = localDay.string(from: dueDate)
+                    } else if flow.isPendingCapitalCall(asOf: asOf) {
+                        activity["status"] = "pending"
+                        activity["date"] = localDay.string(from: dueDate)
+                    } else {
+                        activity["status"] = "paid"
+                        activity["date"] = localDay.string(from: flow.paymentEvidence?.date ?? flow.date)
+                        activity["resolutionSource"] = flow.paymentEvidence?.source
+                        activity["dueOn"] = flow.originalDueDate.map(localDay.string(from:))
+                    }
+                case .distribution, .sale:
+                    guard flow.settled, flow.date <= asOf else { return nil }
+                    activity["status"] = flow.kind == .distribution ? "distribution" : "sale"
+                    activity["date"] = localDay.string(from: flow.date)
+                }
+                return activity
+            }
         }
         fields["lockupUntil"] = holding.lockupUntil.map(iso.string(from:))
         fields["commitment"] = holding.commitment.map(number)

@@ -13,6 +13,30 @@ function fields(value: unknown, keys: string[]): value is Record<string, unknown
     Object.keys(value).every((key) => keys.includes(key));
 }
 
+const capitalStatuses = new Set(["pending", "paid", "cancelled", "distribution", "sale"]);
+
+function calendarDay(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && date(`${value}T00:00:00Z`);
+}
+
+function validCapitalActivity(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!fields(entry, ["id", "status", "amount", "date", "dueOn", "source", "resolutionSource"]) ||
+      typeof entry.id !== "string" || !uuid.test(entry.id) || seen.has(entry.id.toLowerCase()) ||
+      typeof entry.status !== "string" || !capitalStatuses.has(entry.status) ||
+      !reading(entry.amount) || !calendarDay(entry.date) || !text(entry.source, 400)) return false;
+    if (entry.status === "paid" || entry.status === "cancelled") {
+      if (entry.dueOn !== undefined && !calendarDay(entry.dueOn)) return false;
+      if (entry.resolutionSource !== undefined && (!text(entry.resolutionSource, 400) || !entry.dueOn)) return false;
+      if (entry.status === "cancelled" && (!entry.dueOn || !entry.resolutionSource)) return false;
+    } else if (entry.dueOn !== undefined || entry.resolutionSource !== undefined) return false;
+    seen.add(entry.id.toLowerCase());
+  }
+  return true;
+}
+
 type OwnershipEvidence = { excerptID: string; reviewedOn: string };
 type SnapshotHolding = Record<string, unknown> & { ownershipEvidence?: OwnershipEvidence };
 
@@ -22,7 +46,7 @@ export function validManualSnapshot(value: unknown): value is SnapshotHolding[] 
   for (const item of value) {
     if (!fields(item, ["id", "name", "assetClass", "currency", "units", "ownership", "shareClass", "lockupUntil",
       "commitment", "paid", "returned", "pendingCalls", "exitedOn", "valuation", "netGain", "realizedGain",
-      "unrealizedGain", "multiple", "dpi", "xirr", "ownershipEvidence"]) ||
+      "unrealizedGain", "multiple", "dpi", "xirr", "ownershipEvidence", "capitalActivity"]) ||
       typeof item.id !== "string" || !uuid.test(item.id) || seen.has(item.id.toLowerCase()) ||
       !text(item.name, 160) || typeof item.assetClass !== "string" || !classes.has(item.assetClass) ||
       typeof item.currency !== "string" || !/^[A-Z]{3}$/.test(item.currency) ||
@@ -32,6 +56,7 @@ export function validManualSnapshot(value: unknown): value is SnapshotHolding[] 
       ["netGain", "realizedGain", "unrealizedGain", "xirr"].some((key) => item[key] !== undefined && !reading(item[key], true)) ||
       ["lockupUntil", "exitedOn"].some((key) => item[key] !== undefined && !date(item[key])) ||
       (item.ownership !== undefined && (!reading(item.ownership) || Number(item.ownership) > 100))) return false;
+    if (item.capitalActivity !== undefined && !validCapitalActivity(item.capitalActivity)) return false;
     if (item.ownershipEvidence !== undefined) {
       const evidence = item.ownershipEvidence;
       if (!fields(evidence, ["excerptID", "reviewedOn"]) || typeof evidence.excerptID !== "string" ||
