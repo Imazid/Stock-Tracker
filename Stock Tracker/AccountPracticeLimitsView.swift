@@ -28,7 +28,7 @@ struct AccountPracticeLimitsView: View {
 
     var body: some View {
         TradingSection(title: "Account practice limits") {
-            Text("Limit agent buys across practice portfolios in each trading currency. For a manual buy, concentration appears as a warning.")
+            Text("Limits apply when agents buy. The daily limit counts filled buys and sells across practice portfolios in the same currency. Manual buys show a concentration warning.")
                 .font(.footnote)
                 .foregroundStyle(theme.secondaryText)
             if limits != nil {

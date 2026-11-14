@@ -84,7 +84,7 @@ function LimitForm({ owner, limits }: { owner: string; limits: Limits }) {
       setSaved(false);
       save.mutate(stepUp);
     }}>
-      <p>Limit agent buys across practice portfolios in each trading currency. For a manual buy, concentration appears as a warning.</p>
+      <p>Limits apply when agents buy. The daily limit counts filled buys and sells across practice portfolios in the same currency. Manual buys show a concentration warning.</p>
       <fieldset disabled={save.isPending} className="grid gap-3 sm:grid-cols-2">
         <Field label="Maximum exposure to one asset (%)" htmlFor="practice-exposure">
           <Input id="practice-exposure" type="number" min="0" max="100" step="any" inputMode="decimal" required value={exposure}

@@ -116,7 +116,7 @@ email limits apply until a custom SMTP sender is configured.
 
 ### Account practice limits
 
-The signed-in onboarding guide and Settings call `trading-api` to read and save account limits. The existing risk policy and audit tables store the changes. The limits apply to agent buys across practice portfolios per currency. On manual buys, the single-asset limit produces a concentration warning. Reductions use an ordinary signed-in session. Accounts with an enrolled authenticator require a verified session to increase either value. The server records the previous and saved values in the trading audit and uses the new values during subsequent order checks. No schema migration is needed.
+The signed-in onboarding guide and Settings call `trading-api` to read and save account limits. The existing risk policy and audit tables store the changes. Both limits apply when agents buy. The daily limit counts the value of filled buys and sells across practice portfolios in the same currency. Manual buys show a concentration warning. Reductions use an ordinary signed-in session. Accounts with an enrolled authenticator require a verified session to increase either value. The server records the previous and saved values in the trading audit and uses the new values during subsequent order checks. No schema migration is needed.
 
 ## 7. iOS build configuration
 
