@@ -222,6 +222,9 @@ struct PrivateResearchRefresh: Decodable {
     let deals: [PrivateDeal]
     let announcements: [PrivateCompanyUpdate]
     let newerAnnouncements: [PrivateCompanyUpdate]
+    let changedDealIds: [UUID]?
+    let changedAnnouncementIds: [UUID]?
+    let revisionTrackingAvailable: Bool?
 }
 
 struct PrivateCompanyUpdate: Decodable, Identifiable {

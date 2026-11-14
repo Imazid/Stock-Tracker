@@ -53,6 +53,9 @@ struct PrivateResearchWorkspace: View {
                 if let refresh, refresh.unavailableSources > 0 {
                     Section { Text("Some original sources are no longer available. Review the sources before running the update.") }
                 }
+                if refresh?.revisionTrackingAvailable == false {
+                    Section { Text("This report was saved before source revision tracking. Review the current sources for changes.") }
+                }
                 if refresh != nil, deals.isEmpty, announcements.isEmpty, documents.isEmpty,
                    refresh?.newerAnnouncements.isEmpty == true {
                     Section { Text("No sources are available for this report. Choose new evidence in AI Investment Research.") }
@@ -60,16 +63,18 @@ struct PrivateResearchWorkspace: View {
                 if !deals.isEmpty {
                     Section("Published opportunities") {
                         ForEach(deals) { deal in
-                            Toggle("\(deal.company.name) · \(deal.round.stage)",
-                                   isOn: selection(deal.id, in: $selectedDeals))
+                            Toggle(isOn: selection(deal.id, in: $selectedDeals)) {
+                                sourceLabel("\(deal.company.name) · \(deal.round.stage)", revised: refresh?.changedDealIds?.contains(deal.id) == true)
+                            }
                         }
                     }
                 }
                 if !announcements.isEmpty {
                     Section("Published company updates") {
                         ForEach(announcements) { item in
-                            Toggle("\(item.company.name) · \(item.title)",
-                                   isOn: selection(item.id, in: $selectedAnnouncements))
+                            Toggle(isOn: selection(item.id, in: $selectedAnnouncements)) {
+                                sourceLabel("\(item.company.name) · \(item.title)", revised: refresh?.changedAnnouncementIds?.contains(item.id) == true)
+                            }
                         }
                     }
                 }
@@ -199,6 +204,15 @@ struct PrivateResearchWorkspace: View {
     }
 
     private var sourceCount: Int { selectedDeals.count + selectedDocuments.count + selectedAnnouncements.count }
+
+    private func sourceLabel(_ title: String, revised: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+            if revised {
+                Text("Updated since this report").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
 
     private var canRun: Bool {
         !busy && sourceCount > 0 && sourceCount <= 3 && !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&

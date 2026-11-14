@@ -6,6 +6,7 @@ import { buildResearch, type Evidence, ResearchError } from "../_shared/private-
 import { currentStatus, type Discoverable, interpretDiscovery, matchDiscovery } from "../_shared/private-markets/discovery.ts";
 import { ApnsSender, pushEnvironment, type PushEnvironment, validDeviceToken } from "../_shared/private-markets/apns.ts";
 import { advancellCompany, type IssuerNotice, IssuerNewsError, readIssuerNews } from "../_shared/private-markets/issuer-news.ts";
+import { announcementRevision, changedSourceIds, fundingRoundRevision } from "../_shared/private-markets/source-revisions.ts";
 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -162,7 +163,8 @@ type Announcement = {
 };
 
 type ReportSource = { id: string; title: string; url?: string };
-type SourceReferences = { document_ids: string[]; opportunity_ids: string[]; announcement_ids: string[]; company_ids: string[] };
+type SourceReferences = { document_ids: string[]; opportunity_ids: string[]; announcement_ids: string[]; company_ids: string[];
+  revisions?: Record<string, string> };
 type StoredReport = { question: string; source_refs?: SourceReferences } & Record<string, unknown>;
 
 function publicReport({ source_refs, ...report }: StoredReport) {
@@ -217,6 +219,10 @@ async function researchRefresh(admin: ReturnType<typeof serviceClient>, userId: 
     .gt("published_at", createdAt).order("published_at", { ascending: false }).order("id").limit(12) :
     { data: [], error: null };
   if (newer.error) throw newer.error;
+  const [changedDeals, changedAnnouncements] = await Promise.all([
+    changedSourceIds(offers.data, refs.revisions, fundingRoundRevision),
+    changedSourceIds(notices.data, refs.revisions, announcementRevision),
+  ]);
   return {
     question: report.question,
     unavailable_sources: refs.document_ids.length + refs.opportunity_ids.length + refs.announcement_ids.length -
@@ -225,6 +231,9 @@ async function researchRefresh(admin: ReturnType<typeof serviceClient>, userId: 
     deals: offers.data,
     announcements: notices.data.map(companyUpdate),
     newer_announcements: newer.data.filter((item) => !existing.has(item.id)).map(companyUpdate),
+    changed_deal_ids: changedDeals,
+    changed_announcement_ids: changedAnnouncements,
+    revision_tracking_available: refs.revisions !== undefined,
   };
 }
 
@@ -265,8 +274,11 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
     const announcementIds = job.sources.map((source) => source.id);
     const { data: current, error } = await publishedAnnouncements(admin).in("id", announcementIds);
     if (error) throw error;
+    const revisions = Object.fromEntries(await Promise.all(job.sources.map(async (source) => [source.id,
+      await announcementRevision({ company_name: source.company, title: source.title, significance: source.summary,
+        published_at: source.published_at, source_url: source.url })])));
     const source_refs: SourceReferences = { document_ids: [], opportunity_ids: [], announcement_ids: announcementIds,
-      company_ids: [...new Set(current.map((item) => item.company_id as string))] };
+      company_ids: [...new Set(current.map((item) => item.company_id as string))], revisions };
     const payload = { ...report, id: job.job_id, sources, source_refs, question, created_at: new Date().toISOString() };
     const sealed = await seal(keyring, JSON.stringify(payload), context("report", job.owner_id, job.job_id));
     const result = await admin.rpc("finish_private_market_digest", {
@@ -690,6 +702,7 @@ Deno.serve(async (req) => {
         const evidence: Evidence[] = [];
         const sources: ReportSource[] = [];
         const companyIds = new Set<string>();
+        const revisions: Record<string, string> = {};
         if (typeof previousId === "string") {
           const { report } = await savedReport(admin, userId, previousId.toLowerCase());
           reportSourceReferences(report);
@@ -714,6 +727,7 @@ Deno.serve(async (req) => {
           if (data.length !== dealIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published opportunities are unavailable.");
           const financialIssuers = new Set<string>();
           for (const deal of data) {
+            revisions[deal.id] = await fundingRoundRevision(deal);
             companyIds.add(deal.round.company.id);
             const id = `O${sources.length + 1}`;
             const company = deal.round.company.name;
@@ -756,6 +770,7 @@ Deno.serve(async (req) => {
           if (error) throw error;
           if (data.length !== announcementIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published announcements are unavailable.");
           for (const item of data) {
+            revisions[item.id] = await announcementRevision(item);
             companyIds.add(item.company_id);
             const id = `O${sources.length + 1}`;
             const entry = announcementEvidence(item, id);
@@ -775,7 +790,7 @@ Deno.serve(async (req) => {
               `${question.trim()}\nFor this update, identify changes supported by the selected sources, including any changes to financial assumptions. State when the evidence does not establish what changed.` : question;
             const report = await buildResearch(userId, researchQuestion, evidence, mode, deps);
             const source_refs: SourceReferences = { document_ids: ids, opportunity_ids: dealIDs,
-              announcement_ids: announcementIDs, company_ids: [...companyIds] };
+              announcement_ids: announcementIDs, company_ids: [...companyIds], revisions };
             const payload = { ...report, id: runId, sources, source_refs, question,
               previous_report_id: typeof previousId === "string" ? previousId.toLowerCase() : undefined,
               created_at: new Date().toISOString() };

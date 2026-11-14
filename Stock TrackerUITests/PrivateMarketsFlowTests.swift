@@ -817,6 +817,9 @@ final class PrivateMarketsFlowTests: XCTestCase {
         let newer = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Financing assumption update")).firstMatch
         for _ in 0..<3 where !newer.exists { app.swipeUp() }
         XCTAssertEqual(original.value as? String, "1")
+        if ProcessInfo.processInfo.environment["PRIVATE_REPORT_SOURCE_REVISION_TEST"] == "1" {
+            XCTAssertTrue(original.label.contains("Updated since this report") || app.staticTexts["Updated since this report"].exists)
+        }
         XCTAssertEqual(newer.value as? String, "0")
         let control = newer.switches.firstMatch
         if control.exists { control.tap() } else { newer.tap() }
