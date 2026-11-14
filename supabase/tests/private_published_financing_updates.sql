@@ -5,7 +5,8 @@ begin;
 
 insert into auth.users (id, email) values
   ('f1000000-0000-4000-8000-000000000001', 'funding-watch@example.test'),
-  ('f1000000-0000-4000-8000-000000000002', 'funding-unrelated@example.test');
+  ('f1000000-0000-4000-8000-000000000002', 'funding-unrelated@example.test'),
+  ('f1000000-0000-4000-8000-000000000003', 'funding-new-follower@example.test');
 insert into public.private_companies (id, name, sector, country, source_url, verified_at, published) values
   ('f1000000-0000-4000-8000-000000000010', 'Funding fixture', 'Technology', 'AU', 'https://example.test/company', now(), true);
 insert into public.funding_rounds
@@ -33,12 +34,16 @@ values
   ('f1000000-0000-4000-8000-000000000020', 'birchal', 'Series A', 'closed', 'provider review', '{}', 'https://example.test/another-listing', now(), true),
   ('f1000000-0000-4000-8000-000000000026', 'birchal', 'Series B or later', 'interest', 'provider review', '{}', 'https://example.test/interest', now(), true);
 insert into public.corporate_actions (id, company_id, title, significance, source_url, published_at, published)
-values ('f1000000-0000-4000-8000-000000000030', 'f1000000-0000-4000-8000-000000000010',
-  'The issuer reported a seed round', 'The issuer announced the funding close.', 'https://example.test/issuer-release', now() - interval '1 day', true);
+values
+  ('f1000000-0000-4000-8000-000000000030', 'f1000000-0000-4000-8000-000000000010',
+   'The issuer reported a seed round', 'The issuer announced the funding close.', 'https://example.test/issuer-release', now() - interval '1 day', true),
+  ('f1000000-0000-4000-8000-000000000031', 'f1000000-0000-4000-8000-000000000010',
+   'Historical investor update', 'The issuer published its investor update.', 'https://example.test/old-update', now() - interval '20 days', true);
 
 set role service_role;
 select case when array_agg(id order by id) = array[
-    'f1000000-0000-4000-8000-000000000020', 'f1000000-0000-4000-8000-000000000025', 'f1000000-0000-4000-8000-000000000030']::uuid[]
+    'f1000000-0000-4000-8000-000000000020', 'f1000000-0000-4000-8000-000000000025',
+    'f1000000-0000-4000-8000-000000000030', 'f1000000-0000-4000-8000-000000000031']::uuid[]
   then 'ok   closed rounds use one canonical source and omit drafts, future and conflicting listings'
   else 'FAIL publication and deduplication' end
   from public.published_private_company_updates where company_id = 'f1000000-0000-4000-8000-000000000010';
@@ -116,10 +121,51 @@ update public.investment_opportunities set published = false
 select case when public.private_market_push_through('f1000000-0000-4000-8000-000000000001',
     'f1000000-0000-4000-8000-000000000011', 0) is null
   then 'ok   withdrawn financing evidence cannot send a pending push' else 'FAIL stale push' end;
+
+update public.funding_rounds set verified_at = now() + interval '2 minutes', traction = ' '
+where id = 'f1000000-0000-4000-8000-000000000025';
+select case when (select source_revised_at is null from public.funding_rounds
+    where id = 'f1000000-0000-4000-8000-000000000025')
+  then 'ok   harmless metadata leaves a historical source undated for correction'
+  else 'FAIL historical round gained a false revision' end;
+update public.funding_rounds set raised = 333 where id = 'f1000000-0000-4000-8000-000000000025';
+update public.corporate_actions set significance = 'The issuer corrected its historical investor update.'
+where id = 'f1000000-0000-4000-8000-000000000031';
+select public.configure_private_monitor('f1000000-0000-4000-8000-000000000003','f1000000-0000-4000-8000-000000000013',
+  array['f1000000-0000-4000-8000-000000000010']::uuid[], false, true, true);
+create temporary table historic_digest as select * from public.claim_private_market_digests()
+where owner_id = 'f1000000-0000-4000-8000-000000000003';
+select case when count(*) = 2 and bool_and((source->>'is_revision')::boolean)
+    and bool_and((source->>'published_at')::timestamptz < now() - interval '7 days')
+  then 'ok   a new follower gets dated corrections before their inbox is collected'
+  else 'FAIL digest missed an older corrected source for a new follower' end
+from historic_digest d, jsonb_array_elements(d.sources) as source;
+select public.run_private_market_monitor();
+select case when count(*) = 2 and bool_and(occurred_at < now() - interval '7 days')
+    and bool_and(revised_at >= now() - interval '1 day')
+  then 'ok   a new follower sees both historic corrections with original publication dates'
+  else 'FAIL historic correction provenance in inbox' end
+from public.private_market_alert_inbox_with_revisions('f1000000-0000-4000-8000-000000000003');
+select case when public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   inbox collection does not invalidate a pending correction digest'
+  else 'FAIL valid historical digest was blocked' end from historic_digest;
+update public.funding_rounds set raised = 333, verified_at = now() + interval '3 minutes'
+where id = 'f1000000-0000-4000-8000-000000000025';
+select case when public.run_private_market_monitor() = 0
+    and public.private_market_digest_sources('f1000000-0000-4000-8000-000000000003',
+      (now() at time zone 'Australia/Sydney')::date + 1) = '[]'::jsonb
+  then 'ok   unchanged historical corrections do not repeat in alerts or later summaries'
+  else 'FAIL historical correction replay' end;
+select case when count(*) = 0 then 'ok   no historical corrections for an unrelated account'
+  else 'FAIL historical correction leaked' end
+from public.private_market_alert_inbox_with_revisions('f1000000-0000-4000-8000-000000000002');
+
 set role authenticated;
 select case when not has_table_privilege(current_user, 'public.published_private_company_updates', 'select')
   then 'ok   the internal view is restricted to the backend' else 'FAIL direct view access' end;
 select case when not has_function_privilege(current_user, 'public.private_market_alert_inbox_with_revisions(uuid)', 'execute')
   then 'ok   the revised inbox RPC is restricted to the backend' else 'FAIL revised inbox RPC access' end;
+select case when not has_function_privilege(current_user, 'public.stamp_private_source_revision()', 'execute')
+  then 'ok   clients cannot call the source revision trigger' else 'FAIL direct trigger access' end;
 reset role;
 rollback;
