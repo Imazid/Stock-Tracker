@@ -52,7 +52,12 @@ final class BrokerPaperOrderTests: XCTestCase {
         let filled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Filled'"), object: status)
         XCTAssertEqual(XCTWaiter.wait(for: [filled], timeout: 20), .completed, status.label)
 
-        let close = app.buttons.matching(NSPredicate(format: "label == 'Close' AND identifier != 'detail.close'")).firstMatch
+        for title in ["Buy AAPL", "Prepare paper order"] {
+            let back = app.navigationBars[title].buttons["BackButton"]
+            XCTAssertTrue(back.wait(for: \.isHittable, toEqual: true, timeout: 8))
+            back.tap()
+        }
+        let close = app.navigationBars["Alpaca Paper"].buttons["Close"]
         XCTAssertTrue(close.wait(for: \.isHittable, toEqual: true, timeout: 8), app.debugDescription)
         close.tap()
         let detailClose = app.buttons["detail.close"]
