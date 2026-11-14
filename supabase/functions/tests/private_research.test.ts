@@ -87,7 +87,12 @@ Deno.test("scheduled summaries retry when an announcement lacks a verified citat
   const result = await buildResearch("11111111-1111-1111-1111-111111111111", "Summarise published announcements", evidence, "digest", {
     config: { openAIKey: "test" },
     quota: { consume: () => Promise.resolve({ allowed: true, used: requests + 1 }) },
-    fetch: () => {
+    fetch: (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      const prompt = body.messages.filter((message: { role: string }) => message.role === "system")
+        .map((message: { content: string }) => message.content).join("\n");
+      assertEquals(prompt.includes("exactly one entry for each of these source IDs: O1, O2"), true);
+      assertEquals(prompt.includes("return an empty evidence array"), false);
       const citations = evidence.slice(0, ++requests).map((source) => ({ source: source.id, line: 1 }));
       return Promise.resolve(Response.json({ choices: [{ message: { content: JSON.stringify({
         ...finding, analysis: "The issuers published financing information.", evidence: citations,

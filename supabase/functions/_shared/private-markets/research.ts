@@ -183,9 +183,10 @@ export async function buildResearch(
       return { finding: decode(first.text), model: first.model };
     } catch (error) {
       if (!(error instanceof ResearchError) || error.code !== "INVALID_RESEARCH") throw error;
-      const retry = await ask(instruction + ' Return all required keys. Always supply evidence, missing and questions as JSON arrays, ' +
-        'using [] where a list has no entries. Use qualitative wording and exact numbered evidence references. ' +
-        'If evidence is insufficient, return an empty evidence array and describe what is missing.', previous);
+      const retry = await ask(instruction + " Return all required keys. Supply evidence, missing and questions as JSON arrays. " +
+        "Use qualitative wording and exact numbered evidence references. " +
+        (mode === "digest" ? "Use one evidence entry per required source and omit ticker symbols, dates and numbers from prose." :
+          "If evidence is insufficient, return an empty evidence array and describe what is missing."), previous);
       return { finding: decode(retry.text), model: retry.model };
     }
   }
@@ -193,7 +194,10 @@ export async function buildResearch(
   if (mode !== "committee") {
     const digest = mode === "digest";
     const instruction = digest
-      ? "Summarise what each issuer published and any unresolved questions. Cite one line from every supplied source."
+      ? "Summarise what each issuer published and identify unresolved questions. Write one short sentence per disclosure. " +
+        "The evidence array must contain exactly one entry for each of these source IDs: " +
+        evidence.map((source) => source.id).join(", ") + ". Select a line containing the published facts for each entry. " +
+        "Keep ticker symbols and numbers in citations."
       : "Answer the user's research question concisely.";
     const answer = await validated(instruction, (text) => {
       const finding = parseFinding(text, digest ? "Published company updates" : "Research answer", evidence);
