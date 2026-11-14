@@ -146,6 +146,11 @@ enum CashIncomeError: LocalizedError {
     }
 }
 
+func requireIncomeOwner(_ userId: UUID) async throws {
+    guard try await SupabaseManager.auth.session.user.id == userId else { throw CancellationError() }
+    try Task.checkCancellation()
+}
+
 struct CashIncomeRecords {
     let userId: UUID
     private let table = "portfolio_cash_income"
@@ -153,13 +158,8 @@ struct CashIncomeRecords {
     id,paid_on,kind,payer,account_label,currency,cash_received::text,gross_amount::text,withholding::text,franking_credit_aud::text,statement_reference,snaptrade_activity_id,snaptrade_reported_on,snaptrade_reported_amount::text,snaptrade_reported_currency,updated_at
     """
 
-    private func requireOwner() async throws {
-        guard try await SupabaseManager.auth.session.user.id == userId else { throw CancellationError() }
-        try Task.checkCancellation()
-    }
-
     func page(from: String?, through: String?, after: CashIncomePayment? = nil, limit: Int) async throws -> [CashIncomePayment] {
-        try await requireOwner()
+        try await requireIncomeOwner(userId)
         let query = SupabaseManager.client.from(table).select(fields).eq("user_id", value: userId.uuidString)
         if let from { query.gte("paid_on", value: from) }
         if let through { query.lte("paid_on", value: through) }
@@ -170,14 +170,14 @@ struct CashIncomeRecords {
     }
 
     func totals(from: String?, through: String?) async throws -> [CashIncomeTotal] {
-        try await requireOwner()
+        try await requireIncomeOwner(userId)
         let params: [String: String?] = ["p_from": from, "p_through": through]
         return try await SupabaseManager.client.rpc("portfolio_cash_income_totals", params: params).execute().value
     }
 
     func save(_ draft: CashIncomeDraft, editing: CashIncomePayment?, source: CashIncomeBrokerPayment?) async throws {
         var values = try draft.values()
-        try await requireOwner()
+        try await requireIncomeOwner(userId)
         if let editing {
             let rows: [CashIncomePayment] = try await SupabaseManager.client.from(table).update(values)
                 .eq("user_id", value: userId.uuidString).eq("id", value: editing.id.uuidString)
@@ -196,7 +196,7 @@ struct CashIncomeRecords {
     }
 
     func remove(_ payment: CashIncomePayment) async throws {
-        try await requireOwner()
+        try await requireIncomeOwner(userId)
         struct Removed: Decodable { let id: UUID }
         let rows: [Removed] = try await SupabaseManager.client.from(table).delete()
             .eq("user_id", value: userId.uuidString).eq("id", value: payment.id.uuidString)
@@ -205,30 +205,63 @@ struct CashIncomeRecords {
     }
 
     func export(from: String?, through: String?) async throws -> Data {
-        let header = [
+        let cashColumns = [
             "Record type", "Payment ID", "Payment date (Sydney)", "Payment type", "Payer or ticker",
             "Account label", "Currency", "Cash received", "Gross payment", "Withholding", "Franking credit (AUD)",
             "Statement reference", "SnapTrade activity reference", "SnapTrade reported date", "SnapTrade reported currency",
             "SnapTrade reported amount", "Report note",
         ]
-        var note = Array<String?>(repeating: nil, count: header.count)
-        note[0] = "Report information"
-        note[header.count - 1] = cashIncomeNotice
-        var data = Data((csvLine(header.map { Optional($0) }) + csvLine(note)).utf8)
-        var after: CashIncomePayment?
+        let reinvestmentColumns = ["Reinvested amount", "Shares acquired", "Acquisition date (Sydney)", "Acquisition basis (USD)"]
+        typealias ExportRow = (paidOn: String, id: String, fields: [String?])
+        var output: [ExportRow] = []
         let pageSize = 500
+        var afterPayment: CashIncomePayment?
         repeat {
-            let rows = try await page(from: from, through: through, after: after, limit: pageSize)
+            let rows = try await page(from: from, through: through, after: afterPayment, limit: pageSize)
             for row in rows {
-                data.append(contentsOf: csvLine([
-                    "Cash payment", row.id.uuidString.lowercased(), row.paid_on, row.kind.title, row.payer, row.account_label,
+                let id = row.id.uuidString.lowercased()
+                output.append((row.paid_on, id, [
+                    "Cash payment", id, row.paid_on, row.kind.title, row.payer, row.account_label,
                     row.currency, row.cash_received, row.gross_amount, row.withholding, row.franking_credit_aud,
                     row.statement_reference, row.snaptrade_activity_id, row.snaptrade_reported_on, row.snaptrade_reported_currency,
                     row.snaptrade_reported_amount, nil,
-                ]).utf8)
+                ]))
             }
-            after = rows.count == pageSize ? rows.last : nil
-        } while after != nil
+            afterPayment = rows.count == pageSize ? rows.last : nil
+        } while afterPayment != nil
+
+        let reinvestments = ReinvestmentRecords(userId: userId)
+        var afterReinvestment: DividendReinvestment?
+        var hasReinvestments = false
+        repeat {
+            let rows = try await reinvestments.page(from: from, through: through, after: afterReinvestment, limit: pageSize)
+            hasReinvestments = hasReinvestments || !rows.isEmpty
+            for row in rows {
+                let id = row.id.uuidString.lowercased()
+                output.append((row.paid_on, id, [
+                    "Dividend reinvestment", id, row.paid_on, "Dividend", row.portfolio_holdings?.asset_symbol,
+                    nil, row.currency, nil, row.dividend_amount, nil, row.franking_credit_aud, row.statement_reference,
+                    nil, nil, nil, nil, "The gross dividend may include cash paid separately. Use the statement to reconcile both entries.",
+                    row.reinvested_amount, row.shares, row.acquired_on, row.usdBasis,
+                ]))
+            }
+            afterReinvestment = rows.count == pageSize ? rows.last : nil
+        } while afterReinvestment != nil
+
+        let header = hasReinvestments ? cashColumns + reinvestmentColumns : cashColumns
+        let note: [String?] = header.map { column in
+            switch column {
+            case "Record type": "Report information"
+            case "Report note": cashIncomeNotice
+            default: nil
+            }
+        }
+        var data = Data((csvLine(header.map { Optional($0) }) + csvLine(note)).utf8)
+        output.sort { ($0.paidOn, $0.id) > ($1.paidOn, $1.id) }
+        for row in output {
+            let fields = row.fields + Array<String?>(repeating: nil, count: header.count - row.fields.count)
+            data.append(contentsOf: csvLine(fields).utf8)
+        }
         return data
     }
 

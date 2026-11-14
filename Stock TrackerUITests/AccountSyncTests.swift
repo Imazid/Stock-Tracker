@@ -232,6 +232,148 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 12), "Cash income CSV reaches the Files save dialog")
     }
 
+    func testDividendReinvestmentSyncAndIncomeExport() throws {
+        let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let user = try XCTUnwrap(account["user"] as? [String: Any])
+        let userId = try XCTUnwrap(user["id"] as? String)
+        let token = try signIn(email: email)
+        let table = "portfolio_dividend_reinvestments"
+        let path = "/rest/v1/\(table)"
+        XCTAssertEqual(try request("GET", path + "?select=id&limit=1", token: token).status, 200)
+
+        let holding = UUID().uuidString.lowercased()
+        let position: [String: Any] = [
+            "id": holding, "user_id": userId, "asset_symbol": "BHP", "asset_name": "BHP Group",
+            "asset_kind": "Stock", "asset_exchange": "ASX", "shares": 0, "avg_cost": 0,
+            "deleted_at": "2025-08-01T00:00:00Z",
+        ]
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: position), token: token).status, 201)
+        let webEntry: [String: String] = [
+            "user_id": userId, "holding_id": holding, "paid_on": "2025-06-30",
+            "acquired_on": "2025-07-01", "currency": "AUD", "dividend_amount": "15.12345678",
+            "reinvested_amount": "14.12345678", "shares": "0.123456789012345678",
+            "basis_usd": "9.42", "franking_credit_aud": "2", "statement_reference": "Web statement",
+        ]
+        XCTAssertEqual(try request("POST", path, body: JSONSerialization.data(withJSONObject: webEntry),
+                                   token: token).status, 201)
+        let projection = "id,holding_id,paid_on,acquired_on,currency,shares::text,reinvested_amount::text,basis_usd::text,statement_reference"
+        let seeded = try XCTUnwrap(try rows(table, select: projection, token: token).first)
+        let seededId = try XCTUnwrap(seeded["id"] as? String)
+        let cash: [String: String] = [
+            "user_id": userId, "paid_on": "2025-06-30", "kind": "dividend", "payer": "BHP cash",
+            "currency": "AUD", "cash_received": "1.00",
+        ]
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_cash_income",
+                                   body: JSONSerialization.data(withJSONObject: cash), token: token).status, 201)
+
+        func launchAccount() {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                                   "-portfolioValueHidden", "NO", "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                                   "-UITestSignIn", "\(email):\(password)"]
+            app.launch()
+            XCTAssertTrue(app.open("Portfolio"))
+        }
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<8 where !element.isHittable { app.swipeUp(velocity: .slow) }
+            if !element.isHittable { attach("reinvestment-control-unreachable") }
+            XCTAssertTrue(element.isHittable, element.debugDescription)
+        }
+        func replace(_ id: String, with text: String) {
+            let field = app.textFields["portfolio.reinvestment.\(id)"].firstMatch
+            reveal(field)
+            field.tap()
+            if let current = field.value as? String, !current.isEmpty, current != field.placeholderValue {
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+            }
+            field.typeText(text)
+            let done = app.buttons["portfolio.reinvestment.keyboardDone"].firstMatch
+            if done.exists { done.tap() }
+        }
+        func openReinvestments() {
+            let reinvestments = app.buttons["Reinvestments"].firstMatch
+            reveal(reinvestments)
+            reinvestments.tap()
+        }
+
+        launchAccount()
+        let total = app.staticTexts["portfolio.cashIncome.total.AUD"].firstMatch
+        reveal(total)
+        XCTAssertEqual(total.label, "AUD 1.00")
+        openReinvestments()
+        let options = app.buttons["portfolio.reinvestment.options.\(seededId)"].firstMatch
+        XCTAssertTrue(options.waitForExistence(timeout: 12))
+        reveal(options)
+        options.tap()
+        app.buttons["Edit reinvestment"].tap()
+        let shares = app.textFields["portfolio.reinvestment.shares"].firstMatch
+        XCTAssertTrue(shares.waitForExistence(timeout: 8))
+        XCTAssertEqual(shares.value as? String, "0.123456789012345678")
+        replace("reinvested", with: "14.00000001")
+        let save = app.buttons["portfolio.reinvestment.save"].firstMatch
+        save.tap()
+        XCTAssertTrue(save.waitForNonExistence(timeout: 12))
+        let edited = try XCTUnwrap(try rows(table, select: projection, token: token).first)
+        XCTAssertEqual(edited["reinvested_amount"] as? String, "14.00000001")
+        XCTAssertEqual(edited["paid_on"] as? String, "2025-06-30")
+        XCTAssertEqual(edited["acquired_on"] as? String, "2025-07-01")
+        XCTAssertEqual(edited["basis_usd"] as? String, "9.42")
+
+        let add = app.buttons["portfolio.reinvestment.add"].firstMatch
+        reveal(add)
+        add.tap()
+        save.tap()
+        XCTAssertTrue(app.staticTexts["portfolio.reinvestment.error"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["portfolio.reinvestment.holding"].firstMatch.tap()
+        let choose = app.buttons["portfolio.reinvestment.holding.\(holding)"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: 12))
+        XCTAssertTrue(choose.label.contains("Archived"))
+        choose.tap()
+        replace("dividend", with: "12.34")
+        replace("reinvested", with: "11.34")
+        replace("shares", with: "0.000000000000000001")
+        replace("reference", with: "Phone statement")
+        save.tap()
+        XCTAssertTrue(save.waitForNonExistence(timeout: 12))
+        let phone = try XCTUnwrap(try rows(table, select: projection, token: token).first {
+            $0["statement_reference"] as? String == "Phone statement"
+        })
+        XCTAssertEqual(phone["holding_id"] as? String, holding)
+        XCTAssertEqual(phone["shares"] as? String, "0.000000000000000001")
+        XCTAssertTrue(phone["basis_usd"] is NSNull)
+        let phoneId = try XCTUnwrap(phone["id"] as? String)
+
+        app.terminate()
+        launchAccount()
+        openReinvestments()
+        let phoneOptions = app.buttons["portfolio.reinvestment.options.\(phoneId)"].firstMatch
+        XCTAssertTrue(phoneOptions.waitForExistence(timeout: 12))
+
+        let export = app.buttons["portfolio.cashIncome.export"].firstMatch
+        reveal(export)
+        export.tap()
+        let fileSave = app.buttons["Save"].firstMatch
+        XCTAssertTrue(fileSave.waitForExistence(timeout: 12), "Combined income CSV reaches the Files save dialog")
+        attach("reinvestment-files")
+        if ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_SAVE_CSV"] == "1" {
+            fileSave.tap()
+        } else {
+            app.buttons["Cancel"].firstMatch.tap()
+        }
+        for _ in 0..<8 where !phoneOptions.isHittable { app.swipeDown(velocity: .slow) }
+        reveal(phoneOptions)
+        phoneOptions.tap()
+        app.buttons["Remove reinvestment"].tap()
+        app.buttons["Remove reinvestment"].tap()
+        XCTAssertTrue(phoneOptions.waitForNonExistence(timeout: 12))
+        XCTAssertEqual(try rows(table, select: "id", token: token).compactMap { $0["id"] as? String }, [seededId])
+    }
+
     func testClosingSaleAndDeletedTransactionSync() throws {
         let email = "ledger-ui-\(UUID().uuidString.lowercased())@example.com"
         let signup = try request("POST", "/auth/v1/signup", body: try JSONSerialization.data(withJSONObject: [
