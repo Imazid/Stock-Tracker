@@ -9,6 +9,7 @@ struct BrokerPaperTicket: View {
 
     @Environment(\.theme) private var theme
     @Environment(\.locale) private var locale
+    @FocusState private var focusedField: String?
     @State private var accountID = ""
     @State private var side: OrderSide = .buy
     @State private var type = "market"
@@ -73,6 +74,7 @@ struct BrokerPaperTicket: View {
             .disabled(draftKey != nil || intent != nil)
             if let problem { BrokerPaperMessage(text: problem, symbol: "exclamationmark.circle") }
             Button {
+                focusedField = nil
                 if intent != nil { showReceipt = true } else { Task { await prepare() } }
             } label: {
                 Text(busy ? "Preparing…" : intent != nil ? "Review order" : draftKey != nil ? "Retry order preparation" : "Prepare for review")
@@ -83,6 +85,13 @@ struct BrokerPaperTicket: View {
         }
         .navigationTitle("Prepare paper order")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { focusedField = nil }
+                    .accessibilityIdentifier("brokerPaper.keyboardDone")
+            }
+        }
         .onAppear {
             if accountID.isEmpty, let first = accounts.first { accountID = first.id }
             selectSupportedOptions()
@@ -108,6 +117,7 @@ struct BrokerPaperTicket: View {
             TextField(label, text: text, prompt: Text("0"))
                 .keyboardType(.decimalPad)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: identifier)
                 .accessibilityIdentifier(identifier)
         }
     }
