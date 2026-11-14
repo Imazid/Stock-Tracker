@@ -86,6 +86,8 @@ set constraints all immediate;
 select case when not exists (select from public.broker_connections where id = '33333333-3333-4333-8333-333333333333')
   and not exists (select from public.order_intent_transitions where intent_id = '44444444-4444-4444-8444-444444444444')
   and not exists (select from public.oms_events where user_id = '11111111-1111-4111-8111-111111111111')
+  and not exists (select from public.broker_order_updates where user_id = '11111111-1111-4111-8111-111111111111')
+  and (select revision from public.broker_order_updates where user_id = '22222222-2222-4222-8222-222222222222') = 1
   and not public.account_deletion_session_active(
     '11111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
   and exists (select from public.order_intents where id = '66666666-6666-4666-8666-666666666666')
