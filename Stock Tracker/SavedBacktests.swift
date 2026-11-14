@@ -65,7 +65,7 @@ struct SavedBacktestRow: Decodable, Identifiable {
     let saved_at: String
 
     var runDate: Date? {
-        try? Date(ran_at, strategy: .init(includingFractionalSeconds: true))
+        try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(ran_at)
     }
 }
 

@@ -220,7 +220,7 @@ export function BacktestReport({ last }: { last: BacktestResponse }) {
           <section aria-label="Trades">
             <h3 className="mb-2 text-sm font-semibold">Trades · {r.trades.length}</h3>
             {r.trades.length === 0 ? <p className="text-xs text-text-3">The rules never triggered in this period.</p> : (
-              <div className="max-h-80 overflow-auto rounded-lg border border-border">
+              <div className="max-h-80 overflow-auto rounded-lg border border-border" tabIndex={0} role="region" aria-label="Backtest trade table">
                 <table className="w-full text-left text-xs">
                   <thead className="sticky top-0 bg-surface-2 text-text-3"><tr>{["Asset", "Entry", "Entry price", "Exit", "Exit price", "Qty", "P/L", "P/L %", "Bars", "Why it exited"].map((h) => <th key={h} scope="col" className="px-2.5 py-2 font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
                   <tbody className="divide-y divide-border">
@@ -282,7 +282,7 @@ function EquityData({ result, currency }: { result: BacktestResponse["result"]; 
   return <details onToggle={(event) => setExpanded(event.currentTarget.open)} className="text-xs text-text-2">
     <summary className="w-fit cursor-pointer py-2">Equity data table</summary>
     {expanded && <>
-      <div className="overflow-auto"><table className="w-full text-left">
+      <div className="overflow-auto" tabIndex={0} role="region" aria-label="Backtest equity data"><table className="w-full text-left">
         <thead><tr><th scope="col">Time</th><th scope="col">Equity</th>{result.benchmarkName && <th scope="col">{result.benchmarkName}</th>}</tr></thead>
         <tbody>{rows.map((row) => <tr key={row.time}><td>{dateTime(new Date(row.time).toISOString())}</td><td>{money(row.equity, currency)}</td>
           {result.benchmarkName && <td>{money(benchmark.get(row.time), currency)}</td>}</tr>)}</tbody>
