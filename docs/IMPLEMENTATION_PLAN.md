@@ -131,7 +131,7 @@ The iOS app uses `SecureBackend` to call `snaptrade-proxy` and `ai-proxy` with i
 - **"Today" on the provider path** is the trailing 24 hours (conservative), not the exchange day.
 - **Coinbase reconciliation** can only search the 500 most recent orders by client order id (the API
   has no lookup by client id).
-- **Provider maintenance** checks pending orders and imports fills using leased, bounded jobs. Manual sync shares the fill checkpoint. Provider event streaming remains pending.
+- **Provider maintenance** checks pending orders and imports fills using leased, bounded jobs. Manual sync shares the fill checkpoint. Broker order changes committed to the ledger refresh signed-in web order and Activity views and iPhone Alpaca Paper views through owner-scoped Realtime signals. Direct provider event streaming remains pending.
 - **Web market-data adapters** (`web/src/server/market`) duplicate part of `_shared/market`; merge into one.
 - **Assistant runs aren't persisted** (no AgentRun/AgentToolEvent tables for the web assistant); turns are logged only in the browser.
 - The Swift and web parsers preserve explicit RSI and directed moving-average comparisons, including grouped entry and exit rules. Incomplete or unsupported comparisons stay in an editable draft that requires a valid rule before it can run.
