@@ -7,7 +7,13 @@ const services = {
   trading: "trading-api",
   research: "ai-proxy",
   brokerage: "snaptrade-proxy",
+  "private-markets": "private-markets",
 } as const;
+
+const privateMarketActions = new Set([
+  "catalog", "discover", "research", "research_status", "research_runs", "reports", "report",
+  "confirmed_holdings", "applications",
+]);
 
 function failure(message: string, status: number) {
   return Response.json({ error: { message } }, { status, headers: { "Cache-Control": "no-store" } });
@@ -19,7 +25,8 @@ export async function POST(request: Request, context: {params: Promise<{service:
   if (service === "research" && process.env.ENABLE_AI !== "true") return failure("The AI provider is awaiting configuration.", 503);
   if (service === "brokerage" && process.env.ENABLE_SNAPTRADE !== "true") return failure("The brokerage provider is awaiting configuration.", 503);
   const authorization = request.headers.get("authorization");
-  if (!authorization?.match(/^Bearer [\w.-]+$/) || authorization.length > 8192) return failure("Sign in to continue.", 401);
+  const hasBearer = !!authorization?.match(/^Bearer [\w.-]+$/) && authorization.length <= 8192;
+  if (service !== "private-markets" && !hasBearer) return failure("Sign in to continue.", 401);
   const url = SUPABASE_URL;
   const key = SUPABASE_ANON_KEY;
   if (!url || !key) return failure("Stock Tracker is awaiting backend configuration.", 503);
@@ -28,6 +35,18 @@ export async function POST(request: Request, context: {params: Promise<{service:
   if (body.length > 60_000) return failure("Request is too large.", 413);
   const parsed: unknown = await Promise.resolve().then(() => JSON.parse(body)).catch(() => null);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return failure("Invalid request.", 400);
+  let publicCatalog = false;
+  if (service === "private-markets") {
+    const { action } = parsed as { action?: unknown };
+    if (typeof action !== "string" || !privateMarketActions.has(action)) return failure("Unsupported Private Markets action.", 403);
+    publicCatalog = action === "catalog";
+    if ((action === "discover" || action === "research") && process.env.ENABLE_AI !== "true") {
+      return failure("The AI provider is awaiting configuration.", 503);
+    }
+  }
+  if (!publicCatalog && !hasBearer) {
+    return failure("Sign in to continue.", 401);
+  }
   if (service === "trading") {
     const input = parsed as {action?: string; mode?: string; order?: {mode?: string}; draft?: {mode?: string}};
     if ("fixture" in input || input.mode === "live" || input.order?.mode === "live" ||
@@ -48,7 +67,8 @@ export async function POST(request: Request, context: {params: Promise<{service:
     const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/${services[service as keyof typeof services]}`, {
       method: "POST",
       headers: {
-        Authorization: authorization, apikey: key, "Content-Type": "application/json",
+        ...(!publicCatalog && authorization ? { Authorization: authorization } : {}),
+        apikey: key, "Content-Type": "application/json",
         ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
       },
       body,

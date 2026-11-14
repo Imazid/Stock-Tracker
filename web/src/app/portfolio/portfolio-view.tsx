@@ -38,7 +38,10 @@ export function PortfolioView({ recordTransfer = false, logosEnabled, aiEnabled 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader title="Portfolio" description="Holdings and saved valuations synced from Stock Tracker on iPhone."
-        actions={userId && <a className="text-sm text-primary-fg underline" href="/api/portfolio/transactions">Export transactions CSV</a>} />
+        actions={<>
+          <ButtonLink href="/private-markets?view=portfolio" size="sm">Private portfolio</ButtonLink>
+          {userId && <a className="text-sm text-primary-fg underline" href="/api/portfolio/transactions">Export transactions CSV</a>}
+        </>} />
       {session.status === "unconfigured" ? (
         <Card><EmptyState title="Accounts are unavailable" /></Card>
       ) : session.status === "signedOut" ? (

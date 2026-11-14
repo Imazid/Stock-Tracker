@@ -78,6 +78,8 @@ function secrets. Set `FINNHUB_API_KEY` in Supabase for US fundamentals and news
 Functions. Allowlist the production workspace URL in Supabase Auth. Standard Supabase hosted
 email limits apply until a custom SMTP sender is configured.
 
+The web workspace serves Private Markets at `/private-markets`. The catalogue uses published records from the deployed `private-markets` Edge Function. Set `ENABLE_AI=true` to enable new web searches and research. Account-scoped reports, positions, and applications require sign-in. The workbench opens no provider applications and can display saved reports when AI is disabled. The browser smoke test is `node --test tests/private-markets.browser.test.mjs` from `web`, with `PRIVATE_MARKETS_TEST_ORIGIN` and `PRIVATE_MARKETS_TEST_CHROME` set. Use disposable `PRIVATE_MARKETS_TEST_EMAIL` and `PRIVATE_MARKETS_TEST_PASSWORD` for the live model and sign-in flow. The second account check uses `PRIVATE_MARKETS_OTHER_EMAIL` and `PRIVATE_MARKETS_OTHER_PASSWORD`.
+
 ## 4. Local development
 
 - Database + functions: `supabase start` in the repo root (API on port 58321), then
