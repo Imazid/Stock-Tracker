@@ -81,7 +81,9 @@ export async function interpretDiscovery(userId: string, question: string, secto
         "use max_minimum, and company valuations use max_valuation. Do not copy the same limit into other metrics. " +
         "An Australian company does not imply AUD. Use zero for every unspecified amount field. When the currency of " +
         "a requested monetary limit is ambiguous, put that limit in unsupported. Retail-accessible means retail. " +
-        "Currently raising means open, and closed means closed. Use interest only when requested. Choose the closest " +
+        "Only filter status when requested. 'Currently raising' means open. Asking about a raise target or " +
+        "'crowdfunding listings' alone leaves statuses empty. Set disclosed_traction true only for requests about " +
+        "sales, revenue, customers or other operating traction. 'Disclosed raise target' is not traction. Choose the closest " +
         "known sectors for a requested sector. Use stages for named financing stages such as Series C. Use company only for " +
         "an explicitly named company. Put an explicit constraint in unsupported only if it cannot be represented, or " +
         "the question is not a catalogue search. Never list supported filters, the full query, or unrequested ideas there." },
