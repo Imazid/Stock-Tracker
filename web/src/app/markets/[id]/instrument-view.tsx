@@ -241,7 +241,7 @@ export function InstrumentView({ id }: { id: string }) {
           </Card>
           {instrument && !orderPath.available ? (
             <p className="px-1 text-[11px] leading-relaxed text-text-3">
-              No Buy/Sell here: {orderPath.loading ? "checking order routing…" : "there's no connected account that can trade this in a practice environment. See Connections."}
+              {orderPath.loading ? "Checking order routing…" : orderPath.unavailable ?? "Connect an eligible paper account in Connections to prepare an order."}
             </p>
           ) : null}
         </div>

@@ -1089,6 +1089,9 @@ struct AssetTradeBar: View {
                         .accessibilityHint(held <= 0 ? "You don't hold any in a practice portfolio" : "")
                         .accessibilityIdentifier("detail.trade.sell")
                 }
+                if let paperAsset = BrokerPaperAsset(instrument) {
+                    BrokerPaperEntry(asset: paperAsset)
+                }
                 Button {
                     showNewAgent = true
                 } label: {
