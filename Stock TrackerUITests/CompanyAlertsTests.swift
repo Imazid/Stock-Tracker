@@ -20,7 +20,7 @@ final class CompanyAlertsTests: XCTestCase {
         XCTAssertTrue(companyAlerts.waitForExistence(timeout: 35))
         companyAlerts.tap()
 
-        let trigger = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", event)).firstMatch
+        let trigger = app.staticTexts[event].firstMatch
         XCTAssertTrue(trigger.waitForExistence(timeout: 25))
         trigger.tap()
         XCTAssertTrue(app.navigationBars["AAPL Alerts"].waitForExistence(timeout: 10))
@@ -29,10 +29,11 @@ final class CompanyAlertsTests: XCTestCase {
         XCTAssertTrue(threshold.waitForExistence(timeout: 25))
         XCTAssertFalse(addButton.isEnabled)
         threshold.tap()
-        threshold.typeText("432.15")
+        let value = env["COMPANY_ALERT_UI_TARGET"] ?? "432.15"
+        threshold.typeText(value)
         XCTAssertTrue(addButton.isEnabled)
         addButton.tap()
-        let saved = app.staticTexts["432.15 USD"]
+        let saved = app.staticTexts["\(value) USD"]
         XCTAssertTrue(saved.waitForExistence(timeout: 25))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Shared company price rules on iPhone"

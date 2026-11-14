@@ -1,5 +1,6 @@
+import Auth
 import Foundation
-import Supabase
+import OSLog
 import SwiftUI
 import TradingCore
 
@@ -71,8 +72,12 @@ private enum CompanyAlertsService {
         decoder.dateDecodingStrategy = .custom { value in
             let container = try value.singleValueContainer()
             let date = try container.decode(String.self)
-            if let parsed = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(date) { return parsed }
-            return try Date.ISO8601FormatStyle().parse(date)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let parsed = formatter.date(from: date) { return parsed }
+            formatter.formatOptions = [.withInternetDateTime]
+            if let parsed = formatter.date(from: date) { return parsed }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid alert timestamp.")
         }
         return decoder
     }
@@ -94,18 +99,7 @@ private enum CompanyAlertsService {
     }
 
     static func recent(owner: UUID) async throws -> [CompanyAlertEvent] {
-        guard SupabaseManager.isConfigured else { throw URLError(.notConnectedToInternet) }
-        guard try await SupabaseManager.auth.session.user.id == owner else { throw CancellationError() }
-        let response = try await SupabaseManager.client.from("company_research_alert_events")
-            .select("id,title,url,occurred_at,company_research_alerts(instrument_id)")
-            .eq("user_id", value: owner.uuidString)
-            .order("occurred_at", ascending: false)
-            .order("id", ascending: false)
-            .limit(50)
-            .execute()
-        try Task.checkCancellation()
-        guard SupabaseManager.auth.currentUser?.id == owner else { throw CancellationError() }
-        return try decoder().decode([CompanyAlertEvent].self, from: response.data)
+        try await call(["action": "companyAlertActivity"], owner: owner)
     }
 
     private static func call<Value: Decodable>(
@@ -115,6 +109,10 @@ private enum CompanyAlertsService {
         body["action"] = "companyAlerts"
         body["instrumentId"] = instrument.id
         body["operation"] = operation
+        return try await call(body, owner: owner)
+    }
+
+    private static func call<Value: Decodable>(_ body: [String: Any], owner: UUID) async throws -> Value {
         let data = try await SecureBackend.invoke("market-workspace", body: body, expectedUserID: owner)
         try Task.checkCancellation()
         guard SupabaseManager.auth.currentUser?.id == owner else { throw CancellationError() }
@@ -345,6 +343,10 @@ struct CompanyAlertActivity: View {
         defer { loading = false }
         do { events = try await CompanyAlertsService.recent(owner: owner) }
         catch is CancellationError {}
-        catch { failed = true }
+        catch {
+            let errorCode = (error as? SecureBackend.FunctionError)?.code ?? String((error as NSError).code)
+            AppLogger.sync.notice("Company alert history fetch failed with code \(errorCode, privacy: .public)")
+            failed = true
+        }
     }
 }
