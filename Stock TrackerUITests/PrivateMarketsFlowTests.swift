@@ -165,6 +165,30 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["private.capital.recordCancellation"].exists)
     }
 
+    @MainActor
+    func testLinkedAngelListNAVUsesTheManualLedger() throws {
+        try launchWithLocalSession("PRIVATE_LINKED_NAV_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.briefcase"].tap()
+        let holding = app.buttons["private.holding.row"].firstMatch
+        XCTAssertTrue(holding.waitForExistence(timeout: 10))
+        XCTAssertTrue(holding.label.contains("Fund reconciliation fixture"))
+        XCTAssertTrue(holding.label.contains("AngelList capital account"))
+        holding.tap()
+        let source = app.buttons["private.holding.valuationStatement"]
+        for _ in 0..<3 where !source.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(source.isHittable)
+        source.tap()
+        XCTAssertTrue(app.staticTexts["This NAV is used for the holding’s carrying value."].waitForExistence(timeout: 5))
+        app.navigationBars.firstMatch.buttons.firstMatch.tap()
+        let discrepancy = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "The statement’s paid-in capital or distributions differ")).firstMatch
+        for _ in 0..<4 where !discrepancy.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(discrepancy.exists)
+        let ledger = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Manual contribution receipt")).firstMatch
+        for _ in 0..<4 where !ledger.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(ledger.exists)
+    }
+
     private func addPendingCall(_ value: String, source: String) {
         let open = app.buttons["private.ledger.openCashFlow"]
         for _ in 0..<4 where !open.isHittable { app.swipeUp() }

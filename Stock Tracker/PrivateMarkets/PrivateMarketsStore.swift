@@ -424,6 +424,10 @@ final class PrivateMarketsStore: ObservableObject {
                                        snapshots: angelListSnapshots)
     }
 
+    func linkedFundValuation(for holding: PrivateHolding) -> (statement: PrivateFundSnapshot, holding: PrivateHolding)? {
+        PrivateFundSnapshot.linkedValuation(for: holding, snapshots: angelListSnapshots)
+    }
+
     func selectAccount(_ id: UUID?) {
         guard !didLoad || scope != id else { return }
         let previous = scope

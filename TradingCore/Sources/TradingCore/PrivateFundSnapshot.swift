@@ -21,8 +21,33 @@ public struct PrivateFundSnapshot: Codable, Equatable, Identifiable, Sendable {
 
     public var allocationHolding: PrivateHolding {
         PrivateHolding(id: id, name: name, assetClass: assetClass, currency: currency, commitment: commitment,
-                       valuations: netAssetValue.map { [.init(value: $0, date: asOf, source: Self.source,
-                                                              method: "Reported capital account NAV")] } ?? [])
+                       valuations: netAssetValue.map { [valuation(value: $0)] } ?? [])
+    }
+
+    /// Use the statement's dated valuation with the holding's recorded position and ledger.
+    public func applyingNAV(to holding: PrivateHolding, asOf date: Date = .now) -> PrivateHolding? {
+        guard replacesManualHoldingID == holding.id, holding.currency == currency,
+              holding.closedOn(asOf: date) == nil, holding.matchingProviderHoldingID == nil,
+              let netAssetValue, asOf <= date,
+              holding.valuation(asOf: date).map({ $0.date <= asOf }) ?? true else { return nil }
+        let sale = holding.latestManualSale(asOf: date)
+        guard sale.map({ asOf > $0.date }) ?? true else { return nil }
+        var valued = holding
+        valued.valuations.removeAll { $0.date == asOf }
+        valued.valuations.append(valuation(value: netAssetValue, manualSaleID: sale?.id))
+        return valued
+    }
+
+    /// Reported aggregates can help reconcile the ledger but supply no transaction dates.
+    public func agreesWithRecordedCashFlows(of holding: PrivateHolding) -> Bool {
+        let flows = holding.cashFlows.filter { $0.settled && $0.date <= asOf }
+        let contributed = flows.filter { $0.kind.isOutflow }.reduce(Decimal.zero) { $0 + $1.amount }
+        let distributed = flows.filter { $0.kind == .distribution }.reduce(Decimal.zero) { $0 + $1.amount }
+        return (paidIn.map { $0 == contributed } ?? true) && (distributions.map { $0 == distributed } ?? true)
+    }
+
+    private func valuation(value: Decimal, manualSaleID: UUID? = nil) -> PrivateValuation {
+        .init(value: value, date: asOf, source: Self.source, method: "Reported capital account NAV", manualSaleID: manualSaleID)
     }
 
     public struct Record: Identifiable, Equatable, Sendable {
@@ -126,19 +151,23 @@ public struct PrivateFundSnapshot: Codable, Equatable, Identifiable, Sendable {
     public static func allocation(
         manual: [PrivateHolding], confirmed: [PrivateHolding], snapshots: [Self], asOf: Date = .now
     ) -> [PrivateHolding] {
-        let manualByID = Dictionary(manual.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var replaced = Set<UUID>()
-        let fundHoldings = snapshots.compactMap { snapshot -> PrivateHolding? in
-            if let manualID = snapshot.replacesManualHoldingID, let holding = manualByID[manualID] {
-                guard holding.closedOn(asOf: asOf) == nil, holding.matchingProviderHoldingID == nil, snapshot.currency == holding.currency,
-                      snapshot.netAssetValue != nil, snapshot.asOf <= asOf,
-                      holding.latestManualSale(asOf: asOf).map({ snapshot.asOf > $0.date }) ?? true,
-                      holding.valuation(asOf: asOf).map({ $0.date <= snapshot.asOf }) ?? true else { return nil }
-                replaced.insert(manualID)
+        let manualHoldings = manual.filter { $0.closedOn(asOf: asOf) == nil && $0.matchingProviderHoldingID == nil }
+            .map { holding in
+                linkedValuation(for: holding, snapshots: snapshots, asOf: asOf)?.holding ?? holding
             }
-            return snapshot.allocationHolding
+        let standalone = snapshots.filter { $0.replacesManualHoldingID == nil && $0.asOf <= asOf }.map(\.allocationHolding)
+        return manualHoldings + confirmed + standalone
+    }
+
+    public static func linkedValuation(
+        for holding: PrivateHolding, snapshots: [Self], asOf: Date = .now
+    ) -> (statement: Self, holding: PrivateHolding)? {
+        let ordered = snapshots.filter { $0.replacesManualHoldingID == holding.id }
+            .sorted { ($0.asOf, $0.retrievedAt) > ($1.asOf, $1.retrievedAt) }
+        for statement in ordered {
+            if let valued = statement.applyingNAV(to: holding, asOf: asOf) { return (statement, valued) }
         }
-        return manual.filter { $0.closedOn(asOf: asOf) == nil && $0.matchingProviderHoldingID == nil && !replaced.contains($0.id) } + confirmed + fundHoldings
+        return nil
     }
 
     private static func statementAmount(_ text: String) -> Decimal? {

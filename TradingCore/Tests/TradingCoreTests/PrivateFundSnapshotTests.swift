@@ -55,17 +55,26 @@ final class PrivateFundSnapshotTests: XCTestCase {
     }
 
     func testLinkedSnapshotReplacesOnlyMatchingManualNAV() throws {
-        let manual = PrivateHolding(name: "Tracked fund", assetClass: .ventureFund, currency: "USD",
-                                    valuations: [.init(value: 100, date: Date(timeIntervalSince1970: 1_750_000_000),
-                                                       source: "Manual", method: "Statement")])
+        let opening = Date(timeIntervalSince1970: 1_750_000_000)
+        let manual = PrivateHolding(name: "Tracked fund", assetClass: .ventureFund, currency: "USD", commitment: 200, units: 5,
+                                    valuations: [.init(value: 100, date: opening, source: "Manual", method: "Statement")],
+                                    cashFlows: [.init(kind: .contribution, amount: 100, date: opening, settled: true, source: "Receipt")])
         let snapshot = try XCTUnwrap(PrivateFundSnapshot.make(
             reference: "fund", name: "Tracked fund", assetClass: .ventureFund, currency: "USD", asOf: "2026-11-01",
-            netAssetValue: "125", commitment: nil, paidIn: nil, distributions: nil,
+            netAssetValue: "125", commitment: "300", paidIn: "100", distributions: "0",
             replacesManualHoldingID: manual.id, retrievedAt: retrieved
         ))
         let confirmed = PrivateHolding(name: "Confirmed fund", assetClass: .ventureFund, currency: "AUD")
-        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [manual], confirmed: [confirmed], snapshots: [snapshot]).map(\.id),
-                       [confirmed.id, snapshot.id])
+        let allocation = PrivateFundSnapshot.allocation(manual: [manual], confirmed: [confirmed], snapshots: [snapshot], asOf: retrieved)
+        XCTAssertEqual(allocation.map(\.id), [manual.id, confirmed.id])
+        let effective = try XCTUnwrap(allocation.first)
+        XCTAssertEqual(effective.cashFlows, manual.cashFlows)
+        XCTAssertEqual(effective.commitment, manual.commitment)
+        XCTAssertEqual(effective.remainingUnits(asOf: retrieved), manual.units)
+        XCTAssertEqual(effective.valuation(asOf: retrieved)?.source, PrivateFundSnapshot.source)
+        XCTAssertEqual(effective.metrics(asOf: retrieved).multiple, 1.25)
+        XCTAssertTrue(snapshot.agreesWithRecordedCashFlows(of: effective))
+        XCTAssertFalse(snapshot.agreesWithRecordedCashFlows(of: snapshot.allocationHolding))
         var changed = manual
         changed.currency = "EUR"
         XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [changed], confirmed: [], snapshots: [snapshot]).map(\.id),
@@ -74,6 +83,7 @@ final class PrivateFundSnapshotTests: XCTestCase {
         revised.valuations.append(.init(value: 140, date: retrieved, source: "Manual", method: "Newer statement"))
         XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [revised], confirmed: [], snapshots: [snapshot], asOf: retrieved), [revised])
         XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [manual], confirmed: [], snapshots: []), [manual])
+        XCTAssertTrue(PrivateFundSnapshot.allocation(manual: [], confirmed: [], snapshots: [snapshot], asOf: retrieved).isEmpty)
     }
 
     func testLinkedProviderRecordReplacesOnlyThatPositionAndKeepsManualHistory() throws {
@@ -121,10 +131,31 @@ final class PrivateFundSnapshotTests: XCTestCase {
         XCTAssertTrue(holding.recordManualSale(amount: 80, date: updated.asOf.addingTimeInterval(86_400), source: "Final sale statement",
                                                soldUnits: nil, basis: nil, closesPosition: true, asOf: retrieved))
 
-        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [early], asOf: early.asOf).map(\.id), [early.id])
+        let beforePartial = PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [early], asOf: early.asOf)
+        XCTAssertEqual(beforePartial.map(\.id), [holding.id])
+        XCTAssertEqual(beforePartial.first?.valuation(asOf: early.asOf)?.value, 100)
         XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [early], asOf: partialDate), [holding])
-        XCTAssertEqual(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [updated], asOf: updated.asOf).map(\.id), [updated.id])
+        let afterPartial = PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [early, updated], asOf: updated.asOf)
+        XCTAssertEqual(afterPartial.map(\.id), [holding.id])
+        XCTAssertEqual(afterPartial.first?.valuation(asOf: updated.asOf)?.value, 90)
+        XCTAssertEqual(afterPartial.first?.remainingUnits(asOf: updated.asOf), 80)
         XCTAssertTrue(PrivateFundSnapshot.allocation(manual: [holding], confirmed: [], snapshots: [updated], asOf: retrieved).isEmpty)
+    }
+
+    func testAggregateReconciliationUsesDatedContributionsAndDistributionsThroughStatementDate() throws {
+        let snapshot = try XCTUnwrap(make(paidIn: "100", distributions: "30"))
+        let before = snapshot.asOf.addingTimeInterval(-86_400)
+        let after = snapshot.asOf.addingTimeInterval(86_400)
+        var holding = PrivateHolding(name: "Fund", assetClass: .ventureFund, currency: "USD", cashFlows: [
+            .init(kind: .contribution, amount: 100, date: before, settled: true, source: "Receipt"),
+            .init(kind: .capitalCall, amount: 40, date: snapshot.asOf, settled: false, source: "Notice"),
+            .init(kind: .distribution, amount: 30, date: snapshot.asOf, settled: true, source: "Distribution"),
+            .init(kind: .sale, amount: 22, date: snapshot.asOf, settled: true, source: "Proceeds"),
+            .init(kind: .contribution, amount: 55, date: after, settled: true, source: "Later receipt"),
+        ])
+        XCTAssertTrue(snapshot.agreesWithRecordedCashFlows(of: holding))
+        holding.cashFlows.remove(at: 2)
+        XCTAssertFalse(snapshot.agreesWithRecordedCashFlows(of: holding))
     }
 
     private func make(date: String = "2026-11-01", currency: String = "USD",

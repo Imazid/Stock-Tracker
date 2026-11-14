@@ -30,6 +30,7 @@ struct PrivateHoldingsView: View {
                                            description: Text("Add a holding from your ownership records."))
                 }
                 ForEach(store.state.holdings) { holding in
+                    let valuation = store.linkedFundValuation(for: holding)
                     NavigationLink {
                         PrivateHoldingDetail(id: holding.id)
                     } label: {
@@ -41,10 +42,13 @@ struct PrivateHoldingsView: View {
                                 Text("Linked to provider ownership").font(.footnote).foregroundStyle(.secondary)
                             } else if holding.closedOn() != nil {
                                 Text("Exited · Self-reported").font(.subheadline)
-                            } else if let mark = holding.valuation() {
+                            } else if let mark = (valuation?.holding ?? holding).valuation() {
                                 Text(PrivateInput.money(mark.value, currency: holding.currency) + (mark.isStale() ? " · Stale valuation" : " · Dated valuation"))
                                     .font(.subheadline.monospacedDigit())
                                     .foregroundStyle(mark.isStale() ? Color.orange : Color.primary)
+                                if valuation != nil {
+                                    Text(PrivateFundSnapshot.source).font(.footnote).foregroundStyle(.secondary)
+                                }
                             } else {
                                 Text(holding.latestManualSale == nil ? "No carrying value recorded" : "Updated valuation needed")
                                     .font(.footnote).foregroundStyle(.secondary)
@@ -128,6 +132,8 @@ private struct PrivateFundSnapshotDetail: View {
 
     var body: some View {
         if auth.userId == owner, let statement = store.angelListSnapshots.first(where: { $0.id == id }) {
+            let linked = store.state.holdings.first { $0.id == statement.replacesManualHoldingID }
+            let usesStatement = linked.flatMap { store.linkedFundValuation(for: $0)?.statement.id } == statement.id
             List {
                 Section("Statement") {
                     Text(PrivateFundSnapshot.source + " · User-reviewed")
@@ -148,6 +154,20 @@ private struct PrivateFundSnapshotDetail: View {
                     }
                     Text("Return metrics require dated contributions, distributions and valuations.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                if let linked {
+                    Section("Linked holding") {
+                        NavigationLink(linked.name) { PrivateHoldingDetail(id: linked.id) }
+                        if usesStatement {
+                            Text("This NAV is used for the holding’s carrying value.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                } else if statement.replacesManualHoldingID != nil {
+                    Section("Linked holding") {
+                        Text("The linked holding was removed. This statement is kept in your history.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 Button("Remove statement", role: .destructive) { showRemove = true }
                 if let error { Text(error).foregroundStyle(.orange) }
@@ -409,8 +429,10 @@ struct PrivateHoldingDetail: View {
 
     var body: some View {
         if let holding = providerRecord ? providerPosition?.holding : store.state.holdings.first(where: { $0.id == id }) {
+            let valuation = providerRecord ? nil : store.linkedFundValuation(for: holding)
+            let valuedHolding = valuation?.holding ?? holding
             List {
-                overview(holding)
+                overview(valuedHolding, statement: valuation?.statement)
                 if !providerRecord, let owner = auth.userId {
                     let match = holding.matchingProviderHoldingID
                     if match != nil || !store.availableProviderMatches(for: holding).isEmpty {
@@ -438,7 +460,7 @@ struct PrivateHoldingDetail: View {
                     }
                 }
                 if providerPosition?.canCalculatePerformance != false {
-                    performance(holding)
+                    performance(valuedHolding, statement: valuation?.statement)
                 } else {
                     Section("Performance") {
                         Text("Full return metrics require the provider’s dated opening settlement and complete cash-flow records.")
@@ -457,7 +479,7 @@ struct PrivateHoldingDetail: View {
                         .accessibilityIdentifier("private.valuation.record")
                     }
                     if !providerRecord, holding.closedOn() == nil {
-                        if let sale = holding.latestManualSale, holding.valuation() == nil {
+                        if let sale = holding.latestManualSale, valuedHolding.valuation() == nil {
                             Text("Record a valuation dated after the sale on \(sale.date.formatted(date: .abbreviated, time: .omitted)).")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
@@ -534,7 +556,7 @@ struct PrivateHoldingDetail: View {
         } catch { self.error = "The sale could not be removed." }
     }
 
-    private func overview(_ holding: PrivateHolding) -> some View {
+    private func overview(_ holding: PrivateHolding, statement: PrivateFundSnapshot?) -> some View {
         let exited = providerPosition?.hasExited == true || holding.closedOn() != nil
         let ownershipStatus = providerRecord
             ? (exited ? "Exited · Provider confirmed" : "Provider-confirmed ownership · Illiquid")
@@ -582,6 +604,10 @@ struct PrivateHoldingDetail: View {
             if let end = holding.lockupUntil { LabeledContent("Lock-up ends", value: end.formatted(date: .abbreviated, time: .omitted)) }
             if let mark = holding.valuation() {
                 LabeledContent("Latest carrying value", value: PrivateInput.money(mark.value, currency: holding.currency))
+                if let statement, let owner = auth.userId {
+                    NavigationLink(PrivateFundSnapshot.source) { PrivateFundSnapshotDetail(id: statement.id, owner: owner) }
+                        .accessibilityIdentifier("private.holding.valuationStatement")
+                }
                 if holding.closedOn() == nil {
                     Text(mark.isStale() ? "Stale valuation · \(mark.date.formatted(date: .abbreviated, time: .omitted))" :
                             "As of \(mark.date.formatted(date: .abbreviated, time: .omitted))")
@@ -598,21 +624,30 @@ struct PrivateHoldingDetail: View {
         }
     }
 
-    private func performance(_ holding: PrivateHolding) -> some View {
+    private func performance(_ holding: PrivateHolding, statement: PrivateFundSnapshot?) -> some View {
         let metrics = holding.metrics()
+        let reconciles = statement?.agreesWithRecordedCashFlows(of: holding) ?? true
+        let hasReturnData = reconciles && (statement == nil || metrics.paid > 0)
         return Section("Performance") {
             LabeledContent("Capital committed", value: PrivateInput.money(holding.commitment, currency: holding.currency))
             LabeledContent("Capital deployed", value: PrivateInput.money(metrics.paid, currency: holding.currency))
             LabeledContent("Returned capital and proceeds", value: PrivateInput.money(metrics.returned, currency: holding.currency))
             LabeledContent("Uncalled commitment", value: PrivateInput.money(metrics.uncalled, currency: holding.currency))
             LabeledContent("Pending calls", value: PrivateInput.money(metrics.pendingCalls, currency: holding.currency))
-            LabeledContent("Total gain or loss", value: PrivateInput.money(metrics.netGain, currency: holding.currency))
+            LabeledContent("Total gain or loss", value: PrivateInput.money(hasReturnData ? metrics.netGain : nil, currency: holding.currency))
             LabeledContent("Realized gain on sales", value: PrivateInput.money(metrics.realizedGain, currency: holding.currency))
-            LabeledContent("Unrealized gain", value: PrivateInput.money(metrics.unrealizedGain, currency: holding.currency))
+            LabeledContent("Unrealized gain", value: PrivateInput.money(hasReturnData ? metrics.unrealizedGain : nil, currency: holding.currency))
             LabeledContent(holding.assetClass.isFund && !holding.cashFlows.contains(where: { $0.kind == .sale }) ? "TVPI" : "MOIC",
-                           value: multiple(metrics.multiple))
-            if holding.assetClass.isFund { LabeledContent("DPI", value: multiple(metrics.dpi)) }
-            LabeledContent("XIRR", value: metrics.xirr?.formatted(.percent.precision(.fractionLength(1))) ?? "Unavailable")
+                           value: multiple(hasReturnData ? metrics.multiple : nil))
+            if holding.assetClass.isFund { LabeledContent("DPI", value: multiple(hasReturnData ? metrics.dpi : nil)) }
+            LabeledContent("XIRR", value: (hasReturnData ? metrics.xirr : nil)?.formatted(.percent.precision(.fractionLength(1))) ?? "Unavailable")
+            if !reconciles {
+                Text("The statement’s paid-in capital or distributions differ from recorded cash flows. Review the dated ledger before calculating returns.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else if !hasReturnData {
+                Text("Record dated contributions to calculate returns from this NAV.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 
