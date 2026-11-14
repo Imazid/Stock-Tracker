@@ -256,6 +256,43 @@ Deno.test("activity uses the signed root endpoint and offers only eligible dated
   assertFalse(JSON.stringify(res.body).includes("broker-transaction"));
 });
 
+Deno.test("dividend reinvestment preserves the reported date, signed amount and units as reference data", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });
+  const { deps, calls } = harness(() => json(200, {
+    data: [{
+      id: "broker-reinvestment",
+      type: "REI",
+      trade_date: "2026-07-03T23:30:00-04:00",
+      symbol: { symbol: "BHP" },
+      currency: { code: "AUD" },
+      amount: -17.5,
+      units: 0.125,
+    }],
+    pagination: { offset: 0, total: 1 },
+  }), store);
+  const result = await handleSnapTradeRequest(USER, {
+    operation: "accountActivities",
+    params: { accountId: ACCOUNT, startDate: "2026-07-01", endDate: "2026-07-10" },
+  }, deps);
+  assertEquals(result.status, 200);
+  assert(calls[0].url.searchParams.get("type")?.split(",").includes("REI"));
+  const body = result.body as { activities: Record<string, unknown>[] };
+  const { id, ...fields } = body.activities[0];
+  assert(/^[a-f0-9]{64}$/.test(String(id)));
+  assertEquals(fields, {
+    date: "2026-07-03",
+    label: "Dividend reinvestment",
+    amount: -17.5,
+    currency: "AUD",
+    units: 0.125,
+    fee: null,
+    symbol: "BHP",
+    cashFlow: null,
+    foreignCashFlow: null,
+  });
+});
+
 Deno.test("activity refuses malformed dates or pagination and never uses a different user's credentials", async () => {
   const store = new MemoryStore();
   store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "mine" });

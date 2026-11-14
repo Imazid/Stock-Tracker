@@ -57,7 +57,8 @@ struct PortfolioReinvestmentList: View {
             if phase == .active, entries != nil { Task { await load() } }
         }
         .sheet(item: $editor, onDismiss: { Task { await load() } }) { item in
-            ReinvestmentEditor(records: records, entry: item.entry, onSave: onSave)
+            ReinvestmentEditor(records: records, entry: item.entry,
+                               recorded: Set(entries?.compactMap(\.snaptrade_activity_id) ?? []), onSave: onSave)
         }
         .confirmationDialog("Remove this reinvestment?", isPresented: Binding(
             get: { removing != nil }, set: { if !$0 { removing = nil } }
@@ -84,6 +85,9 @@ struct PortfolioReinvestmentList: View {
                     .font(.subheadline).monospacedDigit()
                 Text("Paid \(entry.paid_on) · Acquired \(entry.acquired_on)")
                     .font(.caption).foregroundStyle(theme.secondaryText)
+                if let source = entry.brokerReference {
+                    Text(source.details).font(.caption).foregroundStyle(theme.secondaryText)
+                }
             }
             .accessibilityElement(children: .combine)
             Spacer(minLength: DS.Space.s)
@@ -142,17 +146,24 @@ struct PortfolioReinvestmentList: View {
 private struct ReinvestmentEditor: View {
     let records: ReinvestmentRecords
     let entry: DividendReinvestment?
+    let recorded: Set<String>
     let onSave: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ReinvestmentDraft
+    @State private var source: BrokerReinvestment?
+    @State private var lookup = false
+    @State private var brokerStart = CashIncomeDay.calendar.date(byAdding: .day, value: -89, to: Date()) ?? Date()
+    @State private var brokerEnd = Date()
     @State private var saving = false
     @State private var problem: String?
     @FocusState private var active: String?
 
-    init(records: ReinvestmentRecords, entry: DividendReinvestment?, onSave: @escaping (String) -> Void) {
+    init(records: ReinvestmentRecords, entry: DividendReinvestment?, recorded: Set<String>,
+         onSave: @escaping (String) -> Void) {
         self.records = records
         self.entry = entry
+        self.recorded = recorded
         self.onSave = onSave
         _draft = State(initialValue: ReinvestmentDraft(entry: entry))
     }
@@ -160,6 +171,16 @@ private struct ReinvestmentEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let source = source ?? entry?.brokerReference {
+                    Section("Broker reference") {
+                        Text(source.details)
+                        if self.source != nil {
+                            Button("Clear broker reference") { self.source = nil }
+                        }
+                    }
+                } else {
+                    brokerLookup
+                }
                 Section("Statement dates") {
                     NavigationLink {
                         ReinvestmentHoldingPicker(records: records, selection: $draft.holding)
@@ -222,6 +243,34 @@ private struct ReinvestmentEditor: View {
         .environment(\.calendar, CashIncomeDay.calendar)
     }
 
+    @ViewBuilder
+    private var brokerLookup: some View {
+        Section {
+            Button(lookup ? "Hide brokerage lookup" : "Find reinvestments in linked accounts") { lookup.toggle() }
+                .accessibilityIdentifier("portfolio.reinvestment.brokerLookup")
+            if lookup {
+                DatePicker("First broker reinvestment date", selection: $brokerStart,
+                           in: CashIncomeDay.first...Date(), displayedComponents: .date)
+                DatePicker("Last broker reinvestment date", selection: $brokerEnd,
+                           in: CashIncomeDay.first...Date(), displayedComponents: .date)
+            }
+        }
+        if lookup {
+            let start = CashIncomeDay.string(brokerStart)
+            let end = CashIncomeDay.string(brokerEnd)
+            if start <= end {
+                PortfolioBrokerActivity(userId: records.userId, start: start, end: end, imported: recorded,
+                                        reviewReinvestment: { event in
+                    source = event
+                    lookup = false
+                })
+                .id("\(start)/\(end)")
+            } else {
+                Text("Choose valid broker dates in chronological order.").font(.footnote)
+            }
+        }
+    }
+
     private func amountField(_ title: String, value: Binding<String>, id: String) -> some View {
         TextField(title, text: value)
             .keyboardType(.decimalPad)
@@ -236,7 +285,7 @@ private struct ReinvestmentEditor: View {
         saving = true
         defer { saving = false }
         do {
-            try await records.save(draft, editing: entry)
+            try await records.save(draft, editing: entry, source: source)
             onSave(CashIncomeDay.string(draft.paid))
             dismiss()
         } catch let error as ReinvestmentError {

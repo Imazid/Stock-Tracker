@@ -262,7 +262,8 @@ final class AccountSyncTests: XCTestCase {
         ]
         XCTAssertEqual(try request("POST", path, body: JSONSerialization.data(withJSONObject: webEntry),
                                    token: token).status, 201)
-        let projection = "id,holding_id,paid_on,acquired_on,currency,shares::text,reinvested_amount::text,basis_usd::text,statement_reference"
+        let projection = "id,holding_id,paid_on,acquired_on,currency,shares::text,reinvested_amount::text,basis_usd::text,statement_reference,snaptrade_activity_id,snaptrade_reported_amount::text,snaptrade_reported_units::text"
+        let withBroker = ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_REINVESTMENT_BROKER"] == "1"
         let seeded = try XCTUnwrap(try rows(table, select: projection, token: token).first)
         let seededId = try XCTUnwrap(seeded["id"] as? String)
         let cash: [String: String] = [
@@ -311,6 +312,20 @@ final class AccountSyncTests: XCTestCase {
         reveal(options)
         options.tap()
         app.buttons["Edit reinvestment"].tap()
+        if withBroker {
+            let lookup = app.buttons["portfolio.reinvestment.brokerLookup"].firstMatch
+            XCTAssertTrue(lookup.waitForExistence(timeout: 5))
+            lookup.tap()
+            let find = app.buttons["Find linked accounts"].firstMatch
+            reveal(find)
+            find.tap()
+            let load = app.buttons["Load broker activity"].firstMatch
+            reveal(load)
+            load.tap()
+            let review = app.buttons["Review reinvestment"].firstMatch
+            reveal(review)
+            review.tap()
+        }
         let shares = app.textFields["portfolio.reinvestment.shares"].firstMatch
         XCTAssertTrue(shares.waitForExistence(timeout: 8))
         XCTAssertEqual(shares.value as? String, "0.123456789012345678")
@@ -323,6 +338,11 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(edited["paid_on"] as? String, "2025-06-30")
         XCTAssertEqual(edited["acquired_on"] as? String, "2025-07-01")
         XCTAssertEqual(edited["basis_usd"] as? String, "9.42")
+        if withBroker {
+            XCTAssertEqual(edited["snaptrade_activity_id"] as? String, String(repeating: "c", count: 64))
+            XCTAssertEqual(edited["snaptrade_reported_amount"] as? String, "-13.5")
+            XCTAssertEqual(edited["snaptrade_reported_units"] as? String, "0.125")
+        }
 
         let add = app.buttons["portfolio.reinvestment.add"].firstMatch
         reveal(add)

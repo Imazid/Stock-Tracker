@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, Select } from "@/components/ui/Field";
 import { cashAmount, type IncomeActivity, type IncomeKind } from "@/lib/portfolio-income";
+import { brokerReinvestmentLabel, type BrokerReinvestment } from "@/lib/portfolio-reinvestments";
 import type { SplitActivity } from "@/lib/portfolio-splits";
 import { service } from "@/workspace/lib/backend";
 
@@ -32,7 +33,8 @@ type Page = { activities: Activity[]; omitted: number; nextOffset: number | null
 type ReviewMode = { imported: ReadonlySet<string>; canInclude: boolean } & (
   { mode: "cash"; onInclude: (flow: BrokerCashFlow) => void } |
   { mode: "splits"; selectedId?: string; onReview: (activity: SplitActivity) => void } |
-  { mode: "income"; selectedId?: string; onReview: (activity: IncomeActivity) => void }
+  { mode: "income"; selectedId?: string; onReview: (activity: IncomeActivity) => void } |
+  { mode: "reinvestments"; selectedId?: string; onReview: (activity: BrokerReinvestment) => void }
 );
 
 function isSplitActivity(activity: Activity): activity is Activity & SplitActivity {
@@ -124,17 +126,28 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
   const nextOffset = page?.nextOffset ?? null;
   const accountField = `broker-account-${review.mode}`;
   const selectedAccount = accounts?.find((account) => account.id === accountId);
-  const activities = page?.activities.filter((activity) => review.mode === "cash" ||
-    (review.mode === "splits" ? isSplitActivity(activity) : incomeKind(activity.label)));
-  const brokerTitles = { cash: "Broker activity", splits: "Broker-reported splits", income: "Broker-reported payments" };
-  const emptyLabels = { cash: "cash or corporate activity", splits: "splits", income: "dividends or distributions" };
+  const activities = page?.activities.filter((activity) => {
+    switch (review.mode) {
+      case "cash": return true;
+      case "splits": return isSplitActivity(activity);
+      case "income": return Boolean(incomeKind(activity.label));
+      case "reinvestments": return activity.label === brokerReinvestmentLabel;
+    }
+  });
+  const brokerTitles = { cash: "Broker activity", splits: "Broker-reported splits", income: "Broker-reported payments",
+    reinvestments: "Broker-reported reinvestments" };
+  const emptyLabels = { cash: "cash or corporate activity", splits: "splits", income: "dividends or distributions",
+    reinvestments: "reinvestments" };
+  const instructions = {
+    splits: "Choose an event to bring its reference and reported date into the adjustment form. Confirm the holding, effective date and ratio against your statement.",
+    income: "Select a reported payment, then enter the cash received from your statement. Review any prior manual entry for the same payment.",
+    reinvestments: "Choose an event to attach its reference. Use the statement to confirm the dates, shares and amounts.",
+    cash: "Review reported activity for the selected dates. Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Check against transfers already entered from statements.",
+  };
 
   return <fieldset className="space-y-3 rounded-md border border-border p-3">
     <legend className="px-1 text-sm font-medium">{brokerTitles[review.mode]}</legend>
-    <p className="text-xs text-text-2">{review.mode === "splits"
-      ? "Choose an event to bring its reference and reported date into the adjustment form. Confirm the holding, effective date and ratio against your statement."
-      : review.mode === "income" ? "Select a reported payment, then enter the cash received from your statement. Review any prior manual entry for the same payment."
-        : "Review reported activity for the selected dates. Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Check against transfers already entered from statements."}</p>
+    <p className="text-xs text-text-2">{instructions[review.mode]}</p>
     {!accounts ? <Button size="sm" disabled={busy} onClick={() => void loadAccounts()}>Find linked accounts</Button>
       : accounts.length === 0 ? <p className="text-sm text-text-2">No linked brokerage accounts. <Link className="underline" href="/#settings">Open brokerage connections</Link></p>
       : <div className="flex flex-wrap items-end gap-2">
@@ -195,6 +208,24 @@ export function BrokerActivity({ start, end, ...review }: { start: string; end: 
                 onClick={() => review.onReview({ id, date, kind, symbol, currency, amount,
                   account: selectedAccount ? brokerAccountLabel({ ...selectedAccount, name: undefined }) : "" })}>
                 {included ? "Already recorded" : selected ? "Selected" : "Review payment"}
+              </Button>}
+            </li>;
+          }
+          if (review.mode === "reinvestments") {
+            const { id, date, symbol, currency, amount, units } = activity;
+            const selected = review.selectedId === id;
+            const mayBeReversal = units !== null && units < 0;
+            return <li key={id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <div className="min-w-0 [overflow-wrap:anywhere]">
+                <p className="text-sm">{brokerReinvestmentLabel}{symbol && ` · ${symbol}`}</p>
+                <p className="text-xs text-text-2">{["Reported " + date, amount === null ? null : quantity(amount, currency),
+                  units === null ? null : `${units} units`].filter(Boolean).join(" · ")}</p>
+                {mayBeReversal && <p className="text-xs text-text-2">Check this possible reversal against your statement.</p>}
+              </div>
+              {!mayBeReversal && <Button size="sm" disabled={busy || included || selected || !review.canInclude}
+                aria-label={included || selected ? undefined : `Review reinvestment ${symbol ?? "event"} reported ${date}`}
+                onClick={() => review.onReview({ id, date, symbol, currency, amount, units })}>
+                {included ? "Already recorded" : selected ? "Selected" : "Review reinvestment"}
               </Button>}
             </li>;
           }
