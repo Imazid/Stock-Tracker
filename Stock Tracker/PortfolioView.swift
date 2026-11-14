@@ -42,6 +42,7 @@ enum HoldingSort: String, CaseIterable {
 
 private enum PortfolioSheet: Identifiable, Equatable {
     case add, broker, newPortfolio
+    case stockTransfers(UUID)
     case paywall(feature: String, tier: SubscriptionTier)
 
     var id: String {
@@ -49,6 +50,7 @@ private enum PortfolioSheet: Identifiable, Equatable {
         case .add: return "add"
         case .broker: return "broker"
         case .newPortfolio: return "new"
+        case .stockTransfers(let userId): return "stock-transfers-\(userId)"
         case .paywall(let feature, _): return "paywall-\(feature)"
         }
     }
@@ -132,6 +134,11 @@ struct PortfolioView: View {
                     emptyState
                     closedSection
                     if cloudAuth.authState == .signedIn, let userId = cloudAuth.userId {
+                        Button { sheet = .stockTransfers(userId) } label: {
+                            Label("Stock transfers", systemImage: "arrow.left.arrow.right")
+                        }
+                        .accessibilityIdentifier("portfolio.stockTransfers.open")
+                        .portfolioRow(bottom: DS.Space.l)
                         PortfolioPerformanceLedger(userId: userId)
                             .id(userId)
                             .portfolioRow(bottom: DS.Space.l)
@@ -150,7 +157,10 @@ struct PortfolioView: View {
                     summaryStrip
                         .portfolioRow(bottom: DS.Space.l)
 
-                    PortfolioAccountsCard(hidesValues: valueHidden, onManageBrokers: { sheet = .broker })
+                    PortfolioAccountsCard(hidesValues: valueHidden, onManageBrokers: { sheet = .broker },
+                                          onStockTransfers: cloudAuth.authState == .signedIn ? cloudAuth.userId.map { userId in
+                                              { sheet = .stockTransfers(userId) }
+                                          } : nil)
                         .portfolioRow(bottom: DS.Space.l)
 
                     DSSegmentBar(options: PortfolioSegment.allCases, selection: segmentBinding,
@@ -208,9 +218,14 @@ struct PortfolioView: View {
                 SnapTradeConnectionView()
             case .newPortfolio:
                 CreatePortfolioSheet()
+            case .stockTransfers(let userId):
+                PortfolioStockTransfers(records: StockTransferRecords(userId: userId))
             case .paywall(let feature, let tier):
                 PaywallView(requiredTier: tier, featureName: feature)
             }
+        }
+        .onChange(of: cloudAuth.userId) { _, userId in
+            if case .stockTransfers(let owner) = sheet, owner != userId { sheet = nil }
         }
         .sheet(item: $closedSheet) { ClosedPositionSheet(positionID: $0.id) }
         .alert("Remove holding?", isPresented: Binding(get: { holdingToRemove != nil }, set: { if !$0 { holdingToRemove = nil } })) {

@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -28,7 +29,23 @@ def broker_response(user, request):
             for account, number in [(SOURCE, "••••1234"), (RECEIVER, "••••4321")]
         ]
     if operation == "accountActivities":
-        day = request["params"]["endDate"]
+        params = request["params"]
+        day = params["endDate"]
+        if params.get("stockTransfersOnly"):
+            account = params["accountId"]
+            if account not in (SOURCE, RECEIVER):
+                return 404, {"error": {"code": "UNKNOWN_ACCOUNT"}}
+            if account == SOURCE and params["offset"] == 0:
+                return 200, {"activities": [], "omitted": 0, "nextOffset": 50}
+            sending = account == SOURCE
+            event_day = (date.fromisoformat(day) - timedelta(days=2 if sending else 1)).isoformat()
+            return 200, {"activities": [{
+                "id": ("1" if sending else "2") * 64, "date": event_day,
+                "stockTransfer": {
+                    "accountId": account, "direction": "sent" if sending else "received",
+                    "symbol": "BHP.AX" if sending else "BHP", "exchange": "XASX" if sending else "ASX", "shares": "2.25",
+                },
+            }], "omitted": 0, "nextOffset": None}
         return 200, {"activities": [
             {"id": "d" * 64, "date": day, "label": "Outgoing cash transfer between accounts",
              "amount": -250, "currency": "USD", "cashFlow": {"date": day, "kind": "withdrawal", "amount": 250}},
