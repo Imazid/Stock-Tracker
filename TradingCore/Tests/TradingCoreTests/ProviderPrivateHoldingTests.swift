@@ -18,12 +18,19 @@ final class ProviderPrivateHoldingTests: XCTestCase {
           ],
           "calls":[{"id":"00000000-0000-0000-0000-000000000004","amount":200,
              "due_on":20000000,"settled_on":15000000,"source":"Provider"}],
+          "cancelled_calls":[{"id":"00000000-0000-0000-0000-000000000006","amount":500,
+             "due_on":31536000,"source":"Original notice","cancelled_at":12000000,
+             "cancellation_source":"Provider rescission"}],
           "distributions":[{"id":"00000000-0000-0000-0000-000000000005","amount":100,
              "received_on":31536000,"source":"Provider"}]
         }
         """)
         let holding = record.holding
         XCTAssertTrue(record.canCalculatePerformance)
+        let cancellation = try XCTUnwrap(record.cancelledCalls?.first)
+        XCTAssertEqual(cancellation.cancellationSource, "Provider rescission")
+        XCTAssertFalse(holding.cashFlows.contains { $0.id == cancellation.id })
+        XCTAssertTrue(PrivateMath.capitalCallReminders(in: [holding], now: cancellation.cancelledAt).isEmpty)
         XCTAssertEqual(holding.valuations.count, 1)
         XCTAssertEqual(holding.valuation()?.value, 1500)
         XCTAssertEqual(holding.cashFlows.first?.originalDueDate, Date(timeIntervalSince1970: 20000000))
@@ -31,6 +38,7 @@ final class ProviderPrivateHoldingTests: XCTestCase {
         XCTAssertEqual(metrics.paid, 1200)
         XCTAssertEqual(metrics.returned, 100)
         XCTAssertEqual(metrics.uncalled, 800)
+        XCTAssertEqual(metrics.pendingCalls, 0)
         XCTAssertEqual(metrics.netGain, 400)
         XCTAssertNotNil(metrics.xirr)
     }

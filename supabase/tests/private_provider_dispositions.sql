@@ -215,6 +215,58 @@ select case when count(*)=1 and bool_and(a.source_label='Reinstated provider pay
   join distribution_alert prior using (id, subject_id);
 select public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
   'distribution_reversal','dist-new',now(),null,'AUD',null,'Final provider reversal');
+select case when public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'capital_call','call-cancelled',now()-interval '3 hours',250,'AUD',(now() at time zone 'Australia/Sydney')::date+2,'Original call notice')
+  then 'ok   a provider can report an outstanding call' else 'FAIL initial call' end;
+select public.collect_private_market_alerts('ed000000-0000-4000-8000-000000000001');
+create temporary table original_call_alert as select id,subject_id
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='capital_call';
+select case when count(*)=1 then 'ok   the outstanding call creates one owner alert' else 'FAIL initial call alert' end from original_call_alert;
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','other-provider-account',
+  'ed000000-0000-4000-8000-000000000060','capital_call_cancellation','call-cancelled',now(),null,'AUD',null,'Another account')$q$,
+  '42501','another provider account cannot cancel a capital call');
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','disposition-owner',
+  'ed000000-0000-4000-8000-000000000060','capital_call_cancellation','missing',now(),null,'AUD',null,'Unknown notice')$q$,
+  '22023','cancellation requires the original provider reference');
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','disposition-owner',
+  'ed000000-0000-4000-8000-000000000060','capital_call_cancellation','call-cancelled',now(),250,'AUD',null,'Conflicting notice')$q$,
+  '22023','cancellation cannot change the amount');
+select case when public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'capital_call_cancellation','call-cancelled',now()-interval '2 hours',null,'AUD',null,'Provider rescission')
+  then 'ok   the provider can cancel an outstanding call' else 'FAIL accepted cancellation' end;
+select case when amount=250 and source='Original call notice' and cancellation_source='Provider rescission' and settled_on is null
+  then 'ok   cancellation retains the original terms and dated provider evidence' else 'FAIL original terms changed' end
+  from public.capital_calls where id=(select subject_id from original_call_alert);
+select case when not public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'capital_call_cancellation','call-cancelled',now()-interval '2 hours',null,'AUD',null,'Duplicate notice')
+  then 'ok   a replay cannot change the cancellation' else 'FAIL replay changed cancellation' end;
+select case when not public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'capital_call','call-cancelled',now()-interval '150 minutes',500,'AUD',(now() at time zone 'Australia/Sydney')::date+2,'Stale revision')
+  then 'ok   an older call cannot restore an obligation' else 'FAIL stale record restored the call' end;
+select case when not exists (select 1 from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001') where kind='capital_call')
+  then 'ok   a cancelled call disappears from the due inbox' else 'FAIL cancelled call still due' end;
+reset role;
+select case when public.private_market_push_through('ed000000-0000-4000-8000-000000000001',
+  'ed000000-0000-4000-8000-000000000070',0) is null
+  then 'ok   a cancelled call suppresses any unsent push' else 'FAIL cancelled call still eligible for push' end;
+set role service_role;
+select case when public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'capital_call','call-cancelled',now()-interval '1 hour',175,'AUD',(now() at time zone 'Australia/Sydney')::date+3,'Restored call notice')
+  then 'ok   a newer provider record restores the call under the same reference' else 'FAIL call restoration' end;
+select case when count(*)=1 and min(source_label)='Restored call notice'
+  then 'ok   a restored call reuses the existing alert with revised evidence' else 'FAIL restored call alert' end
+  from public.private_market_alert_inbox('ed000000-0000-4000-8000-000000000001')
+  join original_call_alert using (id, subject_id);
+select case when count(*)=1 and min(source)='Provider rescission' and min(provider_event_at)=now()-interval '2 hours'
+  then 'ok   the cancellation evidence remains in the audit log after reinstatement' else 'FAIL cancellation audit history' end
+  from public.investment_audit_logs where action='provider_capital_call_cancellation'
+    and subject_id=(select subject_id from original_call_alert);
+select public.record_private_holding_activity('birchal','disposition-owner','ed000000-0000-4000-8000-000000000060',
+  'capital_call','call-cancelled',now()-interval '10 minutes',175,'AUD',(now() at time zone 'Australia/Sydney')::date+3,'Payment receipt',null,current_date);
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','disposition-owner',
+  'ed000000-0000-4000-8000-000000000060','capital_call_cancellation','call-cancelled',now(),null,'AUD',null,'Paid call cancellation')$q$,
+  '22023','cancelling an obligation cannot erase a settled payment');
+
 reset role;
 set role authenticated;
 select set_config('request.jwt.claim.sub','ed000000-0000-4000-8000-000000000001',true) is not null;
@@ -224,6 +276,9 @@ select case when count(*)=2 and count(*) filter(where reversed)=1
 select pg_temp.expect_disposition_error($q$select public.record_private_holding_disposition('birchal','disposition-owner',
   'ed000000-0000-4000-8000-000000000060','sale-one',now(),'AUD','Client attempt',true)$q$,
   '42501','even an owner cannot submit a sale or reversal');
+select pg_temp.expect_disposition_error($q$select public.record_private_holding_activity('birchal','disposition-owner',
+  'ed000000-0000-4000-8000-000000000060','capital_call_cancellation','call-cancelled',now(),null,'AUD',null,'Client cancellation')$q$,
+  '42501','even an owner cannot report a provider cancellation');
 select pg_temp.expect_disposition_error($q$select * from public.private_current_holding_exits$q$,
   '42501','clients cannot read the exit evidence view directly');
 select pg_temp.expect_disposition_error($q$select * from public.private_reported_distributions$q$,

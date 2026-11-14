@@ -426,6 +426,13 @@ struct PrivateHoldingDetail: View {
                     }
                     if !providerRecord { Button("Record cash flow") { editor = .cashFlow } }
                 }
+                if let cancellations = providerPosition?.cancelledCalls, !cancellations.isEmpty {
+                    Section("Cancelled capital calls") {
+                        ForEach(cancellations) { call in
+                            PrivateCancelledCallRow(call: call, currency: holding.currency)
+                        }
+                    }
+                }
                 if !providerRecord {
                     Button("Remove holding", role: .destructive) { showDelete = true }
                 }
@@ -607,8 +614,6 @@ struct PrivateCapitalView: View {
 
     @State private var reminderError: String?
 
-    private var providerHoldings: [PrivateHolding] { store.providerHoldings.map(\.holding) }
-
     var body: some View {
         List {
             Section("Reminders") {
@@ -634,19 +639,30 @@ struct PrivateCapitalView: View {
                     }
                 }
             }
-            ForEach(providerHoldings) { holding in
+            ForEach(store.providerHoldings) { position in
+                let holding = position.holding
                 let flows = holding.cashFlows.filter { $0.kind == .capitalCall || $0.kind == .distribution }
-                if !flows.isEmpty {
+                let cancellations = position.cancelledCalls ?? []
+                if !flows.isEmpty || !cancellations.isEmpty {
                     Section("\(holding.name) · Provider records") {
                         ForEach(flows.sorted(by: { $0.date < $1.date }), id: \.id) { flow in
                             PrivateCashFlowRow(holding: holding, flow: flow, isEditable: false)
+                        }
+                        ForEach(cancellations) { call in
+                            PrivateCancelledCallRow(call: call, currency: holding.currency)
                         }
                     }
                 }
             }
             if let error = store.providerError { Text(error).foregroundStyle(.secondary) }
             if store.loadingProviderHoldings { ProgressView("Checking provider records") }
-            if !(store.state.holdings + providerHoldings).contains(where: { $0.cashFlows.contains { $0.kind == .capitalCall || $0.kind == .distribution } }) {
+            let hasManualActivity = store.state.holdings.contains { holding in
+                holding.cashFlows.contains { $0.kind == .capitalCall || $0.kind == .distribution }
+            }
+            let hasProviderActivity = store.providerHoldings.contains { position in
+                position.calls?.isEmpty == false || position.cancelledCalls?.isEmpty == false || position.distributions?.isEmpty == false
+            }
+            if !hasManualActivity && !hasProviderActivity {
                 ContentUnavailableView("No capital calls or distributions", systemImage: "arrow.left.arrow.right",
                                        description: Text("Record cash flows on a holding to track payments and proceeds."))
             }
@@ -659,6 +675,24 @@ struct PrivateCapitalView: View {
 
     private func refresh() async {
         if let owner = auth.userId { await store.refreshProviderHoldings(for: owner) }
+    }
+}
+
+private struct PrivateCancelledCallRow: View {
+    let call: ProviderPrivateHolding.CancelledCall
+    let currency: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("Capital call cancelled", value: PrivateInput.money(call.amount, currency: currency))
+            Text("Provider cancellation · \(call.cancelledAt.formatted(date: .abbreviated, time: .shortened))")
+            Text(call.cancellationSource)
+            Text("Originally due \(call.dueOn.formatted(date: .abbreviated, time: .omitted)) · \(call.source)")
+                .foregroundStyle(.secondary)
+        }
+        .font(.subheadline)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("private.capital.cancelledCall")
     }
 }
 

@@ -393,6 +393,27 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledCapitalCallShowsProviderEvidence() async throws {
+        try launchWithLocalSession("PRIVATE_CAPITAL_CANCELLATION_TEST_SESSION")
+        openPrivateMarkets()
+        let capital = app.buttons["private.destination.arrow.left.arrow.right"]
+        let cancelled = app.otherElements["private.capital.cancelledCall"].firstMatch
+        for _ in 0..<3 where !cancelled.exists {
+            if capital.exists {
+                if !capital.isHittable { app.swipeUp() }
+                if capital.isHittable { capital.tap() }
+            }
+            if cancelled.waitForExistence(timeout: 8) { break }
+        }
+        XCTAssertTrue(cancelled.exists, app.debugDescription)
+        XCTAssertTrue(cancelled.staticTexts["Provider rescission"].exists)
+        let original = cancelled.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Original call notice")).firstMatch
+        XCTAssertTrue(original.exists)
+        XCTAssertTrue(original.label.hasPrefix("Originally due "))
+        XCTAssertFalse(app.buttons["Record as paid"].exists)
+    }
+
+    @MainActor
     func testProviderExitShowsSettlementSourceAndRemainingUnits() async throws {
         try launchWithLocalSession("PRIVATE_DISPOSITION_TEST_SESSION")
         openPrivateMarkets()

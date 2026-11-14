@@ -234,6 +234,15 @@ public struct ProviderPrivateHolding: Decodable, Identifiable, Sendable {
         public let source: String
     }
 
+    public struct CancelledCall: Decodable, Identifiable, Sendable {
+        public let id: UUID
+        public let amount: Decimal
+        public let dueOn: Date
+        public let source: String
+        public let cancelledAt: Date
+        public let cancellationSource: String
+    }
+
     public struct Distribution: Decodable, Sendable {
         public let id: UUID
         public let amount: Decimal
@@ -265,6 +274,7 @@ public struct ProviderPrivateHolding: Decodable, Identifiable, Sendable {
     public let commitment: Commitment
     public let marks: [Mark]?
     public let calls: [Call]?
+    public let cancelledCalls: [CancelledCall]?
     public let distributions: [Distribution]?
     public let dispositions: [Disposition]?
     public let remainingUnits: Decimal?
