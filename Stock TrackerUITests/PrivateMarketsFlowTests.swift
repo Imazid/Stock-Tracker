@@ -572,6 +572,7 @@ final class PrivateMarketsFlowTests: XCTestCase {
         value.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "987.12345678".count))
         value.typeText("987.123456789")
         app.buttons["private.accountHolding.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Account Holding"].waitForNonExistence(timeout: 15), app.debugDescription)
         let revised = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "987.123456789", "987.123456789")).firstMatch
         XCTAssertTrue(revised.waitForExistence(timeout: 12), app.debugDescription)
