@@ -18,7 +18,7 @@ export function providerFailure(status: number | undefined, fallback: FailureCod
 }
 
 export async function reportWorker(
-  worker: "provider-maintenance" | "snaptrade-activity-sync",
+  worker: "provider-maintenance" | "snaptrade-activity-sync" | "alpaca-paper-order-stream",
   started: number,
   run: Omit<WorkerReport, "durationMs">,
   persist: (report: WorkerReport) => Promise<void>,

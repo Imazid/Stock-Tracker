@@ -288,11 +288,21 @@ export class PgOmsStore implements OmsStore {
     return r?.used === true;
   }
 
-  async recordBrokerOrder(intentID: string, from: IntentStatus, order: BrokerOrder): Promise<IntentStatus> {
+  async recordBrokerOrder(
+    intentID: string,
+    from: IntentStatus,
+    order: BrokerOrder,
+    options?: { requireActiveConnection: true },
+  ): Promise<IntentStatus> {
     return await this.sql.begin(async (tx) => {
       const [intent] = await tx`select connection_id, status, provider_order_id, client_order_id from public.order_intents
                                where id = ${intentID} and user_id = ${this.userID} for update`;
       if (!intent || intent.status !== from) return (intent?.status as IntentStatus | undefined) ?? from;
+      if (options?.requireActiveConnection) {
+        const [active] = await tx`select id from public.broker_connections where id = ${intent.connection_id} and user_id = ${this.userID}
+          and status = 'active' and 'read' = any(permissions) for share`;
+        if (!active) return from;
+      }
       if ((intent.provider_order_id && intent.provider_order_id !== order.providerOrderID) ||
           (order.clientOrderID && order.clientOrderID !== intent.client_order_id)) return from;
       const [previous] = from === "partially_filled" && order.status === "partially_filled"
