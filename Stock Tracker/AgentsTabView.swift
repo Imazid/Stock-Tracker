@@ -707,6 +707,7 @@ struct AgentDetailView: View {
                 .accessibilityIdentifier("agent.timeline.older")
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.timeline")
     }
 
@@ -735,6 +736,7 @@ struct AgentDetailView: View {
                     }
                 }
                 .font(.caption)
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("agent.timeline.proposal")
             }
             ForEach(detail.orders) { order in
@@ -748,6 +750,7 @@ struct AgentDetailView: View {
                     }
                 }
                 .font(.caption)
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("agent.timeline.order")
             }
         } else if let detailProblem {

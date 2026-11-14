@@ -170,8 +170,10 @@ final class TradingFlowTests: XCTestCase {
         agent.tap()
         XCTAssertTrue(element("agent.timeline").waitForExistence(timeout: 10))
         tap("agent.run.completed")
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'You approved' ")).firstMatch.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'Fill ID ' ")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "You approved")).firstMatch.waitForExistence(timeout: 10))
+        let fillID = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Fill ID ")).firstMatch
+        XCTAssertTrue(fillID.exists)
+        scrollTo(fillID)
         attach("agent-activity-fill")
 
         XCTAssertTrue(app.open("Activity"))
