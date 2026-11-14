@@ -767,6 +767,55 @@ final class PrivateMarketsFlowTests: XCTestCase {
     @MainActor
     func testCompanyUpdatesShowsPublishedFinancing() async throws {
         try launchWithLocalSession("PRIVATE_FINANCING_TEST_SESSION")
+        openCompanyUpdatesFollowingHeidi()
+        let completed = app.staticTexts["Series C closed"]
+        for _ in 0..<3 where !completed.isHittable {
+            if completed.waitForExistence(timeout: 5) && completed.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(completed.isHittable, app.debugDescription)
+        let evidence = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "2026-09-22")).firstMatch
+        XCTAssertTrue(evidence.exists)
+        XCTAssertTrue(evidence.label.contains("USD 100000000"))
+        let summary = app.buttons["Summarise published updates"]
+        if !summary.isHittable { app.swipeDown() }
+        XCTAssertTrue(summary.isHittable)
+        summary.tap()
+        XCTAssertTrue(app.navigationBars["AI Investment Research"].waitForExistence(timeout: 10))
+        let fundingSource = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Series C closed")).firstMatch
+        for _ in 0..<3 where !fundingSource.exists { app.swipeUp() }
+        XCTAssertTrue(fundingSource.exists, app.debugDescription)
+        XCTAssertEqual(fundingSource.value as? String, "1")
+    }
+
+    @MainActor
+    func testCompanyUpdatesShowsCitableFinancialDisclosure() throws {
+        try launchWithLocalSession("PRIVATE_FINANCIAL_DISCLOSURE_TEST_SESSION")
+        openCompanyUpdatesFollowingHeidi()
+        let title = app.staticTexts["Issuer-reported financial update"]
+        for _ in 0..<4 where !title.isHittable {
+            _ = title.waitForExistence(timeout: 4)
+            if !title.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(title.isHittable, app.debugDescription)
+        let evidence = app.staticTexts.containing(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@", "2026-04", "USD 50000000")).firstMatch
+        XCTAssertTrue(evidence.exists)
+        XCTAssertTrue(app.staticTexts["Issuer financial disclosure"].exists)
+        let summary = app.buttons["Summarise published updates"]
+        for _ in 0..<4 where !summary.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(summary.isHittable)
+        summary.tap()
+        XCTAssertTrue(app.navigationBars["AI Investment Research"].waitForExistence(timeout: 10))
+        let financialSource = app.switches.containing(NSPredicate(
+            format: "label CONTAINS %@", "Issuer-reported financial update")).firstMatch
+        for _ in 0..<4 where !financialSource.exists { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(financialSource.exists, app.debugDescription)
+        XCTAssertEqual(financialSource.value as? String, "1")
+    }
+
+    @MainActor
+    private func openCompanyUpdatesFollowingHeidi() {
         openPrivateMarkets()
         let explorer = app.buttons["private.destination.building.2"]
         let heidi = app.buttons["private.explorer.company.D72C4060-1AE7-4A2F-8F2E-9F4BF1577E01"]
@@ -792,24 +841,6 @@ final class PrivateMarketsFlowTests: XCTestCase {
         }
         XCTAssertTrue(updates.isHittable)
         updates.tap()
-        let completed = app.staticTexts["Series C closed"]
-        for _ in 0..<3 where !completed.isHittable {
-            if completed.waitForExistence(timeout: 5) && completed.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(completed.isHittable, app.debugDescription)
-        let evidence = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "2026-09-22")).firstMatch
-        XCTAssertTrue(evidence.exists)
-        XCTAssertTrue(evidence.label.contains("USD 100000000"))
-        let summary = app.buttons["Summarise published updates"]
-        if !summary.isHittable { app.swipeDown() }
-        XCTAssertTrue(summary.isHittable)
-        summary.tap()
-        XCTAssertTrue(app.navigationBars["AI Investment Research"].waitForExistence(timeout: 10))
-        let fundingSource = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Series C closed")).firstMatch
-        for _ in 0..<3 where !fundingSource.exists { app.swipeUp() }
-        XCTAssertTrue(fundingSource.exists, app.debugDescription)
-        XCTAssertEqual(fundingSource.value as? String, "1")
     }
 
     @MainActor

@@ -370,7 +370,7 @@ struct PrivateUpdatesView: View {
                         set: { changeMonitor(enabled: true, eligible: store.state.monitorEligible == true, digest: $0) }))
                         .disabled(savingMonitor)
                         .accessibilityIdentifier("private.monitor.digest")
-                    Text("Sends published announcements for tracked companies to the AI provider. Summaries use your daily research quota.")
+                    Text("Sends published announcements and financial disclosures for tracked companies to the AI provider. Summaries use your daily research quota.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Text("Online monitoring shares the catalogue company IDs you track with your Stock Tracker account.")
@@ -392,7 +392,10 @@ struct PrivateUpdatesView: View {
                     ForEach(store.monitorAlerts) { alert in
                         VStack(alignment: .leading, spacing: 6) {
                             Text(alert.title).font(.headline)
-                            Text("\(alert.companyName) · \(alert.occurredAt.formatted(date: .abbreviated, time: .shortened))")
+                            let date = alert.sourceLabel == "Issuer financial disclosure"
+                                ? PrivateDeal.Round.Listing.formattedDay(CashIncomeDay.string(alert.occurredAt))
+                                : alert.occurredAt.formatted(date: .abbreviated, time: .shortened)
+                            Text("\(alert.companyName) · \(date)")
                                 .font(.footnote).foregroundStyle(.secondary)
                             if let revisedAt = alert.revisedAt {
                                 Label("Updated \(revisedAt.formatted(date: .abbreviated, time: .shortened))", systemImage: "clock.arrow.circlepath")
@@ -456,10 +459,14 @@ struct PrivateUpdatesView: View {
                             Text(item.kind == "open_round" ? "Funding round" : "Expression of interest")
                                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         }
-                        let date = item.roundAnnouncedOn?.formatted(date: .abbreviated, time: .omitted) ??
+                        let date = (item.financialPublishedOn ?? item.roundAnnouncedOn)?.formatted(date: .abbreviated, time: .omitted) ??
                             item.publishedAt.formatted(date: .abbreviated, time: .shortened)
                         Text("\(item.company.name) · \(date)")
                             .font(.footnote).foregroundStyle(.secondary)
+                        if let revisedAt = item.revisedAt {
+                            Label("Updated \(revisedAt.formatted(date: .abbreviated, time: .shortened))", systemImage: "clock.arrow.circlepath")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                         Text(item.significance)
                         if item.sourceUrl.privateSourceIsSafe { Link("Read source", destination: item.sourceUrl) }
                         if let source = item.sourceLabel { Text(source).font(.footnote).foregroundStyle(.secondary) }

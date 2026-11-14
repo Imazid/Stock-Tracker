@@ -165,6 +165,13 @@ type Announcement = {
   company_name: string;
 };
 
+type PublishedUpdate = Announcement & {
+  source_label: string | null;
+  round_announced_on: string | null;
+  financial_published_on: string | null;
+  source_revised_at: string | null;
+};
+
 type ReportSource = { id: string; title: string; url?: string };
 type SourceReferences = { document_ids: string[]; opportunity_ids: string[]; announcement_ids: string[]; company_ids: string[];
   revisions?: Record<string, string>; baselines?: Record<string, SourceBaseline> };
@@ -176,13 +183,16 @@ function publicReport({ source_refs, ...report }: StoredReport) {
 
 function publishedAnnouncements(admin: ReturnType<typeof serviceClient>) {
   return admin.from("published_private_company_updates")
-    .select("id,title,significance,source_url,source_label,published_at,round_announced_on,company_name,company_id");
+    .select(`id,title,significance,source_url,source_label,published_at,round_announced_on,
+      company_name,company_id,financial_published_on,source_revised_at`);
 }
 
-function companyUpdate(item: Announcement & { source_label: string | null; round_announced_on: string | null }) {
+function companyUpdate(item: PublishedUpdate) {
   return { id: item.id, title: item.title, significance: item.significance, source_url: item.source_url,
     source_label: item.source_label, published_at: item.published_at, round_announced_on: item.round_announced_on,
-    kind: item.round_announced_on ? "closed_round" : "announcement", company: { name: item.company_name } };
+    financial_published_on: item.financial_published_on, revised_at: item.source_revised_at,
+    kind: item.financial_published_on ? "financial_disclosure" : item.round_announced_on ? "closed_round" : "announcement",
+    company: { name: item.company_name } };
 }
 
 function announcementEvidence(item: Pick<Announcement, "company_name" | "title" | "published_at" | "significance">, id: string): Evidence {
@@ -212,14 +222,15 @@ async function researchRefresh(admin: ReturnType<typeof serviceClient>, userId: 
     refs.opportunity_ids.length ? catalogue(admin).in("id", refs.opportunity_ids).returns<CatalogDeal[]>() :
       Promise.resolve({ data: [], error: null }),
     refs.announcement_ids.length ? publishedAnnouncements(admin).in("id", refs.announcement_ids)
-      .order("published_at", { ascending: false }).order("id") : Promise.resolve({ data: [], error: null }),
+      .order("activity_at", { ascending: false }).order("id").returns<PublishedUpdate[]>() :
+      Promise.resolve({ data: [], error: null }),
   ]);
   if (docs.error) throw docs.error;
   if (offers.error) throw offers.error;
   if (notices.error) throw notices.error;
   const existing = new Set(refs.announcement_ids);
   const newer = refs.company_ids.length ? await publishedAnnouncements(admin).in("company_id", refs.company_ids)
-    .gt("published_at", createdAt).order("published_at", { ascending: false }).order("id").limit(12) :
+    .gt("activity_at", createdAt).order("activity_at", { ascending: false }).order("id").limit(12).returns<PublishedUpdate[]>() :
     { data: [], error: null };
   if (newer.error) throw newer.error;
   const [changedDeals, changedAnnouncements] = await Promise.all([
@@ -274,7 +285,7 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
     const includesRevision = job.sources.some((source) => source.is_revision === true);
     const question = includesRevision
       ? "Summarise the current published disclosures. Distinguish updated sources from newly included announcements and identify what still needs verification. Describe a specific change only if the source says what changed."
-      : "Summarise recent published announcements and identify what still needs verification.";
+      : "Summarise recent published company disclosures and identify what still needs verification.";
     const evidence = job.sources.map((source, index) => announcementEvidence({
       company_name: source.company, title: source.is_revision ? "Updated source · " + source.title : source.title,
       significance: source.summary,
@@ -502,8 +513,8 @@ Deno.serve(async (req) => {
         }
         if (!ids.length) return jsonResponse(200, { updates: [] });
         const { data, error } = await publishedAnnouncements(admin)
-          .in("company_id", ids).order("published_at", { ascending: false }).order("id").limit(100)
-          .returns<(Announcement & { source_label: string | null; round_announced_on: string | null })[]>();
+          .in("company_id", ids).order("activity_at", { ascending: false }).order("id").limit(100)
+          .returns<PublishedUpdate[]>();
         if (error) throw error;
         const now = new Date();
         const since = new Date(now.getTime() - 86_400_000);
@@ -523,12 +534,13 @@ Deno.serve(async (req) => {
           id: item.id, title: item.round.stage, kind: item.status === "open" ? "open_round" : "interest",
           significance: item.status === "open" ? "The source listed this funding round as open at verification." :
             "The source published an expression of interest.",
-          source_url: item.source_url, published_at: item.verified_at, company: item.round.company,
+          source_url: item.source_url, published_at: item.verified_at, revised_at: null, company: item.round.company,
         }));
         const announcements = data.map(companyUpdate);
         return jsonResponse(200, {
           updates: [...announcements, ...funding].sort((a, b) =>
-            Date.parse(b.published_at) - Date.parse(a.published_at) || a.id.localeCompare(b.id)).slice(0, 100),
+            Date.parse(b.revised_at ?? b.published_at) - Date.parse(a.revised_at ?? a.published_at) ||
+            a.id.localeCompare(b.id)).slice(0, 100),
         });
       }
       case "profile": {

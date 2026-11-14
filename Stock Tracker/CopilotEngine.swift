@@ -240,7 +240,7 @@ final class CopilotEngine: ObservableObject {
             let now = Date.now
             let recent = now.addingTimeInterval(-30 * 86_400)
             let updates = try await privateMarkets.checkUpdates(for: owner, companyScope: scope, deliverNotifications: false)
-                .filter { $0.isResearchSource && $0.publishedAt >= recent && $0.publishedAt <= now }
+                .filter { $0.isResearchSource && $0.activityAt >= recent && $0.activityAt <= now }
             let selected = Array(updates.prefix(3))
             guard auth.userId == owner, !Task.isCancelled else { throw CancellationError() }
             var report: PrivateResearchReport?

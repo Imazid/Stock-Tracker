@@ -250,9 +250,12 @@ struct PrivateCompanyUpdate: Decodable, Identifiable {
     let sourceLabel: String?
     let publishedAt: Date
     let roundAnnouncedOn: Date?
+    let financialPublishedOn: Date?
+    let revisedAt: Date?
     let company: Company
 
-    var isResearchSource: Bool { kind == "announcement" || kind == "closed_round" }
+    var activityAt: Date { max(publishedAt, revisedAt ?? publishedAt) }
+    var isResearchSource: Bool { kind == "announcement" || kind == "closed_round" || kind == "financial_disclosure" }
 }
 
 enum PrivateUpdateScope {
@@ -693,7 +696,7 @@ final class PrivateMarketsStore: ObservableObject {
         }
         try Task.checkCancellation()
         guard scope == userID else { throw CancellationError() }
-        updates.sort { ($0.publishedAt, $0.id.uuidString) > ($1.publishedAt, $1.id.uuidString) }
+        updates.sort { ($0.activityAt, $0.id.uuidString) > ($1.activityAt, $1.id.uuidString) }
         if deliverNotifications, state.notify, state.monitorEnabled != true, !deliveringUpdates {
             deliveringUpdates = true
             defer { deliveringUpdates = false }
