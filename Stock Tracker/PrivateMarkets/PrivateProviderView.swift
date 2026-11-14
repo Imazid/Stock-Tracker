@@ -731,7 +731,7 @@ struct PrivateUpdatesView: View {
         loading = true
         defer { loading = false }
         do {
-            await store.refreshProviderHoldings(for: id)
+            await store.refreshInvestmentHoldings(for: id)
             await store.refreshMonitor(for: id)
             let refreshed = try await store.checkUpdates(for: id)
             guard auth.userId == id else { return }

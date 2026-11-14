@@ -255,7 +255,7 @@ export function PrivateMarketsView({ aiEnabled, initialTab, initialCompany }: {
           initialUpdates={entry && "updates" in entry ? entry.updates : undefined}
           openScenario={() => setScenario({})} />
         : tab === "deal-room" ? <DealRoom key={owner} owner={owner} />
-        : tab === "portfolio" ? <Positions key={owner} owner={owner} />
+        : tab === "portfolio" ? <Positions key={owner} owner={owner} deals={catalogue.data?.deals ?? []} />
         : tab === "capital" ? <CapitalActivity key={owner} owner={owner} />
         : <Monitoring key={owner} owner={owner} deals={catalogue.data?.deals ?? []} catalogueLoading={catalogue.isLoading}
           catalogueError={catalogue.error} retryCatalogue={() => void catalogue.refetch()}

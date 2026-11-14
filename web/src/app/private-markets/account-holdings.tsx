@@ -8,10 +8,12 @@ import { Field, Input, Select } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { AccountCashFlows, type AccountCashFlow, type CashFlowChange } from "./account-cash-flow";
 import { ManualHoldingCard, type ManualHolding } from "./manual-portfolio";
-import { dateLabel, dayInSydney, groupedDecimal, privateMarkets } from "./private-data";
+import { dateLabel, dayInSydney, groupedDecimal, privateMarkets, type PrivateDeal } from "./private-data";
 
 type Mark = NonNullable<ManualHolding["valuation"]>;
-type AccountHolding = ManualHolding & { valuationHistory?: Mark[]; cashFlows?: AccountCashFlow[] };
+type AccountHolding = ManualHolding & { valuationHistory?: Mark[]; cashFlows?: AccountCashFlow[]; company?: CompanyLink };
+type CompanyLink = { id: string; name: string };
+type CompanyChange = { id: string; company_id: string | null };
 type AccountHoldings = { revision: string | null; updated_at: string | null; holdings: AccountHolding[] };
 type ValuationChange = { id: string; valuation: Mark } | { id: string; date: string };
 type EditableHolding = Pick<ManualHolding, "id" | "name" | "assetClass" | "currency" |
@@ -177,17 +179,54 @@ function AccountValuationHistory({ holding, revision, now, busy, save }: {
   </details>;
 }
 
-export function AccountHoldingsPanel({ owner }: { owner: string }) {
+function AccountCompanyLink({ holding, companies, revision, busy, save }: {
+  holding: AccountHolding; companies: CompanyLink[]; revision: string | null; busy: boolean;
+  save: (change: CompanyChange, revision: string | null) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState<{ revision: string | null }>();
+  return <div className="space-y-2 border-t border-border p-4 text-sm">
+    {holding.company && <p>Published company · {holding.company.name}</p>}
+    {!draft && (holding.company || companies.length > 0) &&
+      <Button size="sm" disabled={busy} onClick={() => setDraft({ revision })}>
+        {holding.company ? "Change company link" : "Link company for updates"}
+      </Button>}
+    {draft && <form className="space-y-2" onSubmit={(event) => {
+      event.preventDefault();
+      const value = new FormData(event.currentTarget).get("company");
+      if (typeof value !== "string" || value === (holding.company?.id ?? "")) return;
+      save({ id: holding.id, company_id: value || null }, draft.revision);
+      setDraft(undefined);
+    }}>
+      <Field label="Published company for updates" htmlFor={id}>
+        <Select id={id} name="company" defaultValue={holding.company?.id ?? ""} disabled={busy}>
+          <option value="">None</option>
+          {holding.company && !companies.some(({ id }) => id === holding.company?.id) &&
+            <option value={holding.company.id}>{holding.company.name}</option>}
+          {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+        </Select>
+      </Field>
+      <div className="flex gap-2">
+        <Button size="sm" type="submit" disabled={busy}>Save company link</Button>
+        <Button size="sm" type="button" onClick={() => setDraft(undefined)}>Cancel</Button>
+      </div>
+    </form>}
+  </div>;
+}
+
+export function AccountHoldingsPanel({ owner, deals }: { owner: string; deals: PrivateDeal[] }) {
   const cache = useQueryClient();
   const options = accountHoldingsQuery(owner);
   const result = useQuery(options);
   const [editor, setEditor] = useState<{ holding: AccountHolding | null; revision: string | null }>();
   const [deleting, setDeleting] = useState<{ id: string; revision: string | null }>();
+  const companies = [...new Map(deals.map(({ round: { company } }) => [company.id, company])).values()]
+    .sort((first, second) => first.name.localeCompare(second.name));
   const mutation = useMutation({
-    mutationFn: ({ revision, ...change }: ({ holding: EditableHolding } | { id: string } | ValuationChange | CashFlowChange) & { revision: string | null }) => {
+    mutationFn: ({ revision, ...change }: ({ holding: EditableHolding } | { id: string } | ValuationChange | CashFlowChange | CompanyChange) & { revision: string | null }) => {
       const action = "holding" in change ? "save_account_holding" : "valuation" in change ? "save_account_valuation"
         : "date" in change ? "remove_account_valuation" : "cash_flow" in change ? "save_account_cash_flow"
-        : "flow_id" in change ? "remove_account_cash_flow" : "remove_account_holding";
+        : "flow_id" in change ? "remove_account_cash_flow" : "company_id" in change ? "set_account_holding_company" : "remove_account_holding";
       return privateMarkets<AccountHoldings>(action, { owner, expected_revision: revision, ...change });
     },
     onMutate: () => cache.cancelQueries({ queryKey: options.queryKey }),
@@ -220,6 +259,11 @@ export function AccountHoldingsPanel({ owner }: { owner: string }) {
       cancel={() => { mutation.reset(); setEditor(undefined); }} />}
     {current?.holdings.map((holding) => <ManualHoldingCard key={holding.id} owner={owner} holding={holding} now={result.dataUpdatedAt} published={false}
       controls={<>
+        {(holding.company || companies.length > 0) && <AccountCompanyLink holding={holding} companies={companies}
+          revision={current.revision} busy={!!editor || mutation.isPending} save={(change, revision) => {
+            mutation.reset();
+            mutation.mutate({ ...change, revision });
+          }} />}
         <AccountCashFlows holding={holding} revision={current.revision} now={result.dataUpdatedAt}
           busy={!!editor || mutation.isPending} save={(change, revision) => {
           mutation.reset();

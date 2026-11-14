@@ -354,7 +354,15 @@ struct PrivateProviderEligibility: Decodable, Identifiable {
 }
 
 enum PrivateMarketsAPI {
-    struct Catalog: Decodable { let deals: [PrivateDeal] }
+    struct Catalog: Decodable {
+        let deals: [PrivateDeal]
+
+        var companies: [PrivateDeal.Company] {
+            var seen = Set<UUID>()
+            return deals.map(\.company).filter { seen.insert($0.id).inserted }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+    }
     struct Items: Decodable { let items: [PrivateSavedItem] }
     struct ResearchRuns: Decodable { let runs: [PrivateResearchRun] }
     struct Updates: Decodable { let updates: [PrivateCompanyUpdate] }
@@ -399,6 +407,7 @@ enum PrivateMarketsAPI {
     }
     struct DocumentList: Decodable { let items: [DocumentSummary] }
     struct AccountHolding: Decodable, Identifiable {
+        struct Company: Decodable { let id: UUID; let name: String }
         struct Mark: Decodable, Identifiable {
             let value: String
             let date: Date
@@ -464,6 +473,7 @@ enum PrivateMarketsAPI {
         let valuationHistory: [Mark]?
         var marks: [Mark] { valuationHistory ?? valuation.map { [$0] } ?? [] }
         let ownershipEvidence: OwnershipEvidence?
+        let company: Company?
         let cashFlows: [CashFlow]?
         let sales: [CashFlow]?
         let remainingUnits: String?
@@ -489,7 +499,7 @@ enum PrivateMarketsAPI {
                                   commitment: decimal(commitment), units: decimal(remainingUnits ?? units),
                                   ownershipPercent: decimal(ownership),
                                   shareClass: shareClass ?? "", lockupUntil: lockupUntil, valuations: mark.map { [$0] } ?? [],
-                                  cashFlows: activity.compactMap(\.ledgerFlow),
+                                  cashFlows: activity.compactMap(\.ledgerFlow), catalogueCompanyID: company?.id,
                                   ownershipEvidenceID: ownershipEvidence?.excerptID, ownershipReviewedOn: ownershipEvidence?.reviewedOn,
                                   latestDispositionOn: lastSaleOn.flatMap { CashIncomeDay.date($0) }, exitSource: exitSource)
         }
@@ -587,6 +597,9 @@ final class PrivateMarketsStore: ObservableObject {
 
     var independentManualHoldings: [PrivateHolding] { state.holdings.filter { $0.matchingProviderHoldingID == nil } }
     var activeManualHoldings: [PrivateHolding] { independentManualHoldings.filter { $0.closedOn() == nil } }
+    private var accountCompanyIDs: [UUID] {
+        accountHoldings.filter { $0.exitedOn == nil }.compactMap { $0.company?.id }
+    }
 
     var unavailableLinkedProviderCount: Int {
         let available = Set(providerHoldings.map(\.id))
@@ -667,15 +680,25 @@ final class PrivateMarketsStore: ObservableObject {
     }
 
     private func applyAccountHoldings(_ response: PrivateMarketsAPI.AccountHoldings) {
+        let previousCompanies = monitoredCompanies(in: state)
         accountHoldingsRevision = response.revision
         accountHoldings = response.holdings
         accountHoldingsError = nil
         hasLoadedAccountHoldings = true
         syncCapitalReminders()
+        if state.monitorEnabled == true, let scope, previousCompanies != monitoredCompanies(in: state) {
+            queueMonitorSettings(for: scope)
+        }
     }
 
     func saveAccountHolding(_ holding: [String: Any], owner: UUID, revision: UUID?) async throws {
         try await updateAccountHoldings("save_account_holding", fields: ["holding": holding], owner: owner, revision: revision)
+    }
+
+    func setAccountHoldingCompany(_ company: UUID?, holding: UUID, owner: UUID, revision: UUID?) async throws {
+        let value: Any = company.map { $0.uuidString as Any } ?? NSNull()
+        try await updateAccountHoldings("set_account_holding_company", fields: ["id": holding.uuidString, "company_id": value],
+                                        owner: owner, revision: revision)
     }
 
     func removeAccountHolding(_ id: UUID, owner: UUID, revision: UUID?) async throws {
@@ -917,10 +940,11 @@ final class PrivateMarketsStore: ObservableObject {
         let companyIDs: [UUID]
         switch companyScope {
         case .tracked:
-            companyIDs = followed + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId)
+            companyIDs = followed + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId) +
+                accountCompanyIDs
         case .owned:
             companyIDs = activeManualHoldings.compactMap(\.catalogueCompanyID) +
-                providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId)
+                providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId) + accountCompanyIDs
         case .followed:
             companyIDs = followed
         }
@@ -1128,7 +1152,7 @@ final class PrivateMarketsStore: ObservableObject {
 
     private func monitoredCompanies(in records: State) -> [UUID] {
         var seen = Set<UUID>()
-        return Array((records.follows.map(\.id) + records.holdings.compactMap(\.catalogueCompanyID))
+        return Array((records.follows.map(\.id) + records.holdings.compactMap(\.catalogueCompanyID) + accountCompanyIDs)
             .filter { seen.insert($0).inserted }.prefix(250))
     }
 

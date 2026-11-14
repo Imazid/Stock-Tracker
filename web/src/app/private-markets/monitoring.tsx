@@ -8,6 +8,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
+import { accountHoldingsQuery } from "./account-holdings";
 import { SourceLink } from "./catalog";
 import {
   dateLabel, privateMarkets, type CompanyUpdate, type MonitorAlert, type MonitorPreferences, type PrivateDeal, type SavedReport,
@@ -119,6 +120,7 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
   onResearch?: (updates: CompanyUpdate[]) => void;
 }) {
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
+  const [companyScope, setCompanyScope] = useState<"tracked" | "holdings">("tracked");
   const scope = webMonitorKey(owner);
   const { settings, save } = useWebMonitor(owner);
   const revision = settings.data?.revision ?? null;
@@ -131,7 +133,11 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
     queryKey: [...scope, "digests"], gcTime: 0, retry: false,
     queryFn: ({ signal }) => privateMarkets<{ items: SavedReport[] }>("monitor_digests", { owner, signal }),
   });
-  const companyIDs = (preferences?.company_ids ?? []).slice().sort();
+  const account = useQuery(accountHoldingsQuery(owner));
+  const owned = (account.error ? [] : account.data?.holdings ?? [])
+    .flatMap((holding) => holding.company && !holding.exitedOn ? [holding.company.id] : []);
+  const tracked = [...(preferences?.company_ids ?? []), ...owned];
+  const companyIDs = [...new Set(companyScope === "holdings" ? owned : tracked)].sort();
   const updates = useQuery({
     queryKey: [...scope, "updates", companyIDs], enabled: companyIDs.length > 0, gcTime: 0, retry: false,
     queryFn: async ({ signal }) => {
@@ -185,16 +191,28 @@ export function Monitoring({ owner, deals, catalogueLoading, catalogueError, ret
           significance={item.significance} date={item.occurred_at} revised={item.revised_at} url={item.source_url}
           label={item.source_label} kind={item.kind} />)}</ul>
       </Card>
-      {companyIDs.length > 0 && <Card>
+      {(tracked.length > 0 || companyScope === "holdings" || account.error) && <Card>
         <CardHeader title="Company updates" />
+        {(owned.length > 0 || companyScope === "holdings") &&
+          <div role="group" aria-label="Company update scope" className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
+            {(["tracked", "holdings"] as const).map((scope) =>
+              <Button size="sm" key={scope} aria-pressed={companyScope === scope} onClick={() => {
+                setCompanyScope(scope);
+                setSelectedIDs([]);
+              }}>{scope === "holdings" ? "Account holdings" : "All tracked companies"}</Button>)}
+          </div>}
+        {account.error && <div className="border-t border-border p-4"><Notice tone="down">
+          Account holdings could not be refreshed. <Button size="sm" onClick={() => void account.refetch()}>Retry holdings</Button>
+        </Notice></div>}
         {onResearch && !!updates.data?.length && <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
           <p className="text-xs text-text-2" role="status">{selected.length} of 3 updates selected.</p>
           <Button size="sm" variant="primary" disabled={!selected.length || updates.isError || save.isPending}
             onClick={() => onResearch(selected)}>Research selected updates</Button>
         </div>}
-        {updates.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading company updates…</p>}
+        {companyIDs.length > 0 && updates.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading company updates…</p>}
         {updates.error && <div className="border-t border-border p-4"><Notice tone="down">{updates.error.message} <Button size="sm" onClick={() => void updates.refetch()}>Retry updates</Button></Notice></div>}
-        {updates.data && !updates.data.length && <EmptyState title="No published updates for followed companies" className="border-t border-border" />}
+        {((updates.data && !updates.data.length) || (!account.error && !companyIDs.length)) &&
+          <EmptyState title="No published updates for these companies" className="border-t border-border" />}
         <ul>{updates.data?.map((item) => {
           const checked = selected.some(({ id }) => id === item.id);
           return <UpdateRow key={item.id} title={item.title} company={item.company.name}

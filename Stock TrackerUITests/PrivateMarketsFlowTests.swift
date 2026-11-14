@@ -384,6 +384,26 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testCopilotShowsUpdatesForLinkedAccountHolding() throws {
+        try launchWithLocalSession("PRIVATE_ACCOUNT_COMPANY_TEST_SESSION")
+        openPrivateMarkets()
+        let copilot = app.buttons["trading.copilot"].firstMatch
+        XCTAssertTrue(copilot.waitForExistence(timeout: 8), app.debugDescription)
+        copilot.tap()
+        let suggestion = app.buttons["copilot.suggestion.Summarise recent u"]
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 5), app.debugDescription)
+        suggestion.tap()
+
+        let source = app.staticTexts["Capability X Limited · Capability X began trading on ASX"]
+        for _ in 0..<3 where !source.isHittable {
+            if !source.waitForExistence(timeout: 5) || !source.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(source.isHittable, app.debugDescription)
+        XCTAssertFalse(app.staticTexts["Heidi · Company restructuring"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["copilot.privateUpdates.ai"].firstMatch.exists)
+    }
+
+    @MainActor
     func testCopilotSummarisesPublishedUpdatesForOwnedCompanies() throws {
         try launchWithLocalSession("PRIVATE_COPILOT_UPDATES_TEST_SESSION")
         openPrivateMarkets()

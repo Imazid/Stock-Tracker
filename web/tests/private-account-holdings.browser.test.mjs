@@ -160,6 +160,24 @@ test("manual web holdings appear in portfolio with account-scoped evidence", {
       await activity.getByText("Partial sale settlement statement", { exact: true }).waitFor();
       await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
     }
+    if (process.env.PRIVATE_ACCOUNT_COMPANY === "1") {
+      await article.getByRole("button", { name: "Link company for updates", exact: true }).click();
+      await article.getByLabel("Published company for updates", { exact: true }).selectOption({ label: "Capability X Limited" });
+      await article.getByRole("button", { name: "Save company link", exact: true }).click();
+      await article.getByText("Published company · Capability X Limited", { exact: true }).waitFor();
+      await page.getByRole("radio", { name: "Updates", exact: true }).click();
+      const updates = page.getByRole("heading", { name: "Company updates", exact: true }).locator("xpath=ancestor::section");
+      await updates.getByRole("heading", { name: "Company restructuring", exact: true }).waitFor();
+      await updates.getByRole("button", { name: "Account holdings", exact: true }).click();
+      const announcement = updates.getByRole("heading", { name: "Capability X began trading on ASX", exact: true });
+      await announcement.waitFor();
+      assert.match(await announcement.locator("xpath=ancestor::li").getByRole("link").getAttribute("href"), /^https:\/\//);
+      assert.equal(await updates.getByRole("heading", { name: "Company restructuring", exact: true }).count(), 0);
+      await other.getByRole("radio", { name: "Updates", exact: true }).click();
+      await other.getByRole("heading", { name: "Monitoring preferences", exact: true }).waitFor();
+      assert.equal(await other.getByRole("button", { name: "Account holdings", exact: true }).count(), 0);
+      await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
+    }
     if (process.env.PRIVATE_ACCOUNT_KEEP_HOLDING !== "1") {
       await article.getByRole("button", { name: "Remove holding", exact: true }).click();
       await article.getByRole("button", { name: "Confirm removal", exact: true }).click();

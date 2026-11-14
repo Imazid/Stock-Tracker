@@ -273,15 +273,15 @@ final class CopilotEngine: ObservableObject {
             return .init(isUser: false, text: "Sign in from Account to see published updates for your private companies.")
         }
         do {
-            if scope != .followed { await privateMarkets.refreshProviderHoldings(for: owner) }
+            if scope != .followed { await privateMarkets.refreshInvestmentHoldings(for: owner) }
             let now = Date.now
             let recent = now.addingTimeInterval(-30 * 86_400)
             let updates = try await privateMarkets.checkUpdates(for: owner, companyScope: scope, deliverNotifications: false)
                 .filter { $0.isResearchSource && $0.activityAt >= recent && $0.activityAt <= now }
             let selected = Array(updates.prefix(3))
             guard auth.userId == owner, !Task.isCancelled else { throw CancellationError() }
-            let notice = scope != .followed && privateMarkets.providerError != nil
-                ? "Some provider holdings could not be refreshed." : nil
+            let refreshFailed = privateMarkets.providerError != nil || privateMarkets.accountHoldingsError != nil
+            let notice = scope != .followed && refreshFailed ? "Some holdings could not be refreshed." : nil
             return .init(isUser: false, text: selected.isEmpty ? "I found no published updates in the last 30 days." :
                 "Here are the latest published updates from the last 30 days.",
                 cards: [.privateUpdates(id: UUID(), response: .init(owner: owner, scope: scope, updates: selected,

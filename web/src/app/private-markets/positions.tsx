@@ -12,7 +12,7 @@ import { AccountHoldingsPanel } from "./account-holdings";
 import { ManualPortfolioPanel } from "./manual-portfolio";
 import { InvestorProfileCard } from "./investor-profile";
 import {
-  amount, dateLabel, privateMarkets, providerName, dayInSydney, sourceHref, type Application, type HandoffReview, type PortfolioHolding, type PortfolioPage,
+  amount, dateLabel, privateMarkets, providerName, dayInSydney, sourceHref, type Application, type HandoffReview, type PortfolioHolding, type PortfolioPage, type PrivateDeal,
 } from "./private-data";
 import { privatePositionPerformance } from "./private-performance";
 import { ValuationHistory } from "./valuation-history";
@@ -189,7 +189,7 @@ function ApplicationCard({ item, owner }: { item: Application; owner: string }) 
   </Card>;
 }
 
-export function Positions({ owner }: { owner: string }) {
+export function Positions({ owner, deals }: { owner: string; deals: PrivateDeal[] }) {
   const holdings = useInfiniteQuery({
     queryKey: ["private-markets", owner, "holdings"], gcTime: 0, retry: false, initialPageParam: 0,
     queryFn: ({ signal, pageParam }) => privateMarkets<PortfolioPage>("confirmed_holdings", { owner, signal, offset: pageParam }),
@@ -215,7 +215,7 @@ export function Positions({ owner }: { owner: string }) {
       {holdings.hasNextPage && <Button size="sm" disabled={holdings.isFetchingNextPage} onClick={() => void holdings.fetchNextPage()}>
         {holdings.isFetchingNextPage ? "Loading…" : "Load more holdings"}
       </Button>}
-      <AccountHoldingsPanel owner={owner} />
+      <AccountHoldingsPanel owner={owner} deals={deals} />
       <ManualPortfolioPanel owner={owner} />
     </section>
     <section className="min-w-0 space-y-3">

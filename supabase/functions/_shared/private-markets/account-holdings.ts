@@ -16,6 +16,7 @@ export function accountValuationDate(value: unknown): value is string {
 export type SavedAccountHolding = Record<string, unknown> & {
   valuation?: SnapshotValuation; valuationHistory?: SnapshotValuation[]; cashFlows?: AccountCashFlow[];
   sales?: AccountCashFlow[]; lastSaleOn?: string; exitedOn?: string;
+  company?: { id: string; name: string };
 };
 
 export function accountValuations(holding?: SavedAccountHolding) {

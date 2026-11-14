@@ -196,6 +196,7 @@ private struct AccountPrivateHoldingDetail: View {
     @State private var removing = false
     @State private var editError: String?
     @State private var markEditor: AccountValuationEdit?
+    @State private var companyEditor: AccountCompanyEdit?
     @State private var removeMark: AccountValuationEdit?
     @State private var updatingMark = false
     @State private var markError: String?
@@ -268,6 +269,15 @@ private struct AccountPrivateHoldingDetail: View {
                     AccountCashFlowView(owner: owner, holdingID: id)
                 }
                 .accessibilityIdentifier("private.accountCashFlow.open")
+                Section("Company updates") {
+                    if let company = current.company {
+                        LabeledContent("Published company", value: company.name)
+                    }
+                    Button(current.company == nil ? "Link company for updates" : "Change company link") {
+                        companyEditor = .init(revision: store.accountHoldingsRevision, company: current.company)
+                    }
+                    .accessibilityIdentifier("private.accountCompany.link")
+                }
                 if let evidence = current.ownershipEvidence {
                     let excerpt = opened?.owner == owner && opened?.excerptID == evidence.excerptID ? opened?.text : nil
                     Section("Reviewed ownership excerpt") {
@@ -308,6 +318,7 @@ private struct AccountPrivateHoldingDetail: View {
             .navigationBarTitleDisplayMode(.inline)
             .onChange(of: current.ownershipEvidence?.excerptID) { _, _ in opened = nil; excerptError = nil }
             .sheet(item: $editor) { edit in AccountPrivateHoldingEditor(edit: edit) }
+            .sheet(item: $companyEditor) { edit in AccountCompanyEditor(owner: owner, holding: id, edit: edit) }
             .confirmationDialog("Remove this holding from your account?", isPresented: Binding(
                 get: { removal != nil }, set: { if !$0 { removal = nil } }
             ), titleVisibility: .visible, presenting: removal) { edit in
@@ -357,6 +368,94 @@ private struct AccountPrivateHoldingDetail: View {
             if auth.userId == owner { editError = failure.localizedDescription }
         } catch {
             if auth.userId == owner { editError = error.localizedDescription }
+        }
+    }
+}
+
+private struct AccountCompanyEdit: Identifiable {
+    let id = UUID()
+    let revision: UUID?
+    let company: PrivateMarketsAPI.AccountHolding.Company?
+}
+
+private struct AccountCompanyEditor: View {
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var store: PrivateMarketsStore
+    @Environment(\.dismiss) private var dismiss
+    let owner: UUID
+    let holding: UUID
+    let edit: AccountCompanyEdit
+    @State private var companyID: UUID?
+    @State private var companies: [PrivateDeal.Company] = []
+    @State private var catalogueError: String?
+    @State private var error: String?
+    @State private var saving = false
+    @State private var changed = false
+
+    init(owner: UUID, holding: UUID, edit: AccountCompanyEdit) {
+        self.owner = owner
+        self.holding = holding
+        self.edit = edit
+        _companyID = State(initialValue: edit.company?.id)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("Published company", selection: $companyID) {
+                    Text("None").tag(nil as UUID?)
+                    ForEach(companies) { company in Text(company.name).tag(Optional(company.id)) }
+                    if let company = edit.company, !companies.contains(where: { $0.id == company.id }) {
+                        Text(company.name).tag(Optional(company.id))
+                    }
+                }
+                .accessibilityIdentifier("private.accountCompany.selection")
+                Text("Updates come from this company’s published disclosures.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let catalogueError { Text(catalogueError).foregroundStyle(.secondary) }
+                if let error { Text(error).foregroundStyle(.orange) }
+            }
+            .navigationTitle("Link Published Company")
+            .navigationBarTitleDisplayMode(.inline)
+            .disabled(saving || auth.userId != owner)
+            .task {
+                do {
+                    let catalogue: PrivateMarketsAPI.Catalog = try await PrivateMarketsAPI.request("catalog")
+                    try Task.checkCancellation()
+                    companies = catalogue.companies
+                } catch is CancellationError {
+                } catch { catalogueError = error.localizedDescription }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }
+                        .disabled(saving || changed || auth.userId != owner || companyID == edit.company?.id)
+                        .accessibilityIdentifier("private.accountCompany.save")
+                }
+            }
+            .interactiveDismissDisabled(saving)
+            .onChange(of: auth.userId) { _, _ in if auth.userId != owner { dismiss() } }
+        }
+    }
+
+    private func save() async {
+        guard auth.userId == owner, !saving, !changed else { return }
+        error = nil
+        saving = true
+        defer { saving = false }
+        do {
+            try await store.setAccountHoldingCompany(companyID, holding: holding, owner: owner, revision: edit.revision)
+            if auth.userId == owner { dismiss() }
+        } catch is CancellationError {
+        } catch let failure as SecureBackend.FunctionError where failure.code == "HOLDINGS_CHANGED" {
+            await store.refreshAccountHoldings(for: owner)
+            if auth.userId == owner {
+                changed = true
+                error = failure.localizedDescription
+            }
+        } catch {
+            if auth.userId == owner { self.error = error.localizedDescription }
         }
     }
 }
@@ -1492,9 +1591,7 @@ private struct PrivateHoldingEditor: View {
                 do {
                     let catalogue: PrivateMarketsAPI.Catalog = try await PrivateMarketsAPI.request("catalog")
                     try Task.checkCancellation()
-                    var seen = Set<UUID>()
-                    companies = catalogue.deals.map(\.company).filter { seen.insert($0.id).inserted }
-                        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                    companies = catalogue.companies
                 } catch is CancellationError {
                 } catch { catalogueError = "The company catalogue is unavailable." }
             }

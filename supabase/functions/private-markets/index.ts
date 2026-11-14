@@ -29,7 +29,7 @@ const activeSessionActions = new Set([
   "reports", "report", "delete_report", "research_refresh",
   "manual_portfolio", "save_manual_portfolio", "remove_manual_portfolio",
   "account_holdings", "save_account_holding", "remove_account_holding", "save_account_valuation", "remove_account_valuation",
-  "save_account_cash_flow", "remove_account_cash_flow",
+  "save_account_cash_flow", "remove_account_cash_flow", "set_account_holding_company",
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
@@ -721,6 +721,7 @@ Deno.serve(async (req) => {
       case "save_account_valuation":
       case "remove_account_valuation":
       case "save_account_cash_flow":
+      case "set_account_holding_company":
       case "remove_account_cash_flow": {
         const reading = body.action === "account_holdings";
         const saving = body.action === "save_account_holding";
@@ -728,9 +729,11 @@ Deno.serve(async (req) => {
         const removingMark = body.action === "remove_account_valuation";
         const savingFlow = body.action === "save_account_cash_flow";
         const removingFlow = body.action === "remove_account_cash_flow";
+        const settingCompany = body.action === "set_account_holding_company";
         const expected = body.expected_revision;
         const allowed = reading ? ["action"] : ["action", "expected_revision", saving ? "holding" : "id",
-          ...(savingMark ? ["valuation"] : removingMark ? ["date"] : savingFlow ? ["cash_flow"] : removingFlow ? ["flow_id"] : [])];
+          ...(savingMark ? ["valuation"] : removingMark ? ["date"] : savingFlow ? ["cash_flow"] :
+            removingFlow ? ["flow_id"] : settingCompany ? ["company_id"] : [])];
         if (Object.keys(body).some((key) => !allowed.includes(key)) ||
           (!reading && expected !== null && (typeof expected !== "string" || !uuid.test(expected)))) {
           return errorResponse(400, "INVALID_HOLDING", "Review the holding and try again.");
@@ -765,7 +768,7 @@ Deno.serve(async (req) => {
           if (prior && (marks.length || cashFlows.length) && prior.currency !== holding.currency) {
             return errorResponse(422, "VALUATION_CURRENCY", "Recorded valuations and cash flows use the holding currency. Remove them before changing it.");
           }
-          const saved = withAccountCashFlows(withAccountValuations(holding, marks, holding.valuation), cashFlows);
+          const saved = withAccountCashFlows(withAccountValuations({ ...holding, company: prior?.company }, marks, holding.valuation), cashFlows);
           if (!saved) return invalidSale();
           if (existing < 0) {
             if (holdings.length >= 100) return errorResponse(422, "HOLDING_LIMIT", "This account already has 100 account holdings.");
@@ -776,7 +779,21 @@ Deno.serve(async (req) => {
         } else {
           const index = typeof body.id === "string" && uuid.test(body.id) ? holdings.findIndex((item) => item.id === body.id) : -1;
           if (index < 0) return errorResponse(404, "NOT_FOUND", "Holding unavailable.");
-          if (savingMark || removingMark) {
+          if (settingCompany) {
+            const companyID = body.company_id;
+            if (companyID !== null && (typeof companyID !== "string" || !uuid.test(companyID))) {
+              return errorResponse(400, "INVALID_COMPANY", "Choose a published company or remove the link.");
+            }
+            let company: SavedAccountHolding["company"];
+            if (companyID !== null) {
+              const selected = await admin.from("private_companies").select("id,name").eq("id", companyID)
+                .eq("published", true).lte("verified_at", new Date().toISOString()).maybeSingle();
+              if (selected.error) throw selected.error;
+              if (!selected.data) return errorResponse(404, "NOT_FOUND", "This company is unavailable in the published catalogue.");
+              company = selected.data;
+            }
+            holdings[index] = { ...holdings[index], company };
+          } else if (savingMark || removingMark) {
             const holding = holdings[index];
             const marks = accountValuations(holding);
             if (savingMark) {
