@@ -25,10 +25,10 @@ export function MarketChip({ market }: { market: MarketStateView }) {
 
 export function SourceLine({ source, currency, observedAt, stale, staleReason }: { source: string; currency: string; observedAt?: string; stale?: boolean; staleReason?: string }) {
   return (
-    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-3">
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-3">
       <span>{source}</span><span aria-hidden>·</span><span>{currency}</span>
       {observedAt ? (<><span aria-hidden>·</span><time dateTime={observedAt} title={dateTime(observedAt)}>as of {ago(observedAt)}</time></>) : null}
       {stale ? <Badge tone="warn" title={staleReason}>Stale</Badge> : null}
-    </p>
+    </span>
   );
 }
