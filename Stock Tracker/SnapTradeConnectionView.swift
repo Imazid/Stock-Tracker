@@ -433,7 +433,8 @@ struct SnapTradeConnectionView: View {
                         Text(account.displayName)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(theme.primaryText)
-                        Text([account.accountType, account.maskedAccountNumber].compactMap { $0 }.joined(separator: " · "))
+                        Text([account.accountType, account.maskedAccountNumber, account.positionsStatus?.label]
+                            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption)
                             .foregroundStyle(theme.secondaryText)
                     }

@@ -183,21 +183,51 @@ class SnapTradeNetworkService {
     // MARK: - Accounts
 
     /// Fetch all accounts for a user
-    func fetchAccounts(userId: String, userSecret: String) async throws -> [SnapTradeAccount] {
+    func fetchAccounts(userId: String, userSecret: String) async throws -> [BrokerAccount] {
         SecureLogger.info("Fetching SnapTrade accounts")
 
-        if isServerBacked { return try await viaServer("listAccounts") }
-
+        if isServerBacked {
+            let accounts: [SnapTradeAccount] = try await viaServer("listAccounts")
+            return accounts.map(BrokerAccount.from(snapTradeAccount:))
+        }
+        let query = ["userId": userId, "userSecret": userSecret]
+        let host = "https://api.snaptrade.com"
         let request = try createRequest(
-            path: "/accounts",
-            method: "GET",
-            queryParams: [
-                "userId": userId,
-                "userSecret": userSecret
-            ]
+            path: "/accounts/all", queryParams: query, baseURL: host
         )
-        
-        return try await executeRequest(request)
+        let directory: SnapTradeAccountDirectory = try await executeRequest(request)
+        let investments = directory.results.filter { $0.kind == "investment" }
+        guard !investments.isEmpty else { return [] }
+        let connectionRequest = try createRequest(path: "/authorizations", queryParams: query, baseURL: host)
+        let connections: [SnapTradeAccountDirectory.Connection] = try await executeRequest(connectionRequest)
+        let byID = Dictionary(connections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen: Set<UUID> = []
+        return investments.compactMap { account in
+            guard seen.insert(account.id).inserted else { return nil }
+            let connection = byID[account.connectionId]
+            let reported = account.status.flatMap(BrokerPositionsStatus.init(rawValue:))
+            let status: BrokerPositionsStatus
+            switch reported {
+            case .closed, .archived, .unavailable: status = reported ?? .unavailable
+            default:
+                if connection == nil { status = .unavailable }
+                else if connection?.disabled == true { status = .disconnected }
+                else if account.syncStatus?.positionsPending == true { status = .pending }
+                else { status = .available }
+            }
+            let balance: AccountBalance?
+            if let amount = account.netValue?.amount, let currency = account.netValue?.currency {
+                balance = AccountBalance(total: Money(amount: amount, currency: currency), cash: nil)
+            } else {
+                balance = nil
+            }
+            return BrokerAccount(
+                id: account.id.uuidString.lowercased(), name: account.displayName,
+                accountNumber: account.maskedAccountNumber,
+                institutionName: connection?.brokerage?.displayName ?? connection?.brokerage?.name ?? "Brokerage account",
+                accountType: account.rawType, balance: balance, createdDate: nil, positionsStatus: status
+            )
+        }
     }
     
     // MARK: - Holdings

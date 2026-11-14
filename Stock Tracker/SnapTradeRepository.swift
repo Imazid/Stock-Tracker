@@ -191,13 +191,9 @@ class SnapTradeRepository {
     func fetchAccounts() async throws -> [BrokerAccount] {
         let identity = try requireIdentity()
 
-        let snapTradeAccounts = try await tracked {
+        let accounts = try await tracked {
             try await networkService.fetchAccounts(userId: identity.userId, userSecret: identity.userSecret)
         }
-        
-        // Map to app models (empty list is valid — no broker connected yet)
-        let accounts = snapTradeAccounts.map { BrokerAccount.from(snapTradeAccount: $0) }
-        
         SecureLogger.info("Fetched \(accounts.count) SnapTrade accounts")
         return accounts
     }
