@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { makeInstrument } from "../../../../supabase/functions/_shared/trading/market.ts";
-import { yahooAdjustedCloses } from "../market/yahoo.ts";
-import { benchmarkBoundary, benchmarkReturn, portfolioBenchmark, validBenchmarkPeriod } from "./benchmark.ts";
+import { benchmarkBoundary, benchmarkReturn, portfolioBenchmark, validBenchmarkPeriod, yahooAdjustedCloses } from "../../../../supabase/functions/_shared/portfolio/benchmark.ts";
 
 test("uses the last completed exchange session and rejects missing trading-day closes", () => {
   const closes = new Map([["2026-01-02", 101], ["2026-01-05", 105]]);

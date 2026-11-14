@@ -1,9 +1,9 @@
-import { dayKey, coversDate, isTradingDay } from "../../../../supabase/functions/_shared/trading/calendar.ts";
-import { makeInstrument, type Venue } from "../../../../supabase/functions/_shared/trading/market.ts";
-import { ecbRate, ecbURL, offsetDay, parseECBObservations, validISODay } from "../../../../supabase/functions/_shared/fx/ecb.ts";
-import { BENCHMARK_MAX_DAYS, type PortfolioBenchmark, type PortfolioBenchmarkResult } from "../../lib/portfolio-benchmark.ts";
-import { cached } from "../market/cache.ts";
-import { yahooAdjustedCloses, YAHOO_SOURCE } from "../market/yahoo.ts";
+import { dayKey, coversDate, isTradingDay } from "../trading/calendar.ts";
+import { makeInstrument, type Venue } from "../trading/market.ts";
+import { ecbRate, ecbURL, offsetDay, parseECBObservations, validISODay } from "../fx/ecb.ts";
+import { BENCHMARK_MAX_DAYS, type PortfolioBenchmark, type PortfolioBenchmarkResult } from "./benchmark_types.ts";
+import { YahooFinanceProvider } from "../market/yahoo.ts";
+import { ProviderError } from "../market/provider.ts";
 
 const instruments = { SPY: makeInstrument("SPY", "etf", "us"), STW: makeInstrument("STW", "etf", "asx") };
 const firstSession = { SPY: "1993-01-22", STW: "2001-08-27" };
@@ -12,6 +12,7 @@ type Close = { time: number; close: number };
 type Rate = { date: string; rate: string };
 const maxGap = 7;
 const instant = (day: string) => Date.parse(day + "T12:00:00Z");
+const cache = new Map<string, { expires: number; result: Promise<PortfolioBenchmarkResult | null> }>();
 
 export function validBenchmarkPeriod(start: string, end: string) {
   return validISODay(start) && validISODay(end) && start >= "1900-01-01" && start < end
@@ -35,11 +36,20 @@ export function benchmarkReturn(open: number, close: number, openingRate = 1, cl
   return Number.isFinite(result) ? result : undefined;
 }
 
+export async function yahooAdjustedCloses(instrument: typeof instruments.SPY, start: number, end: number) {
+  try {
+    return await new YahooFinanceProvider({ maxAttempts: 1 }).adjustedCloses(instrument, start, end);
+  } catch (error) {
+    if (!(error instanceof ProviderError) || (!error.retryable && error.status !== 401 && error.status !== 403)) throw error;
+    return new YahooFinanceProvider({ baseURL: "https://query2.finance.yahoo.com", maxAttempts: 1 }).adjustedCloses(instrument, start, end);
+  }
+}
+
 async function benchmarkRates(start: string, end: string, request = fetch): Promise<(Rate | undefined)[]> {
   const currencies = ["AUD", "USD"];
   const from = offsetDay(start, -maxGap);
   const response = await request(ecbURL(currencies, from, end), {
-    redirect: "error", signal: AbortSignal.timeout(24_000), next: { revalidate: 3600 },
+    redirect: "error", signal: AbortSignal.timeout(24_000),
   });
   if (response.status === 204 || response.status === 404) return [];
   if (!response.ok) throw new Error("ECB benchmark rates are unavailable");
@@ -72,10 +82,21 @@ export async function portfolioBenchmark(
   if (returnPct === undefined) return null;
   return {
     returnPct, start: { session: opening.session, fxDate: openingRate?.date }, end: { session: closing.session, fxDate: closingRate?.date },
-    source: YAHOO_SOURCE, sourceUrl: sourceUrls[id],
+    source: "Yahoo Finance (unofficial)", sourceUrl: sourceUrls[id],
   };
 }
 
-export function cachedPortfolioBenchmark(id: PortfolioBenchmark, start: string, end: string) {
-  return cached(`portfolio-benchmark:${id}:${start}:${end}`, 600_000, () => portfolioBenchmark(id, start, end));
+export function cachedPortfolioBenchmark(id: PortfolioBenchmark, start: string, end: string, now = Date.now()) {
+  const key = `${id}:${start}:${end}`;
+  const hit = cache.get(key);
+  if (hit && hit.expires > now) return hit.result;
+  cache.delete(key);
+  if (cache.size >= 128) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  const result = portfolioBenchmark(id, start, end, now);
+  cache.set(key, { expires: now + 600_000, result });
+  result.catch(() => { if (cache.get(key)?.result === result) cache.delete(key); });
+  return result;
 }

@@ -1,6 +1,6 @@
-import { PORTFOLIO_BENCHMARKS, type PortfolioBenchmark } from "@/lib/portfolio-benchmark";
+import { PORTFOLIO_BENCHMARKS, type PortfolioBenchmark } from "../../../../../../supabase/functions/_shared/portfolio/benchmark_types";
 import { json, jsonError, rateLimited } from "@/server/http/respond";
-import { cachedPortfolioBenchmark, validBenchmarkPeriod } from "@/server/portfolio/benchmark";
+import { cachedPortfolioBenchmark, validBenchmarkPeriod } from "../../../../../../supabase/functions/_shared/portfolio/benchmark";
 
 export const maxDuration = 30;
 

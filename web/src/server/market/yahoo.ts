@@ -51,7 +51,6 @@ interface ChartResult {
   timestamp?: number[];
   indicators?: {
     quote?: { open?: (number | null)[]; high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[]; volume?: (number | null)[] }[];
-    adjclose?: { adjclose?: (number | null)[] }[];
   };
 }
 
@@ -103,21 +102,6 @@ function chartRange(range: string, interval: string) {
   return new URLSearchParams({ range, interval, includePrePost: "false", events: "div,splits" });
 }
 
-export async function yahooAdjustedCloses(instrument: Instrument, start: number, end: number) {
-  const result = await chart(yahooTicker(instrument), new URLSearchParams({
-    period1: String(start / 1000), period2: String(end / 1000), interval: "1d", includeAdjustedClose: "true",
-  }));
-  const { currency, divisor } = normaliseCurrency(result.meta.currency);
-  if (currency !== instrument.currency || result.meta.symbol?.toUpperCase() !== yahooTicker(instrument)) {
-    throw new UpstreamError("The benchmark listing or quote currency could not be verified");
-  }
-  const prices = result.indicators?.adjclose?.[0]?.adjclose;
-  return (result.timestamp ?? []).flatMap((time, index) => {
-    const close = prices?.[index];
-    return typeof close === "number" && Number.isFinite(close) && close > 0 && Number.isFinite(time)
-      ? [{ time: time * 1000, close: close / divisor }] : [];
-  });
-}
 
 export async function yahooChart(instrument: Instrument, range: ChartRange): Promise<YahooChart> {
   const { range: r, interval } = yahooInterval(range, instrument.venue === "crypto");

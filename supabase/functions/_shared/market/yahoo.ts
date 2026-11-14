@@ -93,6 +93,11 @@ export function chartRange(count: number): string {
 
 const noPrices = (instrument: Instrument) => new ProviderError(`No prices came back for ${instrument.symbol}.`);
 
+function chartResult(body: unknown) {
+  const chart = isRecord(body) && isRecord(body.chart) ? body.chart : undefined;
+  return chart && Array.isArray(chart.result) && isRecord(chart.result[0]) ? chart.result[0] : undefined;
+}
+
 interface Chart {
   result: Record<string, unknown>;
   factor: number;
@@ -122,6 +127,29 @@ export class YahooFinanceProvider implements MarketDataProvider {
 
   supports(instrument: Instrument): boolean {
     return YAHOO_VENUES.includes(instrument.venue) && instrument.assetClass !== "crypto" && venueYahooSuffix(instrument.venue) !== undefined;
+  }
+
+  async adjustedCloses(instrument: Instrument, start: number, end: number) {
+    const symbol = yahooSymbol(instrument);
+    const body = await this.#get(`${CHART_PATH}${encodeURIComponent(symbol)}`, [
+      ["period1", String(start / 1000)], ["period2", String(end / 1000)],
+      ["interval", "1d"], ["includeAdjustedClose", "true"],
+    ]);
+    const result = chartResult(body);
+    const meta = result && isRecord(result.meta) ? result.meta : undefined;
+    if (!result || !meta || typeof meta.currency !== "string" || typeof meta.symbol !== "string") throw noPrices(instrument);
+    const { code, factor } = normalisedCurrency(meta.currency);
+    if (code !== instrument.currency || meta.symbol.toUpperCase() !== symbol) {
+      throw new ProviderError("The benchmark listing or quote currency could not be verified");
+    }
+    const indicators = isRecord(result.indicators) ? result.indicators : undefined;
+    const adjusted = Array.isArray(indicators?.adjclose) && isRecord(indicators.adjclose[0]) ? indicators.adjclose[0].adjclose : undefined;
+    if (!Array.isArray(result.timestamp) || !Array.isArray(adjusted)) return [];
+    return result.timestamp.flatMap((time, index) => {
+      const close = finiteNumber(adjusted[index]);
+      return typeof time === "number" && Number.isFinite(time) && close !== undefined && close > 0
+        ? [{ time: time * 1000, close: close * factor }] : [];
+    });
   }
 
   async bars(instruments: Instrument[], timeframe: Timeframe, count: number, now: number): Promise<BarsResult> {
@@ -196,8 +224,7 @@ export class YahooFinanceProvider implements MarketDataProvider {
     const symbol = cleanSymbol(yahooSymbol(instrument));
     if (symbol === "") throw noPrices(instrument);
     const body = await this.#get(`${CHART_PATH}${encodeURIComponent(symbol)}`, [["interval", "1d"], ["range", range]]);
-    const chart = isRecord(body) && isRecord(body.chart) ? body.chart : undefined;
-    const result = chart && Array.isArray(chart.result) && isRecord(chart.result[0]) ? chart.result[0] : undefined;
+    const result = chartResult(body);
     const meta = result && isRecord(result.meta) ? result.meta : undefined;
     if (result === undefined || meta === undefined || typeof meta.currency !== "string") throw noPrices(instrument);
     const { code, factor } = normalisedCurrency(meta.currency);
