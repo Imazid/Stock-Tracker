@@ -433,9 +433,9 @@ final class AccountSyncTests: XCTestCase {
         attach("portfolio-price-movement")
         openHolding.tap()
         XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
-        let synced = app.descendants(matching: .any)["holding.syncedFrom"].firstMatch
-        reveal(synced)
-        XCTAssertTrue(synced.label.contains("3434"), synced.label)
+        let accountLine = app.descendants(matching: .any)["holding.brokerAccount"].firstMatch
+        reveal(accountLine)
+        XCTAssertTrue(accountLine.label.contains("3434"), accountLine.label)
         app.navigationBars["AAPL"].buttons.firstMatch.tap()
         app.buttons["copilot.close"].tap()
 
@@ -447,6 +447,13 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertFalse(amount.exists)
         XCTAssertFalse(units.exists)
         XCTAssertTrue(app.staticTexts["copilot.movement.prices.us:AAPL"].exists)
+        reveal(openHolding)
+        openHolding.tap()
+        XCTAssertTrue(app.navigationBars["AAPL"].waitForExistence(timeout: 8))
+        let holdingUnits = app.descendants(matching: .any)["holding.units"].firstMatch
+        reveal(holdingUnits)
+        XCTAssertTrue(holdingUnits.label.contains("••••"), holdingUnits.label)
+        XCTAssertTrue(app.descendants(matching: .any)["holding.avgCost"].firstMatch.label.contains("••••"))
     }
 
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
