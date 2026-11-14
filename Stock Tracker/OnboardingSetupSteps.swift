@@ -525,6 +525,13 @@ struct EmailAuthForm: View {
     }
     private var canSubmit: Bool { emailValid && password.count >= 8 && !busy }
 
+    private var passwordContentType: UITextContentType {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-UITestTypeOwnPassword") { return .password }
+        #endif
+        return mode == .signUp ? .newPassword : .password
+    }
+
     var body: some View {
         if awaitingCode {
             CodeEntryView(email: email) { onDone(email) }
@@ -543,7 +550,7 @@ struct EmailAuthForm: View {
                 }
                 DarkField(icon: "lock", placeholder: mode == .signUp ? "Password (8+ characters)" : "Password", isEmpty: password.isEmpty) {
                     SecureField("", text: $password)
-                        .textContentType(mode == .signUp ? .newPassword : .password)
+                        .textContentType(passwordContentType)
                         .submitLabel(.go)
                         .focused($focus, equals: .password)
                         .onSubmit { if canSubmit { submit() } }
