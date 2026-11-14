@@ -62,7 +62,7 @@ export function PortfolioDashboard({ userId, brokerageEnabled, pendingApprovals,
         <Metric title="Open holdings value" value={exposure.priced ? money(exposure.total, base) : "—"}
           detail={portfolio.isPending || loadingPrices ? "Checking holdings and prices…" : coverage} />
         <Metric title="Realised gain or loss" value={realised == null ? "—" : signedMoney(realised, "USD")}
-          detail={gains.isPending ? "Checking trades…" : gains.data ? `${gains.data.matchedSales} of ${gains.data.sales} sales fully matched${gains.data.partialSales ? ` · ${gains.data.partialSales} partly matched` : ""}` : "Ledger unavailable"} />
+          detail={gains.isPending ? "Checking trades…" : gains.data ? `${gains.data.matchedSales} of ${gains.data.sales} disposals fully matched${gains.data.partialSales ? ` · ${gains.data.partialSales} partly matched` : ""}` : "Ledger unavailable"} />
         <Metric title="Unrealised gain or loss" value={unrealised?.total == null ? "—" : signedMoney(unrealised.total, "USD")}
           detail={gains.isPending || portfolio.isPending || loadingPrices ? "Checking lots and prices…" : `${unrealised?.byHolding.size ?? 0} of ${holdings.length} ${portfolio.data?.truncated ? "displayed " : ""}holdings covered`} />
       </dl>

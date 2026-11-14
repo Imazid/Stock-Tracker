@@ -23,7 +23,7 @@ export function GainsCard({ userId, holdings, quoteFor, loading, truncated }: {
   const covered = current?.byHolding.size ?? 0;
 
   return <Card>
-    <CardHeader title="Gains and trading fees" subtitle="USD estimates from synced trades, using first in, first out (FIFO)."
+    <CardHeader title="Gains and trading fees" subtitle="USD estimates from synced trades and recorded fractional payments, using first in, first out (FIFO)."
       actions={report && <Button size="sm" disabled={ledger.isFetching} onClick={() => void ledger.refetch()}>Refresh gains</Button>} />
     <div className="space-y-3 border-t border-border p-4">
       {ledger.isPending ? <div className="skeleton h-16" role="status" aria-label="Loading gains" />
@@ -36,7 +36,8 @@ export function GainsCard({ userId, holdings, quoteFor, loading, truncated }: {
                   <dt className="text-xs text-text-2">Realised gain or loss</dt>
                   <dd className="text-lg font-semibold">{report.realisedUsd === null ? "Unavailable" : signedMoney(report.realisedUsd, "USD")}</dd>
                 </dl>
-                <p className="text-xs text-text-3">{report.sales ? `${report.matchedSales} of ${report.sales} sales fully matched.` : "No recorded sales."}
+                <p className="text-xs text-text-3">{report.sales ? `${report.matchedSales} of ${report.sales} disposals fully matched.` : "No recorded disposals."}
+                  {(report.fractionalPayments ?? 0) > 0 && ` Includes ${report.fractionalPayments} fractional payments.`}
                   {report.partialSales > 0 && ` ${report.partialSales} partially matched.`}</p>
               </div>
               <div>
