@@ -7,6 +7,7 @@ import Vision
 struct PrivateResearchWorkspace: View {
     let deals: [PrivateDeal]
     var selectedDealID: UUID?
+    var compareFundingRounds = false
     var announcements: [PrivateCompanyUpdate] = []
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var documents: [PrivateSavedItem] = []
@@ -146,6 +147,10 @@ struct PrivateResearchWorkspace: View {
                 loading = false
                 error = nil
                 if let selectedDealID { selectedDeals.insert(selectedDealID) }
+                if compareFundingRounds {
+                    selectedDeals = Set(deals.prefix(3).map(\.id))
+                    question = "Compare the selected funding rounds. Explain the reported valuation basis, any changes in the financing, and what the sources disclose about dilution and investor rights."
+                }
                 if !announcements.isEmpty {
                     selectedAnnouncements = Set(announcements.prefix(3).map(\.id))
                     question = "Summarise these company announcements. Explain what changed and what the sources leave unanswered."

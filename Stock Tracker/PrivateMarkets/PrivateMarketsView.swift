@@ -107,7 +107,7 @@ struct PrivateMarketsView: View {
                 case .discovery, .explorer, .rounds:
                     PrivateDiscoveryView(title: destination.rawValue, deals: deals, loading: loading,
                                          error: catalogError, refresh: load, groupCompanies: destination == .explorer,
-                                         sortByDeadline: destination == .rounds)
+                                         showFundingHistory: destination == .rounds)
                 case .research:
                     PrivateResearchWorkspace(deals: deals)
                 case .room:
@@ -182,7 +182,7 @@ private struct PrivateDiscoveryView: View {
     let error: String?
     let refresh: () async -> Void
     let groupCompanies: Bool
-    let sortByDeadline: Bool
+    let showFundingHistory: Bool
 
     @EnvironmentObject private var auth: SupabaseAuthManager
     @EnvironmentObject private var store: PrivateMarketsStore
@@ -202,7 +202,7 @@ private struct PrivateDiscoveryView: View {
     @State private var showFilters = false
 
     private var filtered: [PrivateDeal] {
-        let results = deals.filter { deal in
+        deals.filter { deal in
             let matchesSearch = search.isEmpty || [
                 deal.company.name, deal.company.sector, deal.company.country, deal.company.location ?? "",
                 deal.company.description ?? "", deal.round.stage, deal.sourceName
@@ -215,8 +215,6 @@ private struct PrivateDiscoveryView: View {
                 (!hasTraction || deal.round.traction?.isEmpty == false) &&
                 (!following || store.state.follows.contains { $0.id == deal.company.id })
         }
-        if sortByDeadline { return results.sorted { ($0.round.closesAt ?? .distantFuture) < ($1.round.closesAt ?? .distantFuture) } }
-        return results
     }
 
     private func matches(_ value: Decimal?, maximum: String) -> Bool {
@@ -236,7 +234,7 @@ private struct PrivateDiscoveryView: View {
                     }
                 }
             }
-            Section(groupCompanies ? "Companies" : "Opportunities") {
+            Section(groupCompanies ? "Companies" : showFundingHistory ? "Published rounds" : "Opportunities") {
                 if loading {
                     VStack(spacing: DS.Space.l) {
                         ForEach(0..<3) { _ in
@@ -260,12 +258,15 @@ private struct PrivateDiscoveryView: View {
                     ForEach(sorted, id: \.self) { id in
                         if let rounds = companies[id], let company = rounds.first?.company {
                             NavigationLink(company.name) {
-                                List(rounds) { deal in
-                                    NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateDealRow(deal: deal) }
-                                }
-                                .navigationTitle(company.name)
+                                PrivateCompanyFundingHistory(company: company,
+                                                             rounds: deals.filter { $0.company.id == id })
                             }
+                            .accessibilityIdentifier("private.explorer.company.\(id.uuidString)")
                         }
+                    }
+                } else if showFundingHistory {
+                    ForEach(filtered.sorted(by: fundingRoundOrder)) { deal in
+                        NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateFundingRoundRow(deal: deal) }
                     }
                 } else {
                     ForEach(filtered) { deal in
@@ -464,6 +465,78 @@ private struct PrivateDealRow: View {
     }
 }
 
+private func fundingRoundOrder(_ lhs: PrivateDeal, _ rhs: PrivateDeal) -> Bool {
+    let leftStatus = lhs.displayedStatus
+    let rightStatus = rhs.displayedStatus
+    let leftActive = leftStatus == "Open at verification" || leftStatus == "Expression of interest"
+    let rightActive = rightStatus == "Open at verification" || rightStatus == "Expression of interest"
+    if leftActive != rightActive { return leftActive }
+    if leftActive, lhs.round.closesAt != rhs.round.closesAt {
+        return (lhs.round.closesAt ?? .distantFuture) < (rhs.round.closesAt ?? .distantFuture)
+    }
+    if lhs.round.announcedOn != rhs.round.announcedOn {
+        return (lhs.round.announcedOn ?? .distantPast) > (rhs.round.announcedOn ?? .distantPast)
+    }
+    return lhs.id.uuidString < rhs.id.uuidString
+}
+
+private struct PrivateFundingRoundRow: View {
+    let deal: PrivateDeal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            Text(deal.round.stage).font(.headline)
+            Text(deal.company.name).font(.subheadline)
+            Text(deal.displayedStatus).font(.footnote).foregroundStyle(.secondary)
+            if let date = deal.round.announcedOn {
+                LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let raised = deal.round.raised {
+                LabeledContent("Capital raised", value: PrivateInput.money(raised, currency: deal.round.currency))
+                    .font(.footnote.monospacedDigit())
+            }
+            if let valuation = deal.round.valuation {
+                LabeledContent("Reported valuation", value: PrivateInput.money(valuation, currency: deal.round.currency))
+                    .font(.footnote.monospacedDigit())
+            }
+        }
+        .padding(.vertical, DS.Space.xs)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct PrivateCompanyFundingHistory: View {
+    let company: PrivateDeal.Company
+    let rounds: [PrivateDeal]
+    @EnvironmentObject private var auth: SupabaseAuthManager
+
+    var body: some View {
+        let history = rounds.sorted(by: fundingRoundOrder)
+        List {
+            Section {
+                if let description = company.description { Text(description) }
+                if company.sourceUrl.privateSourceIsSafe { Link("Company source", destination: company.sourceUrl) }
+            }
+            Section("Funding history") {
+                ForEach(history) { deal in
+                    NavigationLink { PrivateDealDetail(deal: deal) } label: { PrivateFundingRoundRow(deal: deal) }
+                            .accessibilityIdentifier("private.funding.round.\(deal.round.stage)")
+                }
+            }
+            if history.count > 1, auth.userId != nil {
+                Section("Research") {
+                    NavigationLink("Compare funding rounds") {
+                        PrivateResearchWorkspace(deals: history, compareFundingRounds: true)
+                    }
+                }
+            }
+        }
+        .navigationTitle(company.name)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 private struct PrivateDealDetail: View {
     let deal: PrivateDeal
     @EnvironmentObject private var store: PrivateMarketsStore
@@ -485,9 +558,14 @@ private struct PrivateDealDetail: View {
             }
             Section("Funding terms") {
                 LabeledContent("Stage", value: deal.round.stage)
-                LabeledContent("Eligibility", value: deal.eligibility.capitalized)
-                LabeledContent("Jurisdictions", value: deal.jurisdictions.joined(separator: ", "))
-                LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
+                if let date = deal.round.announcedOn {
+                    LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+                }
+                if deal.provider != "issuer" {
+                    LabeledContent("Eligibility", value: deal.eligibility.capitalized)
+                    if !deal.jurisdictions.isEmpty { LabeledContent("Jurisdictions", value: deal.jurisdictions.joined(separator: ", ")) }
+                    LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
+                }
                 LabeledContent("Raise target", value: PrivateInput.money(deal.round.target, currency: deal.round.currency))
                 LabeledContent("Capital raised", value: PrivateInput.money(deal.round.raised, currency: deal.round.currency))
                 LabeledContent("Valuation", value: PrivateInput.money(deal.round.valuation, currency: deal.round.currency))

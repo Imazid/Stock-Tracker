@@ -245,6 +245,30 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPublishedCompanyShowsDatedFundingHistory() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
+                          "Run this test with the hosted Private Markets configuration.")
+        openPrivateMarkets()
+        app.buttons["private.destination.building.2"].tap()
+        let heidi = app.buttons["private.explorer.company.D72C4060-1AE7-4A2F-8F2E-9F4BF1577E01"]
+        XCTAssertTrue(heidi.waitForExistence(timeout: 20), app.debugDescription)
+        heidi.tap()
+        XCTAssertTrue(app.navigationBars["Heidi"].waitForExistence(timeout: 8))
+        let seriesC = app.buttons["private.funding.round.Series C"]
+        let seriesB = app.buttons["private.funding.round.Series B"]
+        XCTAssertTrue(seriesC.waitForExistence(timeout: 8), app.debugDescription)
+        if !seriesB.isHittable { app.swipeUp() }
+        XCTAssertTrue(seriesB.isHittable, app.debugDescription)
+        XCTAssertTrue(seriesB.label.contains("Capital raised"))
+        XCTAssertTrue(seriesB.label.contains("Reported valuation"))
+        seriesB.tap()
+        XCTAssertTrue(app.staticTexts["Announced"].waitForExistence(timeout: 8), app.debugDescription)
+        let source = app.descendants(matching: .any)["Funding round source"].firstMatch
+        for _ in 0..<2 where !source.isHittable { app.swipeUp() }
+        XCTAssertTrue(source.isHittable, app.debugDescription)
+    }
+
+    @MainActor
     func testResearchWorkspaceReloadsRecentRuns() throws {
         try launchWithLocalSession("PRIVATE_RESEARCH_TEST_SESSION")
         openPrivateMarkets()

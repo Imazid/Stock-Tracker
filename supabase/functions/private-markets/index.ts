@@ -9,7 +9,7 @@ import { advancellCompany, type IssuerNotice, IssuerNewsError, readIssuerNews } 
 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
-  "round:funding_rounds!inner(id,stage,raised,target,valuation,valuation_method,currency,closes_at,source_url,verified_at,traction," +
+  "round:funding_rounds!inner(id,stage,raised,target,valuation,valuation_method,currency,announced_on,closes_at,source_url,verified_at,traction," +
   "company:private_companies!inner(id,name,sector,country,location,description,logo_url,founders,investors,source_url,verified_at)," +
   "share_classes(name,rights,source_url))";
 
@@ -24,6 +24,7 @@ type CatalogDeal = {
   jurisdictions: string[];
   round: {
     stage: string;
+    announced_on: string | null;
     closes_at: string | null;
     verified_at: string;
     raised: number | null;
@@ -45,6 +46,7 @@ function dealEvidence(deal: CatalogDeal): string {
     `Company: ${company.name}`,
     `Sector: ${company.sector}; country: ${company.country}`,
     `Round: ${round.stage}; status: ${currentStatus(deal)}`,
+    round.announced_on && `Round announcement date: ${round.announced_on}`,
     `Source verified: ${deal.verified_at}`,
     round.closes_at && `Published deadline: ${round.closes_at}`,
     `Provider: ${deal.provider}; category: ${deal.category}`,

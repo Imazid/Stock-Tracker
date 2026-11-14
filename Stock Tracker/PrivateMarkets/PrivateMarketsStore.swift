@@ -55,6 +55,7 @@ struct PrivateDeal: Codable, Identifiable {
         let valuation: Decimal?
         let valuationMethod: String?
         let currency: String
+        let announcedOn: Date?
         let closesAt: Date?
         let sourceUrl: URL
         let verifiedAt: Date
