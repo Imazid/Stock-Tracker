@@ -25,7 +25,9 @@ insert into public.investment_opportunities
   ('ea000000-0000-4000-8000-000000000030','ea000000-0000-4000-8000-000000000020','birchal','Crowdfunding','open',100,'retail',array['AU'],
     'https://www.birchal.com/example-one','https://www.birchal.com/example-one','https://example.test/offer',now(),true),
   ('ea000000-0000-4000-8000-000000000031','ea000000-0000-4000-8000-000000000020','birchal','Crowdfunding','open',100,'retail',array['AU'],
-    'https://www.birchal.com/example-two','https://www.birchal.com/example-two','https://example.test/offer',now(),true);
+    'https://www.birchal.com/example-two','https://www.birchal.com/example-two','https://example.test/offer',now(),true),
+  ('ea000000-0000-4000-8000-000000000032','ea000000-0000-4000-8000-000000000020','birchal','Crowdfunding','open',100,'retail',array['AU'],
+    'https://www.birchal.com/example-three','https://www.birchal.com/example-three','https://example.test/offer',now(),true);
 update public.private_market_rules set handoff_enabled=true, reviewed_at=now()-interval '1 day', effective_at=now()-interval '1 day'
   where jurisdiction='AU';
 insert into public.private_provider_approvals (provider,jurisdiction,rule_version,agreement_reference,expires_at,enabled)
@@ -60,7 +62,8 @@ create temporary table application as
   select commitment_id from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
   'ea000000-0000-4000-8000-000000000030',9500,'https://example.test/offer');
 select case when count(*)=1 and bool_and(provider_connection_id = (select id from public.provider_connections where external_subject = 'application-owner'))
-  then 'ok   handoff binds the verified provider account' else 'FAIL unbound application' end
+    and bool_and(retail_csf_cooling_off_required)
+  then 'ok   handoff binds the verified account and records the retail protection' else 'FAIL unbound application' end
   from public.investment_commitments where id=(select commitment_id from application);
 select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
   (select commitment_id from application),'receipt','application_received',now()-interval '1 hour')$q$,
@@ -69,7 +72,17 @@ select pg_temp.expect_application_error($q$select public.record_private_provider
   (select commitment_id from application),'receipt','application_received',now()-interval '4 minutes', 'infinity')$q$,
   '22023','an unbounded deadline is refused');
 select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
-  'receipt','application_received',now()-interval '4 minutes',now()+interval '5 days');
+  'receipt','application_received',now()-interval '4 minutes');
+select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
+  (select commitment_id from application),'receipt','confirmed',now(),null,25,9500)$q$,
+  '22023','retail confirmation requires the provider deadline');
+select case when status='application_received' and cooling_off_ends_at is null
+    and not exists (select 1 from public.private_holdings where commitment_id=c.id)
+  then 'ok   incomplete provider evidence leaves the application pending and records no ownership'
+  else 'FAIL missing withdrawal evidence affected ownership' end
+from public.investment_commitments c where id=(select commitment_id from application);
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from application),
+  'receipt','application_received',now()-interval '3 minutes 30 seconds',now()+interval '5 days');
 select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
   (select commitment_id from application),'receipt','confirmed',now(),null,25,9500)$q$,
   '22023','settlement is refused while a reported withdrawal window is open');
@@ -98,9 +111,19 @@ select case when status='withdrawn' and withdrawn_at=now() and withdrawal_reques
   from public.investment_commitments c where id=(select commitment_id from application);
 select case when count(*)=1 then 'ok   replay does not duplicate the withdrawal audit' else 'FAIL duplicated withdrawal' end
   from public.investment_audit_logs where subject_id=(select commitment_id from application) and action='provider_withdrawn';
-select case when count(*)=1 then 'ok   confirmed withdrawal releases the recorded cap' else 'FAIL retained cap' end
+create temporary table legacy_application as
+  select commitment_id
   from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
     'ea000000-0000-4000-8000-000000000031',501,'https://example.test/offer');
+select case when count(*)=1 then 'ok   confirmed withdrawal releases the recorded cap' else 'FAIL retained cap' end
+from legacy_application;
+update public.investment_commitments set retail_csf_cooling_off_required = null
+where id=(select commitment_id from legacy_application);
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from legacy_application),
+  'legacy-receipt','application_received',now()-interval '1 minute');
+select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
+  (select commitment_id from legacy_application),'legacy-receipt','confirmed',now(),null,5,501)$q$,
+  '22023','legacy Australian crowd-sourced funding requires the deadline when classification was not recorded');
 
 reset role;
 set role authenticated;
@@ -138,6 +161,20 @@ select case when e.verified_class='wholesale' and e.accountant_certificate_revie
   else 'FAIL renewed verification evidence' end
 from public.investor_eligibility e join public.provider_connections c on c.id = e.connection_id
 where c.external_subject='application-owner';
+select pg_temp.expect_application_error($q$select public.record_private_provider_event('birchal','application-owner',
+  (select commitment_id from legacy_application),'legacy-receipt','confirmed',now(),null,5,501)$q$,
+  '22023','a later wholesale verification cannot waive the existing legacy deadline requirement');
+create temporary table wholesale_application as
+  select commitment_id from public.prepare_private_handoff('ea000000-0000-4000-8000-000000000001',
+    'ea000000-0000-4000-8000-000000000032',501,'https://example.test/offer');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
+  'wholesale-receipt','application_received',now()-interval '1 minute');
+select public.record_private_provider_event('birchal','application-owner',(select commitment_id from wholesale_application),
+  'wholesale-receipt','confirmed',now(),null,5,501);
+select case when status='confirmed' and retail_csf_cooling_off_required is false and cooling_off_ends_at is null
+  then 'ok   a verified wholesale application can settle when a retail deadline does not apply'
+  else 'FAIL wholesale tender incorrectly required retail evidence' end
+from public.investment_commitments where id=(select commitment_id from wholesale_application);
 select case when count(*) = 3 then 'ok   each accepted verification change creates one audit event'
   else 'FAIL missing or duplicated verification audit' end
 from public.investment_audit_logs
