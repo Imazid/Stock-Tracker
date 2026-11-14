@@ -15,14 +15,22 @@ insert into capital_fixture values
   ('ca000000-0000-4000-8000-000000000012','ca000000-0000-4000-8000-000000000001','Future confirmation','AUD','confirmed',now()+interval '2 days'),
   ('ca000000-0000-4000-8000-000000000013','ca000000-0000-4000-8000-000000000002','Other account fund','AUD','confirmed',now()-interval '100 days');
 
+insert into public.investment_opportunities
+  (id,round_id,provider,category,status,minimum,eligibility,jurisdictions,source_url,verified_at)
+select f.holding,o.round_id,'birchal','Crowdfunding','closed',50,'retail',array['AU'],
+  'https://example.test/capital/' || f.holding,now()
+from capital_fixture f
+cross join lateral (select round_id from public.investment_opportunities
+  where provider='birchal' and status='closed' order by id limit 1) o;
+
 insert into public.investment_commitments
   (user_id,opportunity_id,provider,jurisdiction,rule_version,reviewed_document_url,requested_amount,currency,
    acknowledged_at,status,provider_reference,confirmed_at)
-select f.owner,o.id,o.provider,'AU',r.version,o.source_url,100,f.currency,
+select f.owner,f.holding,o.provider,'AU',r.version,o.source_url,100,f.currency,
   now()-interval '101 days',f.status,f.holding::text,f.confirmed_at
 from capital_fixture f
 cross join lateral (select id,provider,source_url from public.investment_opportunities
-  where provider='birchal' and status='closed' order by id limit 1) o
+  where id=f.holding) o
 cross join lateral (select version from public.private_market_rules where jurisdiction='AU' order by version desc limit 1) r;
 insert into public.private_holdings (id,user_id,commitment_id,name,asset_class,currency,units,settled_amount,confirmed_at)
 select f.holding,f.owner,k.id,f.name,'Venture fund',f.currency,10,100,f.confirmed_at
