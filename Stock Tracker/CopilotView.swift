@@ -326,6 +326,33 @@ private struct CopilotScreen: View {
                 if let owner = cloudAuth.userId { await privateMarkets.refreshProviderHoldings(for: owner) }
             }
 
+        case .privateScenario(_, let question):
+            TradingSection(title: "Ownership scenario") {
+                if let investment = question.investment {
+                    TradingRow(label: "Assumed investment", value: scenarioAmount(investment, currency: question.currency))
+                }
+                if let newCapital = question.newCapital {
+                    TradingRow(label: "Assumed new capital", value: scenarioAmount(newCapital, currency: question.currency))
+                }
+                if let postMoney = question.postMoney {
+                    TradingRow(label: "Assumed post-money valuation", value: scenarioAmount(postMoney, currency: question.currency))
+                }
+                if let initial = question.initialOwnership {
+                    TradingRow(label: "Initial ownership", value: PrivateScenarioCalculator.percent(initial))
+                }
+                if let revised = question.ownershipAfterRound {
+                    TradingRow(label: "Ownership after round", value: PrivateScenarioCalculator.percent(revised))
+                } else if question.calculatesDilution {
+                    Text("Enter your starting ownership, the new capital and the round’s post-money valuation.")
+                } else if question.initialOwnership == nil {
+                    Text("Enter an investment amount and a post-money valuation in the same currency.")
+                }
+                Text("Assumes shares are issued at the round price with no option pool changes or conversions.")
+                    .font(.caption).foregroundStyle(theme.secondaryText)
+                NavigationLink("Open scenario calculator") { PrivateScenarioCalculator(question: question) }
+            }
+            .accessibilityIdentifier("copilot.card.privateScenario")
+
         case .pauseAll:
             Button(trading.isKillSwitchOn ? "Review pause-all" : "Open Pause all") { showPauseAll = true }
                 .buttonStyle(SecondaryPillButtonStyle())
@@ -334,6 +361,11 @@ private struct CopilotScreen: View {
     }
 
     // MARK: Input
+
+    private func scenarioAmount(_ value: Decimal, currency: String?) -> String {
+        let amount = value.formatted(.number.precision(.fractionLength(0...8)))
+        return currency.map { "\($0) \(amount)" } ?? amount
+    }
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: DS.Space.s) {

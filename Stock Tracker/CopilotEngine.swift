@@ -34,13 +34,14 @@ enum CopilotCard: Identifiable {
     case backtest(id: UUID, box: BacktestBox)
     case agentChoice(id: UUID, request: String, agentIDs: [UUID])
     case unifiedAllocation(id: UUID)
+    case privateScenario(id: UUID, question: PrivateScenarioQuestion)
     case pauseAll(id: UUID)
 
     var id: UUID {
         switch self {
         case .facts(let id, _, _, _), .orders(let id, _, _), .run(let id, _, _), .draft(let id, _),
              .limitChange(let id, _, _, _, _), .backtest(let id, _), .agentChoice(let id, _, _),
-             .unifiedAllocation(let id), .pauseAll(let id):
+             .unifiedAllocation(let id), .privateScenario(let id, _), .pauseAll(let id):
             return id
         }
     }
@@ -141,6 +142,15 @@ final class CopilotEngine: ObservableObject {
                                   ? "Pause-all is already on. No agent can place orders."
                                   : "I can't pause agents for you, but this opens the control. It shows exactly what stops before you confirm.",
                                   cards: [.pauseAll(id: UUID())])
+        }
+        if let question = PrivateScenarioQuestion(text) {
+            let reply: String
+            if question.calculatesDilution {
+                reply = "In a priced round, new investors take the fraction raised divided by the post-money valuation. Existing holders keep the remaining fraction of their previous stake when they don’t participate."
+            } else {
+                reply = "Ownership in a priced round is the investment amount divided by the post-money valuation."
+            }
+            return CopilotMessage(isUser: false, text: reply, cards: [.privateScenario(id: UUID(), question: question)])
         }
         if has("pending", "waiting for", "open order", "awaiting", "need my approval", "needs approval") {
             return pendingTrades()

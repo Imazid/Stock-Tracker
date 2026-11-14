@@ -29,6 +29,49 @@ final class PrivateMarketsTests: XCTestCase {
                                            nextRoundPostMoney: nil, nextRoundRaise: 500_000))
     }
 
+    func testConversationalOwnershipUsesExplicitValuationTerms() throws {
+        let post = try XCTUnwrap(PrivateScenarioQuestion("What percentage ownership would a $5,000 investment represent at a $1m post-money valuation?"))
+        XCTAssertEqual(post.investment, 5_000)
+        XCTAssertEqual(post.postMoney, 1_000_000)
+        XCTAssertEqual(post.initialOwnership, Decimal(string: "0.005"))
+
+        let pre = try XCTUnwrap(PrivateScenarioQuestion("What ownership would I get if I invest AUD 5k at AUD 800k pre-money and the round raises AUD 200k?"))
+        XCTAssertEqual(pre.initialOwnership, post.initialOwnership)
+        XCTAssertEqual(pre.currency, "AUD")
+        let stake = try XCTUnwrap(PrivateScenarioQuestion("How much equity would I get for £5k at £1m post-money?"))
+        XCTAssertEqual(stake.initialOwnership, post.initialOwnership)
+        XCTAssertEqual(stake.currency, "GBP")
+
+        let contextual = try XCTUnwrap(PrivateScenarioQuestion("What percentage ownership would a $5,000 investment represent at this valuation?"))
+        XCTAssertEqual(contextual.investment, 5_000)
+        XCTAssertNil(contextual.initialOwnership)
+        XCTAssertNil(PrivateScenarioQuestion("Show my private investment exposure alongside my listed stocks"))
+    }
+
+    func testConversationalDilutionUsesExistingStakeAndRoundTerms() throws {
+        let query = try XCTUnwrap(PrivateScenarioQuestion("How will my 2% stake dilute if the round raises $500k at a $2m post-money valuation?"))
+        XCTAssertEqual(query.initialOwnership, Decimal(string: "0.02"))
+        XCTAssertEqual(query.ownershipAfterRound, Decimal(string: "0.015"))
+        XCTAssertNil(PrivateScenarioQuestion("What’s my dilution from 2% if the round raises $2m at a $2m post-money valuation?")?.ownershipAfterRound)
+        XCTAssertNil(PrivateScenarioQuestion("What’s my dilution from 101% if the round raises $500k at a $2m post-money valuation?")?.initialOwnership)
+        XCTAssertNil(PrivateScenarioQuestion("What dilution should I expect with a 10% option pool if the round raises $500k at $2m post-money?")?.ownershipAfterRound)
+        XCTAssertNil(PrivateScenarioQuestion("Explain the dilution implications of another financing round.")?.ownershipAfterRound)
+    }
+
+    func testConversationalOwnershipRejectsAmbiguousAmounts() {
+        let questions = [
+            "What ownership would an AUD 5k investment buy at USD 1m post-money?",
+            "What ownership would a 5k AUD investment buy at 1m USD post-money?",
+            "What ownership would a $5k investment buy at a €1m post-money valuation?",
+            "What ownership would a $5k to $10k investment buy at a $1m post-money valuation?",
+            "What ownership would a -$5k investment buy at a $1m post-money valuation?",
+            "What ownership would a $5k investment buy at a $1m valuation?",
+        ]
+        for question in questions {
+            XCTAssertNil(PrivateScenarioQuestion(question)?.initialOwnership, question)
+        }
+    }
+
     func testPendingCallAndDatedFundMetrics() throws {
         let initial = Date(timeIntervalSince1970: 0)
         let year = initial.addingTimeInterval(365 * 86_400)

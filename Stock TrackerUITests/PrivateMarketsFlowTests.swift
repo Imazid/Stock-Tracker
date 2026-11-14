@@ -90,6 +90,29 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["private.allocation"].firstMatch.waitForExistence(timeout: 6))
     }
 
+    func testCopilotCalculatesDilutionAndOpensPrefilledScenario() {
+        openPrivateMarkets()
+        app.buttons["trading.copilot"].firstMatch.tap()
+        let input = app.descendants(matching: .any)["copilot.input"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("How will my 2% stake dilute if the round raises $500k at a $2m post-money valuation?")
+        app.buttons["copilot.send"].tap()
+        let open = app.buttons.containing(NSPredicate(format: "label == %@", "Open scenario calculator")).firstMatch
+        for _ in 0..<3 where !open.isHittable {
+            if open.waitForExistence(timeout: 3) && open.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(open.isHittable, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["1.50%"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["copilot.aiGenerated"].firstMatch.exists)
+        open.tap()
+        XCTAssertTrue(app.navigationBars["Scenario Calculator"].waitForExistence(timeout: 6))
+        let stake = app.textFields["Existing ownership (%)"]
+        XCTAssertTrue(stake.waitForExistence(timeout: 5))
+        XCTAssertEqual(stake.value as? String, "2")
+    }
+
     @MainActor
     func testOwnershipExcerptCanBeReviewedAndLinked() async throws {
         let host = "http://127.0.0.1:58531"

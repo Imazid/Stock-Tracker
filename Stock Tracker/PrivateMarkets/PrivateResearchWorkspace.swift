@@ -369,38 +369,62 @@ private struct PrivateReportView: View {
     }
 }
 
-private struct PrivateScenarioCalculator: View {
-    @State private var investment = ""
-    @State private var postMoney = ""
-    @State private var nextRaise = ""
-    @State private var nextPost = ""
+struct PrivateScenarioCalculator: View {
+    @State private var useExistingStake: Bool
+    @State private var existingStake: String
+    @State private var investment: String
+    @State private var postMoney: String
+    @State private var nextRaise: String
+    @State private var nextPost: String
     @State private var bear = ""
     @State private var base = ""
     @State private var bull = ""
 
+    init(question: PrivateScenarioQuestion? = nil) {
+        let dilution = question?.calculatesDilution == true
+        func input(_ amount: Decimal?) -> String {
+            amount?.formatted(.number.grouping(.never).precision(.fractionLength(0...8))) ?? ""
+        }
+        _useExistingStake = State(initialValue: dilution)
+        _existingStake = State(initialValue: input(question?.existingOwnership.map { $0 * 100 }))
+        _investment = State(initialValue: input(question?.investment))
+        _postMoney = State(initialValue: dilution ? "" : input(question?.postMoney))
+        _nextRaise = State(initialValue: input(question?.newCapital))
+        _nextPost = State(initialValue: dilution ? input(question?.postMoney) : "")
+    }
+
     private var startingOwnership: Decimal? {
+        if useExistingStake {
+            guard let share = PrivateInput.amount(existingStake), share <= 100 else { return nil }
+            return share / 100
+        }
         guard let amount = PrivateInput.amount(investment), let post = PrivateInput.amount(postMoney) else { return nil }
         return PrivateMath.ownership(investment: amount, postMoney: post, nextRoundPostMoney: nil, nextRoundRaise: nil)
     }
 
     private var finalOwnership: Decimal? {
         if nextRaise.isEmpty && nextPost.isEmpty { return startingOwnership }
-        guard let amount = PrivateInput.amount(investment), let post = PrivateInput.amount(postMoney),
+        guard let startingOwnership,
               let raise = PrivateInput.amount(nextRaise), let next = PrivateInput.amount(nextPost) else { return nil }
-        return PrivateMath.ownership(investment: amount, postMoney: post, nextRoundPostMoney: next, nextRoundRaise: raise)
+        return PrivateMath.dilutedOwnership(startingOwnership, newCapital: raise, postMoney: next)
     }
 
     var body: some View {
         Form {
             Section("Initial investment") {
-                input("Investment amount", $investment)
-                input("Post-money valuation", $postMoney)
-                LabeledContent("Initial ownership", value: percent(startingOwnership))
+                Toggle("Start with an ownership percentage", isOn: $useExistingStake)
+                if useExistingStake {
+                    input("Existing ownership (%)", $existingStake)
+                } else {
+                    input("Investment amount", $investment)
+                    input("Post-money valuation", $postMoney)
+                }
+                LabeledContent("Initial ownership", value: Self.percent(startingOwnership))
             }
             Section("Next round") {
                 input("New capital raised", $nextRaise)
                 input("Next post-money valuation", $nextPost)
-                LabeledContent("Ownership after round", value: percent(finalOwnership))
+                LabeledContent("Ownership after round", value: Self.percent(finalOwnership))
             }
             Section("Assumed exit equity values") {
                 scenario("Bear", $bear)
@@ -408,7 +432,7 @@ private struct PrivateScenarioCalculator: View {
                 scenario("Bull", $bull)
             }
             Section {
-                Text("Use one currency throughout. Proceeds assume pro rata ownership with no fees, taxes, preferences, option changes or further dilution.")
+                Text("Use one currency throughout. The next round assumes no additional investment from you, option pool changes or conversions. Exit proceeds assume a pro rata payout with no fees, taxes or preferences.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
@@ -423,16 +447,17 @@ private struct PrivateScenarioCalculator: View {
     private func scenario(_ title: String, _ value: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             input(title + " exit value", value)
-            if let share = finalOwnership, let exit = PrivateInput.amount(value.wrappedValue),
-               let amount = PrivateInput.amount(investment), amount > 0 {
+            if let share = finalOwnership, let exit = PrivateInput.amount(value.wrappedValue) {
                 let proceeds = share * exit
-                Text("Proceeds \(proceeds.formatted(.number.precision(.fractionLength(2)))) · \((proceeds / amount).formatted(.number.precision(.fractionLength(2))))×")
+                let multiple = !useExistingStake ? PrivateInput.amount(investment).flatMap { $0 > 0 ? proceeds / $0 : nil } : nil
+                let amount = proceeds.formatted(.number.precision(.fractionLength(2)))
+                Text(multiple.map { "Proceeds \(amount) · \($0.formatted(.number.precision(.fractionLength(2))))×" } ?? "Proceeds \(amount)")
                     .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
             }
         }
     }
 
-    private func percent(_ value: Decimal?) -> String {
+    static func percent(_ value: Decimal?) -> String {
         value?.formatted(.percent.precision(.fractionLength(2...4))) ?? "Unavailable"
     }
 }

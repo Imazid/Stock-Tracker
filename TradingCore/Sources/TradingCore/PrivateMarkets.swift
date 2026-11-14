@@ -178,10 +178,16 @@ public enum PrivateMath {
         let initial = investment / postMoney
         switch (nextRoundPostMoney, nextRoundRaise) {
         case (nil, nil): return initial
-        case let (post?, raise?) where post > 0 && raise >= 0 && raise < post:
-            return initial * (1 - raise / post)
+        case let (post?, raise?):
+            return dilutedOwnership(initial, newCapital: raise, postMoney: post)
         default: return nil
         }
+    }
+
+    public static func dilutedOwnership(_ existingShare: Decimal, newCapital: Decimal, postMoney: Decimal) -> Decimal? {
+        guard existingShare >= 0, existingShare <= 1, postMoney > 0,
+              newCapital >= 0, newCapital < postMoney else { return nil }
+        return existingShare * (1 - newCapital / postMoney)
     }
 
     /// Reports a unique, bracketed annual rate for conventional dated cash flows.
