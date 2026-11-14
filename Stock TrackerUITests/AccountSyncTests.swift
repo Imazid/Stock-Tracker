@@ -34,6 +34,84 @@ final class AccountSyncTests: XCTestCase {
         }
     }
 
+    func testNewInvestorSignsUpAndReviewsLinkedBrokerage() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ONBOARDING_BROKER"] == "1",
+                          "Start the signed-in onboarding brokerage relay")
+        let email = "investor-onboarding-ios-\(UUID().uuidString.lowercased())@example.com"
+        launch(extraArguments: ["-UITestTypeOwnPassword", "-AppleLocale", "en_US"])
+        app.buttons["onboarding.welcome.create"].tap()
+        waitForStep("Create your Stock Tracker account")
+        fillCredentials(email: email)
+        let submit = app.buttons["auth.submit"]
+        XCTAssertTrue(submit.isEnabled, app.debugDescription)
+        app.secureTextFields["auth.password"].typeText("\n")
+        waitForStep("What do you want to track?", timeout: 25)
+        declineSavePassword()
+        let continueButton = app.buttons["onboarding.continue"]
+        XCTAssertTrue(continueButton.wait(for: \.isHittable, toEqual: true, timeout: 8), app.debugDescription)
+        let us = app.buttons["onboarding.market.us"]
+        if !us.isSelected {
+            for _ in 0..<3 where !us.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(us.isHittable, app.debugDescription)
+            us.tap()
+        }
+        XCTAssertTrue(us.isSelected)
+        continueButton.tap()
+        waitForStep("Pick a few to follow")
+        let apple = app.buttons["onboarding.pick.AAPL"]
+        if !apple.exists { app.buttons["US"].firstMatch.tap() }
+        XCTAssertTrue(apple.waitForExistence(timeout: 8))
+        apple.tap()
+        tapContinue()
+        waitForStep("Add what you already own")
+        let connectBroker = app.buttons["onboarding.portfolio.broker"]
+        for _ in 0..<3 where !connectBroker.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(connectBroker.isHittable, app.debugDescription)
+        connectBroker.tap()
+        XCTAssertTrue(app.navigationBars["Brokers & exchanges"].waitForExistence(timeout: 10))
+        app.buttons["broker.seeAll"].tap()
+        let picker = app.searchFields.firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        picker.tap()
+        picker.typeText("Sandbox")
+        let sandbox = app.buttons["broker.pick.SANDBOX"]
+        XCTAssertTrue(sandbox.waitForExistence(timeout: 15))
+        sandbox.tap()
+        let linked = app.descendants(matching: .any)["broker.connected"].firstMatch
+        let closePortal = app.buttons.matching(NSPredicate(format: "label IN {'Done', 'Close'} AND identifier != 'broker.done'")).firstMatch
+        let portalOrLinked = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in linked.exists || closePortal.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [portalOrLinked], timeout: 55), .completed)
+        if !linked.exists && closePortal.exists { closePortal.tap() }
+        XCTAssertTrue(linked.waitForExistence(timeout: 30), app.debugDescription)
+        let brokerActivity = app.buttons["broker.activity"]
+        for _ in 0..<7 where !brokerActivity.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(brokerActivity.isHittable)
+        brokerActivity.tap()
+        XCTAssertTrue(app.navigationBars["Recent broker activity"].waitForExistence(timeout: 8))
+        app.buttons["Find linked accounts"].tap()
+        XCTAssertTrue(app.buttons["Load broker activity"].waitForExistence(timeout: 15))
+        app.buttons["Load broker activity"].tap()
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !self.app.staticTexts["Loading brokerage data"].exists &&
+                !self.app.staticTexts["Couldn’t load brokerage activity. Try again."].exists
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 25), .completed)
+        app.navigationBars["Recent broker activity"].buttons.firstMatch.tap()
+        app.buttons["broker.done"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] 'holding' AND label CONTAINS[c] 'added'")).firstMatch.waitForExistence(timeout: 10))
+        tapContinue()
+        waitForStep("Know when it moves")
+        app.buttons["onboarding.notifications.notNow"].tap()
+        if app.staticTexts["Keep your portfolio private"].waitForExistence(timeout: 2) { app.buttons["Not now"].tap() }
+        waitForStep("You're all set")
+        app.buttons["onboarding.finish"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["home.portfolio"].firstMatch.waitForExistence(timeout: 20))
+        let token = try signIn(email: email)
+        let holdings = try rows("portfolio_holdings", select: "asset_symbol,shares,broker_account", token: token)
+        XCTAssertFalse(holdings.isEmpty)
+        XCTAssertTrue(holdings.allSatisfy { ($0["shares"] as? Double ?? 0) > 0 && $0["broker_account"] is [String: Any] })
+    }
+
     func testSignUpSyncsWatchlistReferralAndRestoresOnNewInstall() throws {
         let email = "e2e-\(Int(Date().timeIntervalSince1970))@example.com"
         let picks = ["BHP", "AAPL", "BTC"]
@@ -1739,9 +1817,9 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertFalse(finish.exists, "Onboarding finished")
     }
 
-    private func launch() {
+    private func launch(extraArguments: [String] = []) {
         app.launchArguments = ["-UITestFreshInstall", "-app_theme_mode", "Light",
-                               "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey]
+                               "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey] + extraArguments
         app.launch()
         XCTAssertTrue(app.buttons["onboarding.getStarted"].waitForExistence(timeout: 20))
     }
@@ -1762,8 +1840,8 @@ final class AccountSyncTests: XCTestCase {
                 app.buttons[label].tap()
             }
             if app.staticTexts["Use Strong Password?"].exists {
-                let close = app.buttons["xmark"].exists ? app.buttons["xmark"] : app.buttons["Close"]
-                if close.exists { close.tap() }
+                let buttons = app.buttons.matching(NSPredicate(format: "identifier == 'xmark' OR label == 'Close'"))
+                if let close = buttons.allElementsBoundByIndex.last(where: { $0.isHittable }) { close.tap() }
             }
             let current = (passwordField.value as? String) ?? ""
             let typed = current.allSatisfy { $0 == "•" } ? current.count : 0
