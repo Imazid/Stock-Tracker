@@ -34,6 +34,99 @@ final class AccountSyncTests: XCTestCase {
         }
     }
 
+    func testNamedWatchlistsSyncBetweenAppAndAccount() throws {
+        let email = "watchlists-ios-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let session = try request("POST", "/auth/v1/token?grant_type=password", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: session.data) as? [String: Any])
+        let token = try XCTUnwrap(account["access_token"] as? String)
+        let user = try XCTUnwrap(account["user"] as? [String: Any])
+        let owner = try XCTUnwrap(user["id"] as? String)
+        let named = UUID().uuidString
+        let defaultID = "00000000-0000-0000-0000-000000000001"
+        let apple = ["listing_id": "us:AAPL", "symbol": "AAPL", "name": "Apple", "kind": "Stock", "exchange": "US"]
+        let bitcoin = ["listing_id": "crypto:BTC", "symbol": "BTC", "name": "Bitcoin", "kind": "Crypto"]
+        func mutate(_ action: String, group: String, name: String? = nil, assets: [[String: String]] = []) throws {
+            var payload: [String: Any] = [
+                "p_user_id": owner, "p_id": UUID().uuidString, "p_group_id": group, "p_action": action, "p_assets": assets,
+            ]
+            payload["p_name"] = name
+            let response = try request("POST", "/rest/v1/rpc/apply_watchlist_change",
+                                       body: JSONSerialization.data(withJSONObject: payload), token: token)
+            XCTAssertEqual(response.status, 204, String(decoding: response.data, as: UTF8.self))
+        }
+        func cloud() throws -> [[String: Any]] {
+            let response = try request("POST", "/rest/v1/rpc/get_watchlists",
+                                       body: JSONSerialization.data(withJSONObject: ["p_user_id": owner]), token: token)
+            XCTAssertEqual(response.status, 200)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: response.data) as? [[String: Any]])
+        }
+        func symbols(_ groups: [[String: Any]], named name: String) -> [String] {
+            let group = groups.first { ($0["name"] as? String) == name }
+            return (group?["assets"] as? [[String: Any]] ?? []).compactMap { $0["symbol"] as? String }
+        }
+        try mutate("add", group: defaultID, assets: [apple])
+        try mutate("import", group: named, name: "Research", assets: [apple, bitcoin])
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                               "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                               "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light"]
+        app.launch()
+        XCTAssertTrue(app.open("Watchlist", timeout: 25))
+        let appleRow = app.buttons["watchlist.row.AAPL"]
+        let bitcoinRow = app.buttons["watchlist.row.BTC"]
+        let menu = app.buttons["watchlist.listMenu"]
+        XCTAssertTrue(appleRow.waitForExistence(timeout: 20))
+        XCTAssertFalse(bitcoinRow.exists)
+        menu.tap()
+        let research = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Research ·")).firstMatch
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        research.tap()
+        XCTAssertTrue(appleRow.exists)
+        XCTAssertTrue(bitcoinRow.waitForExistence(timeout: 8))
+        app.buttons["watchlist.edit"].tap()
+        appleRow.tap()
+        app.buttons["watchlist.deleteSelected"].tap()
+        app.buttons["watchlist.done"].tap()
+        XCTAssertTrue(appleRow.waitForNonExistence(timeout: 5))
+
+        menu.tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rename “Research”")).firstMatch.tap()
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        if let value = field.value as? String {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count))
+        }
+        field.typeText("Ideas")
+        app.alerts.buttons["Save"].tap()
+
+        var groups: [[String: Any]] = []
+        for _ in 0..<15 {
+            groups = try cloud()
+            if symbols(groups, named: "Ideas") == ["BTC"] { break }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        XCTAssertEqual(symbols(groups, named: "Ideas"), ["BTC"])
+        XCTAssertEqual(symbols(groups, named: "My Watchlist"), ["AAPL"])
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.open("Watchlist", timeout: 25))
+        XCTAssertTrue(appleRow.waitForExistence(timeout: 20))
+        menu.tap()
+        let ideas = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Ideas ·")).firstMatch
+        XCTAssertTrue(ideas.waitForExistence(timeout: 5))
+        ideas.tap()
+        XCTAssertTrue(bitcoinRow.waitForExistence(timeout: 8))
+        XCTAssertFalse(appleRow.exists)
+    }
+
     func testNewInvestorSignsUpAndReviewsLinkedBrokerage() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ONBOARDING_BROKER"] == "1",
                           "Start the signed-in onboarding brokerage relay")

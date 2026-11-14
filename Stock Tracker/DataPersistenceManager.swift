@@ -54,6 +54,7 @@ final class DataPersistenceManager {
         static let priceAlerts          = "com.stocktracker.persist.priceAlerts"
         static let portfolioHistory     = "com.stocktracker.persist.portfolioHistory"
         static let customAssets         = "com.stocktracker.persist.customAssets"
+        static let watchlistStorage     = "com.stocktracker.persist.watchlistStorage"
         static let watchlistGroups      = "com.stocktracker.persist.watchlistGroups"
         static let portfolioVisits      = "com.stocktracker.persist.portfolioVisits"
         static let portfolioGroups      = "com.stocktracker.persist.portfolioGroups"
@@ -131,23 +132,24 @@ final class DataPersistenceManager {
 
     // MARK: - Watchlist Groups
 
-    func saveWatchlistGroups(_ groups: [WatchlistGroup]) {
-        guard let data = try? encoder.encode(groups) else { return }
-        _ = keychain.saveData(key: KeychainKeys.watchlistGroups, value: data)
+    func loadWatchlistStorage() -> StoredWatchlists {
+        if let data = keychain.retrieveData(key: KeychainKeys.watchlistStorage),
+           let storage = try? decoder.decode(StoredWatchlists.self, from: data) {
+            return storage
+        }
+        let groups = keychain.retrieveData(key: KeychainKeys.watchlistGroups)
+            .flatMap { try? decoder.decode([WatchlistGroup].self, from: $0) } ?? []
+        let storage = StoredWatchlists(legacyGroups: groups, legacyAssets: loadWatchlist(),
+                                       selectedIndex: defaults.integer(forKey: "active_watchlist_index"),
+                                       owner: lastPortfolioAccount())
+        saveWatchlistStorage(storage)
+        return storage
     }
 
-    func loadWatchlistGroups() -> [WatchlistGroup] {
-        guard let data = keychain.retrieveData(key: KeychainKeys.watchlistGroups),
-              let groups = try? decoder.decode([WatchlistGroup].self, from: data) else { return [] }
-        return groups
-    }
-
-    func saveActiveWatchlistIndex(_ index: Int) {
-        UserDefaults.standard.set(index, forKey: "active_watchlist_index")
-    }
-
-    func loadActiveWatchlistIndex() -> Int {
-        UserDefaults.standard.integer(forKey: "active_watchlist_index")
+    @discardableResult
+    func saveWatchlistStorage(_ storage: StoredWatchlists) -> Bool {
+        guard let data = try? encoder.encode(storage) else { return false }
+        return keychain.saveData(key: KeychainKeys.watchlistStorage, value: data)
     }
 
     // MARK: - Portfolio
@@ -329,6 +331,7 @@ final class DataPersistenceManager {
         // Groups hold their own copy of the watchlist and win on reload — clear them too,
         // or "cleared" watchlists come back.
         _ = keychain.delete(key: KeychainKeys.watchlistGroups)
+        _ = keychain.delete(key: KeychainKeys.watchlistStorage)
         _ = keychain.delete(key: KeychainKeys.portfolioGroups)
         _ = keychain.delete(key: KeychainKeys.portfolioVisits)
         _ = keychain.delete(key: KeychainKeys.portfolioLedgerQueue)

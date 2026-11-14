@@ -32,69 +32,6 @@ private func parseDate(_ string: String) -> Date {
     iso8601Full.date(from: string) ?? iso8601Basic.date(from: string) ?? Date()
 }
 
-// MARK: - RemoteWatchlistAsset
-// Maps to: public.watchlist_assets
-// Uniqueness: (user_id, symbol)
-// Sync tier: FREE (all signed-in users)
-
-struct RemoteWatchlistAsset: Codable {
-    let id: String          // uuid, server-generated
-    let userId: String
-    let symbol: String
-    let name: String
-    let kind: String        // "Stock" | "Crypto"
-    let exchange: String?
-    let updatedAt: String
-    let deletedAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case userId      = "user_id"
-        case symbol
-        case name
-        case kind
-        case exchange
-        case updatedAt   = "updated_at"
-        case deletedAt   = "deleted_at"
-    }
-
-    var isDeleted: Bool { deletedAt != nil }
-
-    /// Converts to a domain Asset. Live price fields are zeroed out — they are
-    /// always refreshed from the market API, never stored in the cloud.
-    func toDomain() -> Asset {
-        Asset(
-            symbol: symbol,
-            name: name,
-            price: 0,
-            change: 0,
-            changePercent: 0,
-            volume: 0,
-            kind: AssetKind(rawValue: kind) ?? .stock,
-            exchange: exchange ?? ""
-        )
-    }
-
-    /// Builds an upsert payload from a domain Asset.
-    static func from(_ asset: Asset, userId: UUID) -> WatchlistUpsert {
-        WatchlistUpsert(
-            user_id:  userId.uuidString,
-            symbol:   asset.symbol,
-            name:     asset.name,
-            kind:     asset.kind.rawValue,
-            exchange: asset.exchange
-        )
-    }
-}
-
-struct WatchlistUpsert: Encodable {
-    let user_id: String
-    let symbol: String
-    let name: String
-    let kind: String
-    let exchange: String?
-}
-
 // MARK: - RemoteHolding
 // Maps to: public.portfolio_holdings
 // Primary key: id (same UUID as PortfolioHolding.id)

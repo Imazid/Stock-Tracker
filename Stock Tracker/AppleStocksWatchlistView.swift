@@ -73,14 +73,22 @@ struct AppleStocksWatchlistView: View {
 
     @State private var naming: Naming?
     @State private var nameDraft = ""
-    @State private var confirmDeleteList = false
+    @State private var deleteTarget: WatchlistGroup?
 
     @State private var spotlightText: String?
     @State private var spotlightLoading = false
 
     private struct AddScope: Identifiable { let scope: SymbolSearchScope; var id: String { scope.rawValue } }
     private struct PaywallFeature: Identifiable { let name: String; var id: String { name } }
-    private enum Naming { case create, rename }
+    private enum Naming: Equatable {
+        case create
+        case rename(UUID)
+
+        var isRename: Bool {
+            if case .rename = self { return true }
+            return false
+        }
+    }
 
     private var sort: WatchlistSort { WatchlistSort(rawValue: sortRaw) ?? .manual }
     private var isEditing: Bool { editMode.isEditing }
@@ -165,7 +173,10 @@ struct AppleStocksWatchlistView: View {
             .scrollContentBackground(.hidden)
             .dsScreenBackground()
             .environment(\.editMode, $editMode)
-            .refreshable { await marketData.refreshFromAPI() }
+            .refreshable {
+                await SyncManager.shared.pullAndRefresh(marketData: marketData, alertManager: alertManager, force: true)
+                await marketData.refreshFromAPI()
+            }
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom) {
                 if isEditing { editBar.transition(.opacity) }
@@ -203,25 +214,28 @@ struct AppleStocksWatchlistView: View {
             PaywallView(requiredTier: .pro, featureName: feature.name)
                 .environmentObject(subscriptionManager)
         }
-        .alert(naming == .rename ? "Rename list" : "New list", isPresented: Binding(
+        .alert(naming?.isRename == true ? "Rename list" : "New list", isPresented: Binding(
             get: { naming != nil },
             set: { if !$0 { naming = nil } }
         )) {
             TextField("Name", text: $nameDraft)
                 .accessibilityIdentifier("watchlist.nameField")
-            Button(naming == .rename ? "Save" : "Create") { commitName() }
+            Button(naming?.isRename == true ? "Save" : "Create") { commitName() }
             Button("Cancel", role: .cancel) { naming = nil }
         } message: {
-            Text(naming == .rename ? "Give this list a new name." : "Lists keep different ideas apart, like “Dividends” or “Tech”.")
+            Text(naming?.isRename == true ? "Give this list a new name." : "Lists keep different ideas apart, like “Dividends” or “Tech”.")
         }
-        .confirmationDialog("Delete “\(listName)”?", isPresented: $confirmDeleteList, titleVisibility: .visible) {
+        .confirmationDialog("Delete “\(deleteTarget?.name ?? listName)”?", isPresented: Binding(
+            get: { deleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } }
+        ), titleVisibility: .visible, presenting: deleteTarget) { group in
             Button("Delete list", role: .destructive) {
-                dsAnimate { marketData.deleteWatchlist(at: marketData.activeWatchlistIndex) }
+                dsAnimate { marketData.deleteWatchlist(id: group.id) }
                 Haptics.success()
             }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The \(marketData.watchlist.count) symbols on it will be removed from this list. Your other lists and holdings aren't affected.")
+        } message: { group in
+            Text("This deletes the list and its \(group.assets.count) saved symbols.")
         }
     }
 
@@ -307,11 +321,11 @@ struct AppleStocksWatchlistView: View {
             Button("New list…", systemImage: "plus") { startCreate() }
             Button("Rename “\(listName)”…", systemImage: "pencil") {
                 nameDraft = listName
-                naming = .rename
+                naming = .rename(marketData.activeWatchlist.id)
             }
-            if marketData.watchlistGroups.count > 1 {
+            if marketData.canDeleteActiveWatchlist {
                 Button("Delete “\(listName)”…", systemImage: "trash", role: .destructive) {
-                    confirmDeleteList = true
+                    deleteTarget = marketData.activeWatchlist
                 }
             }
         } label: {
@@ -606,8 +620,8 @@ struct AppleStocksWatchlistView: View {
         case .create:
             dsAnimate { marketData.createWatchlist(name: trimmed) }
             filter = .all
-        case .rename:
-            marketData.renameWatchlist(at: marketData.activeWatchlistIndex, to: trimmed)
+        case let .rename(id):
+            marketData.renameWatchlist(id: id, to: trimmed)
         case .none:
             break
         }

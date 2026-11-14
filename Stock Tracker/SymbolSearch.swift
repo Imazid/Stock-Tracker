@@ -74,10 +74,9 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
 
     /// Whether `asset` is this listing (BHP on the ASX is not BHP on the NYSE).
     func matches(_ asset: Asset) -> Bool {
+        if asset.quoteIdentity == placeholderAsset().quoteIdentity { return true }
         guard asset.symbol.uppercased() == symbol.uppercased(), asset.kind == kind else { return false }
-        guard kind == .stock else { return true }
-        if market == .intl { return asset.exchange == "International" }
-        return QuoteService.isASX(asset) == (market == .asx)
+        return asset.isUnresolvedUSQuote && market == .us
     }
 }
 
@@ -416,13 +415,14 @@ enum WatchlistMembership {
             marketData.removeFromWatchlist(existing)
             return .removed
         }
-        if marketData.watchlist.contains(where: { $0.symbol.uppercased() == hit.symbol.uppercased() }) {
+        let candidate = quote ?? hit.placeholderAsset()
+        if marketData.isOnWatchlist(candidate) {
             return .conflict
         }
         if let limit = tier.maxWatchlistAssets, marketData.watchlist.count >= limit {
             return .limitReached
         }
-        marketData.addToWatchlist(quote ?? hit.placeholderAsset())
+        marketData.addToWatchlist(candidate)
         return .added
     }
 }
