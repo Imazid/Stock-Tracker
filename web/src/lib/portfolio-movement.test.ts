@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { portfolioMovement } from "./portfolio-movement.ts";
+import { portfolioMovement, portfolioUnusualMoves } from "./portfolio-movement.ts";
 import type { QuoteView } from "./market-types";
 
 const quote = (id: string, currency: string, last: number, previousClose?: number): QuoteView => ({
@@ -27,4 +27,14 @@ test("excludes stale, missing and mismatched quotes from coverage", () => {
     { ...quote("us:AAPL", "USD", 115, 110), stale: true }]) {
     assert.deepEqual(portfolioMovement([holding], () => price), { covered: 0, contributions: [], totals: [] });
   }
+});
+
+test("ranks unusually large moves by percentage, including the exact threshold and negative moves", () => {
+  const prices = new Map([["us:AAPL", quote("us:AAPL", "USD", 105, 100)], ["asx:BHP", quote("asx:BHP", "AUD", 180, 200)],
+    ["us:SPY", quote("us:SPY", "USD", 51, 50)], ["us:AMZN", { ...quote("us:AMZN", "USD", 200, 50), stale: true }]]);
+  const rows = [...prices.values()].map(({ instrumentId: id, currency }) => ({ shares: id === "us:SPY" ? 1000 : 1, instrument: { id, currency } }));
+  const movement = portfolioMovement(rows, (id) => prices.get(id));
+  assert.deepEqual(portfolioUnusualMoves(movement.contributions).map(({ id, changePct }) => [id, changePct]), [
+    ["asx:BHP", -10], ["us:AAPL", 5],
+  ]);
 });

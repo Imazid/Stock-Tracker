@@ -16,7 +16,8 @@ import { BadInstrumentError, parseInstrumentID } from "@/server/market/instrumen
 import { getCandles, getQuote, NoDataError, search } from "@/server/market/service";
 import { BacktestRequestError, decodeInputs, runBacktest } from "@/server/strategy/backtest";
 import { CHART_RANGES, type ChartRange, type QuoteView } from "@/lib/market-types";
-import { rowToInstrument, toView } from "@/lib/instrument-view";
+import { toView } from "@/lib/instrument-view";
+import { portfolioInstrument } from "@/lib/portfolio-exposure";
 import { portfolioMovement } from "@/lib/portfolio-movement";
 import { clean, type ToolContext, type ToolName, TOOL_NAMES, type ToolOutcome } from "./tools-schema.ts";
 
@@ -194,11 +195,11 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
       .select("asset_symbol,asset_name,asset_kind,asset_exchange,shares")
       .is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(limit + 1);
     if (error) return { data: { error: "Synced holdings are unavailable." }, isError: true };
-    const holdings = data.slice(0, limit).map((row) => {
-      const instrument = rowToInstrument({
+    const holdings = data.slice(0, limit).flatMap((row) => {
+      const instrument = portfolioInstrument({
         symbol: row.asset_symbol, name: row.asset_name, kind: row.asset_kind, exchange: row.asset_exchange,
       });
-      return { shares: row.shares as number, instrument: toView(instrument), asset: instrument };
+      return instrument ? [{ shares: row.shares as number, instrument: toView(instrument), asset: instrument }] : [];
     });
     const assets = new Map(holdings.map(({ asset, instrument }) => [instrument.id, asset]));
     const quotes = new Map<string, QuoteView>();
@@ -212,7 +213,8 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
     }));
     return {
       data: {
-        holdingsChecked: holdings.length,
+        holdingsChecked: Math.min(data.length, limit),
+        holdingsWithUnresolvedListings: Math.min(data.length, limit) - holdings.length,
         holdingsWithUsableQuotes: movement.covered,
         truncated: data.length > limit,
         totals: movement.totals.map(([currency, contribution]) => ({ currency, contribution })),

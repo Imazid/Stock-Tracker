@@ -1,0 +1,71 @@
+.panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.panel[data-overview] {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  --text-2: var(--muted);
+  --primary-fg: var(--accent);
+}
+
+.panel summary {
+  padding: 12px 15px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.panel summary:focus-visible {
+  outline-offset: -3px;
+}
+
+.body {
+  display: grid;
+  gap: 10px;
+  padding: 0 15px 15px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));
+  gap: 8px;
+}
+
+.groups > div {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px;
+  overflow-wrap: anywhere;
+}
+
+.groups h3 {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.groups ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.groups li {
+  border-top: 1px solid var(--border);
+  padding-block: 5px;
+}
+
+.panel .body a, .panel .body button {
+  color: var(--primary-fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

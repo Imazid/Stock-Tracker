@@ -1,4 +1,5 @@
 import type { Evidence, FinancialFact, ResearchEvent, ResearchProfile, ResearchRecord } from "../../lib/research-types.ts";
+import { upcomingEarnings } from "../../lib/portfolio-events.ts";
 import { cached } from "../market/cache.ts";
 import { asNumber, asObject, asText, providerJSON, safeUrl } from "./upstream.ts";
 
@@ -82,6 +83,13 @@ export async function fmpNews(symbol: string): Promise<ResearchEvent[]> {
     const date = asText(row.publishedDate);
     if (row.symbol !== symbol || !url || !title || !date || !Number.isFinite(Date.parse(date))) return [];
     return [{ id: url, title, category: "News", date, publisher: asText(row.site ?? row.publisher), evidence: { ...evidence, url, publishedAt: date } }];
+  });
+}
+
+export async function fmpUpcomingEarnings(symbol: string, today: string, through: string): Promise<ResearchEvent[]> {
+  const { rows, evidence } = await fmpRows("earnings", { symbol, limit: "30" }, 3_600_000);
+  return upcomingEarnings(rows, symbol, today, through, {
+    ...evidence, url: `${DOCS}/stable/earnings-company`,
   });
 }
 

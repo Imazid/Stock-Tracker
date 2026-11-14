@@ -75,13 +75,20 @@ function Turn({ turn }: { turn: AssistantTurn }) {
 }
 
 interface Status { assistant: boolean; accounts: boolean }
-
-/** The chat itself; `compact` for the side panel, full size for the AI Workspace page. */
-export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
+type ChatProps = {
   compact?: boolean;
   company?: { instrumentId: string; symbol: string; section: string };
   reportRequest?: number;
-}) {
+  initialQuestion?: string;
+};
+
+/** The chat itself; `compact` for the side panel, full size for the AI Workspace page. */
+export function AssistantChat(props: ChatProps) {
+  const session = useSession();
+  return <Conversation key={session.status === "signedIn" ? session.user.id : session.status} {...props} />;
+}
+
+function Conversation({ compact = false, company, reportRequest = 0, initialQuestion }: ChatProps) {
   const { turns, busy, send, stop, reset } = useAssistant(company?.instrumentId, company?.section);
   const reportPrompt = company
     ? `Write a source-backed investment research report on ${company.symbol}, covering business, performance, finances, valuation, risks, recent filings, earnings and peers. Cite the evidence and mark missing datasets.`
@@ -91,7 +98,7 @@ export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
     "How has operating cash flow changed over the last five years?",
     "What do the latest reported results show about profitability and financial risk?",
   ] : SUGGESTIONS;
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialQuestion ?? "");
   const [shareAccountContext, setShareAccountContext] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const session = useSession();
@@ -127,17 +134,19 @@ export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
         ) : null}
         {turns.length === 0 ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-text"><BrainCircuit aria-hidden className="h-4 w-4 text-primary-fg" />{company ? `Ask about ${company.symbol}` : "Ask about markets, your watchlist or a strategy"}</div>
+            <div className="flex items-center gap-2 text-sm font-medium text-text"><BrainCircuit aria-hidden className="h-4 w-4 text-primary-fg" />{company ? `Ask about ${company.symbol}` : initialQuestion ? "Ask about your portfolio" : "Ask about markets, your watchlist or a strategy"}</div>
             <p className="text-[13px] leading-relaxed text-text-2">
-              {company ? "Research uses the selected listing, company datasets and source documents available to this app." : <>Answers come from the app&apos;s market data and your own lists, with sources and times. It can draft a strategy, run a backtest or fill in an order ticket for you to review — it never places, approves or sends an order. General information only, not personal advice.</>}
+              {company ? "Research uses the selected listing, company datasets and source documents available to this app." : initialQuestion
+                ? "Enable account sharing to include your synced holdings, then send the question. The response links to the quotes used in the calculation."
+                : <>Answers come from the app&apos;s market data and your own lists, with sources and times. It can draft a strategy, run a backtest or fill in an order ticket for you to review — it never places, approves or sends an order. General information only, not personal advice.</>}
             </p>
-            <ul className="space-y-1.5">
+            {!initialQuestion && <ul className="space-y-1.5">
               {suggestions.slice(0, compact ? 3 : suggestions.length).map((s, i) => (
                 <li key={s}>
                   <button type="button" disabled={busy || unavailable} onClick={() => submit(s)} className="w-full rounded-lg border border-border px-3 py-2 text-left text-[13px] text-text-2 hover:border-primary/50 hover:text-text disabled:opacity-50">{company && i === 0 ? "Generate AI research report" : s}</button>
                 </li>
               ))}
-            </ul>
+            </ul>}
           </div>
         ) : (
           turns.map((t, i) => <Turn key={i} turn={t} />)
@@ -183,7 +192,8 @@ export function AssistantChat({ compact = false, company, reportRequest = 0 }: {
           )}
         </div>
         {turns.length > 0 ? (
-          <button type="button" onClick={reset} className="mt-2 inline-flex items-center gap-1 text-[12px] text-text-3 hover:text-text"><RotateCcw aria-hidden className="h-3 w-3" />New conversation</button>
+          <button type="button" onClick={() => { setShareAccountContext(false); setDraft(initialQuestion ?? ""); reset(); }}
+            className="mt-2 inline-flex items-center gap-1 text-[12px] text-text-3 hover:text-text"><RotateCcw aria-hidden className="h-3 w-3" />New conversation</button>
         ) : null}
       </form>
     </div>

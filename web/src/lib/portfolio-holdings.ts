@@ -11,8 +11,16 @@ export type PortfolioHolding = {
   broker_account: HoldingBrokerAccount | null;
   shares: number;
   avg_cost: number;
+  updated_at?: string;
   instrument: InstrumentView | null;
 };
+
+export function updatedOpenHoldings(holdings: readonly PortfolioHolding[], after: number, now: number) {
+  return holdings.filter(({ updated_at }) => {
+    const updated = Date.parse(updated_at ?? "");
+    return updated > after && updated <= now;
+  }).length;
+}
 
 export type HoldingClass = InstrumentView["assetClass"] | "unclassified";
 export type HoldingSort = "value" | "change" | "drop" | "gain" | "loss" | "symbol";

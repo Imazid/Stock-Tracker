@@ -2,6 +2,7 @@
 
 import { Wallet } from "lucide-react";
 import { HoldingsCard } from "@/components/portfolio/holdings-card";
+import { HoldingEvents } from "@/components/portfolio/holding-events";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -22,7 +23,7 @@ import { useSession } from "@/lib/session";
 import { PortfolioHistory } from "@/workspace/components/portfolio-history";
 import "@/workspace/styles.css";
 
-export function PortfolioView({ recordTransfer = false, logosEnabled }: { recordTransfer?: boolean; logosEnabled: boolean }) {
+export function PortfolioView({ recordTransfer = false, logosEnabled, aiEnabled }: { recordTransfer?: boolean; logosEnabled: boolean; aiEnabled: boolean }) {
   const session = useSession();
   const userId = session.status === "signedIn" ? session.user.id : undefined;
   const { portfolio, holdings, pricedListings, quotes, pendingQuotes, loadingPrices } = usePortfolioPositions(userId);
@@ -53,7 +54,8 @@ export function PortfolioView({ recordTransfer = false, logosEnabled }: { record
           {userId && <div className="workspace portfolio-history-embed"><PortfolioHistory key={userId} userId={userId} /></div>}
           <HoldingsCard key={userId} comparison={comparison} pendingQuotes={pendingQuotes} truncated={portfolio.data?.truncated ?? false}
             logosEnabled={logosEnabled} gainsUnavailable={gains.isError} ratesUnavailable={rates.isError} />
-          {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={loadingPrices} />}
+          {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={loadingPrices} aiEnabled={aiEnabled} />}
+          {userId && holdings.length > 0 && <HoldingEvents key={userId} userId={userId} />}
           {holdings.length > 0 && <ExposureCard key={userId} holdings={holdings} quoteFor={quoteFor}
             loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} />}
           {userId && <>
