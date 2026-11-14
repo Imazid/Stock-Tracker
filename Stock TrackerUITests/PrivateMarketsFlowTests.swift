@@ -369,6 +369,36 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSavedResearchCanReviewNewSources() async throws {
+        try launchWithLocalSession("PRIVATE_REPORT_REFRESH_TEST_SESSION")
+        openPrivateMarkets()
+        let destination = app.buttons["private.destination.sparkles"]
+        let saved = app.buttons["Review earlier financing assumptions"]
+        for _ in 0..<3 where !saved.exists {
+            if destination.exists && destination.isHittable { destination.tap() }
+            for _ in 0..<2 where !saved.exists { app.swipeUp() }
+            if saved.waitForExistence(timeout: 4) { break }
+        }
+        XCTAssertTrue(saved.isHittable, app.debugDescription)
+        saved.tap()
+        let refresh = app.buttons["private.research.refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 8), app.debugDescription)
+        refresh.tap()
+        let question = app.descendants(matching: .any)["private.research.question"].firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(question.value as? String, "Review earlier financing assumptions")
+        let original = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Series B")).firstMatch
+        let newer = app.switches.containing(NSPredicate(format: "label CONTAINS %@", "Financing assumption update")).firstMatch
+        for _ in 0..<3 where !newer.exists { app.swipeUp() }
+        XCTAssertEqual(original.value as? String, "1")
+        XCTAssertEqual(newer.value as? String, "0")
+        let control = newer.switches.firstMatch
+        if control.exists { control.tap() } else { newer.tap() }
+        XCTAssertEqual(newer.value as? String, "1")
+        XCTAssertTrue(app.buttons["Ask a question"].exists)
+    }
+
+    @MainActor
     func testResearchWorkspaceReloadsRecentRuns() throws {
         try launchWithLocalSession("PRIVATE_RESEARCH_TEST_SESSION")
         openPrivateMarkets()

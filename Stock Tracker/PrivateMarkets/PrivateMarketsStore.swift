@@ -133,9 +133,20 @@ struct PrivateResearchReport: Decodable {
     let createdAt: Date
     let question: String
     let sources: [Source]
+    let refreshAvailable: Bool?
+    let previousReportId: UUID?
     let findings: [Finding]
     let committee: Finding?
     let models: [String]
+}
+
+struct PrivateResearchRefresh: Decodable {
+    let question: String
+    let unavailableSources: Int
+    let documents: [PrivateSavedItem]
+    let deals: [PrivateDeal]
+    let announcements: [PrivateCompanyUpdate]
+    let newerAnnouncements: [PrivateCompanyUpdate]
 }
 
 struct PrivateCompanyUpdate: Decodable, Identifiable {

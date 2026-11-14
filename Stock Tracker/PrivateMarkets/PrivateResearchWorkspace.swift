@@ -9,6 +9,9 @@ struct PrivateResearchWorkspace: View {
     var selectedDealID: UUID?
     var compareFundingRounds = false
     var announcements: [PrivateCompanyUpdate] = []
+    var refresh: PrivateResearchRefresh?
+    var refreshOwner: UUID?
+    var previousReportID: UUID?
     @EnvironmentObject private var auth: SupabaseAuthManager
     @State private var documents: [PrivateSavedItem] = []
     @State private var reports: [PrivateSavedItem] = []
@@ -41,8 +44,16 @@ struct PrivateResearchWorkspace: View {
                 Section("Research question") {
                     TextField("Ask about a company, valuation or risk", text: $question, axis: .vertical)
                         .lineLimit(2...5)
+                        .accessibilityIdentifier("private.research.question")
                     Text("Choose up to three sources. The committee runs five specialist reviews and a synthesis.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                if let refresh, refresh.unavailableSources > 0 {
+                    Section { Text("Some original sources are no longer available. Review the sources before running the update.") }
+                }
+                if refresh != nil, deals.isEmpty, announcements.isEmpty, documents.isEmpty,
+                   refresh?.newerAnnouncements.isEmpty == true {
+                    Section { Text("No sources are available for this report. Choose new evidence in AI Investment Research.") }
                 }
                 if !deals.isEmpty {
                     Section("Published opportunities") {
@@ -60,6 +71,15 @@ struct PrivateResearchWorkspace: View {
                         }
                     }
                 }
+                if let refresh, !refresh.newerAnnouncements.isEmpty {
+                    Section("Published since the previous report") {
+                        if sourceCount >= 3 { Text("Deselect a source to include a newer update.").font(.footnote) }
+                        ForEach(refresh.newerAnnouncements) { item in
+                            Toggle("\(item.company.name) · \(item.title)",
+                                   isOn: selection(item.id, in: $selectedAnnouncements))
+                        }
+                    }
+                }
                 Section("Private excerpts") {
                     if loading {
                         VStack(spacing: 0) {
@@ -70,7 +90,9 @@ struct PrivateResearchWorkspace: View {
                     if documents.isEmpty && !loading {
                         Text("Add authorized text in the Deal Room.").foregroundStyle(.secondary)
                     }
-                    ForEach(documents) { item in Toggle(item.title, isOn: selection(item.id, in: $selectedDocuments)) }
+                    ForEach(documents) { item in
+                        Toggle(item.title, isOn: selection(item.id, in: $selectedDocuments))
+                    }
                     if !selectedDocuments.isEmpty {
                         Toggle("I have permission to send these excerpts to Stock Tracker’s configured AI provider", isOn: $consent)
                     }
@@ -146,15 +168,19 @@ struct PrivateResearchWorkspace: View {
                 busy = false
                 loading = false
                 error = nil
-                if let selectedDealID { selectedDeals.insert(selectedDealID) }
-                if compareFundingRounds {
+                if let refreshOwner, refreshOwner != auth.userId { return }
+                if let refresh {
+                    question = refresh.question
+                    selectedDeals = Set(refresh.deals.map(\.id))
+                    selectedAnnouncements = Set(refresh.announcements.map(\.id))
+                    documents = refresh.documents
+                } else if compareFundingRounds {
                     selectedDeals = Set(deals.prefix(3).map(\.id))
                     question = "Compare the selected funding rounds. Explain the reported valuation basis, any changes in the financing, and what the sources disclose about dilution and investor rights."
-                }
-                if !announcements.isEmpty {
+                } else if !announcements.isEmpty {
                     selectedAnnouncements = Set(announcements.prefix(3).map(\.id))
                     question = "Summarise these published company updates. Explain what changed, what the sources disclose about dilution, and what remains unanswered."
-                }
+                } else if let selectedDealID { selectedDeals.insert(selectedDealID) }
                 workspaceOwner = auth.userId
             }
             await load()
@@ -207,7 +233,7 @@ struct PrivateResearchWorkspace: View {
             }
             // An omitted completed run already has a saved report in the same database transaction.
             let reportList: PrivateMarketsAPI.Items = try await PrivateMarketsAPI.request("reports", expectedUserID: owner)
-            let documentList: PrivateMarketsAPI.Items? = quietly ? nil :
+            let documentList: PrivateMarketsAPI.Items? = quietly || refresh != nil ? nil :
                 try await PrivateMarketsAPI.request("documents", expectedUserID: owner)
             try Task.checkCancellation()
             guard auth.userId == owner, loadID == requestID else { return }
@@ -223,11 +249,12 @@ struct PrivateResearchWorkspace: View {
 
     private func run(_ mode: String) {
         guard let owner = auth.userId else { return }
-        let fields: [String: Any] = [
+        var fields: [String: Any] = [
             "mode": mode, "question": question, "document_ids": selectedDocuments.map(\.uuidString),
             "opportunity_ids": selectedDeals.map(\.uuidString), "ai_consent": consent,
             "announcement_ids": selectedAnnouncements.map(\.uuidString)
         ]
+        if let previousReportID { fields["previous_report_id"] = previousReportID.uuidString }
         let requestID = UUID()
         runRequestID = requestID
         error = nil
@@ -289,7 +316,7 @@ struct PrivateSavedReportView: View {
     var body: some View {
         Group {
             if auth.userId != owner { ContentUnavailableView("Report unavailable", systemImage: "doc.text") }
-            else if let report { PrivateReportView(report: report) }
+            else if let report { PrivateReportView(report: report, owner: owner) }
             else if let error { ContentUnavailableView("Report unavailable", systemImage: "exclamationmark.circle", description: Text(error)) }
             else {
                 ScrollView {
@@ -324,12 +351,26 @@ struct PrivateSavedReportView: View {
 
 private struct PrivateReportView: View {
     let report: PrivateResearchReport
+    let owner: UUID
     var body: some View {
         List {
             Section("Question") {
                 Text(report.question)
                 Text("AI-generated research · \(report.createdAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.footnote).foregroundStyle(.secondary)
+            }
+            if report.refreshAvailable == true {
+                Section {
+                    NavigationLink("Review sources for an updated report") {
+                        PrivateResearchRefreshView(reportId: report.id, owner: owner)
+                    }
+                    .accessibilityIdentifier("private.research.refresh")
+                }
+            }
+            if let previous = report.previousReportId {
+                Section {
+                    NavigationLink("Open previous report") { PrivateSavedReportView(id: previous, owner: owner) }
+                }
             }
             if let committee = report.committee { section(committee) }
             ForEach(report.findings) { section($0) }
@@ -365,6 +406,41 @@ private struct PrivateReportView: View {
             ForEach(Array(finding.questions.enumerated()), id: \.offset) { _, question in
                 Label(question, systemImage: "questionmark.bubble")
             }
+        }
+    }
+}
+
+private struct PrivateResearchRefreshView: View {
+    let reportId: UUID
+    let owner: UUID
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var refresh: PrivateResearchRefresh?
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if auth.userId != owner {
+                ContentUnavailableView("Report unavailable", systemImage: "doc.text")
+            } else if let refresh {
+                PrivateResearchWorkspace(deals: refresh.deals, announcements: refresh.announcements,
+                                         refresh: refresh, refreshOwner: owner, previousReportID: reportId)
+            } else if let error {
+                ContentUnavailableView("Sources unavailable", systemImage: "doc.text", description: Text(error))
+            } else {
+                ProgressView("Checking research sources")
+            }
+        }
+        .task(id: auth.userId) {
+            refresh = nil
+            error = nil
+            guard auth.userId == owner else { return }
+            do {
+                let response: PrivateResearchRefresh = try await PrivateMarketsAPI.request(
+                    "research_refresh", ["id": reportId.uuidString], expectedUserID: owner)
+                try Task.checkCancellation()
+                if auth.userId == owner { refresh = response }
+            } catch is CancellationError {
+            } catch { if auth.userId == owner { self.error = error.localizedDescription } }
         }
     }
 }

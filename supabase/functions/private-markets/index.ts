@@ -14,6 +14,7 @@ const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisd
   "share_classes(name,rights,source_url))";
 
 type CatalogDeal = {
+  id: string;
   source_url: string;
   provider: string;
   category: string;
@@ -33,7 +34,7 @@ type CatalogDeal = {
     valuation_method: string | null;
     currency: string;
     traction: string | null;
-    company: { name: string; description: string | null; country: string; sector: string };
+    company: { id: string; name: string; description: string | null; country: string; sector: string };
     share_classes: { name: string; rights: string }[];
   };
 };
@@ -104,6 +105,8 @@ function catalogue(admin: ReturnType<typeof serviceClient>) {
 }
 
 type Announcement = {
+  id: string;
+  company_id: string;
   title: string;
   significance: string;
   published_at: string;
@@ -111,13 +114,78 @@ type Announcement = {
   company_name: string;
 };
 
-function announcementEvidence(item: Announcement, id: string): Evidence {
+type ReportSource = { id: string; title: string; url?: string };
+type SourceReferences = { document_ids: string[]; opportunity_ids: string[]; announcement_ids: string[]; company_ids: string[] };
+type StoredReport = { question: string; source_refs?: SourceReferences } & Record<string, unknown>;
+
+function publicReport({ source_refs, ...report }: StoredReport) {
+  return { ...report, refresh_available: source_refs !== undefined };
+}
+
+function publishedAnnouncements(admin: ReturnType<typeof serviceClient>) {
+  return admin.from("published_private_company_updates")
+    .select("id,title,significance,source_url,source_label,published_at,round_announced_on,company_name,company_id");
+}
+
+function companyUpdate(item: Announcement & { source_label: string | null; round_announced_on: string | null }) {
+  return { id: item.id, title: item.title, significance: item.significance, source_url: item.source_url,
+    source_label: item.source_label, published_at: item.published_at, round_announced_on: item.round_announced_on,
+    kind: item.round_announced_on ? "closed_round" : "announcement", company: { name: item.company_name } };
+}
+
+function announcementEvidence(item: Pick<Announcement, "company_name" | "title" | "published_at" | "significance">, id: string): Evidence {
   const title = item.company_name + ": " + item.title;
   const summary = [
     "Company: " + item.company_name, "Announcement: " + item.title,
     "Published: " + item.published_at, item.significance,
   ].join("\n");
   return { id, title, text: summary.slice(0, 2_800) };
+}
+
+async function savedReport(admin: ReturnType<typeof serviceClient>, userId: string, id: string) {
+  const { data, error } = await admin.from("research_reports").select("sealed,created_at")
+    .eq("user_id", userId).eq("id", id).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new ResearchError(404, "NOT_FOUND", "Report unavailable.");
+  const plain = await open(await keys(), data.sealed as SealedSecret, context("report", userId, id));
+  return { report: JSON.parse(plain) as StoredReport, createdAt: data.created_at as string };
+}
+
+async function researchRefresh(admin: ReturnType<typeof serviceClient>, userId: string, id: string) {
+  const { report, createdAt } = await savedReport(admin, userId, id);
+  const refs = reportSourceReferences(report);
+  const [docs, offers, notices] = await Promise.all([
+    refs.document_ids.length ? admin.from("deal_documents").select("id,title,created_at").eq("user_id", userId)
+      .in("id", refs.document_ids) : Promise.resolve({ data: [], error: null }),
+    refs.opportunity_ids.length ? catalogue(admin).in("id", refs.opportunity_ids).returns<CatalogDeal[]>() :
+      Promise.resolve({ data: [], error: null }),
+    refs.announcement_ids.length ? publishedAnnouncements(admin).in("id", refs.announcement_ids)
+      .order("published_at", { ascending: false }).order("id") : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (docs.error) throw docs.error;
+  if (offers.error) throw offers.error;
+  if (notices.error) throw notices.error;
+  const existing = new Set(refs.announcement_ids);
+  const newer = refs.company_ids.length ? await publishedAnnouncements(admin).in("company_id", refs.company_ids)
+    .gt("published_at", createdAt).order("published_at", { ascending: false }).order("id").limit(12) :
+    { data: [], error: null };
+  if (newer.error) throw newer.error;
+  return {
+    question: report.question,
+    unavailable_sources: refs.document_ids.length + refs.opportunity_ids.length + refs.announcement_ids.length -
+      (docs.data.length + offers.data.length + notices.data.length),
+    documents: docs.data,
+    deals: offers.data,
+    announcements: notices.data.map(companyUpdate),
+    newer_announcements: newer.data.filter((item) => !existing.has(item.id)).map(companyUpdate),
+  };
+}
+
+function reportSourceReferences(report: StoredReport): SourceReferences {
+  if (!report.source_refs) {
+    throw new ResearchError(409, "REPORT_SOURCES_UNAVAILABLE", "This report was saved before source references became available.");
+  }
+  return report.source_refs;
 }
 
 type DigestJob = {
@@ -143,11 +211,16 @@ async function scheduledDigests(admin: ReturnType<typeof serviceClient>) {
   const results = await Promise.allSettled(jobs.map(async (job) => {
     const evidence = job.sources.map((source, index) => announcementEvidence({
       company_name: source.company, title: source.title, significance: source.summary,
-      published_at: source.published_at, source_url: source.url,
+      published_at: source.published_at,
     }, "O" + (index + 1)));
     const report = await buildResearch(job.owner_id, question, evidence, "digest", aiDependencies(admin));
     const sources = evidence.map(({ id, title }, index) => ({ id, title, url: job.sources[index].url }));
-    const payload = { ...report, id: job.job_id, sources, question, created_at: new Date().toISOString() };
+    const announcementIds = job.sources.map((source) => source.id);
+    const { data: current, error } = await publishedAnnouncements(admin).in("id", announcementIds);
+    if (error) throw error;
+    const source_refs: SourceReferences = { document_ids: [], opportunity_ids: [], announcement_ids: announcementIds,
+      company_ids: [...new Set(current.map((item) => item.company_id as string))] };
+    const payload = { ...report, id: job.job_id, sources, source_refs, question, created_at: new Date().toISOString() };
     const sealed = await seal(keyring, JSON.stringify(payload), context("report", job.owner_id, job.job_id));
     const result = await admin.rpc("finish_private_market_digest", {
       p_job: job.job_id, p_lease: job.lease, p_sources: job.sources, p_sealed: sealed,
@@ -352,10 +425,9 @@ Deno.serve(async (req) => {
           return errorResponse(400, "INVALID_REQUEST", "Send up to 100 watched company IDs.");
         }
         if (!ids.length) return jsonResponse(200, { updates: [] });
-        const { data, error } = await admin.from("published_private_company_updates")
-          .select("id,title,significance,source_url,source_label,published_at,round_announced_on,company_name")
+        const { data, error } = await publishedAnnouncements(admin)
           .in("company_id", ids).order("published_at", { ascending: false }).order("id").limit(100)
-          .returns<(Announcement & { id: string; source_label: string | null; round_announced_on: string | null })[]>();
+          .returns<(Announcement & { source_label: string | null; round_announced_on: string | null })[]>();
         if (error) throw error;
         const now = new Date();
         const since = new Date(now.getTime() - 86_400_000);
@@ -377,10 +449,7 @@ Deno.serve(async (req) => {
             "The source published an expression of interest.",
           source_url: item.source_url, published_at: item.verified_at, company: item.round.company,
         }));
-        const announcements = data.map(({ company_name, round_announced_on, ...item }) => ({
-          ...item, kind: round_announced_on ? "closed_round" : "announcement", round_announced_on,
-          company: { name: company_name },
-        }));
+        const announcements = data.map(companyUpdate);
         return jsonResponse(200, {
           updates: [...announcements, ...funding].sort((a, b) =>
             Date.parse(b.published_at) - Date.parse(a.published_at) || a.id.localeCompare(b.id)).slice(0, 100),
@@ -522,11 +591,11 @@ Deno.serve(async (req) => {
       }
       case "report": {
         if (typeof body.id !== "string" || !uuid.test(body.id)) return errorResponse(400, "INVALID_REQUEST", "Invalid report.");
-        const { data, error } = await admin.from("research_reports").select("sealed").eq("user_id", userId).eq("id", body.id).maybeSingle();
-        if (error) throw error;
-        if (!data) return errorResponse(404, "NOT_FOUND", "Report unavailable.");
-        const plaintext = await open(await keys(), data.sealed as SealedSecret, context("report", userId, body.id));
-        return jsonResponse(200, JSON.parse(plaintext));
+        return jsonResponse(200, publicReport((await savedReport(admin, userId, body.id)).report));
+      }
+      case "research_refresh": {
+        if (typeof body.id !== "string" || !uuid.test(body.id)) return errorResponse(400, "INVALID_REQUEST", "Invalid report.");
+        return jsonResponse(200, await researchRefresh(admin, userId, body.id));
       }
       case "research_status": {
         if (typeof body.id !== "string" || !uuid.test(body.id)) return errorResponse(400, "INVALID_REQUEST", "Invalid research run.");
@@ -545,16 +614,24 @@ Deno.serve(async (req) => {
         return jsonResponse(200, { runs: data.map(researchStatus) });
       }
       case "research": {
-        const { document_ids: ids, opportunity_ids: dealIDs, announcement_ids: announcementIDs = [], question, mode } = body;
-        if (!Array.isArray(ids) || !Array.isArray(dealIDs) || !Array.isArray(announcementIDs)) {
+        const { document_ids: documentIds, opportunity_ids: opportunityIds, announcement_ids: updateIds = [], question, mode } = body;
+        if (!Array.isArray(documentIds) || !Array.isArray(opportunityIds) || !Array.isArray(updateIds)) {
           return errorResponse(400, "INVALID_RESEARCH", "Select one to three sources and enter a research question.");
         }
-        const sourceIDs = [...ids, ...dealIDs, ...announcementIDs];
+        const sourceIDs = [...documentIds, ...opportunityIds, ...updateIds];
         if (sourceIDs.length < 1 || sourceIDs.length > 3 ||
-          sourceIDs.some((id) => typeof id !== "string" || !uuid.test(id)) || new Set(sourceIDs).size !== sourceIDs.length ||
+          sourceIDs.some((id) => typeof id !== "string" || !uuid.test(id)) ||
+          new Set(sourceIDs.map((id: string) => id.toLowerCase())).size !== sourceIDs.length ||
           typeof question !== "string" || !question.trim() || question.length > 1_000 ||
           (mode !== "question" && mode !== "committee")) {
           return errorResponse(400, "INVALID_RESEARCH", "Select one to three sources and enter a research question.");
+        }
+        const ids = documentIds.map((id: string) => id.toLowerCase());
+        const dealIDs = opportunityIds.map((id: string) => id.toLowerCase());
+        const announcementIDs = updateIds.map((id: string) => id.toLowerCase());
+        const previousId = body.previous_report_id;
+        if (previousId !== undefined && (typeof previousId !== "string" || !uuid.test(previousId))) {
+          return errorResponse(400, "INVALID_RESEARCH", "Invalid previous research report.");
         }
         const documentProvider = Deno.env.get("PRIVATE_MARKETS_DOCUMENT_AI_PROVIDER");
         const approvedProvider = documentProvider === "gemini" || documentProvider === "openai";
@@ -564,7 +641,12 @@ Deno.serve(async (req) => {
         }
         const keyring = await keys();
         const evidence: Evidence[] = [];
-        const sources: { id: string; title: string; url?: string }[] = [];
+        const sources: ReportSource[] = [];
+        const companyIds = new Set<string>();
+        if (typeof previousId === "string") {
+          const { report } = await savedReport(admin, userId, previousId.toLowerCase());
+          reportSourceReferences(report);
+        }
         if (ids.length) {
           const { data, error } = await admin.from("deal_documents").select("id,title,sealed")
             .eq("user_id", userId).in("id", ids);
@@ -580,12 +662,11 @@ Deno.serve(async (req) => {
           }
         }
         if (dealIDs.length) {
-          const { data, error } = await admin.from("investment_opportunities").select(publicDealFields)
-            .eq("published", true).eq("round.published", true).eq("round.company.published", true)
-            .eq("round.share_classes.published", true).in("id", dealIDs).returns<CatalogDeal[]>();
+          const { data, error } = await catalogue(admin).in("id", dealIDs).returns<CatalogDeal[]>();
           if (error) throw error;
           if (data.length !== dealIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published opportunities are unavailable.");
           for (const deal of data) {
+            companyIds.add(deal.round.company.id);
             const id = `O${sources.length + 1}`;
             const company = deal.round.company.name;
             evidence.push({ id, title: company, text: dealEvidence(deal) });
@@ -593,13 +674,13 @@ Deno.serve(async (req) => {
           }
         }
         if (announcementIDs.length) {
-          const { data, error } = await admin.from("published_private_company_updates")
-            .select("title,significance,published_at,source_url,company_name")
-            .in("id", announcementIDs).order("published_at", { ascending: false }).order("id")
+          const { data, error } = await publishedAnnouncements(admin).in("id", announcementIDs)
+            .order("published_at", { ascending: false }).order("id")
             .returns<Announcement[]>();
           if (error) throw error;
           if (data.length !== announcementIDs.length) return errorResponse(404, "NOT_FOUND", "One or more published announcements are unavailable.");
           for (const item of data) {
+            companyIds.add(item.company_id);
             const id = `O${sources.length + 1}`;
             const entry = announcementEvidence(item, id);
             evidence.push(entry);
@@ -614,8 +695,14 @@ Deno.serve(async (req) => {
             await audit(ids.length ? "document_ai_consent" : "public_research_started", runId);
             const deps = aiDependencies(admin, ids.length && approvedProvider ? documentProvider : undefined);
             if (mode === "committee") deps.config.timeoutMs = 22_000;
-            const report = await buildResearch(userId, question, evidence, mode, deps);
-            const payload = { ...report, id: runId, sources, question, created_at: new Date().toISOString() };
+            const researchQuestion = typeof previousId === "string" ?
+              `${question.trim()}\nFor this update, identify changes supported by the selected sources, including any changes to financial assumptions. State when the evidence does not establish what changed.` : question;
+            const report = await buildResearch(userId, researchQuestion, evidence, mode, deps);
+            const source_refs: SourceReferences = { document_ids: ids, opportunity_ids: dealIDs,
+              announcement_ids: announcementIDs, company_ids: [...companyIds] };
+            const payload = { ...report, id: runId, sources, source_refs, question,
+              previous_report_id: typeof previousId === "string" ? previousId.toLowerCase() : undefined,
+              created_at: new Date().toISOString() };
             const sealed = await seal(keyring, JSON.stringify(payload), context("report", userId, runId));
             const result = await admin.rpc("finish_private_research", {
               p_user: userId, p_run: runId, p_title: question.trim().slice(0, 160), p_sealed: sealed,
@@ -643,7 +730,7 @@ Deno.serve(async (req) => {
           }));
           return jsonResponse(202, { id: runId, status: "running" });
         }
-        return jsonResponse(200, await research());
+        return jsonResponse(200, publicReport(await research()));
       }
       default:
         return errorResponse(400, "INVALID_ACTION", "Unknown Private Markets action.");
