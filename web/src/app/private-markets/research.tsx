@@ -11,7 +11,11 @@ import { Notice } from "@/components/ui/Notice";
 import { Segmented } from "@/components/ui/Segmented";
 import { CompareRounds, SourceLink } from "./catalog";
 import { dealRoomExcerpts } from "./deal-room";
-import { dateLabel, privateMarkets, type Finding, type PrivateDeal, type Report, type ResearchCapabilities, type ResearchRun, type SavedReport } from "./private-data";
+import { ResearchSourceReview } from "./research-source-review";
+import {
+  dateLabel, privateMarkets, type Finding, type PrivateDeal, type Report, type ResearchCapabilities,
+  type ResearchRefresh, type ResearchRun, type SavedReport,
+} from "./private-data";
 
 type Mode = "question" | "committee";
 const reportKey = (owner: string) => ["private-markets", owner, "reports"];
@@ -95,6 +99,8 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
   const [consent, setConsent] = useState(false);
   const [excerptConsentProvider, setExcerptConsentProvider] = useState<ResearchCapabilities["document_provider"]>(null);
   const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([]);
+  const [reviewID, setReviewID] = useState<string | null>(null);
+  const [reviewSelection, setReviewSelection] = useState<string[] | null>(null);
   const [reportID, setReportID] = useState<string | null>(initialReportID ?? null);
   const [runID, setRunID] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -107,12 +113,33 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
   const excerptConsent = Boolean(documentProvider && excerptConsentProvider === documentProvider);
   const providerLabel = documentProvider === "openai" ? "OpenAI" : "Google Gemini";
   const excerpts = useQuery({ ...dealRoomExcerpts(owner), enabled: Boolean(documentProvider) });
-  const sourcesValid = selected.length + selectedExcerpts.length > 0 && selected.length + selectedExcerpts.length <= 3 &&
+  const review = useQuery({
+    queryKey: ["private-markets", owner, "research-refresh", reviewID], enabled: Boolean(reviewID),
+    gcTime: 0, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false,
+    queryFn: ({ signal }) => privateMarkets<ResearchRefresh>("research_refresh", { owner, signal, id: reviewID }),
+  });
+  const originalPublicIDs = review.data ? [...new Set([
+    ...review.data.deals.map(({ id }) => id), ...review.data.announcements.map(({ id }) => id),
+  ])].slice(0, 3) : [];
+  const publicIDs = reviewID ? (reviewSelection ?? originalPublicIDs) : selected.map(({ id }) => id);
+  const excerptItems = [...new Map([...(review.data?.documents ?? []), ...(excerpts.data?.items ?? [])].map((item) => [item.id, item])).values()];
+  const sourceCount = publicIDs.length + selectedExcerpts.length;
+  const sourcesValid = sourceCount > 0 && sourceCount <= 3 &&
+    (!reviewID || (Boolean(review.data) && !review.error && !review.isFetching)) &&
     (!selectedExcerpts.length || (Boolean(documentProvider) &&
-      selectedExcerpts.every((id) => excerpts.data?.items.some((item) => item.id === id))));
+      selectedExcerpts.every((id) => excerptItems.some((item) => item.id === id))));
   function resetConsent() {
     setConsent(false);
     setExcerptConsentProvider(null);
+  }
+
+  function setSourceReview(report: Report | null) {
+    setReviewID(report?.id ?? null);
+    setQuestion(report?.question ?? "");
+    setMode(report?.committee ? "committee" : "question");
+    setReviewSelection(null);
+    setSelectedExcerpts([]);
+    resetConsent();
   }
 
   const saved = useQuery({
@@ -143,15 +170,17 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
     }
   }, [cache, finished, owner]);
   const submit = useMutation({
-    mutationFn: ({ prompt, kind, sourceIDs, documentIDs, documentPermission, provider }: {
-      prompt: string; kind: Mode; sourceIDs: string[]; documentIDs: string[]; documentPermission: boolean;
-      provider?: ResearchCapabilities["document_provider"];
+    mutationFn: ({ prompt, kind, dealIDs, announcementIDs, documentIDs, documentPermission, provider, previousID }: {
+      prompt: string; kind: Mode; dealIDs: string[]; announcementIDs: string[]; documentIDs: string[]; documentPermission: boolean;
+      provider?: ResearchCapabilities["document_provider"]; previousID?: string;
     }) =>
       privateMarkets<Report | { id: string; status: "running" }>("research", {
-        owner, question: prompt, mode: kind, opportunity_ids: sourceIDs, document_ids: documentIDs, model_consent: true,
+        owner, question: prompt, mode: kind, opportunity_ids: dealIDs, announcement_ids: announcementIDs,
+        document_ids: documentIDs, previous_report_id: previousID, model_consent: true,
         ai_consent: documentPermission, document_provider: documentIDs.length ? provider : undefined, background: kind === "committee",
       }),
-    onSuccess: (result) => {
+    onSuccess: (result, request) => {
+      if (request.previousID) setSourceReview(null);
       if ("findings" in result) {
         cache.setQueryData([...reportKey(owner), result.id], result);
         setReportID(result.id);
@@ -168,14 +197,16 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
       setReportID((current) => current === id ? null : current);
       setRunID((current) => current === id ? null : current);
       setConfirmDelete((current) => current === id ? null : current);
+      if (reviewID === id) setSourceReview(null);
       cache.removeQueries({ queryKey: [...reportKey(owner), id], exact: true });
+      cache.removeQueries({ queryKey: ["private-markets", owner, "research-refresh", id], exact: true });
       cache.setQueryData<{ items: SavedReport[] }>(reportKey(owner),
         (data) => data && { items: data.items.filter((item) => item.id !== id) });
       await cache.invalidateQueries({ queryKey: reportKey(owner), exact: true });
     },
   });
   const running = Boolean(runID && !activeRun.error && (!activeRun.data || activeRun.data.status === "running"));
-  const busy = submit.isPending || running;
+  const busy = submit.isPending || running || remove.isPending;
   const reportBusy = Boolean(shownID && shownReport.isPending);
   const pendingRuns = runs.data?.runs.filter((item) => item.id !== runID) ?? [];
   const canSubmit = aiEnabled && sourcesValid && !busy && consent && Boolean(question.trim()) &&
@@ -192,10 +223,28 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
             resetConsent();
             setReportID(null);
             setRunID(null);
-            submit.mutate({ prompt: question.trim(), kind: mode, sourceIDs: selected.map(({ id }) => id),
+            const eligibleDeals = review.data?.deals ?? selected;
+            const dealIDs = publicIDs.filter((id) => eligibleDeals.some((deal) => deal.id === id));
+            submit.mutate({ prompt: question.trim(), kind: mode, dealIDs,
+              announcementIDs: publicIDs.filter((id) => !dealIDs.includes(id)), previousID: reviewID ?? undefined,
               documentIDs: selectedExcerpts, documentPermission: excerptConsent, provider: documentProvider });
           }}>
-            {selected.length ? <CompareRounds deals={selected} asOf={asOf} />
+            {reviewID ? <section id="private-research-review" aria-labelledby="private-research-review-heading" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 id="private-research-review-heading" className="text-sm font-semibold text-text" tabIndex={-1}>Review sources for an update</h2>
+                <Button size="sm" disabled={busy} onClick={() => { setSourceReview(null); submit.reset(); }}>Cancel update</Button>
+              </div>
+              {review.isPending && <p className="text-sm text-text-2" role="status">Checking published and private source availability…</p>}
+              {review.error && <Notice tone="down">{review.error.message} <Button size="sm" onClick={() => { setReviewSelection(null); setSelectedExcerpts([]); resetConsent(); void review.refetch(); }}>Retry source review</Button></Notice>}
+              {review.data && !review.error && <>
+                <p className="text-xs text-text-2" role="status">{sourceCount} of 3 sources selected.</p>
+                <ResearchSourceReview review={review.data} asOf={review.dataUpdatedAt} selected={[...publicIDs, ...selectedExcerpts]} disabled={busy || !aiEnabled}
+                  onToggle={(id, checked) => {
+                    setReviewSelection(checked ? [...publicIDs, id] : publicIDs.filter((source) => source !== id));
+                    resetConsent();
+                  }} />
+              </>}
+            </section> : selected.length ? <CompareRounds deals={selected} asOf={asOf} />
               : <p className="text-sm text-text-2">Select published rounds in Discover.</p>}
             {!aiEnabled && <Notice>New AI research is unavailable in this deployment. Saved reports are still available.</Notice>}
             {aiEnabled && <div className="space-y-2">
@@ -210,12 +259,12 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
                 <p className="text-xs text-text-2">A selected excerpt is unavailable. <Button type="button" size="sm" onClick={() => { setSelectedExcerpts([]); resetConsent(); }}>Clear excerpt selection</Button></p>}
               {documentProvider && <>
                 {excerpts.error && <Notice tone="warn">{excerpts.error.message} <Button type="button" size="sm" onClick={() => void excerpts.refetch()}>Retry</Button></Notice>}
-                {excerpts.data?.items.length === 0 && <p className="text-xs text-text-2">Save an authorized excerpt in Deal Room to use it here.</p>}
-                {excerpts.data?.items.map((item) => {
+                {excerpts.data && excerptItems.length === 0 && <p className="text-xs text-text-2">Save an authorized excerpt in Deal Room to use it here.</p>}
+                {excerptItems.map((item) => {
                   const checked = selectedExcerpts.includes(item.id);
                   return <label key={item.id} className="flex items-start gap-2 text-[13px] text-text-2">
                     <input type="checkbox" className="mt-0.5" checked={checked}
-                      disabled={busy || (!checked && selected.length + selectedExcerpts.length >= 3)} onChange={() => {
+                      disabled={busy || (Boolean(reviewID) && !review.data) || (!checked && sourceCount >= 3)} onChange={() => {
                         setSelectedExcerpts(checked ? selectedExcerpts.filter((id) => id !== item.id) : [...selectedExcerpts, item.id]);
                         resetConsent();
                       }} />
@@ -259,15 +308,27 @@ export function Research({ owner, aiEnabled, selected, asOf, initialReportID, op
         {shownReport.data && <ReportView report={shownReport.data} actions={confirmDelete === shownReport.data.id ? <>
           <p>Delete this saved report and its quotes?</p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="danger" disabled={remove.isPending} onClick={() => remove.mutate(confirmDelete)}>
+            <Button size="sm" variant="danger" disabled={busy} onClick={() => remove.mutate(confirmDelete)}>
               Confirm deletion
             </Button>
             <Button size="sm" disabled={remove.isPending} onClick={() => { setConfirmDelete(null); remove.reset(); }}>Cancel</Button>
           </div>
-        </> : <Button size="sm" disabled={remove.isPending} onClick={() => {
-          setConfirmDelete(shownID);
-          remove.reset();
-        }}>Delete report</Button>} />}
+        </> : <div className="flex flex-wrap gap-2">
+          {shownReport.data.refresh_available && <Button size="sm" disabled={busy}
+            onClick={() => {
+              if (!shownReport.data) return;
+              setSourceReview(shownReport.data);
+              submit.reset();
+              requestAnimationFrame(() => document.getElementById("private-research-review-heading")?.focus());
+            }}>Review sources for an update</Button>}
+          {shownReport.data.previous_report_id && <Button size="sm" onClick={() => {
+            setReportID(shownReport.data?.previous_report_id ?? null);
+          }}>Open previous report</Button>}
+          <Button size="sm" disabled={busy} onClick={() => {
+            setConfirmDelete(shownID);
+            remove.reset();
+          }}>Delete report</Button>
+        </div>} />}
       </div>
       <Card className="min-w-0">
         <CardHeader title="Saved reports" subtitle="Reports saved to this account on web or iPhone." />

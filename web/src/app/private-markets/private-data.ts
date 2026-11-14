@@ -49,8 +49,15 @@ export type Finding = {
 };
 export type Report = {
   id: string; question: string; created_at: string; findings: Finding[]; committee?: Finding;
+  refresh_available?: boolean; previous_report_id?: string;
   sources: { id: string; title: string; url?: string }[];
   reported_facts?: { source: string; title: string; entries: { label: string; value: string }[] }[];
+};
+export type ResearchRefresh = {
+  unavailable_sources: number; revision_tracking_available: boolean;
+  documents: SavedExcerpt[]; deals: PrivateDeal[]; announcements: CompanyUpdate[]; newer_announcements: CompanyUpdate[];
+  changed_deal_ids: string[]; changed_announcement_ids: string[];
+  source_changes: { source_id: string; title: string; fields: { field: string; previous: string | null; current: string | null }[] }[];
 };
 export type PortfolioHolding = {
   id: string; name: string; asset_class: string; currency: string; units: number | null; ownership_percent: number | null;
@@ -97,7 +104,7 @@ export type MonitorAlert = {
 };
 
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
-  "reports" | "report" | "delete_report" | "confirmed_holdings" | "applications" | "allocation" | "updates" |
+  "reports" | "report" | "delete_report" | "research_refresh" | "confirmed_holdings" | "applications" | "allocation" | "updates" |
   "profile" | "save_profile" | "handoff_check" | "handoff" |
   "documents" | "document" | "save_document" | "delete_document" | "research_capabilities" |
   "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";

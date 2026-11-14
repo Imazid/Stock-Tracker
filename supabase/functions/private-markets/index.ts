@@ -471,8 +471,9 @@ Deno.serve(async (req) => {
     }
     const userId = await authenticatedUserId(req, admin);
     if (!userId) return errorResponse(401, "UNAUTHENTICATED", "Sign in first.");
-    const documentResearch = body.action === "research" && Array.isArray(body.document_ids) && body.document_ids.length > 0;
-    if ((typeof body.action === "string" && activeSessionActions.has(body.action)) || documentResearch) {
+    const protectedResearch = body.action === "research" &&
+      (body.previous_report_id !== undefined || (Array.isArray(body.document_ids) && body.document_ids.length > 0));
+    if ((typeof body.action === "string" && activeSessionActions.has(body.action)) || protectedResearch) {
       const session = sessionId(req);
       if (!session) return errorResponse(401, "UNAUTHENTICATED", "Sign in to view your account records.");
       const { data: active, error } = await admin.rpc("account_deletion_session_active", { p_user: userId, p_session: session });
