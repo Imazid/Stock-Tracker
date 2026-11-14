@@ -55,6 +55,7 @@ final class DataPersistenceManager {
         static let portfolioHistory     = "com.stocktracker.persist.portfolioHistory"
         static let customAssets         = "com.stocktracker.persist.customAssets"
         static let watchlistGroups      = "com.stocktracker.persist.watchlistGroups"
+        static let portfolioVisits      = "com.stocktracker.persist.portfolioVisits"
         static let portfolioGroups      = "com.stocktracker.persist.portfolioGroups"
         static let portfolioLedgerQueue = "com.stocktracker.persist.portfolioLedgerQueue"
         static let lastPortfolioAccount = "com.stocktracker.persist.lastPortfolioAccount"
@@ -105,6 +106,27 @@ final class DataPersistenceManager {
         guard let data = keychain.retrieveData(key: KeychainKeys.portfolioGroups),
               let groups = try? decoder.decode([PortfolioGroup].self, from: data) else { return ([], 0) }
         return (groups, UserDefaults.standard.integer(forKey: "active_portfolio_index"))
+    }
+
+    func portfolioVisit(for scope: PortfolioVisitSnapshot.Scope) -> PortfolioVisitSnapshot? {
+        portfolioVisits().first { $0.scope == scope }
+    }
+
+    func savePortfolioVisit(_ snapshot: PortfolioVisitSnapshot) {
+        let retained = portfolioVisits().filter { $0.scope != snapshot.scope }
+        guard let data = try? encoder.encode([snapshot] + retained) else { return }
+        _ = keychain.saveData(key: KeychainKeys.portfolioVisits, value: data)
+    }
+
+    func removePortfolioVisits(for portfolio: UUID) {
+        let retained = portfolioVisits().filter { $0.scope.portfolio != portfolio }
+        guard let data = try? encoder.encode(retained) else { return }
+        _ = keychain.saveData(key: KeychainKeys.portfolioVisits, value: data)
+    }
+
+    private func portfolioVisits() -> [PortfolioVisitSnapshot] {
+        guard let data = keychain.retrieveData(key: KeychainKeys.portfolioVisits) else { return [] }
+        return (try? decoder.decode([PortfolioVisitSnapshot].self, from: data)) ?? []
     }
 
     // MARK: - Watchlist Groups
@@ -308,6 +330,7 @@ final class DataPersistenceManager {
         // or "cleared" watchlists come back.
         _ = keychain.delete(key: KeychainKeys.watchlistGroups)
         _ = keychain.delete(key: KeychainKeys.portfolioGroups)
+        _ = keychain.delete(key: KeychainKeys.portfolioVisits)
         _ = keychain.delete(key: KeychainKeys.portfolioLedgerQueue)
         _ = keychain.delete(key: KeychainKeys.lastPortfolioAccount)
         _ = keychain.delete(key: KeychainKeys.hiddenClosedPositions)

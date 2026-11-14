@@ -113,8 +113,8 @@ final class SyncManager: ObservableObject {
             let now = Date()
             persist.rememberPortfolioAccount(userId)
             persist.saveLastSyncDate(now)
-            syncState = .lastSyncedAt(now)
             syncedUserId = userId
+            syncState = .lastSyncedAt(now)
             AppLogger.sync.info("First-sign-in sync complete")
 
         } catch {
@@ -128,7 +128,14 @@ final class SyncManager: ObservableObject {
     func pullAndRefresh(marketData: MarketData, alertManager: PriceAlertManager, force: Bool = false) async {
         guard SupabaseManager.isConfigured else { return }
         guard let userId = SupabaseManager.auth.currentUser?.id else { return }
-        guard !isRunning else { return }
+        if force {
+            do {
+                while isRunning { try await Task.sleep(for: .milliseconds(250)) }
+            } catch { return }
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
+        } else if isRunning {
+            return
+        }
         if syncedUserId != userId {
             await syncOnSignIn(marketData: marketData, alertManager: alertManager)
             return

@@ -486,7 +486,8 @@ final class MarketData: ObservableObject {
 
     func deletePortfolio(at index: Int) {
         guard portfolioGroups.count > 1 else { return }
-        portfolioGroups.remove(at: index)
+        let removed = portfolioGroups.remove(at: index)
+        DataPersistenceManager.shared.removePortfolioVisits(for: removed.id)
         let newIndex = min(activePortfolioIndex, portfolioGroups.count - 1)
         activePortfolioIndex = newIndex
         portfolio = portfolioGroups[newIndex].holdings

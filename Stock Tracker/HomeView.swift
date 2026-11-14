@@ -12,6 +12,9 @@ struct HomeView: View {
     @EnvironmentObject var subscriptionManager: SubscriptionManager
     @Environment(\.theme) var appTheme
 
+    var visitSummary: String? = nil
+    var onOpenVisitChanges: (() -> Void)? = nil
+
     @State private var showSettings = false
     @EnvironmentObject var insightService: AIInsightService
     @State private var dailyBriefing: String?
@@ -84,8 +87,8 @@ struct HomeView: View {
 
     @ViewBuilder
     private var portfolioIntelligence: some View {
-        if !marketData.portfolio.isEmpty {
-            PortfolioIntelligenceEntry()
+        if !marketData.portfolio.isEmpty || visitSummary != nil {
+            PortfolioIntelligenceEntry(visitSummary: visitSummary, onOpenVisitChanges: onOpenVisitChanges)
         }
     }
 
