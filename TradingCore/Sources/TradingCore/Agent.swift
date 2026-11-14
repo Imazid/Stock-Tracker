@@ -120,6 +120,7 @@ public struct TradingAgent: Codable, Identifiable, Sendable {
     public var schedule: AgentSchedule
     public var createdAt: Date
     public var lastRunAt: Date?
+    public var lastMonthlyInvestmentPeriod: String?
     public var nextRunAt: Date?
     public var consecutiveErrors: Int
     public var lastError: String?

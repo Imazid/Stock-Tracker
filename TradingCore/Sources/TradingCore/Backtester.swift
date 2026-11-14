@@ -188,8 +188,11 @@ public enum Backtester {
 
         var warnings: [String] = []
         let missing = spec.universe.filter { bars[$0.id] == nil }.map(\.symbol)
+        if spec.monthlyInvestment != nil {
+            warnings.append("Monthly purchases use available starting cash and sale proceeds. No external deposits are simulated.")
+        }
         if !missing.isEmpty { warnings.append("No history for \(missing.joined(separator: ", ")); tested without \(missing.count == 1 ? "it" : "them").") }
-        if spec.kind == .rebalance, !missing.isEmpty {
+        if spec.allocation != nil, !missing.isEmpty {
             throw BacktestError.unsupported("Rebalancing needs history for every fund. Missing: \(missing.joined(separator: ", ")).")
         }
 
@@ -204,6 +207,7 @@ public enum Backtester {
         var lastClose: [String: Double] = [:]
         var lastExit: [String: Date] = [:]
         var lastBuyIndex: [String: Int] = [:]
+        var lastMonthlyInvestmentPeriod: String?
         var trades: [BacktestTrade] = []
         var curve: [EquityPoint] = []
         var invested: [Bool] = []
@@ -241,6 +245,11 @@ public enum Backtester {
                 case .buy:
                     let price = open * (1 + slip)
                     var notional = min(order.notional ?? 0, config.maxOrderNotional)
+                    if spec.monthlyInvestment != nil {
+                        let held = (holdings[id]?.quantity ?? 0) * open
+                        notional = min(notional, max(equity() * config.maxPositionPct / 100 - held, 0))
+                        if holdings[id] == nil, holdings.count >= config.maxOpenPositions { continue }
+                    }
                     let feeRate = (instrument.assetClass == .crypto ? config.cryptoFeeBps : config.equityFeeBps) / 10_000
                         + PaperBroker.taxBps(for: instrument, side: .buy) / 10_000
                     let flat = instrument.assetClass == .crypto ? 0 : config.equityFeePerOrder
@@ -326,11 +335,24 @@ public enum Backtester {
                     if due { pending[id] = Pending(side: .buy, notional: dca.amountPerBuy, reason: "scheduled") }
                 }
             case .rebalance:
-                guard let rebalance = spec.rebalance, pending.isEmpty,
+                guard let rebalance = spec.allocation, pending.isEmpty,
                       rebalance.targets.keys.allSatisfy({ lastClose[$0] != nil }) else { break }
                 var values: [String: Double] = [:]
                 for id in rebalance.targets.keys { values[id] = (holdings[id]?.quantity ?? 0) * (lastClose[id] ?? 0) }
-                for trade in StrategyEvaluator.rebalanceTrades(config: rebalance, values: values, equity: equityNow) {
+                let monthly = spec.monthlyInvestment != nil
+                var contribution = 0.0
+                if monthly {
+                    guard rebalance.targets.keys.allSatisfy({ id in active.contains { $0.id == id } }),
+                          let venue = spec.universe.first?.venue else { break }
+                    let period = String(calendar.dayKey(venue, time).prefix(7))
+                    if period > (lastMonthlyInvestmentPeriod ?? ""), let amount = spec.monthlyInvestment?.amount {
+                        contribution = min(amount, max(cash, 0))
+                        lastMonthlyInvestmentPeriod = period
+                    }
+                }
+                let orders = monthly ? StrategyEvaluator.monthlyRebalanceTrades(config: rebalance, values: values, contribution: contribution)
+                    : StrategyEvaluator.rebalanceTrades(config: rebalance, values: values, equity: equityNow)
+                for trade in orders {
                     pending[trade.instrumentID] = Pending(side: trade.side, notional: trade.notional, reason: "rebalance")
                 }
             case .research:

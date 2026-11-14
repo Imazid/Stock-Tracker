@@ -1051,6 +1051,87 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(exit["op"] as? String, "crossesAbove")
     }
 
+    func testMonthlyETFStrategyEditsBacktestsAndStartsPractice() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STRATEGY_STUDIO"] == "1",
+                          "Start the signed-in strategy relay with historical market data")
+        let email = "strategy-studio-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        app.launchArguments = ["-UITestFreshInstall", "-hasCompletedOnboarding", "YES",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.open("Agents"))
+        app.buttons["agents.new"].tap()
+        let prompt = app.descendants(matching: .any)["agent.new.prompt"].firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.tap()
+        prompt.typeText("Invest $150 monthly in 60% VTI and 40% BND. Rebalance when allocations drift by 5 points, with a $5,000 budget.")
+        app.buttons["agent.new.draft"].tap()
+
+        let monthly = app.textFields["agent.draft.monthlyAmount"]
+        XCTAssertTrue(monthly.waitForExistence(timeout: 8), app.debugDescription)
+        for _ in 0..<12 where !app.frame.insetBy(dx: 0, dy: 175).contains(CGPoint(x: monthly.frame.midX, y: monthly.frame.midY)) {
+            let down = monthly.frame.midY < app.frame.midY
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.37 : 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.54, dy: down ? 0.63 : 0.38))
+            start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        XCTAssertEqual(monthly.value as? String, "150")
+        monthly.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        monthly.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "175")
+        XCTAssertEqual(monthly.value as? String, "175")
+        let done = app.buttons["agent.draft.keyboardDone"].firstMatch
+        if done.waitForExistence(timeout: 3) { done.tap() }
+
+        let backtest = app.buttons["agent.draft.backtest"]
+        for _ in 0..<10 where !backtest.isHittable {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.64))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.29))
+            start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        XCTAssertTrue(backtest.isHittable && backtest.isEnabled, app.debugDescription)
+        backtest.tap()
+        XCTAssertTrue(app.navigationBars["Backtest"].waitForExistence(timeout: 90), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["backtest.testData"].exists)
+        let provider = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Prices: Alpaca")).firstMatch
+        XCTAssertTrue(provider.exists, app.debugDescription)
+        let assumptions = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "at the next bar's open")).firstMatch
+        for _ in 0..<8 where !assumptions.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(assumptions.isHittable)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "available practice cash each month")).firstMatch.exists)
+        attach("strategy-backtest-assumptions")
+        app.buttons["backtest.done"].tap()
+
+        let start = app.buttons["agent.draft.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 8))
+        XCTAssertEqual(start.label, "Start in practice")
+        start.tap()
+        let agentCard = app.buttons["agents.card.Monthly ETF Investing Agent"]
+        XCTAssertTrue(agentCard.waitForExistence(timeout: 25), app.debugDescription)
+        let saved = try request("POST", "/functions/v1/trading-api",
+                                body: JSONSerialization.data(withJSONObject: ["action": "state"]), token: token)
+        XCTAssertEqual(saved.status, 200)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: saved.data) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        let state = try XCTUnwrap(data["state"] as? [String: Any])
+        let agents = try XCTUnwrap(state["agents"] as? [[String: Any]])
+        let agent = try XCTUnwrap(agents.first { $0["name"] as? String == "Monthly ETF Investing Agent" })
+        XCTAssertEqual(agent["mode"] as? String, "paper")
+        XCTAssertEqual(agent["status"] as? String, "active")
+        let versions = try XCTUnwrap(agent["versions"] as? [[String: Any]])
+        let spec = try XCTUnwrap(versions.last?["spec"] as? [String: Any])
+        let monthlySpec = try XCTUnwrap(spec["monthlyInvestment"] as? [String: Any])
+        XCTAssertEqual(monthlySpec["amount"] as? Double, 175)
+        let allocation = try XCTUnwrap(monthlySpec["allocation"] as? [String: Any])
+        XCTAssertEqual(allocation["driftThresholdPct"] as? Double, 5)
+        XCTAssertEqual(allocation["targets"] as? [String: Double], ["us:VTI": 60, "us:BND": 40])
+    }
+
     func testSignedInAssetResearchSearchChartEvidenceAIAndWatchlist() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_RESEARCH_JOURNEY"] == "1",
                           "Start the signed-in research journey relay")

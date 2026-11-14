@@ -251,6 +251,17 @@ public struct RebalanceConfig: Codable, Hashable, Sendable {
     }
 }
 
+/// Separate from the ordinary rebalance config so earlier engines safely skip it.
+public struct MonthlyInvestment: Codable, Hashable, Sendable {
+    public var amount: Double
+    public var allocation: RebalanceConfig
+
+    public init(amount: Double, allocation: RebalanceConfig) {
+        self.amount = amount
+        self.allocation = allocation
+    }
+}
+
 public struct StrategySpec: Codable, Hashable, Sendable {
     public var kind: StrategyKind
     public var title: String
@@ -263,6 +274,7 @@ public struct StrategySpec: Codable, Hashable, Sendable {
     public var sizing: Sizing
     public var dca: DCAConfig?
     public var rebalance: RebalanceConfig?
+    public var monthlyInvestment: MonthlyInvestment?
     /// Bars to wait after an exit before the same instrument can be bought again.
     public var reentryCooldownBars: Int
     /// Watch whatever the ledger holds instead of a fixed list (a risk-manager agent
@@ -273,7 +285,7 @@ public struct StrategySpec: Codable, Hashable, Sendable {
                 universe: [Instrument], entry: Condition? = nil, exit: Condition? = nil,
                 protections: Protections = Protections(),
                 sizing: Sizing = Sizing(mode: .percentOfEquity, value: 10),
-                dca: DCAConfig? = nil, rebalance: RebalanceConfig? = nil,
+                dca: DCAConfig? = nil, rebalance: RebalanceConfig? = nil, monthlyInvestment: MonthlyInvestment? = nil,
                 reentryCooldownBars: Int = 1, followsLedgerPositions: Bool = false) {
         self.kind = kind
         self.title = title
@@ -286,9 +298,12 @@ public struct StrategySpec: Codable, Hashable, Sendable {
         self.sizing = sizing
         self.dca = dca
         self.rebalance = rebalance
+        self.monthlyInvestment = monthlyInvestment
         self.reentryCooldownBars = reentryCooldownBars
         self.followsLedgerPositions = followsLedgerPositions
     }
+
+    public var allocation: RebalanceConfig? { monthlyInvestment?.allocation ?? rebalance }
 
     /// Completed bars needed before any rule can be evaluated.
     public var warmupBars: Int {
@@ -312,12 +327,17 @@ public struct StrategySpec: Codable, Hashable, Sendable {
                 lines.append("Buy \(Operand.trim(dca.amountPerBuy)) of each asset \(every).")
             }
         case .rebalance:
-            if let rebalance {
+            if let amount = monthlyInvestment?.amount, amount > 0 {
+                let currency = universe.first?.currency ?? "USD"
+                lines.append("Invest \(NumberText.money(amount, currency: currency)) of available practice cash each month, split by target weight.")
+            }
+            if let rebalance = allocation {
                 let parts = rebalance.targets.sorted { $0.value > $1.value }.map { id, weight in
                     "\(id.split(separator: ":").last.map(String.init) ?? id) \(Operand.trim(weight))%"
                 }
                 lines.append("Hold \(parts.joined(separator: ", ")).")
-                lines.append("Trade back to target when a holding drifts \(Operand.trim(rebalance.driftThresholdPct)) points.")
+                let scope = monthlyInvestment != nil ? " of invested value" : ""
+                lines.append("Trade back to target when a holding drifts \(Operand.trim(rebalance.driftThresholdPct)) percentage points\(scope).")
             }
         case .research:
             lines.append("Watch and report. This strategy never places orders.")
@@ -387,7 +407,7 @@ public enum StrategyValidator {
             if !(dca.amountPerBuy.isFinite && dca.amountPerBuy > 0) { error("The amount per buy must be above zero.") }
             if !(1...250).contains(dca.intervalBars) { error("The buy interval must be between 1 and 250 bars.") }
         case .rebalance:
-            guard let rebalance = spec.rebalance else { error("A rebalancing strategy needs target weights."); break }
+            guard let rebalance = spec.allocation else { error("A rebalancing strategy needs target weights."); break }
             let ids = Set(spec.universe.map(\.id))
             if rebalance.targets.isEmpty { error("Add at least one target weight.") }
             for (id, weight) in rebalance.targets.sorted(by: { $0.key < $1.key }) {
@@ -397,6 +417,19 @@ public enum StrategyValidator {
             // Summed in key order so the total never depends on dictionary order.
             let total = rebalance.targets.sorted(by: { $0.key < $1.key }).reduce(0) { $0 + $1.value }
             if total > 100.0001 { error("Target weights add up to \(Operand.trim(total))% — they can't exceed 100%.") }
+            if spec.monthlyInvestment != nil {
+                if spec.rebalance != nil { error("Use one allocation configuration for monthly investing.") }
+                if spec.timeframe != .day { error("Monthly investing needs daily bars.") }
+                if Set(spec.universe.map(\.venue)).count > 1 { error("Monthly investing needs assets traded on the same market.") }
+                if spec.universe.contains(where: { $0.assetClass != .etf }) { error("Choose ETFs for monthly investing and rebalancing.") }
+                if Set(rebalance.targets.keys) != ids || abs(total - 100) > 0.0001 {
+                    error("Set a target for every ETF. The weights must add up to 100%.")
+                }
+                if spec.monthlyInvestment.map({ $0.amount.isFinite && $0.amount > 0 }) != true {
+                    error("Enter a monthly investment above zero.")
+                }
+                if !spec.protections.isEmpty { error("This strategy supports allocation drift exits. Remove the separate price-based exits.") }
+            }
             if !(rebalance.driftThresholdPct.isFinite && rebalance.driftThresholdPct >= 0.5 && rebalance.driftThresholdPct <= 50) {
                 error("The drift threshold must be between 0.5 and 50 points.")
             }
@@ -404,6 +437,7 @@ public enum StrategyValidator {
             if spec.entry != nil || spec.exit != nil { warn("Research strategies ignore buy and sell rules.") }
         }
 
+        if spec.monthlyInvestment != nil && spec.kind != .rebalance { error("Monthly investing requires a rebalancing strategy.") }
         let p = spec.protections
         if let v = p.stopLossPct, !(v.isFinite && v > 0 && v < 100) { error("Stop loss must be between 0 and 100%.") }
         if let v = p.takeProfitPct, !(v.isFinite && v > 0 && v <= 1_000) { error("Take profit must be between 0 and 1000%.") }

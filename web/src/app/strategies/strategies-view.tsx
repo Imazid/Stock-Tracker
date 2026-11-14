@@ -4,7 +4,7 @@ import { UniverseCatalog } from "@engine/catalog.ts";
 import type { AgentDraft } from "@engine/state.ts";
 import type { Instrument, Timeframe } from "@engine/market.ts";
 import { instrumentID } from "@engine/market.ts";
-import { makeSpec, ruleLines, type SizingMode, type StrategyKind, type StrategySpec, validate } from "@engine/strategy.ts";
+import { makeSpec, type RebalanceConfig, ruleLines, type SizingMode, type StrategyKind, type StrategySpec, validate } from "@engine/strategy.ts";
 import * as Templates from "@engine/templates.ts";
 import { Copy, Save, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -30,6 +30,7 @@ const TEMPLATES: { id: string; label: string; make: () => StrategySpec }[] = [
   { id: "crypto", label: "Crypto trend monitor", make: () => Templates.cryptoMonitor(UniverseCatalog.cryptoMajors) },
   { id: "dca", label: "Dollar-cost averaging", make: () => Templates.dollarCostAveraging([UniverseCatalog.broadETFs[0]]) },
   { id: "rebalance", label: "ETF rebalancing", make: () => Templates.etfRebalancing(UniverseCatalog.balancedETFs) },
+  { id: "monthly", label: "Monthly ETF investing", make: () => Templates.monthlyInvesting(UniverseCatalog.balancedETFs) },
 ];
 
 interface ParseResponse {
@@ -116,22 +117,30 @@ export function StrategiesView() {
     }
   };
 
-  const changeKind = (kind: StrategyKind) => {
-    if (kind === spec.kind) return;
+  const changeKind = (kind: StrategyKind | "monthlyRebalance") => {
+    const current = spec.monthlyInvestment !== undefined ? "monthlyRebalance" : spec.kind;
+    if (kind === current) return;
     if (kind === "dca") setSpec({ ...Templates.dollarCostAveraging(spec.universe.length ? spec.universe : [UniverseCatalog.broadETFs[0]]), title: spec.title });
-    else if (kind === "rebalance") {
+    else if (kind === "monthlyRebalance") {
+      const funds = spec.universe.filter(asset => asset.assetClass === "etf");
+      setSpec(Templates.monthlyInvesting(funds.length ? funds : UniverseCatalog.balancedETFs));
+    } else if (kind === "rebalance") {
       const u = spec.universe.length ? spec.universe : UniverseCatalog.balancedETFs;
       const each = Math.floor(100 / u.length);
       setSpec(makeSpec({ kind: "rebalance", title: spec.title, summary: "Keeps each fund near its target share.", universe: u, rebalance: { targets: Object.fromEntries(u.map((i) => [instrumentID(i), each])), driftThresholdPct: 5 } }));
     } else setSpec(makeSpec({ kind: "rules", title: spec.title, summary: spec.summary, universe: spec.universe, entry: { op: "crossesAbove", left: { kind: "sma", period: 20 }, right: { kind: "sma", period: 50 } }, exit: { op: "crossesBelow", left: { kind: "sma", period: 20 }, right: { kind: "sma", period: 50 } } }));
   };
 
+  const monthly = spec.monthlyInvestment;
+  const allocation = monthly?.allocation ?? spec.rebalance;
+  const patchAllocation = (value: RebalanceConfig): Partial<StrategySpec> =>
+    monthly ? { monthlyInvestment: { ...monthly, allocation: value } } : { rebalance: value };
+
   const setUniverse = (universe: Instrument[]) => {
-    if (spec.kind === "rebalance" && spec.rebalance) {
-      const targets: Record<string, number> = {};
-      for (const i of universe) targets[instrumentID(i)] = spec.rebalance.targets[instrumentID(i)] ?? 0;
-      patch({ universe, rebalance: { ...spec.rebalance, targets } });
-    } else patch({ universe });
+    if (!allocation) { patch({ universe }); return; }
+    const targets: Record<string, number> = {};
+    for (const i of universe) targets[instrumentID(i)] = allocation.targets[instrumentID(i)] ?? 0;
+    patch({ universe, ...patchAllocation({ ...allocation, targets }) });
   };
 
   return (
@@ -169,8 +178,8 @@ export function StrategiesView() {
             <div className="grid gap-4 border-t border-border px-4 py-4">
               <div className="grid gap-3 md:grid-cols-[1fr_160px_140px]">
                 <Field label="Name" htmlFor="s-title"><Input id="s-title" value={spec.title} onChange={(e) => patch({ title: e.target.value })} maxLength={80} /></Field>
-                <Field label="Type" htmlFor="s-kind"><Select id="s-kind" value={spec.kind} onChange={(e) => changeKind(e.target.value as StrategyKind)}>
-                  <option value="rules">Entry / exit rules</option><option value="dca">Dollar-cost averaging</option><option value="rebalance">Rebalancing</option></Select></Field>
+                <Field label="Type" htmlFor="s-kind"><Select id="s-kind" value={spec.monthlyInvestment !== undefined ? "monthlyRebalance" : spec.kind} onChange={(e) => changeKind(e.target.value as StrategyKind | "monthlyRebalance")}>
+                  <option value="rules">Entry / exit rules</option><option value="dca">Dollar-cost averaging</option><option value="rebalance">Rebalancing</option><option value="monthlyRebalance">Monthly investing and rebalancing</option></Select></Field>
                 <Field label="Bars" htmlFor="s-tf"><Select id="s-tf" value={spec.timeframe} onChange={(e) => patch({ timeframe: e.target.value as Timeframe })}><option value="day">Daily</option><option value="hour">Hourly</option></Select></Field>
               </div>
               <Field label="Summary" htmlFor="s-summary"><Input id="s-summary" value={spec.summary} onChange={(e) => patch({ summary: e.target.value })} maxLength={240} /></Field>
@@ -192,22 +201,28 @@ export function StrategiesView() {
                 </div>
               ) : null}
 
-              {spec.kind === "rebalance" && spec.rebalance ? (
+              {monthly && (
+                <Field label={`Monthly investment (${spec.universe[0]?.currency ?? "USD"})`} htmlFor="s-monthly"
+                  hint="Uses available practice cash. Target weights are percentages of invested value.">
+                  <NumberInput id="s-monthly" min={0} step={0.01} value={monthly.amount} onChange={(value) => patch({ monthlyInvestment: { ...monthly, amount: value ?? 0 } })} />
+                </Field>
+              )}
+              {allocation ? (
                 <div className="grid gap-3">
                   <div className="grid gap-2 sm:grid-cols-3">
                     {spec.universe.map((i) => (
                       <Field key={instrumentID(i)} label={`${i.symbol} target %`} htmlFor={`t-${i.symbol}`}>
-                        <NumberInput id={`t-${i.symbol}`} min={0} max={100} value={spec.rebalance!.targets[instrumentID(i)]} onChange={(v) => patch({ rebalance: { ...spec.rebalance!, targets: { ...spec.rebalance!.targets, [instrumentID(i)]: v ?? 0 } } })} />
+                        <NumberInput id={`t-${i.symbol}`} min={0} max={100} value={allocation.targets[instrumentID(i)]} onChange={(v) => patch(patchAllocation({ ...allocation, targets: { ...allocation.targets, [instrumentID(i)]: v ?? 0 } }))} />
                       </Field>
                     ))}
                   </div>
-                  <Field label="Rebalance when drift exceeds (percentage points)" htmlFor="s-drift"><NumberInput id="s-drift" min={0.5} step={0.5} value={spec.rebalance.driftThresholdPct} onChange={(v) => patch({ rebalance: { ...spec.rebalance!, driftThresholdPct: v ?? 5 } })} /></Field>
+                  <Field label="Rebalance when drift exceeds (percentage points)" htmlFor="s-drift"><NumberInput id="s-drift" min={0.5} step={0.5} value={allocation.driftThresholdPct} onChange={(v) => patch(patchAllocation({ ...allocation, driftThresholdPct: v ?? 0 }))} /></Field>
                 </div>
               ) : null}
             </div>
           </Card>
 
-          <Card>
+          {spec.monthlyInvestment === undefined && <Card>
             <CardHeader title="Sizing and protections" />
             <div className="grid gap-3 border-t border-border px-4 py-4 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Position size" htmlFor="s-size-mode"><Select id="s-size-mode" value={spec.sizing.mode} onChange={(e) => patch({ sizing: { ...spec.sizing, mode: e.target.value as SizingMode } })}>
@@ -220,7 +235,7 @@ export function StrategiesView() {
               <Field label="Trailing stop %" htmlFor="s-ts"><NumberInput id="s-ts" min={0} step={0.5} placeholder="none" value={spec.protections.trailingStopPct} onChange={(v) => patch({ protections: { ...spec.protections, trailingStopPct: v } })} /></Field>
               <Field label="Max holding (bars)" htmlFor="s-mh"><NumberInput id="s-mh" min={1} placeholder="none" value={spec.protections.maxHoldingBars} onChange={(v) => patch({ protections: { ...spec.protections, maxHoldingBars: v } })} /></Field>
             </div>
-          </Card>
+          </Card>}
 
           <BacktestPanel key={draftGeneration} spec={spec} valid={errors.length === 0} capital={parsed?.draft.budget} positionLimit={parsed?.draft.maxPositionPct} />
         </div>

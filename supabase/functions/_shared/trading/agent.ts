@@ -95,6 +95,7 @@ export interface TradingAgent {
   schedule: AgentSchedule;
   createdAt: number;
   lastRunAt?: number;
+  lastMonthlyInvestmentPeriod?: string;
   nextRunAt?: number;
   consecutiveErrors: number;
   lastError?: string;
