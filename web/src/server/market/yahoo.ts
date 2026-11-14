@@ -13,7 +13,8 @@ import { getJSON, UpstreamError } from "./http.ts";
 const HOSTS = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"];
 export const YAHOO_SOURCE = "Yahoo Finance (unofficial)";
 /** The symbol Yahoo knows this listing by, including its exchange or quote currency suffix. */
-export const yahooTicker = (instrument: Instrument) => instrument.venue === "crypto" ? `${instrument.symbol}-USD` : yahooSymbol(instrument);
+export const yahooTicker = (instrument: Instrument) => instrument.symbol.startsWith("^") ? instrument.symbol
+  : instrument.venue === "crypto" ? `${instrument.symbol}-USD` : yahooSymbol(instrument);
 
 const MINOR_UNITS: Record<string, { major: string; divisor: number }> = {
   GBp: { major: "GBP", divisor: 100 },

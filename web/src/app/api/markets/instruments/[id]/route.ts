@@ -6,7 +6,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const limited = rateLimited(request);
   if (limited) return limited;
   try {
-    const instrument = parseInstrumentID((await params).id);
+    const instrument = parseInstrumentID((await params).id, { allowIndex: true });
     return json(describeInstrument(instrument));
   } catch (error) {
     if (error instanceof BadInstrumentError) return jsonError(400, "invalid", error.message);

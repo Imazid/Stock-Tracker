@@ -16,6 +16,7 @@ import type {
 } from "@/lib/market-types";
 import { ALPACA_CRYPTO_SOURCE, ALPACA_IEX_SOURCE, alpacaCandles, alpacaConfigured, alpacaQuote, alpacaSupports } from "./alpaca";
 import { cached } from "./cache";
+import { marketIndexes } from "@/lib/market-indexes";
 import { COIN_NAMES, COINGECKO_IDS, COINGECKO_SOURCE, coinGeckoQuote } from "./coingecko";
 import { decodeSearch, researchSearch } from "@/server/research/search";
 import { UpstreamError } from "./http";
@@ -96,7 +97,7 @@ async function quoteFromSources(instrument: Instrument, now: number): Promise<Qu
         reasons.push(`Alpaca: ${reason(error)}`);
       }
     }
-  } else if (instrument.venue === "us" && alpacaConfigured()) {
+  } else if (instrument.venue === "us" && alpacaSupports(instrument)) {
     try {
       const q = await alpacaQuote(instrument);
       const s = staleness(instrument, q.observedAt, 0, now);
@@ -215,7 +216,7 @@ export function describeInstrument(instrument: Instrument): InstrumentResponse {
   if (instrument.venue === "crypto") {
     if (COINGECKO_IDS[instrument.symbol]) quotes.push(COINGECKO_SOURCE);
     if (alpacaConfigured()) quotes.push(ALPACA_CRYPTO_SOURCE);
-  } else if (instrument.venue === "us" && alpacaConfigured()) quotes.push(ALPACA_IEX_SOURCE);
+  } else if (instrument.venue === "us" && alpacaSupports(instrument)) quotes.push(ALPACA_IEX_SOURCE);
   quotes.push(YAHOO_SOURCE);
   candles.push(YAHOO_SOURCE);
   if (alpacaSupports(instrument)) candles.push(instrument.venue === "crypto" ? ALPACA_CRYPTO_SOURCE : ALPACA_IEX_SOURCE);
@@ -249,7 +250,7 @@ export async function search(query: string, { allowLicensedIdentifiers = true } 
     for (const [sym, name] of Object.entries(COIN_NAMES)) {
       if (sym.startsWith(upper) || name.toUpperCase().includes(upper)) add({ ...toView(makeInstrument(sym, "crypto", "crypto", name)), origin: "catalog", exchangeLabel: "Crypto" });
     }
-    for (const instrument of catalogInstruments) {
+    for (const instrument of [...marketIndexes, ...catalogInstruments]) {
       if (instrument.symbol.startsWith(upper) || instrument.name.toUpperCase().includes(upper)) {
         add({ ...toView(instrument), origin: "catalog", exchangeLabel: instrument.venue.toUpperCase() });
       }

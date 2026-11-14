@@ -4,7 +4,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { useQuote } from "@/hooks/market";
-import { money } from "@/lib/format";
+import { isMarketIndex } from "@/lib/market-indexes";
+import { money, plainNumber } from "@/lib/format";
 import type { InstrumentView } from "@/lib/market-types";
 import { ChangePill } from "./Change";
 import { Sparkline } from "./Sparkline";
@@ -29,7 +30,7 @@ export function InstrumentRow({ instrument, trailing, spark = true }: { instrume
             <span className="text-xs text-text-3">No live price</span>
           ) : (
             <>
-              <span className="tabular text-sm font-medium text-text">{money(q.last, q.currency)}</span>
+              <span className="tabular text-sm font-medium text-text">{isMarketIndex(instrument.symbol) ? `${plainNumber(q.last)} pts` : money(q.last, q.currency)}</span>
               <span className="flex items-center gap-1">
                 {q.stale ? <Badge tone="warn" title={q.staleReason}>Stale</Badge> : null}
                 <ChangePill changePct={q.changePct} />

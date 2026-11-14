@@ -20,7 +20,7 @@ import TradingCore
 enum SymbolMarket: String, Codable, CaseIterable, Sendable {
     /// `intl`: London, Frankfurt, Paris, Amsterdam, Zurich, Tokyo, Hong Kong, Singapore,
     /// Seoul and Mumbai listings, kept under their Yahoo symbol ("VOD.L", "7203.T").
-    case us, asx, crypto, intl
+    case us, asx, crypto, intl, index
 }
 
 /// A search result, independent of whether we have a live quote for it yet.
@@ -35,6 +35,7 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
     var isETF: Bool? = nil
 
     var market: SymbolMarket {
+        if symbol.hasPrefix("^") { return .index }
         if kind == .crypto { return .crypto }
         if exchange == "International" { return .intl }
         return exchange == "ASX" ? .asx : .us
@@ -46,6 +47,7 @@ struct SymbolHit: Identifiable, Hashable, Codable, Sendable {
     var badge: String {
         switch market {
         case .crypto: return "Crypto"
+        case .index: return "Index"
         case .asx:    return "ASX"
         case .us:     return "US"
         case .intl:   return Venue.parse(yahooSymbol: symbol)?.venue.shortName ?? "Intl"
@@ -203,10 +205,12 @@ final class SymbolSearchModel: ObservableObject {
     private var quoteTasks: [Task<Void, Never>] = []
 
     private let prefetchQuotes: Bool
+    private let includesIndexes: Bool
 
-    init(scope: SymbolSearchScope = .all, prefetchQuotes: Bool = true) {
+    init(scope: SymbolSearchScope = .all, prefetchQuotes: Bool = true, includesIndexes: Bool = false) {
         self.scope = scope
         self.prefetchQuotes = prefetchQuotes
+        self.includesIndexes = includesIndexes
     }
 
     func retry() { schedule(debounce: false) }
@@ -236,6 +240,12 @@ final class SymbolSearchModel: ObservableObject {
     private func run(_ q: String) async {
         var stocks: [SymbolHit]?
         var crypto: [SymbolHit]?
+        let indexes = includesIndexes ? Self.indexHits(q) : []
+        if !indexes.isEmpty {
+            allHits = indexes
+            phase = .results
+            if prefetchQuotes { loadQuotes(for: indexes) }
+        }
         await withTaskGroup(of: (isStock: Bool, hits: [SymbolHit]?).self) { group in
             group.addTask { (true, await Self.withDeadline(seconds: 12) { await Self.stockHits(q) }) }
             group.addTask { (false, await Self.withDeadline(seconds: 8) { await Self.cryptoHits(q) }) }
@@ -245,7 +255,7 @@ final class SymbolSearchModel: ObservableObject {
                     return
                 }
                 if result.isStock { stocks = result.hits } else { crypto = result.hits }
-                let merged = SymbolRanking.rank(stocks: stocks ?? [], crypto: crypto ?? [], query: q)
+                let merged = SymbolRanking.rank(stocks: indexes + (stocks ?? []), crypto: crypto ?? [], query: q)
                 allHits = merged
                 if !merged.isEmpty {
                     phase = .results
@@ -294,6 +304,17 @@ final class SymbolSearchModel: ObservableObject {
             guard r.currency.uppercased() == "USD", !r.symbol.contains("."),
                   usExchange(from: r.region) != nil else { return nil }
             return SymbolHit(symbol: r.symbol, name: r.name, kind: .stock, exchange: "US", isETF: r.isETF)
+        }
+    }
+
+    private static func indexHits(_ query: String) -> [SymbolHit] {
+        let term = query.lowercased()
+        return [
+            ("^GSPC", "S&P 500", "US"), ("^IXIC", "Nasdaq Composite", "US"),
+            ("^DJI", "Dow Jones Industrial Average", "US"), ("^AXJO", "S&P/ASX 200", "ASX")
+        ].compactMap { symbol, name, exchange in
+            guard symbol.lowercased().hasPrefix(term) || name.lowercased().contains(term) else { return nil }
+            return SymbolHit(symbol: symbol, name: name, kind: .stock, exchange: exchange)
         }
     }
 
@@ -382,7 +403,7 @@ final class SymbolSearchModel: ObservableObject {
                 quote = try await APIService.shared.fetchCryptoPrice(id: hit.coinID)
             case .asx:
                 quote = try await APIService.shared.fetchYahooQuote(symbol: "\(hit.symbol).AX", name: hit.name)
-            case .intl:
+            case .index, .intl:
                 quote = try await APIService.shared.fetchYahooQuote(symbol: hit.symbol, name: hit.name)
             case .us:
                 quote = try await APIService.shared.fetchStockQuote(symbol: hit.symbol)
@@ -753,18 +774,20 @@ struct SymbolResultRow: View {
             .accessibilityLabel(accessibilityText)
             .accessibilityIdentifier(rowIdentifier)
 
-            Button(action: onToggle) {
-                Image(systemName: isInWatchlist ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.system(size: 24, weight: .regular))
-                    .foregroundStyle(isInWatchlist ? DS.accent : theme.secondaryText)
-                    .contentTransition(.symbolEffect(.replace))
-                    .motionSafeAnimation(DS.quick, value: isInWatchlist)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+            if hit.market != .index {
+                Button(action: onToggle) {
+                    Image(systemName: isInWatchlist ? "checkmark.circle.fill" : "plus.circle")
+                        .font(.system(size: 24, weight: .regular))
+                        .foregroundStyle(isInWatchlist ? DS.accent : theme.secondaryText)
+                        .contentTransition(.symbolEffect(.replace))
+                        .motionSafeAnimation(DS.quick, value: isInWatchlist)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel(isInWatchlist ? "Remove \(hit.symbol) from \(listName)" : "Add \(hit.symbol) to \(listName)")
+                .accessibilityIdentifier("\(rowIdentifier).toggle")
             }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel(isInWatchlist ? "Remove \(hit.symbol) from \(listName)" : "Add \(hit.symbol) to \(listName)")
-            .accessibilityIdentifier("\(rowIdentifier).toggle")
         }
         .padding(.vertical, 2)
     }
@@ -772,17 +795,21 @@ struct SymbolResultRow: View {
     @ViewBuilder
     private func priceColumn(stacked: Bool) -> some View {
         if let quote, quote.price > 0 {
-            QuoteNumbers(price: marketData.formatPrice(quote.price), percent: quote.changePercent,
+            QuoteNumbers(price: priceLabel(quote.price), percent: quote.changePercent,
                          stacked: stacked, priceFont: .subheadline.weight(.semibold).monospacedDigit())
         } else if isLoadingQuote {
             QuoteNumbersSkeleton(stacked: stacked)
         }
     }
 
+    private func priceLabel(_ value: Double) -> String {
+        hit.market == .index ? value.formatted(.number.precision(.fractionLength(2))) + " pts" : marketData.formatPrice(value)
+    }
+
     private var accessibilityText: String {
         var parts = ["\(hit.symbol), \(hit.name), \(hit.badge)"]
         if let quote, quote.price > 0 {
-            parts.append(marketData.formatPrice(quote.price))
+            parts.append(priceLabel(quote.price))
             parts.append(String(format: "%@ %.2f percent today", quote.changePercent >= 0 ? "up" : "down", abs(quote.changePercent)))
         }
         if isLoadingQuote && quote == nil { parts.append("loading price") }

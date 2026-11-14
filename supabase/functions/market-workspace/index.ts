@@ -1,4 +1,5 @@
 // Read-only market data and strategy preparation for the Stock Tracker workspace.
+import { createClient } from "npm:@supabase/supabase-js@2.49.4";
 import { serviceClient } from "../_shared/secure/edge.ts";
 import { authenticate } from "../_shared/server/auth.ts";
 import { errorResponse, Field, HttpError, ok, readJSONObject, sameSecret } from "../_shared/server/http.ts";
@@ -9,6 +10,7 @@ import { PORTFOLIO_BENCHMARKS, type PortfolioBenchmark } from "../_shared/portfo
 import { catalogInstruments } from "../_shared/trading/catalog.ts";
 import { decodeInstrument, instrumentID, parseYahooSymbol, venueCurrency, VENUES } from "../_shared/trading/market.ts";
 import { validate } from "../_shared/trading/strategy.ts";
+import { cachedMarketExplore, knownWatchedListings } from "./explore.ts";
 import { companyResearch } from "./company.ts";
 import { mobileResearchReport, researchListing } from "./research_report.ts";
 import { answerCompanyQuestion } from "./research_answer.ts";
@@ -43,7 +45,8 @@ Deno.serve(async (request) => {
     const body = await readJSONObject(request, 12_000);
     const featured = body.action === "featured";
     let userID: string | undefined;
-    if (featured) {
+    const publicMarketFeed = featured || body.action === "explore" && request.headers.has("x-workspace-overview-secret");
+    if (publicMarketFeed) {
       const expected = env("WORKSPACE_OVERVIEW_SECRET");
       const provided = request.headers.get("x-workspace-overview-secret");
       if (!expected || !provided || !sameSecret(expected, provided)) {
@@ -106,6 +109,19 @@ Deno.serve(async (request) => {
     }
     const { provider } = providerFromEnv(env);
     if (!provider) throw new HttpError(503, "unavailable", "The market data provider is unavailable.");
+
+    if (body.action === "explore") {
+      const feed = cachedMarketExplore(provider, env, now);
+      if (!userID) return ok(await feed);
+      const [rankings, watched] = await Promise.all([
+        feed,
+        createClient(env("SUPABASE_URL")!, env("SUPABASE_ANON_KEY")!, {
+          auth: { persistSession: false, autoRefreshToken: false },
+          global: { headers: { Authorization: request.headers.get("Authorization") ?? "" } },
+        }).rpc("most_watched_listings", { p_user_id: userID }),
+      ]);
+      return ok({ ...rankings, mostWatched: knownWatchedListings(watched.data) });
+    }
 
     if (featured) {
       const assets = ["SPY", "QQQ", "AAPL", "NVDA", "MSFT", "BTC", "ETH", "SOL", "BHP", "CBA"]

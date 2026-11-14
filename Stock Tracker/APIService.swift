@@ -1338,7 +1338,7 @@ extension APIService {
 
         // Yahoo quotes in the listing's currency (AUD for .AX). Store USD — see FXRates.
         let currency = meta["currency"] as? String
-        let fx = Self.yahooToUSD(currency, symbol: sanitized)
+        let fx = sanitized.hasPrefix("^") ? 1 : Self.yahooToUSD(currency, symbol: sanitized)
         let last = meta["regularMarketPrice"] as? Double ?? 0
         let reference = meta["chartPreviousClose"] as? Double
         let price = last * fx

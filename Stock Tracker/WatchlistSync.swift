@@ -12,6 +12,7 @@ struct WatchlistChange: Codable {
     let name: String?
     let assets: [Asset]
     let keys: [String]
+    var savedAt: Date? = Date()
 
     init(_ action: Action, groupID: UUID, name: String? = nil, assets: [Asset] = [], keys: [String] = []) {
         id = UUID()
@@ -39,10 +40,18 @@ struct WatchlistChange: Codable {
         case .delete: groups.remove(at: index)
         case .add:
             var existing = Set(groups[index].assets.map { Self.key(for: $0, in: groupID) })
-            groups[index].assets += assets.filter { existing.insert(Self.key(for: $0, in: groupID)).inserted }
+            let additions = assets.filter { existing.insert(Self.key(for: $0, in: groupID)).inserted }
+            groups[index].assets += additions
+            var dates = groups[index].savedDates ?? [:]
+            for asset in additions { dates[asset.id.uuidString] = savedAt }
+            groups[index].savedDates = dates
         case .remove:
             let removed = Set(keys)
-            groups[index].assets.removeAll { removed.contains(Self.key(for: $0, in: groupID)) }
+            groups[index].assets.removeAll { asset in
+                removed.contains(Self.key(for: asset, in: groupID))
+            }
+            let remaining = Set(groups[index].assets.map { $0.id.uuidString })
+            groups[index].savedDates = groups[index].savedDates?.filter { remaining.contains($0.key) }
         case .reorder:
             let requested = Set(keys)
             let current = Dictionary(groups[index].assets.map { (Self.key(for: $0, in: groupID), $0) },
@@ -203,6 +212,7 @@ final class WatchlistSync {
             let name: String
             let kind: AssetKind
             let exchange: String?
+            let saved_at: String?
 
             var domain: Asset {
                 Asset(id: id, symbol: symbol, name: name, price: 0, change: 0, changePercent: 0, volume: 0,
@@ -214,6 +224,14 @@ final class WatchlistSync {
         let name: String
         let assets: [Row]
 
-        var domain: WatchlistGroup { WatchlistGroup(id: id, name: name, assets: assets.map(\.domain)) }
+        var domain: WatchlistGroup {
+            let dates = Dictionary(uniqueKeysWithValues: assets.compactMap { row -> (String, Date)? in
+                guard let text = row.saved_at else { return nil }
+                let format = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+                guard let date = (try? format.parse(text)) ?? (try? Date.ISO8601FormatStyle().parse(text)) else { return nil }
+                return (row.id.uuidString, date)
+            })
+            return WatchlistGroup(id: id, name: name, assets: assets.map(\.domain), savedDates: dates)
+        }
     }
 }

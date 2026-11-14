@@ -72,7 +72,10 @@ access to each person's portfolios, watchlist and paper orders. Keep `ALPACA_*`,
 `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` server-side.
 
 Set `WORKSPACE_OVERVIEW_SECRET` to the same randomly generated value in Vercel and the Supabase
-function secrets. Set `FINNHUB_API_KEY` in Supabase for US fundamentals and news. Set
+function secrets. The web Explore route uses this same secret. The iPhone requests the feed with its signed-in session.
+The feed uses Alpaca market data for US listings, Yahoo Finance for ASX closes, and the optional
+`COINGECKO_API_KEY` Demo key for trending crypto. Apply migration `20261115120000` for
+watchlist addition times and the signed-in Most watched ranking. Set `FINNHUB_API_KEY` in Supabase for US fundamentals and news. Set
 `ENABLE_AI` and `ENABLE_SNAPTRADE` in Vercel after configuring the corresponding shared Edge
 Functions. Allowlist the production workspace URL in Supabase Auth. Standard Supabase hosted
 email limits apply until a custom SMTP sender is configured.
