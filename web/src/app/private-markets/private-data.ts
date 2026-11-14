@@ -73,8 +73,23 @@ export type Application = {
   offer: { round: { stage: string; company: { name: string } | null } | null } | null;
 };
 
+export type MonitorPreferences = {
+  company_ids: string[]; eligible_opportunities: boolean; digest_enabled: boolean; refreshed_at: string;
+};
+
+export type CompanyUpdate = {
+  id: string; title: string; significance: string; source_url: string; source_label?: string;
+  published_at: string; revised_at?: string; company: { name: string };
+};
+
+export type MonitorAlert = {
+  id: string; kind: string; company_name: string; title: string; significance: string;
+  source_url: string | null; source_label: string | null; occurred_at: string; revised_at: string | null;
+};
+
 type PrivateAction = "catalog" | "discover" | "research" | "research_status" | "research_runs" |
-  "reports" | "report" | "confirmed_holdings" | "applications";
+  "reports" | "report" | "confirmed_holdings" | "applications" | "updates" |
+  "web_monitor_preferences" | "save_web_monitor" | "monitor_inbox" | "monitor_digests";
 
 export async function privateMarkets<T>(
   action: PrivateAction, { owner, signal, ...body }: Record<string, unknown> & { owner?: string; signal?: AbortSignal } = {},

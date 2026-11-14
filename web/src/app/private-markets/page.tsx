@@ -9,5 +9,5 @@ export default async function PrivateMarketsPage({
   searchParams: Promise<{ view?: string | string[] }>;
 }) {
   const { view } = await searchParams;
-  return <PrivateMarketsView aiEnabled={process.env.ENABLE_AI === "true"} initialTab={view === "portfolio" ? "portfolio" : "catalogue"} />;
+  return <PrivateMarketsView aiEnabled={process.env.ENABLE_AI === "true"} initialTab={view === "portfolio" || view === "updates" || view === "research" ? view : "catalogue"} />;
 }

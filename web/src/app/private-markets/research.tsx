@@ -85,11 +85,13 @@ function ReportView({ report }: { report: Report }) {
   );
 }
 
-export function Research({ owner, aiEnabled, selected, asOf }: { owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number }) {
+export function Research({ owner, aiEnabled, selected, asOf, initialReportID }: {
+  owner: string; aiEnabled: boolean; selected: PrivateDeal[]; asOf: number; initialReportID?: string;
+}) {
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState<Mode>("question");
   const [consent, setConsent] = useState(false);
-  const [reportID, setReportID] = useState<string | null>(null);
+  const [reportID, setReportID] = useState<string | null>(initialReportID ?? null);
   const [runID, setRunID] = useState<string | null>(null);
   const cache = useQueryClient();
 

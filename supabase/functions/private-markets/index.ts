@@ -13,6 +13,10 @@ import {
 } from "../_shared/private-markets/source-revisions.ts";
 
 const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i;
+// One web subscription per account, independent of any iPhone installation.
+const webMonitorDevice = "4c736341-5e56-4e0d-9466-7438190e4e60";
+const monitoringSessionActions = new Set(["web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests"]);
+
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
   "round:funding_rounds!inner(id,stage,raised,target,valuation,valuation_method,currency,announced_on,closes_at,source_url,verified_at,traction," +
   "company:private_companies!inner(id,name,sector,country,location,description,logo_url,founders,investors,source_url,verified_at," +
@@ -456,6 +460,13 @@ Deno.serve(async (req) => {
     }
     const userId = await authenticatedUserId(req, admin);
     if (!userId) return errorResponse(401, "UNAUTHENTICATED", "Sign in first.");
+    if (typeof body.action === "string" && monitoringSessionActions.has(body.action)) {
+      const session = sessionId(req);
+      if (!session) return errorResponse(401, "UNAUTHENTICATED", "Sign in to view account monitoring.");
+      const { data: active, error } = await admin.rpc("account_deletion_session_active", { p_user: userId, p_session: session });
+      if (error) throw error;
+      if (active !== true) return errorResponse(401, "UNAUTHENTICATED", "Your session ended. Sign in again.");
+    }
     if ((body.action === "discover" || body.action === "research") && body.model_consent !== true) {
       return errorResponse(403, "AI_CONSENT_REQUIRED", "Allow Stock Tracker to send this request to the AI provider.");
     }
@@ -487,9 +498,38 @@ Deno.serve(async (req) => {
         });
         return jsonResponse(200, page);
       }
+      case "web_monitor_preferences":
+      case "save_web_monitor": {
+        if (body.action === "web_monitor_preferences" && Object.keys(body).length !== 1) {
+          return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Choose valid web monitoring preferences.");
+        }
+        if (body.action === "save_web_monitor") {
+          const { enabled, company_ids: companies, eligible_opportunities: eligible, digest_enabled: digest } = body;
+          if (Object.keys(body).some((key) => !["action", "enabled", "company_ids", "eligible_opportunities", "digest_enabled"].includes(key)) ||
+            typeof enabled !== "boolean" || typeof eligible !== "boolean" || typeof digest !== "boolean" ||
+            !Array.isArray(companies) || companies.length > 250 ||
+            companies.some((id) => typeof id !== "string" || !uuid.test(id))) {
+            return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Choose valid web monitoring preferences.");
+          }
+          const { error } = await admin.rpc("configure_private_monitor", {
+            p_user: userId, p_device: webMonitorDevice, p_enabled: enabled,
+            p_companies: enabled ? [...new Set(companies.map((id: string) => id.toLowerCase()))] : [],
+            p_eligible: enabled && eligible, p_digest: enabled && digest,
+          });
+          if (error?.code === "22023") return errorResponse(422, "MONITOR_SETTINGS_UNAVAILABLE", error.message);
+          if (error) throw error;
+        }
+        const { data, error } = await admin.from("private_monitor_devices")
+          .select("company_ids,eligible_opportunities,digest_enabled,refreshed_at")
+          .eq("user_id", userId).eq("device_id", webMonitorDevice)
+          .gte("refreshed_at", new Date(Date.now() - 90 * 86_400_000).toISOString())
+          .maybeSingle();
+        if (error) throw error;
+        return jsonResponse(200, { preferences: data });
+      }
       case "monitor_push": {
         const { device_id: device, environment, token } = body;
-        if (typeof device !== "string" || !uuid.test(device) ||
+        if (typeof device !== "string" || !uuid.test(device) || device.toLowerCase() === webMonitorDevice ||
           (environment !== undefined && environment !== null && !pushEnvironment(environment)) ||
           (token !== null && (!validDeviceToken(token) || !pushEnvironment(environment)))) {
           return errorResponse(400, "INVALID_MONITOR_PUSH", "Send the installation identifier and a valid device token.");
@@ -510,7 +550,7 @@ Deno.serve(async (req) => {
       }
       case "monitor_settings": {
         const { device_id: device, company_ids: companies, enabled, eligible_opportunities: eligible, digest } = body;
-        if (typeof device !== "string" || !uuid.test(device) || typeof enabled !== "boolean" || typeof eligible !== "boolean" ||
+        if (typeof device !== "string" || !uuid.test(device) || device.toLowerCase() === webMonitorDevice || typeof enabled !== "boolean" || typeof eligible !== "boolean" ||
           (digest !== undefined && typeof digest !== "boolean") ||
           !Array.isArray(companies) || companies.length > 250 || companies.some((id) => typeof id !== "string" || !uuid.test(id))) {
           return errorResponse(400, "INVALID_MONITOR_SETTINGS", "Send a device identifier and up to 250 company identifiers.");

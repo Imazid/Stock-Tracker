@@ -12,7 +12,7 @@ const services = {
 
 const privateMarketActions = new Set([
   "catalog", "discover", "research", "research_status", "research_runs", "reports", "report",
-  "confirmed_holdings", "applications",
+  "confirmed_holdings", "applications", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
 ]);
 
 function failure(message: string, status: number) {
