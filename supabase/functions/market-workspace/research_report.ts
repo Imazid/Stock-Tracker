@@ -12,14 +12,7 @@ export function researchListing(instrumentID: string) {
   return { venue: venue as Venue, symbol };
 }
 
-export async function mobileResearchReport(
-  instrumentID: string,
-  origin: string | undefined,
-  bypass: string | undefined,
-  request: typeof fetch = fetch,
-  publicOnly = false,
-) {
-  researchListing(instrumentID);
+export function researchOrigin(origin: string | undefined, bypass: string | undefined, unavailable: () => HttpError) {
   let web: URL;
   try {
     web = new URL(origin ?? "");
@@ -28,13 +21,25 @@ export async function mobileResearchReport(
   }
   if (web.protocol !== "https:" || web.username || web.password || web.pathname !== "/" ||
       web.search || web.hash || !bypass) throw unavailable();
+  return { web, bypass };
+}
+
+export async function mobileResearchReport(
+  instrumentID: string,
+  origin: string | undefined,
+  bypass: string | undefined,
+  request: typeof fetch = fetch,
+  publicOnly = false,
+) {
+  researchListing(instrumentID);
+  const resolved = researchOrigin(origin, bypass, unavailable);
 
   const encoded = encodeURIComponent(instrumentID);
   try {
-    const url = new URL(`/api/markets/instruments/${encoded}/research/report`, web);
+    const url = new URL(`/api/markets/instruments/${encoded}/research/report`, resolved.web);
     if (publicOnly) url.searchParams.set("publicOnly", "true");
     const result = await request(url, {
-      headers: { Accept: "application/json", "x-vercel-protection-bypass": bypass },
+      headers: { Accept: "application/json", "x-vercel-protection-bypass": resolved.bypass },
       signal: AbortSignal.timeout(25_000),
       redirect: "error",
     });
@@ -45,7 +50,7 @@ export async function mobileResearchReport(
         !Array.isArray(report.coverage) || !Array.isArray(report.facts) || !Array.isArray(report.events)) {
       throw unavailable();
     }
-    return { report, dashboardURL: new URL(`/markets/${encoded}`, web).href };
+    return { report, dashboardURL: new URL(`/markets/${encoded}`, resolved.web).href };
   } catch (error) {
     if (error instanceof HttpError) throw error;
     throw unavailable();

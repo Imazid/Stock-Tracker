@@ -58,6 +58,7 @@ struct CompanyResearchView: View {
                                     Label("Ask AI about \(instrument.symbol)", systemImage: "sparkles")
                                 }
                                 .accessibilityIdentifier("companyResearch.ask")
+                                alertsLink(owner: owner)
                             }
                         }
                         if let quote = report.quote {
@@ -140,6 +141,7 @@ struct CompanyResearchView: View {
                         Text(errorMessage)
                     } actions: {
                         Button("Try again") { requestCount += 1 }
+                        if let owner = auth.userId { alertsLink(owner: owner) }
                     }
                 } else {
                     ProgressView("Collecting company evidence…")
@@ -154,6 +156,17 @@ struct CompanyResearchView: View {
             }
             .task(id: RequestKey(owner: auth.userId, attempt: requestCount)) { await load() }
         }
+    }
+
+    private func alertsLink(owner: UUID) -> some View {
+        NavigationLink {
+            if auth.userId == owner {
+                CompanyAlertsScreen(instrument: instrument, owner: owner).id(owner)
+            }
+        } label: {
+            Label("Company alerts", systemImage: "bell")
+        }
+        .accessibilityIdentifier("companyResearch.alerts")
     }
 
     private func load() async {
