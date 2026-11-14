@@ -212,6 +212,7 @@ struct CashIncomeRecords {
             "SnapTrade reported amount", "Report note",
         ]
         let reinvestmentColumns = ["Reinvested amount", "Shares acquired", "Acquisition date (Sydney)", "Acquisition basis (USD)"]
+        let brokerReinvestmentColumns = ["SnapTrade reported symbol", "SnapTrade reported units"]
         typealias ExportRow = (paidOn: String, id: String, fields: [String?])
         var output: [ExportRow] = []
         let pageSize = 500
@@ -233,22 +234,27 @@ struct CashIncomeRecords {
         let reinvestments = ReinvestmentRecords(userId: userId)
         var afterReinvestment: DividendReinvestment?
         var hasReinvestments = false
+        var hasBrokerReinvestments = false
         repeat {
             let rows = try await reinvestments.page(from: from, through: through, after: afterReinvestment, limit: pageSize)
             hasReinvestments = hasReinvestments || !rows.isEmpty
             for row in rows {
                 let id = row.id.uuidString.lowercased()
+                hasBrokerReinvestments = hasBrokerReinvestments || row.snaptrade_activity_id != nil
                 output.append((row.paid_on, id, [
                     "Dividend reinvestment", id, row.paid_on, "Dividend", row.portfolio_holdings?.asset_symbol,
                     nil, row.currency, nil, row.dividend_amount, nil, row.franking_credit_aud, row.statement_reference,
-                    nil, nil, nil, nil, "The gross dividend may include cash paid separately. Use the statement to reconcile both entries.",
+                    row.snaptrade_activity_id, row.snaptrade_reported_on, row.snaptrade_reported_currency,
+                    row.snaptrade_reported_amount, "The gross dividend may include cash paid separately. Use the statement to reconcile both entries.",
                     row.reinvested_amount, row.shares, row.acquired_on, row.usdBasis,
+                    row.snaptrade_reported_symbol, row.snaptrade_reported_units,
                 ]))
             }
             afterReinvestment = rows.count == pageSize ? rows.last : nil
         } while afterReinvestment != nil
 
-        let header = hasReinvestments ? cashColumns + reinvestmentColumns : cashColumns
+        let header = cashColumns + (hasReinvestments ? reinvestmentColumns : [])
+            + (hasBrokerReinvestments ? brokerReinvestmentColumns : [])
         let note: [String?] = header.map { column in
             switch column {
             case "Record type": "Report information"
@@ -259,8 +265,9 @@ struct CashIncomeRecords {
         var data = Data((csvLine(header.map { Optional($0) }) + csvLine(note)).utf8)
         output.sort { ($0.paidOn, $0.id) > ($1.paidOn, $1.id) }
         for row in output {
-            let fields = row.fields + Array<String?>(repeating: nil, count: header.count - row.fields.count)
-            data.append(contentsOf: csvLine(fields).utf8)
+            let fields = row.fields.prefix(header.count)
+                + Array<String?>(repeating: nil, count: max(0, header.count - row.fields.count))
+            data.append(contentsOf: csvLine(Array(fields)).utf8)
         }
         return data
     }

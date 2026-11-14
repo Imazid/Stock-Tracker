@@ -59,6 +59,7 @@ struct PortfolioBrokerActivity: View {
     private enum Review {
         case transfer((PerformanceFlow) -> Void)
         case income(selected: String?, review: (CashIncomeBrokerPayment) -> Void)
+        case reinvestments((BrokerReinvestment) -> Void)
     }
     private let review: Review
 
@@ -82,9 +83,38 @@ struct PortfolioBrokerActivity: View {
         review = .income(selected: selectedIncomeID, review: reviewIncome)
     }
 
-    private var reviewingIncome: Bool {
-        if case .income = review { return true }
-        return false
+    init(userId: UUID, start: String, end: String, imported: Set<String>,
+         reviewReinvestment: @escaping (BrokerReinvestment) -> Void) {
+        self.userId = userId
+        self.start = start
+        self.end = end
+        self.imported = imported
+        canInclude = true
+        review = .reinvestments(reviewReinvestment)
+    }
+
+    private var activityTitle: String {
+        switch review {
+        case .transfer: "Broker activity"
+        case .income: "Broker-reported payments"
+        case .reinvestments: "Broker-reported reinvestments"
+        }
+    }
+
+    private var emptyActivityTitle: String {
+        switch review {
+        case .transfer: "cash or corporate activity"
+        case .income: "payments"
+        case .reinvestments: "reinvestments"
+        }
+    }
+
+    private func matchesReview(_ activity: Activity) -> Bool {
+        switch review {
+        case .transfer: true
+        case .income: CashIncomeKind(brokerLabel: activity.label) != nil
+        case .reinvestments: activity.label == BrokerReinvestment.label
+        }
     }
 
     @State private var accounts: [Account]?
@@ -131,18 +161,19 @@ struct PortfolioBrokerActivity: View {
                     Text("Some records had missing or unsupported data. Check your statement for complete activity.")
                         .font(.footnote)
                 }
-                let activities = reviewingIncome ? page.activities.filter { CashIncomeKind(brokerLabel: $0.label) != nil } : page.activities
+                let activities = page.activities.filter(matchesReview)
                 if activities.isEmpty {
-                    if reviewingIncome {
-                        Text(page.nextOffset == nil ? "No reported payments in this date range." : "No reported payments on the loaded pages.")
+                    if page.nextOffset == nil {
+                        Text("No reported \(emptyActivityTitle) in this date range.")
                     } else {
-                        Text("No reported cash or corporate activity in this date range.")
+                        Text("No reported \(emptyActivityTitle) on the loaded pages.")
                     }
                 }
                 ForEach(activities) { activity in
                     switch review {
                     case .transfer(let include): activityRow(activity, include: include)
                     case .income(let selected, let review): incomeRow(activity, selected: selected, review: review)
+                    case .reinvestments(let review): reinvestmentRow(activity, review: review)
                     }
                 }
                 if let next = page.nextOffset {
@@ -150,11 +181,14 @@ struct PortfolioBrokerActivity: View {
                 }
             }
         } header: {
-            Text(reviewingIncome ? "Broker-reported payments" : "Broker activity")
+            Text(activityTitle)
         } footer: {
-            if reviewingIncome {
+            switch review {
+            case .income:
                 Text("Review the reported payment and enter the cash received from your statement. Check for any previous manual entry for the same payment.")
-            } else {
+            case .reinvestments:
+                Text("Choose an event to attach its reference. Use the statement to confirm the dates, shares and amounts.")
+            case .transfer:
                 Text("Include cash that entered or left the portfolio you valued. For a transfer between included accounts, leave both entries out. Compare with transfers already entered from statements. SnapTrade refreshes activity daily. For foreign cash, look up an ECB reference rate or enter the USD amount from your statement.")
             }
         }
@@ -222,6 +256,28 @@ struct PortfolioBrokerActivity: View {
                 .disabled(included || selected == activity.id || busy || !canInclude)
             } else {
                 Text("Check the statement for a cash payment or reversal.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func reinvestmentRow(_ activity: Activity, review: @escaping (BrokerReinvestment) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text([activity.label, activity.symbol].compactMap { $0 }.joined(separator: " · "))
+            let amount = activity.amount.map { "\($0.formatted()) \(activity.currency ?? "")" }
+            let units = activity.units.map { "\($0.description) units" }
+            Text([activity.date, amount, units].compactMap { $0 }.joined(separator: " · "))
+                .font(.caption).foregroundStyle(.secondary)
+            if let reportedUnits = activity.units, reportedUnits < 0 {
+                Text("Check this possible reversal against your statement.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                let included = imported.contains(activity.id)
+                Button(included ? "Already recorded" : "Review reinvestment") {
+                    review(BrokerReinvestment(id: activity.id, date: activity.date, symbol: activity.symbol,
+                                              currency: activity.currency, amount: activity.amount?.description,
+                                              units: activity.units?.description))
+                }
+                .buttonStyle(.borderless)
+                .disabled(included || busy)
             }
         }
     }

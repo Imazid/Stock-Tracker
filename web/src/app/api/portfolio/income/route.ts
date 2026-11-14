@@ -11,6 +11,8 @@ const columns = [
 ];
 const reinvestmentColumns = ["Reinvested amount", "Shares acquired", "Acquisition date (Sydney)", "Acquisition basis (USD)"];
 
+const brokerReinvestmentColumns = ["SnapTrade reported symbol", "SnapTrade reported units"];
+
 export async function GET(request: Request) {
   const db = await serverSupabase();
   if (!db) return jsonError(503, "unavailable", "Accounts are unavailable.");
@@ -26,6 +28,7 @@ export async function GET(request: Request) {
 
   const records: (string | null)[][] = [];
   const reinvestments: (string | null)[][] = [];
+  let hasBrokerReinvestments = false;
   try {
     const pageSize = 500;
     let last: IncomeRow | undefined;
@@ -49,12 +52,15 @@ export async function GET(request: Request) {
     } while (last);
     for await (const page of reinvestmentPages(db, user.id, request.signal, { field: "paid_on", from, through })) {
       for (const entry of page) {
+        hasBrokerReinvestments ||= Boolean(entry.snaptrade_activity_id);
         reinvestments.push([
           "Dividend reinvestment", entry.id, entry.paid_on, "Dividend", entry.portfolio_holdings?.asset_symbol ?? null,
           null, entry.currency, null, entry.dividend_amount, null, entry.franking_credit_aud, entry.statement_reference,
-          null, null, null, null, "The gross dividend may include cash paid separately. Use the statement to reconcile both entries.",
+          entry.snaptrade_activity_id ?? null, entry.snaptrade_reported_on ?? null, entry.snaptrade_reported_currency ?? null,
+          entry.snaptrade_reported_amount ?? null, "The gross dividend may include cash paid separately. Use the statement to reconcile both entries.",
           entry.reinvested_amount, entry.shares, entry.acquired_on,
           entry.currency === "USD" ? entry.reinvested_amount : entry.basis_usd,
+          entry.snaptrade_reported_symbol ?? null, entry.snaptrade_reported_units ?? null,
         ]);
       }
     }
@@ -62,7 +68,8 @@ export async function GET(request: Request) {
     return jsonError(503, "unavailable", "Couldn’t export your cash income. Try again.");
   }
 
-  const header = reinvestments.length ? [...columns, ...reinvestmentColumns] : columns;
+  const header = [...columns, ...(reinvestments.length ? reinvestmentColumns : []),
+    ...(hasBrokerReinvestments ? brokerReinvestmentColumns : [])];
   const note = header.map((name, i) => i === 0 ? "Report information" : name === "Report note" ? incomeNotice : null);
   const rows = [...records, ...reinvestments].sort((a, b) => b[2]!.localeCompare(a[2]!) || b[1]!.localeCompare(a[1]!));
   return new Response([header, note, ...rows].map((row) => header.map((_, i) => csvField(row[i] ?? null)).join(",")).join("\r\n") + "\r\n", {
