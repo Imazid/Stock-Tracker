@@ -86,12 +86,19 @@ struct PortfolioPerformanceLedger: View {
     @State private var periods: [PerformancePeriod]?
     @State private var summary: PerformanceSummary?
     @State private var error: String?
-    @State private var editor: Editor?
     @State private var removing: PerformancePeriod?
+    @State private var sheet: Sheet?
 
-    private struct Editor: Identifiable {
-        var id = UUID()
-        let period: PerformancePeriod?
+    private enum Sheet: Identifiable {
+        case editor(PerformancePeriod?)
+        case benchmark
+
+        var id: String {
+            switch self {
+            case .editor(let period): period?.id.uuidString ?? "new"
+            case .benchmark: "benchmark"
+            }
+        }
     }
 
     var body: some View {
@@ -100,14 +107,16 @@ struct PortfolioPerformanceLedger: View {
                 Text("Portfolio returns").font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 if !valueHidden {
-                    Button("Add period") { editor = Editor(period: nil) }
+                    Button("Add period") { sheet = .editor(nil) }
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier("portfolio.returns.add")
                 }
             }
             if valueHidden {
                 Text("Balances are hidden.").font(.footnote).foregroundStyle(theme.secondaryText)
+                    .accessibilityIdentifier("portfolio.returns.hidden")
             } else if let error {
                 Text(error).font(.footnote).foregroundStyle(theme.secondaryText)
                 Button("Retry") { Task { await load() } }.frame(minHeight: 44)
@@ -127,6 +136,14 @@ struct PortfolioPerformanceLedger: View {
                         result("Investment change", summary.investment_change_usd.formatted(.currency(code: "USD")))
                         returnRows(summary.time_weighted_return_pct, summary.money_weighted_return_pct, summary.return_pct)
                     }
+                    Button {
+                        sheet = .benchmark
+                    } label: {
+                        Label("Compare with a benchmark", systemImage: "chart.line.uptrend.xyaxis")
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("portfolio.returns.benchmark.open")
                     if periods.count > 100 {
                         Text("Showing the 100 most recent periods.").font(.caption)
                     }
@@ -142,8 +159,15 @@ struct PortfolioPerformanceLedger: View {
         .padding(DS.Space.l)
         .frostedCard()
         .task(id: userId) { await load() }
-        .sheet(item: $editor) { item in
-            PerformancePeriodEditor(userId: userId, period: item.period) { await load() }
+        .sheet(item: $sheet) { item in
+            switch item {
+            case .editor(let period):
+                PerformancePeriodEditor(userId: userId, period: period) { await load() }
+            case .benchmark:
+                if !valueHidden {
+                    PortfolioBenchmarkSheet(userId: userId, periods: benchmarkPeriods)
+                }
+            }
         }
         .confirmationDialog("Remove this period?", isPresented: Binding(
             get: { removing != nil }, set: { if !$0 { removing = nil } }
@@ -152,13 +176,26 @@ struct PortfolioPerformanceLedger: View {
         }
     }
 
+    private var benchmarkPeriods: [PortfolioBenchmarkPeriod] {
+        var result: [PortfolioBenchmarkPeriod] = []
+        if let summary, summary.periods > 1 {
+            result.append(PortfolioBenchmarkPeriod(id: "continuous", start: summary.starts_on, end: summary.ends_on,
+                                                  timeWeighted: summary.time_weighted_return_pct, continuous: true))
+        }
+        result += (periods ?? []).prefix(100).map {
+            PortfolioBenchmarkPeriod(id: $0.id.uuidString, start: $0.starts_on, end: $0.ends_on,
+                                     timeWeighted: $0.time_weighted_return_pct)
+        }
+        return result
+    }
+
     private func periodRow(_ period: PerformancePeriod) -> some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             HStack {
                 Text("\(period.starts_on) to \(period.ends_on)").font(.subheadline.weight(.semibold))
                 Spacer()
                 Menu {
-                    Button("Edit period") { editor = Editor(period: period) }
+                    Button("Edit period") { sheet = .editor(period) }
                     Button("Remove period", role: .destructive) { removing = period }
                 } label: {
                     Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)

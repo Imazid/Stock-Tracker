@@ -1,6 +1,9 @@
 import type { IssuerClassification, IssuerClassificationResponse } from "../../lib/issuer-classification.ts";
 import { findSecListing, secConfigured, secDirectory, secSubmissions } from "../research/sec.ts";
-import { issuerFilings } from "./issuer-filings.ts";
+import bundledFilings from "../../../../Stock Tracker/IssuerFilings.json" with { type: "json" };
+
+// Xcode also includes this dated SEC filing catalog as a bundle resource.
+const issuerFilings: Readonly<Record<string, IssuerClassification>> = bundledFilings;
 
 // The US SIC divisions are based on the OSHA SIC Manual. Special-purpose investment
 // vehicles have no operating sector. Preserve that distinction for exposure weights.
@@ -49,13 +52,8 @@ export async function issuerClassifications(ids: readonly string[], deps = {
   const issuers: Record<string, IssuerClassification> = {};
   const missing: string[] = [];
   for (const id of new Set(ids)) {
-    if (!Object.hasOwn(issuerFilings, id)) {
-      if (id.startsWith("us:")) missing.push(id);
-      continue;
-    }
-    const [issuer, sic, incorporation, filedOn, filing] = issuerFilings[id];
-    issuers[id] = { issuer, sic, sector: operatingSector(sic), country: incorporationCountry(incorporation),
-      evidence: { url: `https://www.sec.gov/Archives/edgar/data/${filing}`, filedOn } };
+    if (Object.hasOwn(issuerFilings, id)) issuers[id] = issuerFilings[id];
+    else if (id.startsWith("us:")) missing.push(id);
   }
 
   // Preserve the bundled classifications through an upstream failure. The shared

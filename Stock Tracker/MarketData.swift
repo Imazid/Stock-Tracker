@@ -8,7 +8,7 @@ import WidgetKit
 // Owns all @Published state that views observe. Business logic is delegated to:
 //   • QuoteService   — stock/crypto quotes, price history, S&P 500, exchange rates
 //   • NewsService    — news fetching + pagination
-//   • PortfolioService — persistence, history generation, mock data
+//   • PortfolioService — persistence, history generation, starter assets
 //
 // No view file needs to change: the public API surface is identical to before.
 
@@ -70,9 +70,11 @@ final class MarketData: ObservableObject {
     /// Not @Published: no view reads it, and publishing it set-then-cleared re-rendered
     /// every MarketData observer twice per refresh.
     var priceDirections: [String: PriceDirection] = [:]
-    /// Symbols whose latest quote failed — UI shows "No live price" instead of a stale number.
-    @Published private(set) var quoteFailures: Set<String> = []
+    /// Listings whose latest quote failed — UI shows "No live price" instead of a stale number.
+    @Published private var quoteFailures: Set<String> = []
     private var previousPrices: [String: Double] = [:]
+
+    func quoteFailed(for asset: Asset) -> Bool { quoteFailures.contains(asset.quoteIdentity) }
 
     // MARK: - External Managers (wired by Stock_TrackerApp)
 
@@ -232,21 +234,17 @@ final class MarketData: ObservableObject {
         preferredCurrency = saved.currency
 
         // Seed base asset lists (used for quote refreshes even when restoring from disk)
-        let (mockStocks, mockCrypto) = portfolioService.mockAssets()
+        (stocks, crypto) = portfolioService.starterAssets()
 
         if !saved.portfolio.isEmpty || !saved.watchlist.isEmpty {
             // Restore saved state
             watchlist = saved.watchlist
             portfolio = saved.portfolio
             if !saved.history.isEmpty { portfolioHistory = saved.history }
-            stocks = mockStocks
-            crypto = mockCrypto
         } else {
             // First launch — start empty. A finance app must never show someone
             // holdings they don't own; onboarding fills the watchlist with their
             // picks and the portfolio with what they add or connect.
-            stocks = mockStocks
-            crypto = mockCrypto
             portfolio = []
             watchlist = []
         }
@@ -486,6 +484,7 @@ final class MarketData: ObservableObject {
 
     private func refreshAssetsFromAPI() async {
         isRefreshingQuotes = true
+        defer { isRefreshingQuotes = false }
         mergeTrackedAssetsIntoCanonicalCollections()
         // Stocks and crypto from different providers, at the same time.
         async let freshStocks = quoteService.refreshStockQuotes(for: stocks)
@@ -499,17 +498,17 @@ final class MarketData: ObservableObject {
         )
         portfolio = synced.portfolio
         watchlist = synced.watchlist
-        quoteFailures = quoteService.lastFailedSymbols
+        quoteFailures = Set((stocks + crypto).filter { quoteService.quoteFailed(for: $0) }.map(\.quoteIdentity))
 
         // Sync prices for all non-active watchlist groups
         let allAssets = stocks + crypto
         for i in watchlistGroups.indices where i != activeWatchlistIndex {
             watchlistGroups[i].assets = watchlistGroups[i].assets.map { asset in
-                allAssets.first(where: { $0.symbol == asset.symbol }) ?? asset
+                guard let quote = allAssets.first(where: { $0.quoteIdentity == asset.quoteIdentity }) else { return asset }
+                return quoteService.mergedAsset(old: asset, api: quote)
             }
         }
 
-        isRefreshingQuotes = false
         lastQuoteRefreshDate = Date()
     }
 
@@ -520,22 +519,22 @@ final class MarketData: ObservableObject {
         let refreshed: Asset? = asset.kind == .crypto
             ? (await quoteService.refreshCryptoPrices(for: [asset])).first
             : (await quoteService.refreshStockQuotes(for: [asset])).first
-        guard let fresh = refreshed, fresh.price > 0, !quoteService.lastFailedSymbols.contains(asset.symbol) else {
-            quoteFailures.insert(asset.symbol)   // shown as "No live price", not a silent stale value
+        guard let fresh = refreshed, fresh.price > 0, !quoteService.quoteFailed(for: asset) else {
+            quoteFailures.insert(asset.quoteIdentity)   // shown as "No live price", not a silent stale value
             return
         }
-        quoteFailures.remove(asset.symbol)
+        quoteFailures.remove(asset.quoteIdentity)
         func apply(_ old: Asset) -> Asset { quoteService.mergedAsset(old: old, api: fresh) }
-        for i in portfolio.indices where portfolio[i].asset.symbol == asset.symbol {
+        for i in portfolio.indices where portfolio[i].asset.quoteIdentity == asset.quoteIdentity {
             portfolio[i].asset = apply(portfolio[i].asset)
         }
-        for i in watchlist.indices where watchlist[i].symbol == asset.symbol {
+        for i in watchlist.indices where watchlist[i].quoteIdentity == asset.quoteIdentity {
             watchlist[i] = apply(watchlist[i])
         }
         if asset.kind == .crypto {
-            for i in crypto.indices where crypto[i].symbol == asset.symbol { crypto[i] = apply(crypto[i]) }
+            for i in crypto.indices where crypto[i].quoteIdentity == asset.quoteIdentity { crypto[i] = apply(crypto[i]) }
         } else {
-            for i in stocks.indices where stocks[i].symbol == asset.symbol { stocks[i] = apply(stocks[i]) }
+            for i in stocks.indices where stocks[i].quoteIdentity == asset.quoteIdentity { stocks[i] = apply(stocks[i]) }
         }
         saveToDisk()
         updateWidgetData()
@@ -557,7 +556,7 @@ final class MarketData: ObservableObject {
     }
 
     private func upsert(_ asset: Asset, into collection: inout [Asset]) {
-        if let index = collection.firstIndex(where: { $0.symbol == asset.symbol }) {
+        if let index = collection.firstIndex(where: { $0.quoteIdentity == asset.quoteIdentity }) {
             // Prefer a non-zero price when reconciling local/synced/imported copies.
             if collection[index].price <= 0 && asset.price > 0 {
                 collection[index] = asset
@@ -612,10 +611,6 @@ final class MarketData: ObservableObject {
             exchangeRates[code] = rate
             if rate.isFinite, rate > 0 { verifiedFXRates[code] = rate }
         }
-    }
-
-    func refreshExchangeRateIfNeeded() async {
-        await updateExchangeRate()
     }
 
     /// Rebuilds the widgets' portfolio charts from real price history.
@@ -1312,26 +1307,35 @@ final class MarketData: ObservableObject {
 
     func applyRemoteSync(watchlist remoteWatchlist: [Asset], portfolio remotePortfolio: [PortfolioHolding], history remoteHistory: [PortfolioSnapshot]) {
         // Preserve live market data for assets already known locally
-        // Use init(_:uniquingKeysWith:) to avoid fatal error on duplicate symbols
-        let localAssets = Dictionary((watchlist + stocks + crypto).map { ($0.symbol, $0) }, uniquingKeysWith: { first, _ in first })
+        let localAssets = Dictionary((watchlist + stocks + crypto).map { ($0.quoteIdentity, $0) }, uniquingKeysWith: { first, _ in first })
         watchlist = remoteWatchlist.map { asset in
-            guard let live = localAssets[asset.symbol], live.price > 0 else { return asset }
+            guard let live = localAssets[asset.quoteIdentity], live.price > 0 else { return asset }
             var a = asset
             a.price = live.price
             a.change = live.change
             a.changePercent = live.changePercent
+            a.volume = live.volume
             return a
         }
         // Preserve live market data for portfolio assets
         portfolio = remotePortfolio.map { holding in
-            guard let live = localAssets[holding.asset.symbol], live.price > 0 else { return holding }
+            guard let live = localAssets[holding.asset.quoteIdentity], live.price > 0 else { return holding }
             var h = holding
             h.asset.price = live.price
             h.asset.change = live.change
             h.asset.changePercent = live.changePercent
+            h.asset.volume = live.volume
             return h
         }
         if !remoteHistory.isEmpty { portfolioHistory = remoteHistory }
+        saveToDisk()
+        updateWidgetData()
+    }
+
+    func refreshSyncedQuotesIfNeeded() async {
+        guard portfolio.contains(where: { $0.shares > 0 && hasNoLivePrice($0.asset) }) else { return }
+        await updateExchangeRate()
+        await refreshAssetsFromAPI()
         saveToDisk()
         updateWidgetData()
     }

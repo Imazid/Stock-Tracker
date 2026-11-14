@@ -286,6 +286,89 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(try rows("portfolio_holdings", select: "id,shares", token: token).count, original.count)
     }
 
+    func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ISSUER_EXPOSURE"] == "1",
+                          "Start the issuer allocation quote fixture relay")
+        let email = "issuer-exposure-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userId = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let now = ISO8601DateFormatter().string(from: Date())
+        let listings: [(String, String, Double)] = [
+            ("BHP", "ASX", 1), ("BHP", "NYSE", 1), ("TSM", "NYSE", 1), ("QQQ", "NASDAQ", 1),
+        ]
+        let holdings = listings.map { symbol, exchange, quantity in
+            ["id": UUID().uuidString.lowercased(), "user_id": userId, "asset_symbol": symbol,
+             "asset_name": symbol, "asset_kind": "Stock", "asset_exchange": exchange,
+             "shares": quantity, "avg_cost": 10, "date_added": now] as [String: Any]
+        }
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: holdings), token: token).status, 201)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light", "-portfolioSegment", "allocation"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<18 {
+                let frame = element.exists ? element.frame : .zero
+                if !frame.isEmpty, app.frame.insetBy(dx: 0, dy: 65).contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
+                let movingDown = !frame.isEmpty && frame.midY < app.frame.midY
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.37 : 0.66))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.63 : 0.40))
+                start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            }
+            XCTAssertTrue(element.isHittable, "Expected \(element)")
+        }
+        XCTAssertTrue(app.buttons["portfolio.privacy"].waitForExistence(timeout: 30))
+        let grouping = app.buttons["portfolio.allocation.grouping"]
+        func choose(_ name: String) {
+            reveal(grouping)
+            grouping.tap()
+            app.buttons[name].firstMatch.tap()
+        }
+        func slice(_ name: String) -> XCUIElement {
+            app.descendants(matching: .any)["portfolio.allocation.slice.\(name)"].firstMatch
+        }
+        choose("SIC sector")
+        XCTAssertTrue(app.staticTexts["4 of 4 holdings valued."].waitForExistence(timeout: 30))
+        for name in ["Mining and extraction", "Manufacturing", "ETFs"] {
+            reveal(slice(name))
+        }
+        choose("Issuer incorporation")
+        let sources = app.buttons["portfolio.allocation.filings"]
+        reveal(sources)
+        sources.tap()
+        XCTAssertTrue(app.navigationBars["Issuer filing sources"].waitForExistence(timeout: 8))
+        for id in ["asx:BHP", "us:BHP", "us:TSM"] {
+            XCTAssertTrue(app.descendants(matching: .any)["portfolio.allocation.filing.\(id)"].firstMatch.exists)
+        }
+        XCTAssertFalse(app.descendants(matching: .any)["portfolio.allocation.filing.us:QQQ"].exists)
+        app.navigationBars["Issuer filing sources"].buttons["Done"].tap()
+        let australia = slice("Australia")
+        reveal(australia)
+        // The ASX leg uses the live ASX quote converted to USD. The controlled US
+        // leg is US$200 and the other two holdings are US$100 each.
+        let amount = try XCTUnwrap(australia.label.firstMatch(of: /\$\s*([0-9]+(?:\.[0-9]+)?)/))
+        let australiaValue = try XCTUnwrap(Double(amount.1))
+        XCTAssertGreaterThan(australiaValue, 210, australia.label)
+        XCTAssertLessThan(australiaValue, 300, australia.label)
+        let weight = australiaValue / (australiaValue + 200) * 100
+        let expected = String(format: "%.1f%%", weight)
+        XCTAssertTrue(australia.label.contains(expected), australia.label)
+        reveal(slice("Taiwan"))
+        app.buttons["portfolio.privacy"].tap()
+        reveal(australia)
+        XCTAssertTrue(australia.label.contains("••••"), australia.label)
+        XCTAssertTrue(australia.label.contains(expected), australia.label)
+        attach("issuer-incorporation")
+    }
+
     func testReviewedStockTransferSyncsAcrossSignIn() throws {
         // Run scripts/snaptrade-positions-fixture.py with STOCK_TRACKER_UI_TEST_API pointing to it.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STOCK_TRANSFERS"] == "1",
@@ -424,6 +507,79 @@ final class AccountSyncTests: XCTestCase {
         confirmRemoval.tap()
         XCTAssertTrue(row.waitForNonExistence(timeout: 8))
         XCTAssertTrue(try saved().isEmpty)
+    }
+
+    func testReconciledReturnsCompareWithBenchmarks() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_BENCHMARK"] == "1",
+                          "Use a test market-workspace server with benchmark data")
+        let email = "benchmark-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        let owner = try request("GET", "/auth/v1/user", token: token)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: owner.data) as? [String: Any])
+        let userId = try XCTUnwrap(account["id"] as? String)
+        let periods: [[String: Any]] = [
+            ["starts_on": "2026-08-03", "ends_on": "2026-09-04", "opening_value_usd": 1000, "closing_value_usd": 1100,
+             "external_flows": []],
+            ["starts_on": "2026-09-04", "ends_on": "2026-10-03", "opening_value_usd": 1100, "closing_value_usd": 1600,
+             "external_flows": [["date": "2026-09-16", "kind": "deposit", "amount": 500]]],
+        ].map { $0.merging(["user_id": userId]) { old, _ in old } }
+        let saved = try request("POST", "/rest/v1/portfolio_performance_periods",
+                                body: JSONSerialization.data(withJSONObject: periods), token: token)
+        XCTAssertEqual(saved.status, 201)
+
+        func launch(hidden: Bool) {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                "-portfolioValueHidden", hidden ? "YES" : "NO", "-preferredMarket", "US",
+                "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
+            app.launch()
+            XCTAssertTrue(app.open("Portfolio"))
+        }
+
+        let open = app.buttons["portfolio.returns.benchmark.open"]
+        launch(hidden: false)
+        for _ in 0..<6 where !open.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(open.isHittable)
+        open.tap()
+        XCTAssertTrue(app.navigationBars["Benchmark comparison"].waitForExistence(timeout: 8), app.debugDescription)
+        let etf = app.descendants(matching: .any)["portfolio.returns.benchmark.etf"].firstMatch
+        let portfolio = app.descendants(matching: .any)["portfolio.returns.benchmark.portfolio"].firstMatch
+        let difference = app.descendants(matching: .any)["portfolio.returns.benchmark.difference"].firstMatch
+        XCTAssertTrue(etf.waitForExistence(timeout: 25))
+        XCTAssertTrue(portfolio.label.contains("Unavailable"))
+        XCTAssertTrue(difference.label.contains("Unavailable"))
+        XCTAssertTrue(app.staticTexts["ETF closes 2026-08-03 and 2026-10-02."].exists)
+
+        app.descendants(matching: .any)["portfolio.returns.benchmark.period"].firstMatch.tap()
+        let period = app.buttons["benchmark.period.2026-08-03.2026-09-04.false"]
+        XCTAssertTrue(period.waitForExistence(timeout: 6), app.debugDescription)
+        period.tap()
+        app.descendants(matching: .any)["portfolio.returns.benchmark.fund"].firstMatch.tap()
+        let stw = app.buttons["benchmark.fund.STW"]
+        XCTAssertTrue(stw.waitForExistence(timeout: 6), app.debugDescription)
+        stw.tap()
+        let rates = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "ECB AUD/USD rates observed")).firstMatch
+        XCTAssertTrue(rates.waitForExistence(timeout: 25))
+        XCTAssertTrue(portfolio.label.contains("10.00%"))
+        XCTAssertTrue(difference.label.contains("pp"))
+        XCTAssertTrue(app.buttons["ETF details"].exists || app.links["ETF details"].exists)
+        attach("statement-period-benchmark")
+        app.navigationBars["Benchmark comparison"].buttons["Done"].tap()
+        let add = app.buttons["portfolio.returns.add"]
+        for _ in 0..<4 where !add.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(add.isHittable)
+        add.tap()
+        XCTAssertTrue(app.textFields["portfolio.returns.opening"].waitForExistence(timeout: 8))
+
+        app.terminate()
+        launch(hidden: true)
+        let hidden = app.staticTexts["portfolio.returns.hidden"]
+        for _ in 0..<6 where !hidden.exists { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(hidden.exists, app.debugDescription)
+        XCTAssertFalse(open.exists)
     }
 
     func testInternalBrokerCashStaysOutOfPortfolioReturns() throws {

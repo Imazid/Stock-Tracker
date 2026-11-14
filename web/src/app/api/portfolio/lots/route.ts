@@ -1,12 +1,10 @@
 import { csvField } from "@/lib/csv";
 import { serverSupabase } from "@/lib/supabase/server";
 import { jsonError } from "@/server/http/respond";
-import { stockTransferFields, type StockTransfer } from "@/lib/portfolio-transfers";
-import { splitFields, type StockSplit } from "@/lib/portfolio-splits";
 import { audReferences, type AudReference } from "@/server/portfolio/aud-rates";
 import { calculateLots, lotNumber, sydneyDate, UNIT_DECIMALS } from "@/server/portfolio/lots";
-import { reinvestmentAcquisition, reinvestmentPages } from "@/server/portfolio/reinvestments";
-import { tradeSource, transactionPages, type TransactionRow } from "@/server/portfolio/transactions";
+import { readLotLedger } from "@/server/portfolio/lot-ledger";
+import { tradeSource, type TransactionRow } from "@/server/portfolio/transactions";
 
 const disclaimer = "Preliminary USD FIFO records for review. This report does not calculate tax. Verify actual lots, transaction-date AUD values, transfers, corporate actions and missing transactions. Trades with identical timestamps use sales before purchases. Saved splits apply before trades on the Sydney effective date. Sales use units on the sale date and open lots use units at the report end. Check fractional shares and cash payments against your statement. Use the transaction CSV for source amounts and bookkeeping FX.";
 const columns = [
@@ -70,57 +68,13 @@ export async function GET(request: Request) {
     return jsonError(400, "invalid_date_range", "Choose valid dates in chronological order.");
   }
 
-  const transactions: TransactionRow[] = [];
-  const acquisitions: TransactionRow[] = [];
-  const splits: StockSplit[] = [];
-  const transfers: StockTransfer[] = [];
-  // Sydney midnight is earlier than UTC midnight. The query uses a broad UTC
-  // cutoff and the calculation applies the exact Sydney day.
-  const before = end ? new Date(Date.parse(end + "T00:00:00Z") + 86_400_000).toISOString() : undefined;
+  let ledger;
   try {
-    await Promise.all([
-      (async () => {
-        for await (const page of transactionPages(db, user.id, request.signal, before)) transactions.push(...page);
-      })(),
-      (async () => {
-        for await (const page of reinvestmentPages(db, user.id, request.signal, { field: "acquired_on", through: end })) {
-          for (const entry of page) acquisitions.push(reinvestmentAcquisition(entry));
-        }
-      })(),
-      (async () => {
-        const pageSize = 500;
-        let lastId: string | undefined;
-        do {
-          let query = db.from("portfolio_stock_splits").select(splitFields).eq("user_id", user.id)
-            .order("id").limit(pageSize).abortSignal(request.signal);
-          if (end) query = query.lte("effective_date", end);
-          if (lastId) query = query.gt("id", lastId);
-          const { data, error } = await query.overrideTypes<StockSplit[], { merge: false }>();
-          if (error) throw error;
-          splits.push(...data);
-          lastId = data.length === pageSize ? data[data.length - 1].id : undefined;
-        } while (lastId);
-      })(),
-      (async () => {
-        const pageSize = 500;
-        let lastId: string | undefined;
-        do {
-          let query = db.from("portfolio_stock_transfers").select(stockTransferFields).eq("user_id", user.id)
-            .order("id").limit(pageSize).abortSignal(request.signal);
-          if (end) query = query.lte("sent_on", end);
-          if (lastId) query = query.gt("id", lastId);
-          const { data, error } = await query.overrideTypes<StockTransfer[], { merge: false }>();
-          if (error) throw error;
-          transfers.push(...data);
-          lastId = data.length === pageSize ? data[data.length - 1].id : undefined;
-        } while (lastId);
-      })(),
-    ]);
+    ledger = await readLotLedger(db, user.id, request.signal, end ?? undefined);
   } catch {
     return jsonError(503, "unavailable", "Couldn’t export your lot report. Try again.");
   }
-
-  for (const acquisition of acquisitions) transactions.push(acquisition);
+  const { transactions, acquisitions, splits, transfers } = ledger;
   const includesAud = currency === "AUD";
   let rows = calculateLots(transactions, start ?? undefined, end ?? undefined, undefined, splits, transfers);
   let references: ReadonlyMap<string, AudReference> = new Map();

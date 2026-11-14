@@ -6,13 +6,14 @@
 //     sometimes a real ticker comes back empty — both are re-asked on query2;
 //   * bars can contain nulls (no trades in the interval): dropped, never filled in.
 
-import { type Instrument, parseYahooSymbol, type Venue } from "@engine/market.ts";
+import { type Instrument, parseYahooSymbol, yahooSymbol, type Venue } from "../../../../supabase/functions/_shared/trading/market.ts";
 import type { CandleView, ChartRange, VolumeScope } from "@/lib/market-types";
-import { getJSON, UpstreamError } from "./http";
-import { yahooTicker } from "./instruments";
+import { getJSON, UpstreamError } from "./http.ts";
 
 const HOSTS = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"];
 export const YAHOO_SOURCE = "Yahoo Finance (unofficial)";
+/** The symbol Yahoo knows this listing by, including its exchange or quote currency suffix. */
+export const yahooTicker = (instrument: Instrument) => instrument.venue === "crypto" ? `${instrument.symbol}-USD` : yahooSymbol(instrument);
 
 const MINOR_UNITS: Record<string, { major: string; divisor: number }> = {
   GBp: { major: "GBP", divisor: 100 },
@@ -28,6 +29,7 @@ export function normaliseCurrency(currency: string | undefined): { currency: str
 }
 
 interface ChartMeta {
+  symbol?: string;
   currency?: string;
   regularMarketPrice?: number;
   regularMarketTime?: number;
@@ -47,7 +49,9 @@ interface ChartMeta {
 interface ChartResult {
   meta: ChartMeta;
   timestamp?: number[];
-  indicators?: { quote?: { open?: (number | null)[]; high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[]; volume?: (number | null)[] }[] };
+  indicators?: {
+    quote?: { open?: (number | null)[]; high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[]; volume?: (number | null)[] }[];
+  };
 }
 
 export interface YahooChart {
@@ -74,10 +78,10 @@ export function yahooInterval(range: ChartRange, crypto: boolean): { range: stri
   return INTERVALS[range];
 }
 
-async function chart(ticker: string, range: string, interval: string): Promise<ChartResult> {
+async function chart(ticker: string, query: URLSearchParams): Promise<ChartResult> {
   let lastError: unknown;
   for (const host of HOSTS) {
-    const url = `${host}/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=${interval}&includePrePost=false&events=div%2Csplits`;
+    const url = `${host}/v8/finance/chart/${encodeURIComponent(ticker)}?${query}`;
     try {
       const body = (await getJSON(url, { label: "Yahoo Finance" })) as { chart?: { result?: ChartResult[] | null; error?: { description?: string } | null } };
       const result = body.chart?.result?.[0];
@@ -94,9 +98,14 @@ async function chart(ticker: string, range: string, interval: string): Promise<C
   throw lastError instanceof Error ? lastError : new UpstreamError("Yahoo Finance couldn't be reached");
 }
 
+function chartRange(range: string, interval: string) {
+  return new URLSearchParams({ range, interval, includePrePost: "false", events: "div,splits" });
+}
+
+
 export async function yahooChart(instrument: Instrument, range: ChartRange): Promise<YahooChart> {
   const { range: r, interval } = yahooInterval(range, instrument.venue === "crypto");
-  const result = await chart(yahooTicker(instrument), r, interval);
+  const result = await chart(yahooTicker(instrument), chartRange(r, interval));
   const { currency, divisor } = normaliseCurrency(result.meta.currency);
   const ts = result.timestamp ?? [];
   const q = result.indicators?.quote?.[0] ?? {};
@@ -136,7 +145,7 @@ export interface YahooQuote {
 
 export async function yahooQuote(instrument: Instrument): Promise<YahooQuote> {
   // range=1d: the previous close is yesterday's (5d gave a 5-day "daily" change).
-  const result = await chart(yahooTicker(instrument), instrument.venue === "crypto" ? "1d" : "1d", "5m");
+  const result = await chart(yahooTicker(instrument), chartRange("1d", "5m"));
   const m = result.meta;
   if (typeof m.regularMarketPrice !== "number" || !(m.regularMarketPrice > 0) || typeof m.regularMarketTime !== "number") {
     throw new UpstreamError("Yahoo Finance has no current price for that", 404);

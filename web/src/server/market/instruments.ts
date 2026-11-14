@@ -8,7 +8,6 @@ import {
   makeInstrument,
   type Venue,
   VENUES,
-  yahooSymbol,
 } from "@engine/market.ts";
 import { toView as clientToView } from "@/lib/instrument-view";
 import type { InstrumentView, MarketStateView } from "@/lib/market-types";
@@ -34,12 +33,6 @@ export function parseInstrumentID(raw: string): Instrument {
 export function toView(instrument: Instrument, nameOverride?: string): InstrumentView {
   const view = clientToView(instrument);
   return nameOverride && nameOverride.trim() !== "" ? { ...view, name: nameOverride } : view;
-}
-
-/** The symbol Yahoo knows this listing by: "BHP.AX", "VOD.L", "BTC-USD", "AAPL". */
-export function yahooTicker(instrument: Instrument): string {
-  if (instrument.venue === "crypto") return `${instrument.symbol}-USD`;
-  return yahooSymbol(instrument);
 }
 
 function localTime(t: number, timeZone?: string): string {

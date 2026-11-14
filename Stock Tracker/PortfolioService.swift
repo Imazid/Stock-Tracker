@@ -32,7 +32,7 @@ protocol PortfolioServiceProtocol: AnyObject {
     func loadWatchlistGroups() -> [WatchlistGroup]
     func loadActiveWatchlistIndex() -> Int
     func appendCurrentSnapshot(to history: [PortfolioSnapshot], currentValue: Double) -> [PortfolioSnapshot]
-    func mockAssets() -> (stocks: [Asset], crypto: [Asset])
+    func starterAssets() -> (stocks: [Asset], crypto: [Asset])
 }
 
 // MARK: - Implementation
@@ -107,22 +107,15 @@ final class PortfolioService: PortfolioServiceProtocol {
         return updated.sorted { $0.date < $1.date }
     }
 
-    // MARK: - Mock Data (first launch)
+    // MARK: - Starter catalogue
 
-    func mockAssets() -> (stocks: [Asset], crypto: [Asset]) {
-        let stocks: [Asset] = [
-            Asset(symbol: "AAPL", name: "Apple Inc.",           price: 180.12, change:  1.24, changePercent:  0.69, volume: 55_000_000, kind: .stock,  exchange: "NYSE"),
-            Asset(symbol: "TSLA", name: "Tesla Inc.",           price: 240.87, change: -2.45, changePercent: -1.01, volume: 38_000_000, kind: .stock,  exchange: "NYSE"),
-            Asset(symbol: "MSFT", name: "Microsoft Corporation",price: 350.54, change:  3.21, changePercent:  0.92, volume: 29_000_000, kind: .stock,  exchange: "NYSE"),
-            Asset(symbol: "NVDA", name: "NVIDIA Corporation",   price: 480.90, change:  5.12, changePercent:  1.08, volume: 32_000_000, kind: .stock,  exchange: "NYSE")
-        ]
-        let crypto: [Asset] = [
-            Asset(symbol: "BTC",  name: "Bitcoin",  price: 62_500, change: -1_200, changePercent: -1.88, volume:     18_000, kind: .crypto, exchange: "Binance"),
-            Asset(symbol: "ETH",  name: "Ethereum", price:  3_200, change:     45, changePercent:  1.43, volume:    220_000, kind: .crypto, exchange: "Binance"),
-            Asset(symbol: "SOL",  name: "Solana",   price:    135, change:   -3.4, changePercent: -2.45, volume:  1_800_000, kind: .crypto, exchange: "Binance"),
-            Asset(symbol: "ADA",  name: "Cardano",  price:   0.45, change:   0.01, changePercent:   2.3, volume: 75_000_000, kind: .crypto, exchange: "Binance")
-        ]
-        return (stocks, crypto)
+    func starterAssets() -> (stocks: [Asset], crypto: [Asset]) {
+        let stocks = OnboardingCatalog.us.filter { ["AAPL", "TSLA", "MSFT", "NVDA"].contains($0.symbol) }
+        let crypto = OnboardingCatalog.crypto.filter { ["BTC", "ETH", "SOL", "ADA"].contains($0.symbol) }
+        func asset(_ pick: PickedAsset) -> Asset {
+            Asset(symbol: pick.symbol, name: pick.name, price: 0, change: 0, changePercent: 0,
+                  volume: 0, kind: pick.kind, exchange: pick.exchange)
+        }
+        return (stocks.map(asset), crypto.map(asset))
     }
-
 }

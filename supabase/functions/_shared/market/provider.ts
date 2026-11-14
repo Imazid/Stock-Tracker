@@ -57,8 +57,13 @@ export interface DollarVolumeSource {
  * any part of a credential, a header or a URL.
  */
 export class ProviderError extends Error {
-  constructor(message: string, readonly status?: number, readonly retryable = false) {
+  readonly status?: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, status?: number, retryable = false) {
     super(message);
+    this.status = status;
+    this.retryable = retryable;
     this.name = "ProviderError";
   }
 }
