@@ -9,6 +9,7 @@
 
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import postgres from "npm:postgres@3.4.5";
+import { listenToAlpacaPaperOrders } from "../_shared/brokers/alpaca-paper-stream.ts";
 import type { AdapterContext, BrokerAdapter, BrokerFill, BrokerOrder, BrokerOrderRequest, SubmitResult } from "../_shared/brokers/types.ts";
 import type { OrderIntentInput, RiskEvaluationView } from "../_shared/oms/api.ts";
 import { type ExecutionDeps, reconcileIntent, submitIntent } from "../_shared/oms/execute.ts";
@@ -17,6 +18,7 @@ import { resolveGates } from "../_shared/oms/gates.ts";
 import { canonicalIntent, intentHash, newClientOrderID } from "../_shared/oms/intent.ts";
 import { insertIntent, intentView, loadIntent, PgOmsStore, serializeFor, type Sql } from "../_shared/oms/store_pg.ts";
 import { keyRingFromRaw, seal } from "../_shared/vault/envelope.ts";
+import { confirmAlpacaOrder, leaseAlpacaConnections, streamAlpacaOrders } from "../provider-maintenance/alpaca-stream.ts";
 import { providerMaintenance } from "../provider-maintenance/worker.ts";
 
 const URL = Deno.env.get("OMS_TEST_DB_URL");
@@ -267,6 +269,108 @@ Deno.test({ name: "pg: authenticated scheduler reconciles an order and imports a
       if (previous[name] === undefined) Deno.env.delete(name);
       else Deno.env.set(name, previous[name]);
     }
+    await sql.end();
+  }
+});
+
+
+Deno.test({ name: "pg: paper stream leases, confirms via REST and commits only the matched order", ignore: !URL, sanitizeResources: false, sanitizeOps: false }, async () => {
+  const sql = postgres(URL!, { max: 8, prepare: false, onnotice: () => {} });
+  const envName = "BROKER_CREDENTIALS_KEKS";
+  const previous = Deno.env.get(envName);
+  Deno.env.set(envName, JSON.stringify({ active: "k1", keys: { k1: btoa("\x01".repeat(32)) } }));
+  const providerOrderID = crypto.randomUUID();
+  try {
+    const intent = await approvedIntent(sql);
+    const store = new PgOmsStore(sql, USER);
+    assert(await store.transition(intent.id, "approved", "submitting"));
+    assert(await store.transition(intent.id, "submitting", "submitted"));
+    const otherUser = crypto.randomUUID();
+    const otherConn = crypto.randomUUID();
+    await sql`insert into auth.users(id) values (${otherUser})`;
+    await sql`insert into public.broker_connections (id, user_id, adapter_id, name, environment, permissions)
+      values (${otherConn}, ${otherUser}, 'alpaca', 'Unrelated paper connection', 'paper', array['read'])`;
+
+    const now = new Date();
+    const otherLease = { connection_id: otherConn, user_id: otherUser };
+    const ownerLease = { connection_id: CONN, user_id: USER };
+    const results = await Promise.all(Array.from({ length: 4 }, () => leaseAlpacaConnections(sql, crypto.randomUUID(), now, new Date(now.getTime() + 10_000))));
+    assertEquals(results.flat(), [ownerLease]);
+    await sql`update provider_operations.alpaca_stream_leases set available_at = now() - interval '1 second'`;
+
+    const credentials = { provider: "alpaca", keyID: "stream-test-key", secretKey: "stream-test-secret" } as const;
+    const ring = await keyRingFromRaw("k1", { k1: new Uint8Array(32).fill(1) });
+    const sealed = await seal(ring, { userID: USER, connectionID: CONN, provider: "alpaca" },
+      { keyID: credentials.keyID, secretKey: credentials.secretKey });
+    await sql`insert into public.broker_credentials (connection_id, user_id, sealed, kek_id)
+      values (${CONN}, ${USER}, ${sql.json(sealed as never)}, 'k1')
+      on conflict (connection_id) do update set sealed = excluded.sealed, kek_id = excluded.kek_id`;
+
+    const notice = { clientOrderID: intent.clientOrderID, providerOrderID };
+    let restReads = 0;
+    const getOrder = (ctx: AdapterContext, requested: string): Promise<BrokerOrder> => {
+      assertEquals(ctx.environment, "paper");
+      assertEquals(ctx.credentials, credentials);
+      assertEquals(requested, providerOrderID);
+      restReads++;
+      return Promise.resolve({
+        providerOrderID, clientOrderID: intent.clientOrderID, symbol: "AAPL", side: "buy", type: "limit",
+        status: "partially_filled", providerStatus: "partially_filled", filledQuantity: "3", averageFillPrice: "190.41",
+        updatedAt: new Date().toISOString(),
+      });
+    };
+    assertEquals(await confirmAlpacaOrder(sql, otherLease, notice, getOrder, credentials), false);
+    assertEquals(restReads, 0);
+    const wrongOrder = async (ctx: AdapterContext, requested: string) => ({
+      ...(await getOrder(ctx, requested)), clientOrderID: "st-foreign-intent",
+    });
+    assertEquals(await confirmAlpacaOrder(sql, ownerLease, notice, wrongOrder, credentials), false);
+    assertEquals((await loadIntent(sql, USER, intent.id))?.status, "submitted");
+
+    const failures = new Set<import("../_shared/worker-report.ts").FailureCode>();
+    const shutdown = new AbortController();
+    const frames: string[] = [];
+    const socketFixture = Deno.serve({ hostname: "127.0.0.1", port: 0, signal: shutdown.signal, onListen: () => {} }, (request) => {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onmessage = ({ data }) => {
+        const request = JSON.parse(data);
+        frames.push(request.action);
+        const send = (value: unknown) => socket.send(new TextEncoder().encode(JSON.stringify(value)));
+        if (request.action === "auth") {
+          const status = request.key === credentials.keyID && request.secret === credentials.secretKey ? "authorized" : "unauthorized";
+          send({ stream: "authorization", data: { status } });
+        } else if (request.action === "listen") {
+          send({ stream: "listening", data: { streams: request.data.streams } });
+          send({ stream: "trade_updates", data: { order: {
+            id: providerOrderID, client_order_id: intent.clientOrderID, filled_qty: "10000", status: "filled",
+          } } });
+        }
+      };
+      return response;
+    });
+    const result = await streamAlpacaOrders(sql, failures, (secret, onOrder, signal) =>
+      listenToAlpacaPaperOrders(secret, onOrder, signal, () =>
+        new WebSocket(`ws://127.0.0.1:${socketFixture.addr.port}`)), getOrder, 850)
+      .finally(async () => { shutdown.abort(); await socketFixture.finished; });
+    assertEquals(frames, ["auth", "listen"]);
+    assertEquals(result, { connectionsClaimed: 1, confirmed: 1, errors: 0 });
+    assertEquals([...failures], []);
+    assertEquals(restReads, 2);
+    const partial = await intentView(sql, (await loadIntent(sql, USER, intent.id))!);
+    assertEquals(partial.status, "partially_filled");
+    assertEquals(partial.brokerOrder?.filledQuantity, "3");
+    assertEquals(partial.brokerOrder?.averageFillPrice, "190.41");
+
+    const willRevoke = async (ctx: AdapterContext, requested: string): Promise<BrokerOrder> => {
+      const latest = await getOrder(ctx, requested);
+      await sql`update public.broker_connections set status = 'revoked', revoked_at = now() where id = ${CONN}`;
+      return { ...latest, status: "filled", providerStatus: "filled", filledQuantity: "10" };
+    };
+    await confirmAlpacaOrder(sql, ownerLease, notice, willRevoke, credentials);
+    assertEquals((await loadIntent(sql, USER, intent.id))?.status, "partially_filled");
+  } finally {
+    if (previous === undefined) Deno.env.delete(envName);
+    else Deno.env.set(envName, previous);
     await sql.end();
   }
 });

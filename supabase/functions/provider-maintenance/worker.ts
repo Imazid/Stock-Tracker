@@ -1,3 +1,4 @@
+import { streamAlpacaOrders } from "./alpaca-stream.ts";
 import { adapterFor } from "../_shared/brokers/registry.ts";
 import { BrokerError } from "../_shared/brokers/types.ts";
 import { errorResponse, HttpError, json, logEvent, sameSecret } from "../_shared/server/http.ts";
@@ -128,6 +129,7 @@ async function reconcileDue(sql: Sql, failures: Set<FailureCode>) {
 export async function providerMaintenance(request: Request): Promise<Response> {
   const started = performance.now();
   let sql: Sql | undefined;
+  let worker: "provider-maintenance" | "alpaca-paper-order-stream" = "provider-maintenance";
   let jobs = 0;
   let errors = 0;
   const failures = new Set<FailureCode>();
@@ -137,7 +139,19 @@ export async function providerMaintenance(request: Request): Promise<Response> {
     if (secret.length < 32 || !sameSecret(secret, request.headers.get("x-scheduler-secret") ?? "")) {
       throw new HttpError(401, "unauthorized", "Not allowed.");
     }
+    const mode = request.headers.get("x-provider-maintenance-mode");
+    if (mode !== null && mode !== "alpaca-paper-stream") {
+      throw new HttpError(400, "invalid", "Unknown maintenance mode.");
+    }
     sql = database();
+    if (mode === "alpaca-paper-stream") {
+      worker = "alpaca-paper-order-stream";
+      const data = await streamAlpacaOrders(sql, failures);
+      jobs = data.connectionsClaimed;
+      errors = data.errors;
+      logEvent("alpaca_paper_order_stream", data);
+      return json(200, { ok: true, data });
+    }
     const data = await reconcileDue(sql, failures);
     jobs = data.ordersClaimed + data.connectionsClaimed;
     errors = data.errors;
@@ -149,10 +163,10 @@ export async function providerMaintenance(request: Request): Promise<Response> {
     return response;
   } finally {
     const db = sql;
-    if (db) await reportWorker("provider-maintenance", started, { jobs, errors, failureCodes: [...failures] }, async (run) => {
+    if (db) await reportWorker(worker, started, { jobs, errors, failureCodes: [...failures] }, async (run) => {
       await db.begin(async (tx) => {
         await tx`set local statement_timeout = '3s'`;
-        await tx`select public.record_provider_worker_run('provider-maintenance',
+        await tx`select public.record_provider_worker_run(${worker},
           ${run.durationMs}, ${run.jobs}, ${run.errors}, ${run.failureCodes}::text[])`;
       });
     });
