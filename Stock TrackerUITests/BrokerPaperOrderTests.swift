@@ -75,35 +75,14 @@ final class BrokerPaperOrderTests: XCTestCase {
         try XCTSkipUnless(origin.scheme == "http" && origin.host == "127.0.0.1", "Use an isolated fixture.")
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-UITestFreshInstall", "-SupabaseURLOverride", base, "-SupabaseAnonKeyOverride", key,
-                               "-UITestTypeOwnPassword", "-AppleLocale", "en_US", "-app_theme_mode", "Light"]
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                               "-SupabaseURLOverride", base, "-SupabaseAnonKeyOverride", key,
+                               "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light"]
         app.launch()
-        tap(app.buttons["I already have an account"], in: app, timeout: 25)
-        let emailField = app.textFields["auth.email"]
-        tap(emailField, in: app)
-        emailField.typeText(email)
-        let passwordField = app.descendants(matching: .any)["auth.password"].firstMatch
-        XCTAssertTrue(passwordField.waitForExistence(timeout: 5))
-        for _ in 0..<3 {
-            passwordField.tap()
-            for label in ["Choose My Own Password", "Other Options…"] where app.buttons[label].waitForExistence(timeout: 1) {
-                app.buttons[label].tap()
-            }
-            let current = (passwordField.value as? String) ?? ""
-            if !current.isEmpty && current.allSatisfy({ $0 == "•" }) {
-                passwordField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
-            }
-            passwordField.typeText(password)
-            if (passwordField.value as? String)?.count == password.count { break }
-        }
-        XCTAssertEqual((passwordField.value as? String)?.count, password.count)
-        passwordField.typeText("\n")
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        for target in [app, springboard] where target.buttons["Not Now"].waitForExistence(timeout: 2) {
-            target.buttons["Not Now"].tap()
-            break
-        }
-        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 35), app.debugDescription)
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 35))
+        XCTAssertTrue(app.open("Activity"))
+        XCTAssertTrue(app.buttons["brokerPaper.activity"].waitForExistence(timeout: 35), app.debugDescription)
+        XCTAssertTrue(app.open("Home"))
         return app
     }
 
