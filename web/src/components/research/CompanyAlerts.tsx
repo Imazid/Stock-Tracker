@@ -89,7 +89,7 @@ export function CompanyAlerts({ id }: { id: string }) {
       <h4 className="font-medium">Recent triggers</h4>
       <ul className="mt-1 space-y-2">{inbox.data.events.map((event) => <li key={event.id} className="text-xs">
         <p className="text-text-2">{dateTime(event.occurred_at)}</p>
-        {event.url ? <a href={event.url} target="_blank" rel="noreferrer" className="text-primary-fg hover:underline">{event.title}</a> : event.title}
+        {event.url ? <a href={event.url} target="_blank" rel="noreferrer" className="text-primary-fg hover:underline">{event.title}</a> : <p>{event.title}</p>}
       </li>)}</ul>
     </div> : null}
   </details>;
