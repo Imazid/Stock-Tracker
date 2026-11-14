@@ -185,6 +185,56 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(try brokerRows().count, 2)
     }
 
+    func testCurrentBrokerPositionsKeepPriorQuantitiesWhenAnAccountFails() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_BROKER_POSITIONS"] == "1",
+                          "Start the SnapTrade positions fixture relay")
+        let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        func holdings() throws -> [[String: Any]] {
+            try rows("portfolio_holdings", select: "id,asset_symbol,shares,broker_account", token: token)
+        }
+        func quantities(_ rows: [[String: Any]]) -> [Double] {
+            rows.compactMap { $0["shares"] as? Double }.sorted()
+        }
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        var original: [[String: Any]] = []
+        for _ in 0..<15 {
+            original = try holdings()
+            if quantities(original) == [20, 50] { break }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        XCTAssertEqual(quantities(original), [20, 50])
+        XCTAssertEqual(original.compactMap { $0["asset_symbol"] as? String }, ["BHP", "BHP"])
+        let account = app.buttons["portfolio.account.CommSec"]
+        for _ in 0..<7 where !account.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(account.isHittable)
+        account.tap()
+        let sync = app.buttons["broker.sync"]
+        XCTAssertTrue(sync.waitForExistence(timeout: 8))
+        sync.tap()
+        let failure = app.alerts["Couldn’t sync brokerage positions"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 12))
+        XCTAssertEqual(quantities(try holdings()), [20, 50])
+        failure.buttons["OK"].tap()
+        sync.tap()
+        var refreshed: [[String: Any]] = []
+        for _ in 0..<15 {
+            refreshed = try holdings()
+            if quantities(refreshed) == [0, 70] { break }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        XCTAssertEqual(quantities(refreshed), [0, 70])
+        XCTAssertEqual(Set(refreshed.compactMap { $0["id"] as? String }), Set(original.compactMap { $0["id"] as? String }))
+    }
+
     func testCashIncomeSyncsBetweenAccountAndPhone() throws {
         let email = "income-ui-\(UUID().uuidString.lowercased())@example.com"
         let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
