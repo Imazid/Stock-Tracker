@@ -62,10 +62,14 @@ struct ContentView: View {
     @EnvironmentObject var trading: TradingStore
     @EnvironmentObject var router: TradingRouter
     @EnvironmentObject private var cloudAuth: SupabaseAuthManager
+    @EnvironmentObject private var sync: SyncManager
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var privateMarkets = PrivateMarketsStore.shared
     @Environment(\.colorScheme) var colorScheme
     @AppStorage("portfolioSegment") private var portfolioSegment = PortfolioSegment.holdings.rawValue
     @State private var pendingCommand: WorkspaceDestination?
+    @State private var visitTracker = PortfolioVisitTracker()
+    @State private var showingVisitChanges = false
 
     /// Binding allows the parent (StockCryptoTrackerApp) to drive tab selection from widget deep links.
     @Binding var selectedTab: MainTab
@@ -74,10 +78,34 @@ struct ContentView: View {
         _selectedTab = selectedTab
     }
 
+    private var visitInput: PortfolioVisitTracker.Input {
+        let owner = cloudAuth.userId
+        let portfolio = marketData.portfolioGroups.indices.contains(marketData.activePortfolioIndex)
+            ? marketData.portfolioGroups[marketData.activePortfolioIndex].id : nil
+        let ready: Bool
+        if let owner {
+            ready = cloudAuth.authState == .signedIn && sync.hasLoadedPortfolio(for: owner)
+        } else {
+            ready = cloudAuth.authState == .signedOut && DataPersistenceManager.shared.lastPortfolioAccount() == nil
+        }
+        let scope = ready ? portfolio.map { PortfolioVisitSnapshot.Scope(owner: owner, portfolio: $0) } : nil
+        let visiting = (selectedTab == .home || selectedTab == .portfolio) && scenePhase != .background
+        let positions = scope == nil ? [] : marketData.portfolio
+            .filter { $0.shares.isFinite && $0.shares > 0 }
+            .map(PortfolioVisitSnapshot.Position.init)
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        return PortfolioVisitTracker.Input(scope: scope, positions: positions, isVisiting: visiting)
+    }
+
+    private var visitSummary: String? {
+        guard let report = visitTracker.report, !marketData.portfolio.isEmpty || !report.changes.isEmpty else { return nil }
+        return report.summary
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             Tab("Home", systemImage: MainTab.home.icon, value: MainTab.home) {
-                HomeView()
+                HomeView(visitSummary: visitSummary, onOpenVisitChanges: { showingVisitChanges = true })
             }
 
             Tab("Markets", systemImage: MainTab.markets.icon, value: MainTab.markets) {
@@ -85,7 +113,7 @@ struct ContentView: View {
             }
 
             Tab("Portfolio", systemImage: MainTab.portfolio.icon, value: MainTab.portfolio) {
-                PortfolioView()
+                PortfolioView(visitSummary: visitSummary, onOpenVisitChanges: { showingVisitChanges = true })
             }
 
             Tab("Private Markets", systemImage: MainTab.privateMarkets.icon, value: MainTab.privateMarkets) {
@@ -111,6 +139,15 @@ struct ContentView: View {
         }
         .tint(DS.accent)
         .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
+        .onChange(of: visitInput, initial: true) { old, input in
+            if old.scope != input.scope { showingVisitChanges = false }
+            visitTracker.observe(input)
+        }
+        .sheet(isPresented: $showingVisitChanges) {
+            if let report = visitTracker.report {
+                PortfolioVisitChangesSheet(report: report)
+            }
+        }
         .modifier(TradingRootSheets())
         .sheet(isPresented: $router.showCommands, onDismiss: performCommand) {
             CommandPalette { destination in

@@ -110,32 +110,28 @@ extension MarketData {
 struct PortfolioIntelligenceEntry: View {
     @EnvironmentObject private var router: TradingRouter
     @EnvironmentObject private var trading: TradingStore
+    @EnvironmentObject private var marketData: MarketData
     @Environment(\.theme) private var theme
+
+    var visitSummary: String? = nil
+    var onOpenVisitChanges: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
             SectionHeader(title: "Your Portfolio Intelligence")
-            Button {
-                router.askCopilot(CopilotEngine.portfolioMovementPrompt)
-            } label: {
-                Label("Why did my portfolio move?", systemImage: "chart.line.uptrend.xyaxis")
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
+            if let visitSummary, let onOpenVisitChanges {
+                Button(action: onOpenVisitChanges) {
+                    Label(visitSummary, systemImage: "clock.arrow.circlepath")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("portfolio.intelligence.visit")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.intelligenceTint)
-            .accessibilityIdentifier("portfolio.intelligence.movement")
 
-            Button {
-                router.askCopilot(CopilotEngine.concentrationPrompt)
-            } label: {
-                Label("Review portfolio concentration", systemImage: "chart.pie")
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
+            if !marketData.portfolio.isEmpty {
+                movementActions
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("portfolio.intelligence.concentration")
-
             let count = trading.pendingProposals.count
             if count > 0 {
                 Button {
@@ -154,6 +150,30 @@ struct PortfolioIntelligenceEntry: View {
             }
         }
         .dsCard()
+    }
+
+    @ViewBuilder
+    private var movementActions: some View {
+        Button {
+            router.askCopilot(CopilotEngine.portfolioMovementPrompt)
+        } label: {
+            Label("Why did my portfolio move?", systemImage: "chart.line.uptrend.xyaxis")
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(theme.intelligenceTint)
+        .accessibilityIdentifier("portfolio.intelligence.movement")
+
+        Button {
+            router.askCopilot(CopilotEngine.concentrationPrompt)
+        } label: {
+            Label("Review portfolio concentration", systemImage: "chart.pie")
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("portfolio.intelligence.concentration")
     }
 }
 

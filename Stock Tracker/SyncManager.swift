@@ -113,8 +113,8 @@ final class SyncManager: ObservableObject {
             let now = Date()
             persist.rememberPortfolioAccount(userId)
             persist.saveLastSyncDate(now)
-            syncState = .lastSyncedAt(now)
             syncedUserId = userId
+            syncState = .lastSyncedAt(now)
             AppLogger.sync.info("First-sign-in sync complete")
 
         } catch {
