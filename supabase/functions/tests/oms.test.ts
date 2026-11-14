@@ -168,6 +168,7 @@ class FakeAdapter implements BrokerAdapter {
   lookup: BrokerOrder | undefined;
   account: BrokerAccount = { providerAccountID: "acct-1", label: "Alpaca paper", environment: "paper", status: "active", currency: "USD", tradingEnabled: true, tradingBlockers: [] };
   cancels = 0;
+  cancelAccepted = true;
   afterCancel: BrokerOrder | undefined;
   capabilities() {
     return { provider: "alpaca" as const, environment: "paper" as const, executionAvailable: true, readAccounts: true, readPositions: true, readFills: true, orders: [], streaming: { orders: false, marketData: false }, notes: [] };
@@ -198,7 +199,7 @@ class FakeAdapter implements BrokerAdapter {
   cancel() {
     this.cancels++;
     if (this.afterCancel) this.lookup = this.afterCancel;
-    return Promise.resolve({ accepted: true });
+    return Promise.resolve({ accepted: this.cancelAccepted });
   }
   getOrder() {
     if (!this.lookup) return Promise.reject(new BrokerError("not_found", "no such order"));
@@ -430,6 +431,15 @@ Deno.test("cancel: before submission is local; after, only the provider's word c
     adapter.afterCancel = brokerOrder("canceled");
     const out = await cancelIntent(deps, { ...intent, status: "submitted", providerOrderID: "alp-1" }, caller);
     assertEquals(out.status, "cancelled");
+  }
+  {
+    const { intent, adapter, deps } = await setup({ status: "submitted" });
+    adapter.cancelAccepted = false;
+    adapter.lookup = brokerOrder("filled");
+    const out = await cancelIntent(deps, { ...intent, status: "submitted", providerOrderID: "alp-1" }, caller);
+    assert(!out.ok);
+    assertEquals(out.code, "provider_error");
+    assertEquals(out.status, "filled", "a refused cancellation should still refresh the broker status");
   }
   {
     const { intent, deps } = await setup({ status: "submitted" });

@@ -104,6 +104,7 @@ struct ActivityTabView: View {
         let open = shown.filter { $0.status.isOpen }
         let closed = shown.filter { !$0.status.isOpen }
         return VStack(alignment: .leading, spacing: DS.Space.l) {
+            BrokerPaperEntry(asset: nil)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: DS.Space.s) {
                     ForEach(OrderFilter.allCases) { option in

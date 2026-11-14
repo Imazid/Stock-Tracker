@@ -42,9 +42,10 @@ export function useSession(): SessionState {
 }
 
 /** A fresh access token for calling edge functions, or undefined when signed out. */
-export async function accessToken(): Promise<string | undefined> {
+export async function accessToken(expectedUserId?: string): Promise<string | undefined> {
   const supabase = browserSupabase();
   if (!supabase) return undefined;
   const { data } = await supabase.auth.getSession();
+  if (expectedUserId && data.session?.user.id !== expectedUserId) return undefined;
   return data.session?.access_token;
 }

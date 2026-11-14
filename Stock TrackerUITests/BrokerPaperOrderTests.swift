@@ -1,0 +1,112 @@
+import XCTest
+
+final class BrokerPaperOrderTests: XCTestCase {
+    /// Uses the actual order and connection functions against a local broker transport fixture.
+    /// The fixture listens only on loopback and tracks outgoing submissions.
+    func testPaperOrderNeedsApprovalAndShowsBrokerFill() throws {
+        let app = try launchFixtureAccount()
+        XCUIDevice.shared.system.open(try XCTUnwrap(URL(string: "stocktracker://asset/AAPL")))
+        tap(app.buttons["brokerPaper.trade"], in: app, timeout: 30)
+        tap(app.buttons["brokerPaper.connect"], in: app)
+
+        let key = app.secureTextFields["brokerPaper.keyID"]
+        tap(key, in: app)
+        key.typeText("paper-fixture-key")
+        let secret = app.secureTextFields["brokerPaper.secretKey"]
+        tap(secret, in: app)
+        secret.typeText("paper-fixture-secret")
+        let permission = app.switches["brokerPaper.tradePermission"]
+        tap(permission, in: app)
+        XCTAssertEqual(permission.value as? String, "1")
+        tap(app.buttons["brokerPaper.saveConnection"], in: app)
+
+        tap(app.buttons["brokerPaper.prepare"], in: app, timeout: 35)
+        let quantity = app.textFields["brokerPaper.size"]
+        tap(quantity, in: app)
+        quantity.typeText("1")
+        tap(app.buttons["brokerPaper.draft"], in: app)
+        let fees = app.descendants(matching: .any)["brokerPaper.fees"].firstMatch
+        XCTAssertTrue(fees.waitForExistence(timeout: 20))
+        XCTAssertTrue(fees.label.contains("0 USD"), fees.label)
+        XCTAssertFalse(app.buttons["brokerPaper.submit"].exists)
+
+        tap(app.buttons["brokerPaper.riskCheck"], in: app)
+        let approve = app.buttons["brokerPaper.approve"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 25), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Passed"].exists)
+        XCTAssertFalse(app.buttons["brokerPaper.submit"].exists)
+        XCTAssertFalse(app.staticTexts["Confirmed by Alpaca"].exists)
+        tap(approve, in: app)
+
+        let submit = app.buttons["brokerPaper.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Confirmed by Alpaca"].exists)
+        tap(submit, in: app)
+        let brokerID = app.descendants(matching: .any)["brokerPaper.brokerID"].firstMatch
+        XCTAssertTrue(brokerID.waitForExistence(timeout: 25), app.debugDescription)
+        XCTAssertTrue(brokerID.label.contains("paper-fixture-order-"), brokerID.label)
+        tap(app.buttons["brokerPaper.reconcile"], in: app)
+        let status = app.descendants(matching: .any)["brokerPaper.brokerStatus"].firstMatch
+        let filled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Filled'"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [filled], timeout: 20), .completed, status.label)
+
+        let close = app.buttons["Close"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        let detailDone = app.buttons["Done"].firstMatch
+        if detailDone.waitForExistence(timeout: 5) { detailDone.tap() }
+        XCTAssertTrue(app.open("Activity"))
+        tap(app.buttons["brokerPaper.activity"], in: app, timeout: 15)
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'brokerPaper.history.'")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 15))
+        XCTAssertTrue(saved.label.contains("Buy AAPL") && saved.label.contains("Filled"), saved.label)
+        tap(saved, in: app)
+        XCTAssertTrue(brokerID.waitForExistence(timeout: 12))
+    }
+
+    private func launchFixtureAccount() throws -> XCUIApplication {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["BROKER_PAPER_UI_ORIGIN"] != nil, "Set BROKER_PAPER_UI_ORIGIN for the isolated broker fixture.")
+        let base = try XCTUnwrap(env["BROKER_PAPER_UI_ORIGIN"])
+        let email = try XCTUnwrap(env["BROKER_PAPER_UI_EMAIL"])
+        let password = try XCTUnwrap(env["BROKER_PAPER_UI_PASSWORD"])
+        let key = try XCTUnwrap(env["BROKER_PAPER_UI_ANON"])
+        let origin = try XCTUnwrap(URL(string: base))
+        try XCTSkipUnless(origin.scheme == "http" && origin.host == "127.0.0.1", "Use an isolated fixture.")
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestFreshInstall", "-SupabaseURLOverride", base, "-SupabaseAnonKeyOverride", key,
+                               "-UITestTypeOwnPassword", "-AppleLocale", "en_US", "-app_theme_mode", "Light"]
+        app.launch()
+        tap(app.buttons["I already have an account"], in: app, timeout: 25)
+        let emailField = app.textFields["auth.email"]
+        tap(emailField, in: app)
+        emailField.typeText(email)
+        let passwordField = app.secureTextFields["auth.password"]
+        XCTAssertTrue(passwordField.waitForExistence(timeout: 5))
+        passwordField.tap()
+        passwordField.typeText(password)
+        XCTAssertEqual((passwordField.value as? String)?.count, password.count)
+        passwordField.typeText("\n")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for target in [app, springboard] where target.buttons["Not Now"].waitForExistence(timeout: 2) {
+            target.buttons["Not Now"].tap()
+            break
+        }
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 35), app.debugDescription)
+        return app
+    }
+
+    private func tap(_ element: XCUIElement, in app: XCUIApplication, timeout: TimeInterval = 15,
+                     file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element.waitForExistence(timeout: timeout), "\(element) should appear", file: file, line: line)
+        for _ in 0..<6 where !element.isHittable || !app.frame.insetBy(dx: 0, dy: 70).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
+            let above = element.frame.midY < app.frame.midY
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: above ? 0.36 : 0.66))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: above ? 0.66 : 0.36))
+            start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        XCTAssertTrue(element.isHittable, file: file, line: line)
+        element.tap()
+    }
+}
