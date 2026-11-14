@@ -286,6 +286,89 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(try rows("portfolio_holdings", select: "id,shares", token: token).count, original.count)
     }
 
+    func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ISSUER_EXPOSURE"] == "1",
+                          "Start the issuer allocation quote fixture relay")
+        let email = "issuer-exposure-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userId = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let now = ISO8601DateFormatter().string(from: Date())
+        let listings: [(String, String, Double)] = [
+            ("BHP", "ASX", 1), ("BHP", "NYSE", 1), ("TSM", "NYSE", 1), ("QQQ", "NASDAQ", 1),
+        ]
+        let holdings = listings.map { symbol, exchange, quantity in
+            ["id": UUID().uuidString.lowercased(), "user_id": userId, "asset_symbol": symbol,
+             "asset_name": symbol, "asset_kind": "Stock", "asset_exchange": exchange,
+             "shares": quantity, "avg_cost": 10, "date_added": now] as [String: Any]
+        }
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: holdings), token: token).status, 201)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light", "-portfolioSegment", "allocation"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<18 {
+                let frame = element.exists ? element.frame : .zero
+                if !frame.isEmpty, app.frame.insetBy(dx: 0, dy: 65).contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
+                let movingDown = !frame.isEmpty && frame.midY < app.frame.midY
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.37 : 0.66))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.53, dy: movingDown ? 0.63 : 0.40))
+                start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            }
+            XCTAssertTrue(element.isHittable, "Expected \(element)")
+        }
+        XCTAssertTrue(app.buttons["portfolio.privacy"].waitForExistence(timeout: 30))
+        let grouping = app.buttons["portfolio.allocation.grouping"]
+        func choose(_ name: String) {
+            reveal(grouping)
+            grouping.tap()
+            app.buttons[name].firstMatch.tap()
+        }
+        func slice(_ name: String) -> XCUIElement {
+            app.descendants(matching: .any)["portfolio.allocation.slice.\(name)"].firstMatch
+        }
+        choose("SIC sector")
+        XCTAssertTrue(app.staticTexts["4 of 4 holdings valued."].waitForExistence(timeout: 30))
+        for name in ["Mining and extraction", "Manufacturing", "ETFs"] {
+            reveal(slice(name))
+        }
+        choose("Issuer incorporation")
+        let sources = app.buttons["portfolio.allocation.filings"]
+        reveal(sources)
+        sources.tap()
+        XCTAssertTrue(app.navigationBars["Issuer filing sources"].waitForExistence(timeout: 8))
+        for id in ["asx:BHP", "us:BHP", "us:TSM"] {
+            XCTAssertTrue(app.descendants(matching: .any)["portfolio.allocation.filing.\(id)"].firstMatch.exists)
+        }
+        XCTAssertFalse(app.descendants(matching: .any)["portfolio.allocation.filing.us:QQQ"].exists)
+        app.navigationBars["Issuer filing sources"].buttons["Done"].tap()
+        let australia = slice("Australia")
+        reveal(australia)
+        // The ASX leg uses the live ASX quote converted to USD. The controlled US
+        // leg is US$200 and the other two holdings are US$100 each.
+        let amount = try XCTUnwrap(australia.label.firstMatch(of: /\$\s*([0-9]+(?:\.[0-9]+)?)/))
+        let australiaValue = try XCTUnwrap(Double(amount.1))
+        XCTAssertGreaterThan(australiaValue, 210, australia.label)
+        XCTAssertLessThan(australiaValue, 300, australia.label)
+        let weight = australiaValue / (australiaValue + 200) * 100
+        let expected = String(format: "%.1f%%", weight)
+        XCTAssertTrue(australia.label.contains(expected), australia.label)
+        reveal(slice("Taiwan"))
+        app.buttons["portfolio.privacy"].tap()
+        reveal(australia)
+        XCTAssertTrue(australia.label.contains("••••"), australia.label)
+        XCTAssertTrue(australia.label.contains(expected), australia.label)
+        attach("issuer-incorporation")
+    }
+
     func testReviewedStockTransferSyncsAcrossSignIn() throws {
         // Run scripts/snaptrade-positions-fixture.py with STOCK_TRACKER_UI_TEST_API pointing to it.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STOCK_TRANSFERS"] == "1",

@@ -342,7 +342,7 @@ private struct HomeWatchlistRow: View {
                 if isLoaded {
                     QuoteNumbers(price: marketData.formatPrice(asset.price), percent: asset.changePercent, stacked: stacked)
                         .priceFlash(value: asset.price)
-                } else if marketData.quoteFailures.contains(asset.symbol) {
+                } else if marketData.quoteFailed(for: asset) {
                     Text("No live price").font(.footnote).foregroundStyle(theme.secondaryText)
                 } else {
                     QuoteNumbersSkeleton(stacked: stacked)
@@ -360,7 +360,7 @@ private struct HomeWatchlistRow: View {
             price: asset.price,
             change: asset.change,
             changePercent: asset.changePercent
-        ) : "\(asset.symbol), \(marketData.quoteFailures.contains(asset.symbol) ? "no live price" : "loading price")")
+        ) : "\(asset.symbol), \(marketData.quoteFailed(for: asset) ? "no live price" : "loading price")")
         .accessibilityHint("Opens details")
         .accessibilityIdentifier("home.watchlist.\(asset.symbol)")
     }

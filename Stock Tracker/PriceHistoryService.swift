@@ -37,14 +37,13 @@ struct TradingHours: Sendable {
     static func forAsset(_ asset: Asset) -> TradingHours? {
         if asset.kind == .crypto { return nil }
         if QuoteService.isASX(asset) { return .asx }
-        if asset.exchange == "International" {
-            // Listings the trading calendar knows (London, Tokyo…) get their real hours;
-            // anything else is shown as a continuous series.
-            guard let (venue, _) = Venue.parse(yahooSymbol: asset.symbol),
-                  let hours = MarketCalendar.standard.regularHours(venue) else { return nil }
-            return TradingHours(timeZone: hours.timeZone, openMinute: hours.open, closeMinute: hours.close)
+        if let venue = asset.listedStock?.venue {
+            if venue == .us { return .us }
+            return MarketCalendar.standard.regularHours(venue).map {
+                TradingHours(timeZone: $0.timeZone, openMinute: $0.open, closeMinute: $0.close)
+            }
         }
-        return .us
+        return asset.isUnresolvedUSQuote ? .us : nil
     }
 
     private var calendar: Calendar {

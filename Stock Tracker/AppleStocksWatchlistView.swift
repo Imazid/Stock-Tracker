@@ -681,7 +681,7 @@ struct WatchlistRow: View {
     @State private var series: MiniSeries?
 
     private var isLoaded: Bool { asset.price > 0 }
-    private var hasNoQuote: Bool { !isLoaded && marketData.quoteFailures.contains(asset.symbol) }
+    private var hasNoQuote: Bool { !isLoaded && marketData.quoteFailed(for: asset) }
     private var shownSeries: MiniSeries? { series ?? MiniSeriesStore.shared.cached(for: asset) }
 
     var body: some View {
