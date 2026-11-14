@@ -477,6 +477,100 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "positions priced")).firstMatch.exists)
     }
 
+    func testPortfolioVisitShowsSyncedPositionChangesAndHidesValues() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_HOLDINGS_COMPARISON"] == "1",
+                          "Start the holdings comparison fixture relay")
+        let email = "holdings-comparison-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let userID = try XCTUnwrap((account["user"] as? [String: Any] ?? account)["id"] as? String)
+        let token = try signIn(email: email)
+        let appleID = UUID().uuidString.lowercased()
+        let fundID = UUID().uuidString.lowercased()
+        let date = ISO8601DateFormatter().string(from: Date())
+
+        func position(_ id: String, _ symbol: String, _ units: Double) -> [String: Any] {
+            ["id": id, "user_id": userID, "asset_symbol": symbol, "asset_name": symbol,
+             "asset_kind": "Stock", "asset_exchange": "NASDAQ", "shares": units, "avg_cost": 40, "date_added": date]
+        }
+        func insert(_ rows: [[String: Any]]) throws {
+            XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings",
+                                       body: JSONSerialization.data(withJSONObject: rows), token: token).status, 201)
+        }
+        func update(_ id: String, _ values: [String: Any]) throws {
+            let response = try request("PATCH", "/rest/v1/portfolio_holdings?id=eq.\(id)",
+                                       body: JSONSerialization.data(withJSONObject: values), token: token)
+            XCTAssertTrue([200, 204].contains(response.status), "Update returned \(response.status)")
+        }
+        try insert([position(appleID, "AAPL", 2), position(fundID, "QQQ", 1)])
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Dark", "-portfolioSegment", "holdings",
+            "-preferredCurrency", "USD"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio"))
+        let visit = app.buttons["portfolio.intelligence.visit"]
+        func revealVisit(lookingAbove: Bool = false) {
+            for _ in 0..<12 {
+                let frame = visit.exists ? visit.frame : .zero
+                if !frame.isEmpty, app.frame.insetBy(dx: 0, dy: 90).contains(CGPoint(x: frame.midX, y: frame.midY)) {
+                    return
+                }
+                let down = frame.isEmpty ? lookingAbove : frame.midY < app.frame.midY
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: down ? 0.36 : 0.64))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: down ? 0.65 : 0.35))
+                start.press(forDuration: 0.04, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            }
+            XCTAssertTrue(visit.isHittable, app.debugDescription)
+        }
+        let movement = app.buttons["portfolio.intelligence.movement"]
+        for _ in 0..<6 where !movement.exists { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(movement.waitForExistence(timeout: 15))
+        revealVisit(lookingAbove: true)
+        let firstVisit = NSPredicate(format: "label == %@", "First portfolio visit on this device")
+        XCTAssertTrue(firstVisit.evaluate(with: visit), visit.label)
+
+        XCTAssertTrue(app.open("Markets"))
+        try update(appleID, ["shares": 3, "avg_cost": 43])
+        try update(fundID, ["deleted_at": date])
+        try insert([position(UUID().uuidString.lowercased(), "AMZN", 1)])
+        XCTAssertTrue(app.open("Portfolio"))
+        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.19))
+        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.84))
+        top.press(forDuration: 0.08, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 0)
+        top.press(forDuration: 0.08, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 0)
+        revealVisit()
+        let changed = NSPredicate(format: "label == %@", "3 positions changed since your last visit")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: changed, evaluatedWith: visit)], timeout: 20), .completed, visit.label)
+        visit.tap()
+        let summary = app.staticTexts["portfolio.visit.summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertEqual(summary.label, "3 positions changed since your last visit")
+        XCTAssertTrue(app.staticTexts["New open position"].exists)
+        XCTAssertTrue(app.staticTexts["No longer open"].exists)
+        XCTAssertEqual(app.staticTexts["portfolio.visit.units"].label, "Units 2 → 3")
+        XCTAssertEqual(app.staticTexts["portfolio.visit.cost"].label, "Average cost US$40.00 → US$43.00")
+        attach("portfolio-visit-changes")
+        app.buttons["portfolio.visit.done"].tap()
+
+        app.buttons["portfolio.privacy"].tap()
+        visit.tap()
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["portfolio.visit.units"].exists)
+        XCTAssertFalse(app.staticTexts["portfolio.visit.cost"].exists)
+        XCTAssertTrue(app.staticTexts["Quantity · Average cost updated"].exists)
+        app.buttons["portfolio.visit.done"].tap()
+
+        XCTAssertTrue(app.open("Markets"))
+        XCTAssertTrue(app.open("Portfolio"))
+        let unchanged = NSPredicate(format: "label == %@", "No position changes since your last visit")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: unchanged, evaluatedWith: visit)], timeout: 8), .completed)
+    }
+
     func testIssuerExposureKeepsDualListingPricesAndShowsFilingSources() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ISSUER_EXPOSURE"] == "1",
                           "Start the issuer allocation quote fixture relay")

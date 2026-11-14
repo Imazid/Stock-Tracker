@@ -79,6 +79,8 @@ private enum PortfolioSheet: Identifiable, Equatable {
 
 struct PortfolioView: View {
     @EnvironmentObject private var cloudAuth: SupabaseAuthManager
+    @EnvironmentObject private var sync: SyncManager
+    @EnvironmentObject private var alerts: PriceAlertManager
     @EnvironmentObject private var marketData: MarketData
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var insightService: AIInsightService
@@ -86,6 +88,9 @@ struct PortfolioView: View {
     @EnvironmentObject private var privateMarkets: PrivateMarketsStore
     @Environment(\.selectTab) private var selectTab
     @ObservedObject private var broker = SnapTradeViewModel.shared
+
+    var visitSummary: String? = nil
+    var onOpenVisitChanges: (() -> Void)? = nil
 
     @AppStorage("portfolioSegment") private var segmentRaw = PortfolioSegment.holdings.rawValue
     @AppStorage("portfolioChartRange") private var rangeRaw = TimeRange.oneDay.rawValue
@@ -167,6 +172,10 @@ struct PortfolioView: View {
             List {
                 if marketData.portfolio.isEmpty {
                     emptyState
+                    if visitSummary != nil {
+                        PortfolioIntelligenceEntry(visitSummary: visitSummary, onOpenVisitChanges: onOpenVisitChanges)
+                            .portfolioRow(bottom: DS.Space.l)
+                    }
                     closedSection
                     if cloudAuth.authState == .signedIn, let userId = cloudAuth.userId {
                         Button { sheet = .brokerCash(userId) } label: {
@@ -197,7 +206,7 @@ struct PortfolioView: View {
                     summaryStrip
                         .portfolioRow(bottom: DS.Space.l)
 
-                    PortfolioIntelligenceEntry()
+                    PortfolioIntelligenceEntry(visitSummary: visitSummary, onOpenVisitChanges: onOpenVisitChanges)
                         .portfolioRow(bottom: DS.Space.l)
 
                     PortfolioAccountsCard(hidesValues: valueHidden, onManageBrokers: { sheet = .broker },
@@ -238,6 +247,9 @@ struct PortfolioView: View {
             .dsScreenBackground(style: .portfolio)
             .task(id: cloudAuth.userId) { await refreshPrivatePositions() }
             .refreshable {
+                if cloudAuth.authState == .signedIn {
+                    await sync.pullAndRefresh(marketData: marketData, alertManager: alerts, force: true)
+                }
                 await marketData.refreshFromAPI()
                 await refreshPrivatePositions()
             }
