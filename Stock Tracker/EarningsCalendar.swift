@@ -18,6 +18,7 @@ import SwiftUI
 import Combine
 import UserNotifications
 import OSLog
+import TradingCore
 
 // MARK: - Model
 
@@ -138,7 +139,7 @@ final class EarningsCalendar: ObservableObject {
 
     /// US listings only: Finnhub's free calendar has no ASX, crypto or index earnings.
     static func covers(_ asset: Asset) -> Bool {
-        asset.kind == .stock && !QuoteService.isASX(asset) && !asset.symbol.hasPrefix("^")
+        asset.listedStock?.venue == .us && !asset.isListedETF
     }
 
     /// Refreshes `upcoming` for the given assets (watchlist + holdings).
@@ -180,9 +181,15 @@ final class EarningsCalendar: ObservableObject {
         return result.flatMap { $0.isUpcoming() ? $0 : nil }
     }
 
+    /// A fresh successful lookup can report no upcoming event.
+    func hasRecentLookup(for symbol: String, now: Date = Date()) -> Bool {
+        guard let entry = cache[symbol] else { return false }
+        return now.timeIntervalSince(entry.fetchedAt) < Self.maxAge
+    }
+
     private func fetch(_ symbol: String) async throws -> EarningsEvent? {
         let key = SecretsConfig.finnhubAPIKey
-        guard await MarketDataProxy.available(debugKey: key) else { return nil }
+        guard MarketDataProxy.available(debugKey: key) else { throw APIError.noData }
         let day = DateFormatter()
         day.calendar = Calendar(identifier: .gregorian)
         day.locale = Locale(identifier: "en_US_POSIX")

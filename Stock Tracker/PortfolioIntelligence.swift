@@ -111,6 +111,8 @@ struct PortfolioIntelligenceEntry: View {
     @EnvironmentObject private var router: TradingRouter
     @EnvironmentObject private var trading: TradingStore
     @EnvironmentObject private var marketData: MarketData
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @State private var showingHoldingEvents = false
     @Environment(\.theme) private var theme
 
     var visitSummary: String? = nil
@@ -131,6 +133,15 @@ struct PortfolioIntelligenceEntry: View {
 
             if !marketData.portfolio.isEmpty {
                 movementActions
+                Button {
+                    showingHoldingEvents = true
+                } label: {
+                    Label("Earnings and news for holdings", systemImage: "newspaper")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("portfolio.intelligence.events")
             }
             let count = trading.pendingProposals.count
             if count > 0 {
@@ -150,6 +161,9 @@ struct PortfolioIntelligenceEntry: View {
             }
         }
         .dsCard()
+        .sheet(isPresented: $showingHoldingEvents) {
+            PortfolioHoldingEvents(owner: auth.userId)
+        }
     }
 
     @ViewBuilder
