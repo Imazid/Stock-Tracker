@@ -52,7 +52,7 @@ export function PaperDesk({ state, act, onNewOrder, onAsset }: { state: TradingS
   </>;
 }
 
-export function OrderTicket({ state, asset, act, onDone }: { state?: TradingState; asset: Instrument; act: TradeAction; onDone: (message: string) => void }) {
+export function OrderTicket({ state, asset, initialSide = "buy", act, onDone }: { state?: TradingState; asset: Instrument; initialSide?: "buy" | "sell"; act: TradeAction; onDone: (message: string) => void }) {
   const ledgers = state?.ledgers.filter(ledger => ledger.kind === "manualPaper" && ledger.currency === asset.currency) ?? [];
   const [type,setType] = useState("market");
   const [preview,setPreview] = useState<{ result: Preview; order: OrderRequest }>();
@@ -104,7 +104,7 @@ export function OrderTicket({ state, asset, act, onDone }: { state?: TradingStat
       {preview.result.risk.checks.filter(check => check.status === "failed" || check.status === "warning").map(check => <p key={check.id} className={check.status === "failed" ? "error" : "muted"}>{check.detail}</p>)}
     </div> : unresolved ? <p className="notice">An earlier submission is awaiting confirmation. Retry its original order ID to retrieve the result safely.</p> : <>
       <label>Portfolio<select name="ledger">{ledgers.map(ledger => <option key={ledger.id} value={ledger.id}>{ledger.name} · {money(ledger.cash, ledger.currency)}</option>)}</select></label>
-      <div className="form-grid"><label>Side<select name="side"><option value="buy">Buy</option><option value="sell">Sell</option></select></label><label>Order type<select value={type} onChange={e => setType(e.target.value)}><option value="market">Market</option><option value="limit">Limit</option><option value="stop">Stop</option><option value="stopLimit">Stop limit</option></select></label></div>
+      <div className="form-grid"><label>Side<select name="side" defaultValue={initialSide}><option value="buy">Buy</option><option value="sell">Sell</option></select></label><label>Order type<select value={type} onChange={e => setType(e.target.value)}><option value="market">Market</option><option value="limit">Limit</option><option value="stop">Stop</option><option value="stopLimit">Stop limit</option></select></label></div>
       <div className="form-grid"><label>Units<input name="quantity" type="number" min=".00000001" step="any" required/></label><label>Time in force<select name="tif"><option value="day">Day</option><option value="gtc">Good till cancelled</option><option value="ioc">Immediate or cancel</option><option value="fok">Fill or kill</option></select></label></div>
       {(type === "limit" || type === "stopLimit") && <label>Limit price ({asset.currency})<input type="number" name="limit" step="any" min=".00000001" required/></label>}
       {(type === "stop" || type === "stopLimit") && <label>Stop price ({asset.currency})<input type="number" name="stop" step="any" min=".00000001" required/></label>}

@@ -1,20 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useQueries, useQuery } from "@tanstack/react-query";
 import { Wallet } from "lucide-react";
 import { SourceLine, StatusChip } from "@/components/market/DataChips";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { getJSON } from "@/lib/api";
 import { money, plainNumber } from "@/lib/format";
-import { toView } from "@/lib/instrument-view";
-import type { QuoteResponse } from "@/lib/market-types";
-import type { HoldingBrokerAccount } from "@/lib/portfolio-transfers";
 import { portfolioMovement } from "@/lib/portfolio-movement";
-import { portfolioInstrument } from "@/lib/portfolio-exposure";
 import { BrokerCash } from "./broker-cash";
 import { ExposureCard } from "./exposure-card";
 import { GainsCard } from "./gains-card";
@@ -22,61 +16,15 @@ import { MovementCard } from "./movement-card";
 import { LotReport } from "./lot-report";
 import { IncomeLedger } from "./income-ledger";
 import { PerformanceLedger } from "./performance-ledger";
+import { usePortfolioPositions } from "@/hooks/portfolio-positions";
 import { useSession } from "@/lib/session";
-import { browserSupabase } from "@/lib/supabase/client";
 import { PortfolioHistory } from "@/workspace/components/portfolio-history";
 import "@/workspace/styles.css";
 
-interface HoldingRow {
-  id: string;
-  asset_symbol: string;
-  asset_name: string;
-  asset_kind: "Stock" | "Crypto";
-  asset_exchange: string | null;
-  broker_account: HoldingBrokerAccount | null;
-  shares: number;
-  avg_cost: number;
-}
-
-async function readPortfolio(userId: string) {
-  const db = browserSupabase();
-  if (!db) throw new Error("Accounts are unavailable.");
-  const holdings = await db.from("portfolio_holdings").select("id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,broker_account")
-    .eq("user_id", userId).is("deleted_at", null).gt("shares", 0).order("asset_symbol").order("id").limit(201);
-  if (holdings.error) throw new Error("Couldn’t load your synced portfolio.");
-  return {
-    holdings: (holdings.data as HoldingRow[]).slice(0, 200).map((row) => {
-      const listing = portfolioInstrument({
-        symbol: row.asset_symbol, name: row.asset_name, kind: row.asset_kind, exchange: row.asset_exchange,
-      });
-      return { ...row, instrument: listing ? toView(listing) : null };
-    }),
-    truncated: holdings.data.length > 200,
-  };
-}
-
-export function PortfolioView() {
+export function PortfolioView({ recordTransfer = false }: { recordTransfer?: boolean }) {
   const session = useSession();
   const userId = session.status === "signedIn" ? session.user.id : undefined;
-  const portfolio = useQuery({
-    queryKey: ["portfolio", userId],
-    enabled: Boolean(userId),
-    queryFn: () => readPortfolio(userId!),
-    staleTime: 30_000,
-  });
-  const holdings = portfolio.data?.holdings ?? [];
-  const pricedListings = holdings.flatMap((holding) => holding.instrument ? [{ ...holding, instrument: holding.instrument }] : []);
-  const ids = [...new Set(pricedListings.map((holding) => holding.instrument.id))];
-  const prices = useQueries({
-    queries: ids.map((id) => ({
-      queryKey: ["quote", id],
-      queryFn: ({ signal }: { signal: AbortSignal }) =>
-        getJSON<QuoteResponse>(`/api/markets/instruments/${encodeURIComponent(id)}/quote`, signal),
-      staleTime: 10_000,
-      refetchInterval: 60_000,
-    })),
-  });
-  const quotes = new Map(ids.map((id, index) => [id, prices[index]]));
+  const { portfolio, holdings, pricedListings, quotes, loadingPrices } = usePortfolioPositions(userId);
   const movement = portfolioMovement(pricedListings, (id) => quotes.get(id)?.data?.quote);
 
   return (
@@ -96,14 +44,14 @@ export function PortfolioView() {
       ) : (
         <>
           {userId && <div className="workspace portfolio-history-embed"><PortfolioHistory key={userId} userId={userId} /></div>}
-          {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={prices.some((price) => price.isPending)} />}
+          {holdings.length > 0 && <MovementCard movement={movement} holdingCount={holdings.length} loading={loadingPrices} />}
           {holdings.length > 0 && <ExposureCard key={userId} holdings={holdings} quoteFor={(id) => quotes.get(id)?.data}
-            loading={prices.some((price) => price.isPending)} truncated={portfolio.data?.truncated ?? false} />}
+            loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} />}
           {userId && <>
             <GainsCard key={userId + "-gains"} userId={userId} holdings={holdings} quoteFor={(id) => quotes.get(id)?.data?.quote}
-              loading={prices.some((price) => price.isPending)} truncated={portfolio.data?.truncated ?? false} />
+              loading={loadingPrices} truncated={portfolio.data?.truncated ?? false} />
             <BrokerCash key={userId + "-cash"} userId={userId} />
-            <PerformanceLedger key={userId} userId={userId} />
+            <PerformanceLedger key={`${userId}:${recordTransfer}`} userId={userId} recordTransfer={recordTransfer} />
             <IncomeLedger key={userId + "-income"} userId={userId} />
             <LotReport key={userId + "-lots"} userId={userId} />
           </>}

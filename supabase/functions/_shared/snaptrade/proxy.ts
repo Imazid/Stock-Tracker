@@ -311,7 +311,7 @@ export function listInvestmentAccounts(userId: string, deps: SnapTradeProxyDeps,
 
 function cashEntries(payload: unknown) {
   if (!Array.isArray(payload)) return null;
-  const entries = new Map<string, number | null>();
+  const entries = new Map<string, { amount: string | null; buyingPower: string | null }>();
   const duplicates = new Set<string>();
   let incomplete = false;
   for (const row of payload) {
@@ -321,16 +321,19 @@ function cashEntries(payload: unknown) {
       continue;
     }
     if (entries.has(code)) duplicates.add(code);
-    const amount = typeof row.cash === "number" && Number.isFinite(row.cash) && Math.abs(row.cash) <= Number.MAX_SAFE_INTEGER
-      ? row.cash : null;
-    entries.set(code, amount);
+    const amount = balanceAmount(row.cash);
+    entries.set(code, { amount, buyingPower: balanceAmount(row.buying_power) });
     if (amount === null) incomplete = true;
   }
   return {
     balances: [...entries].sort(([a], [b]) => a.localeCompare(b))
-      .map(([currency, amount]) => ({ currency, amount: amount === null || duplicates.has(currency) ? null : String(amount) })),
+      .map(([currency, values]) => ({ currency, ...(duplicates.has(currency) ? { amount: null, buyingPower: null } : values) })),
     incomplete: incomplete || duplicates.size > 0,
   };
+}
+
+function balanceAmount(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER ? String(value) : null;
 }
 
 function balanceSyncTime(row: InvestmentRow, now: number) {
@@ -347,7 +350,8 @@ async function portfolioCash(userId: string, deps: SnapTradeProxyDeps): Promise<
   const deadline = performance.now() + 43_000;
   const directory = await investmentDirectory(user, deps, true);
   if (!directory.rows) return directory.error;
-  const distinct = new Map<string, { id: string; label: string; paper: boolean; status: string; syncedAt: string | null }>();
+  const distinct = new Map<string, { id: string; label: string; paper: boolean; status: string; syncedAt: string | null;
+    netValue: { amount: string; currency: string } | null }>();
   for (const row of directory.rows) {
     const account = accountDetails(row, directory.connections.get(row.connection_id));
     if (account.positions_status === "closed" || account.positions_status === "archived") continue;
@@ -361,7 +365,10 @@ async function portfolioCash(userId: string, deps: SnapTradeProxyDeps): Promise<
     const prior = distinct.get(key);
     if (prior && (priority(prior.status) > priority(status) ||
       (priority(prior.status) === priority(status) && (prior.syncedAt ?? "") >= (syncedAt ?? "")))) continue;
-    distinct.set(key, { id: row.id, label: [account.institution_name, account.number].filter(Boolean).join(" "), paper, status, syncedAt });
+    const total = account.balance?.total;
+    const amount = balanceAmount(total?.amount);
+    const netValue = total && amount !== null ? { amount, currency: total.currency } : null;
+    distinct.set(key, { id: row.id, label: [account.institution_name, account.number].filter(Boolean).join(" "), paper, status, syncedAt, netValue });
   }
 
   const selected = [...distinct.values()];

@@ -177,6 +177,35 @@ kbd { font: 11px var(--mono); }
 .row-chevron { color: var(--dim); }
 .watch-action { width: 100%; min-height: 38px; color: #b7c7b3; font-size: 10px; }
 .overview-bottom { margin-top: 13px; }
+.dashboard-actions, .dashboard-heading-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dashboard-actions { margin-bottom: 14px; }
+.portfolio-dashboard { display: grid; gap: 14px; margin-bottom: 14px; }
+.dashboard-summary .panel-heading { flex-wrap: wrap; }
+.dashboard-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 1px; margin: 0; background: var(--line); border-block: 1px solid var(--line); }
+.dashboard-metric { padding: 12px 15px; background: var(--surface); }
+.dashboard-metric dt, .dashboard-metric small, .dashboard-allocation p, .dashboard-brokerage p, .dashboard-intelligence-body p, .dashboard-status { color: var(--muted); font-size: 12px; }
+.dashboard-metric dd { margin: 2px 0 4px; font: 650 clamp(21px, 2.6vw, 31px)/1.15 var(--heading); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dashboard-metric small { display: block; margin-top: 4px; font-family: inherit; font-weight: 450; line-height: 1.45; }
+.dashboard-allocation, .dashboard-brokerage, .dashboard-intelligence-body, .dashboard-status { padding: 10px 15px; }
+.dashboard-allocation ul, .dashboard-accounts { list-style: none; margin: 6px 0; padding: 0; }
+.dashboard-allocation ul { display: flex; flex-wrap: wrap; gap: 7px; }
+.dashboard-allocation li { display: flex; gap: 8px; background: var(--surface-raised); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+.dashboard-brokerage, .dashboard-intelligence-body { border-top: 1px solid var(--line); }
+.dashboard-brokerage .dashboard-heading-row { justify-content: space-between; }
+.dashboard-brokerage .brokerage-actions { margin-bottom: 0; }
+.dashboard-brokerage h3, .dashboard-allocation h3, .dashboard-intelligence-body h3 { font-size: 13px; font-weight: 650; }
+.dashboard-net { margin: 8px 0 5px; }
+.dashboard-net .dashboard-metric { padding: 8px 0; }
+.dashboard-accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr)); gap: 8px; }
+.dashboard-accounts li { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; overflow-wrap: anywhere; }
+.dashboard-accounts dl { margin: 5px 0 0; }
+.dashboard-accounts dt { color: var(--muted); font-size: 11px; }
+.dashboard-accounts dd { margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.dashboard-intelligence-body { display: grid; gap: 7px; justify-items: start; }
+.dashboard-intelligence-body a { color: var(--accent); text-decoration: underline; }
+.dashboard-moves { display: flex; gap: 8px 22px; flex-wrap: wrap; margin: 0; }
+.dashboard-moves dt { color: var(--muted); font-size: 12px; }
+.dashboard-moves dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
 .main > .portfolio-history { margin-bottom: 14px; }
 .portfolio-history .portfolio-history-heading { min-height: 58px; }
 .portfolio-history .portfolio-history-heading h2, .portfolio-history-summary dd { color: var(--text); }
