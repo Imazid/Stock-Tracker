@@ -92,6 +92,90 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertFalse(app.buttons["search.result.index.^GSPC.toggle"].exists)
     }
 
+    func testNamedPortfoliosKeepHoldingsSeparateAcrossSignInAndRename() throws {
+        let email = "portfolio-groups-ios-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        let session = try request("GET", "/auth/v1/user", token: token)
+        let user = try XCTUnwrap(JSONSerialization.jsonObject(with: session.data) as? [String: Any])
+        let owner = try XCTUnwrap(user["id"] as? String)
+        let research = UUID().uuidString
+        let income = UUID().uuidString
+        for (id, name) in [(research, "Research"), (income, "Income")] {
+            let result = try request("POST", "/rest/v1/rpc/apply_portfolio_group_change",
+                                     body: JSONSerialization.data(withJSONObject: [
+                "p_user_id": owner, "p_id": UUID().uuidString, "p_group_id": id,
+                "p_action": "create", "p_name": name, "p_emoji": "💼",
+            ]), token: token)
+            XCTAssertEqual(result.status, 204, String(decoding: result.data, as: UTF8.self))
+        }
+        let fixtures: [(String, String, Any)] = [
+            ("AAPL", "Apple", NSNull()), ("QQQ", "Invesco QQQ", research), ("MSFT", "Microsoft", income),
+        ]
+        let holdings = fixtures.map { symbol, name, group in
+            ["id": UUID().uuidString, "user_id": owner, "asset_symbol": symbol, "asset_name": name,
+             "asset_exchange": "US", "asset_kind": symbol == "QQQ" ? "ETF" : "Stock",
+             "shares": 2, "avg_cost": 20, "portfolio_group_id": group] as [String: Any]
+        }
+        let inserted = try request("POST", "/rest/v1/portfolio_holdings",
+                                   body: JSONSerialization.data(withJSONObject: holdings), token: token)
+        XCTAssertEqual(inserted.status, 201, String(decoding: inserted.data, as: UTF8.self))
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                               "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+                               "-UITestSignIn", "\(email):\(password)", "-app_theme_mode", "Light"]
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio", timeout: 25))
+
+        func verifyHolding(_ ticker: String) {
+            let row = app.buttons["portfolio.holding.\(ticker)"]
+            for _ in 0..<9 where !row.isHittable { app.swipeUp() }
+            XCTAssertTrue(row.waitForExistence(timeout: 12), app.debugDescription)
+            for (symbol, _, _) in fixtures where symbol != ticker {
+                XCTAssertFalse(app.buttons["portfolio.holding.\(symbol)"].exists)
+            }
+        }
+        func openMenu(_ name: String) {
+            let bar = app.navigationBars[name]
+            XCTAssertTrue(bar.waitForExistence(timeout: 8))
+            let title = bar.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+            XCTAssertTrue(title.exists, bar.debugDescription)
+            title.tap()
+        }
+        verifyHolding("AAPL")
+        openMenu("Main Portfolio")
+        app.buttons["Research"].tap()
+        verifyHolding("QQQ")
+        openMenu("Research")
+        app.buttons["Income"].tap()
+        verifyHolding("MSFT")
+        openMenu("Income")
+        app.buttons["Rename…"].tap()
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 8))
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Income".count) + "Dividends")
+        app.alerts.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Dividends"].waitForExistence(timeout: 8))
+
+        var cloud: [[String: Any]] = []
+        for _ in 0..<15 {
+            cloud = try rows("portfolio_groups", select: "id,name", token: token)
+            if cloud.contains(where: { $0["name"] as? String == "Dividends" }) { break }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        XCTAssertEqual(cloud.first { $0["name"] as? String == "Dividends" }?["id"] as? String, income.lowercased())
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.open("Portfolio", timeout: 25))
+        verifyHolding("AAPL")
+        openMenu("Main Portfolio")
+        app.buttons["Dividends"].tap()
+        verifyHolding("MSFT")
+    }
+
     func testNamedWatchlistsSyncBetweenAppAndAccount() throws {
         let email = "watchlists-ios-\(UUID().uuidString.lowercased())@example.com"
         let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [

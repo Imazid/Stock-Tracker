@@ -459,6 +459,8 @@ struct PortfolioSnapshot: Identifiable, Codable {
     let id = UUID()
     let date: Date
     let totalValue: Double
+
+    var utcDay: String { String(date.ISO8601Format().prefix(10)) }
     
     enum CodingKeys: String, CodingKey {
         case date
@@ -486,6 +488,8 @@ struct PortfolioSnapshot: Identifiable, Codable {
 // MARK: - Portfolio Group
 
 struct PortfolioGroup: Identifiable, Codable {
+    static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+
     var id: UUID
     var name: String
     var emoji: String

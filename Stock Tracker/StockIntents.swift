@@ -50,10 +50,10 @@ struct StockEntityQuery: EntityStringQuery {
     /// Watchlist + holdings, as saved on this iPhone.
     @MainActor
     private func followed() -> [StockEntity] {
-        let persist = DataPersistenceManager.shared
         var seen = Set<String>()
         let lists = WatchlistSync.shared.cached(owner: SupabaseManager.auth.currentUser?.id)
-        return (lists.groups.flatMap(\.assets) + persist.loadPortfolio().map(\.asset))
+        let portfolios = PortfolioAccountStore.shared.cached(owner: SupabaseManager.auth.currentUser?.id)
+        return (lists.groups.flatMap(\.assets) + portfolios.groups.flatMap { $0.holdings.map(\.asset) })
             .filter { !$0.symbol.hasPrefix("^") && seen.insert($0.symbol).inserted }
             .map(StockEntity.init(asset:))
     }

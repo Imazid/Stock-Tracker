@@ -151,7 +151,7 @@ struct DebugView: View {
                         let keys = ["saved_watchlist", "saved_portfolio", "saved_custom_assets", "saved_price_alerts", "saved_portfolio_history"]
                         let totalBytes = keys.compactMap { UserDefaults.standard.data(forKey: $0)?.count }.reduce(0, +)
                         row("UserDefaults Size", ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file))
-                        row("Saved Portfolio", DataPersistenceManager.shared.loadPortfolio().isEmpty ? "No" : "Yes")
+                        row("Saved Portfolio", marketData.portfolioGroups.allSatisfy { $0.holdings.isEmpty } ? "No" : "Yes")
                         row("Saved Watchlist", DataPersistenceManager.shared.loadWatchlist().isEmpty ? "No" : "Yes")
                     }
 

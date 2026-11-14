@@ -262,7 +262,7 @@ final class SnapTradeViewModel: ObservableObject {
 
     private func clearConnection(keepPositions: Bool) {
         if keepPositions, let marketData {
-            for holding in marketData.portfolio where isImported(holding) {
+            for holding in marketData.allPortfolioHoldings where isImported(holding) {
                 stopTracking(holding, marketData: marketData)
             }
             importedIDs = []
@@ -315,7 +315,7 @@ final class SnapTradeViewModel: ObservableObject {
             accounts = linked
             let readable = linked.filter(\.canReadPositions).map(\.id)
             let readableIDs = Set(readable.map { $0.lowercased() })
-            let hasUnreadablePositions = marketData?.portfolio.contains { holding in
+            let hasUnreadablePositions = marketData?.allPortfolioHoldings.contains { holding in
                 guard let account = holding.brokerAccount else { return false }
                 return account.tracking && holding.shares > 0 && !readableIDs.contains(account.account_id)
             } ?? false
@@ -356,7 +356,7 @@ final class SnapTradeViewModel: ObservableObject {
         guard let marketData, !pendingRemovals.isEmpty else { return }
         var plan = SyncPlan()
         let ids = Set(pendingRemovals.map(\.id))
-        plan.removals = marketData.portfolio.filter { ids.contains($0.id) }
+        plan.removals = marketData.allPortfolioHoldings.filter { ids.contains($0.id) }
         apply(plan, marketData: marketData)
         pendingRemovals = []
     }
@@ -365,7 +365,7 @@ final class SnapTradeViewModel: ObservableObject {
     func keepPendingRemovals() {
         guard let marketData else { return }
         let reviewed = pendingRemovals.map { old in
-            var holding = marketData.portfolio.first { $0.id == old.id } ?? old
+            var holding = marketData.allPortfolioHoldings.first { $0.id == old.id } ?? old
             holding.shares = old.shares
             return holding
         }
@@ -432,7 +432,7 @@ final class SnapTradeViewModel: ObservableObject {
 
     func makeSyncPlan(marketData: MarketData) -> SyncPlan {
         var plan = SyncPlan()
-        let current = marketData.portfolio
+        let current = marketData.allPortfolioHoldings
         let known = Set(accounts.filter(\.canReadPositions).map { $0.id.lowercased() })
         let eligible = holdings.filter {
             $0.quantity.isFinite && $0.quantity > 0 && known.contains($0.accountId.lowercased())
@@ -534,7 +534,7 @@ final class SnapTradeViewModel: ObservableObject {
         var summary = SyncSummary(skipped: plan.skipped, review: plan.review)
         var accepted: [PortfolioHolding] = []
         for holding in plan.adds {
-            if SubscriptionManager.shared.canAddPortfolioHolding(currentCount: marketData.portfolio.count + accepted.count) {
+            if SubscriptionManager.shared.canAddPortfolioHolding(currentCount: (marketData.portfolioGroups.first?.holdings.count ?? 0) + accepted.count) {
                 accepted.append(holding)
             } else {
                 summary.overLimit += 1

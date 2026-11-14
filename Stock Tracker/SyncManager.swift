@@ -77,7 +77,9 @@ final class SyncManager: ObservableObject {
         } catch { return }
         guard SupabaseManager.auth.currentUser?.id == userId else { return }
         self.marketData = marketData
+        marketData.usePortfolioAccount(userId)
         marketData.useWatchlistAccount(userId)
+        alertManager.useAccount(userId)
 
         // If we already synced this session (e.g. session restore on relaunch),
         // use the lighter incremental pull instead of a full merge.
@@ -87,28 +89,13 @@ final class SyncManager: ObservableObject {
         }
         isRunning = true
         defer { isRunning = false }
-        let previousOwner = persist.lastPortfolioAccount()
-        let samePortfolioAccount = previousOwner == nil || previousOwner == userId
-
         syncState = .syncing
         AppLogger.sync.info("Starting first-sign-in sync for user \(userId)")
 
         do {
-            try await flushPortfolioChanges(userId: userId)
-
-            let remotePortfolio = try await readPortfolio(userId: userId, includeLocal: samePortfolioAccount)
-            let mergedAlerts    = try await mergeAlerts(userId: userId)
-            let mergedHistory   = try await mergeSnapshots(userId: userId)
-
+            try await exchangePortfolios(userId: userId, marketData: marketData)
+            let mergedAlerts = try await mergeAlerts(userId: userId, local: alertManager.alerts)
             guard SupabaseManager.auth.currentUser?.id == userId else { return }
-            persist.savePriceAlerts(mergedAlerts)
-            persist.savePortfolioHistory(mergedHistory)
-
-            marketData.applyRemoteSync(
-                portfolio: preservingPending(remotePortfolio, userId: userId),
-                history: mergedHistory
-            )
-            marketData.applySyncedClosedPositions(remotePortfolio.closed, reset: !samePortfolioAccount)
             alertManager.applyRemoteAlerts(mergedAlerts)
 
             let now = Date()
@@ -120,7 +107,10 @@ final class SyncManager: ObservableObject {
             syncState = .lastSyncedAt(now)
             AppLogger.sync.info("First-sign-in sync complete")
 
+        } catch is CancellationError {
+            return
         } catch {
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
             syncState = .error(error.localizedDescription)
             AppLogger.sync.error("First-sign-in sync failed: \(error)")
         }
@@ -144,7 +134,9 @@ final class SyncManager: ObservableObject {
             return
         }
 
-        if !force, !WatchlistSync.shared.hasPending(owner: userId),
+        let account = portfolios.cached(owner: userId)
+        if !force, !account.needsUpload,
+           !WatchlistSync.shared.hasPending(owner: userId),
            (persist.loadPortfolioLedgerQueue()[userId.uuidString]?.isEmpty ?? true),
            let lastSync = persist.loadLastSyncDate(),
            Date().timeIntervalSince(lastSync) < Constants.Sync.foregroundPullThrottle {
@@ -157,45 +149,26 @@ final class SyncManager: ObservableObject {
         defer { isRunning = false }
 
         do {
-            try await flushPortfolioChanges(userId: userId)
+            try await exchangePortfolios(userId: userId, marketData: marketData)
             let since = persist.loadLastSyncDate() ?? .distantPast
             let sinceStr = ISO8601DateFormatter().string(from: since)
-
-            var localAlerts    = persist.loadPriceAlerts()
-            let localHistory   = persist.loadPortfolioHistory()
-            let remotePortfolio = try await readPortfolio(userId: userId, includeLocal: true, importLocal: false)
-
-            let remoteAlerts: [RemotePriceAlert]
-            do {
-                let response = try await SupabaseManager.client
-                    .from("price_alerts")
-                    .select()
-                    .eq("user_id", value: userId.uuidString)
-                    .gte("updated_at", value: sinceStr)
-                    .execute()
-                remoteAlerts = try JSONDecoder.supabaseDecoder.decode([RemotePriceAlert].self, from: response.data)
-            } catch let decodeError as DecodingError {
-                AppLogger.sync.error("Alerts decode failed: \(decodeError)")
-                remoteAlerts = []
-            }
-
-            for remote in remoteAlerts {
-                let remoteIdLower = remote.id.lowercased()
-                if remote.isDeleted {
-                    localAlerts.removeAll { $0.id.uuidString.lowercased() == remoteIdLower }
-                } else if !localAlerts.contains(where: { $0.id.uuidString.lowercased() == remoteIdLower }) {
-                    localAlerts.append(remote.toDomain())
+            let response = try await SupabaseManager.client
+                .from("price_alerts")
+                .select()
+                .eq("user_id", value: userId.uuidString)
+                .gte("updated_at", value: sinceStr)
+                .execute()
+            let delta = try JSONDecoder.supabaseDecoder.decode([RemotePriceAlert].self, from: response.data)
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
+            var localAlerts = alertManager.alerts
+            for row in delta {
+                let id = row.id.lowercased()
+                if row.isDeleted {
+                    localAlerts.removeAll { $0.id.uuidString.lowercased() == id }
+                } else if !localAlerts.contains(where: { $0.id.uuidString.lowercased() == id }) {
+                    localAlerts.append(row.toDomain())
                 }
             }
-
-            guard SupabaseManager.auth.currentUser?.id == userId else { return }
-            persist.savePriceAlerts(localAlerts)
-
-            marketData.applyRemoteSync(
-                portfolio: preservingPending(remotePortfolio, userId: userId),
-                history: localHistory
-            )
-            marketData.applySyncedClosedPositions(remotePortfolio.closed)
             alertManager.applyRemoteAlerts(localAlerts)
 
             let now = Date()
@@ -205,7 +178,10 @@ final class SyncManager: ObservableObject {
             syncState = .lastSyncedAt(now)
             AppLogger.sync.info("Incremental pull complete")
 
+        } catch is CancellationError {
+            return
         } catch {
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
             syncState = .error(error.localizedDescription)
             AppLogger.sync.error("Incremental pull failed: \(error)")
         }
@@ -239,32 +215,40 @@ final class SyncManager: ObservableObject {
         defer { isRunning = false }
         syncState = .syncing
         do {
-            try await flushPortfolioChanges(userId: userId)
+            if let marketData, marketData.portfolioOwner == userId,
+               portfolios.cached(owner: userId).needsUpload || !(persist.loadPortfolioLedgerQueue()[userId.uuidString]?.isEmpty ?? true) {
+                try await exchangePortfolios(userId: userId, marketData: marketData)
+            }
             if let marketData, marketData.watchlistOwner == userId, WatchlistSync.shared.hasPending(owner: userId) {
                 try await WatchlistSync.shared.exchange(owner: userId, marketData: marketData)
             }
             guard SupabaseManager.auth.currentUser?.id == userId else { return }
-            try await upsertAlerts(persist.loadPriceAlerts(), userId: userId)
-            try await upsertSnapshots(persist.loadPortfolioHistory(), userId: userId)
+            if let alerts = marketData?.alertManager, alerts.owner == userId {
+                try await upsertAlerts(alerts.alerts, userId: userId)
+            }
             guard SupabaseManager.auth.currentUser?.id == userId else { return }
             let now = Date()
             syncState = .lastSyncedAt(now)
             AppLogger.sync.info("Background upload complete")
+        } catch is CancellationError {
+            return
         } catch {
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
             syncState = .error(error.localizedDescription)
             AppLogger.sync.error("Background upload failed: \(error)")
         }
     }
 
     /// Save mutations before their network request so a relaunch can retry the same trade IDs.
-    func queuePortfolioChange(_ holding: PortfolioHolding, changed: Set<UUID> = [], deleted: [Transaction] = [],
+    func queuePortfolioChange(_ holding: PortfolioHolding, groupID: UUID, owner: UUID?,
+                              changed: Set<UUID> = [], deleted: [Transaction] = [],
                               archived: Bool = false, closedAt: Date? = nil) -> Bool {
         queuePortfolioChanges([PortfolioLedgerChange(revision: UUID(), holding: holding, changed: changed, deleted: deleted,
-                                                     archivedAt: archived ? Date() : nil, closedAt: closedAt)])
+                                                     archivedAt: archived ? Date() : nil, closedAt: closedAt, groupID: groupID)], owner: owner)
     }
 
-    func queuePortfolioChanges(_ pending: [PortfolioLedgerChange]) -> Bool {
-        guard !pending.isEmpty, let userId = SupabaseManager.auth.currentUser?.id else { return true }
+    func queuePortfolioChanges(_ pending: [PortfolioLedgerChange], owner: UUID?) -> Bool {
+        guard !pending.isEmpty, let userId = owner else { return true }
         var queue = persist.loadPortfolioLedgerQueue()
         var changes = queue[userId.uuidString, default: []]
         for change in pending {
@@ -276,7 +260,7 @@ final class SyncManager: ObservableObject {
                                                  changed: (prior?.changed ?? []).union(change.changed),
                                                  deleted: Array(Dictionary(removed.map { ($0.id, $0) },
                                                                            uniquingKeysWith: { _, latest in latest }).values),
-                                                 archivedAt: change.archivedAt, closedAt: change.closedAt))
+                                                 archivedAt: change.archivedAt, closedAt: change.closedAt, groupID: change.groupID ?? prior?.groupID))
         }
         queue[userId.uuidString] = changes
         guard persist.savePortfolioLedgerQueue(queue) else {
@@ -287,9 +271,9 @@ final class SyncManager: ObservableObject {
         return true
     }
 
-    private func flushPortfolioChanges(userId: UUID) async throws {
+    private func flushPortfolioChanges(_ pending: [PortfolioLedgerChange], userId: UUID) async throws {
         let key = userId.uuidString
-        let pending = persist.loadPortfolioLedgerQueue()[key] ?? []
+        try requirePortfolioOwner(userId)
         let linked = pending.filter { $0.holding.brokerAccount != nil }
         if !linked.isEmpty {
             nonisolated struct Batch: Encodable, Sendable { let p_changes: [PortfolioLedgerChange.Parameters] }
@@ -298,6 +282,7 @@ final class SyncManager: ObservableObject {
             clearChanges(Set(linked.map(\.revision)), for: key)
         }
         for change in pending where change.holding.brokerAccount == nil {
+            try requirePortfolioOwner(userId)
             try await SupabaseManager.client.rpc("sync_portfolio_ledger", params: change.parameters(userId: userId)).execute()
             clearChanges([change.revision], for: key)
         }
@@ -312,31 +297,18 @@ final class SyncManager: ObservableObject {
 
     // MARK: - Soft delete
 
-    func softDeleteAlert(id: UUID) async {
-        guard SupabaseManager.isConfigured, isSignedIn else { return }
+    func softDeleteAlert(id: UUID, owner: UUID) async {
+        guard SupabaseManager.isConfigured, SupabaseManager.auth.currentUser?.id == owner else { return }
         do {
             let nowStr = ISO8601DateFormatter().string(from: Date())
             try await SupabaseManager.client
                 .from("price_alerts")
                 .update(["deleted_at": nowStr])
                 .eq("id", value: id.uuidString)
+                .eq("user_id", value: owner.uuidString)
                 .execute()
         } catch {
             AppLogger.sync.error("Soft-delete alert failed: \(error)")
-        }
-    }
-
-    func softDeleteHolding(id: UUID) async {
-        guard SupabaseManager.isConfigured, isSignedIn else { return }
-        do {
-            let nowStr = ISO8601DateFormatter().string(from: Date())
-            try await SupabaseManager.client
-                .from("portfolio_holdings")
-                .update(["deleted_at": nowStr])
-                .eq("id", value: id.uuidString)
-                .execute()
-        } catch {
-            AppLogger.sync.error("Soft-delete holding failed: \(error)")
         }
     }
 
@@ -354,71 +326,159 @@ final class SyncManager: ObservableObject {
             .execute()
     }
 
-    private func upsertSnapshots(_ history: [PortfolioSnapshot], userId: UUID) async throws {
-        let recent = history.suffix(Constants.Sync.maxSnapshotSyncDays)
-        let rows = recent.map { RemotePortfolioSnapshot.from($0, userId: userId) }
-        guard !rows.isEmpty else { return }
-        // Deduplicate by snapshot_date — keep last occurrence
-        var seen = Set<String>()
-        let unique = rows.reversed().filter { seen.insert($0.snapshot_date).inserted }.reversed()
-        try await SupabaseManager.client
-            .from("portfolio_snapshots")
-            .upsert(Array(unique), onConflict: "user_id,snapshot_date")
-            .execute()
-    }
-
     // MARK: - Merge helpers (first sign-in)
 
-    private struct PortfolioRead {
-        let open: [PortfolioHolding]
-        let closed: [ClosedPosition]
+    private let portfolios = PortfolioAccountStore.shared
+
+    private struct RemoteGroup: Decodable {
+        let id: UUID
+        let name: String
+        let emoji: String
+        let deleted_at: String?
+
+        var domain: PortfolioGroup { PortfolioGroup(id: id, name: name, emoji: emoji) }
     }
 
-    private func readPortfolio(userId: UUID, includeLocal: Bool, importLocal: Bool = true) async throws -> PortfolioRead {
-        let holdings: [RemoteHolding] = try await portfolioRows("portfolio_holdings", userId: userId)
+    private func requirePortfolioOwner(_ owner: UUID) throws {
+        guard SupabaseManager.auth.currentUser?.id == owner, marketData?.portfolioOwner == owner else {
+            throw CancellationError()
+        }
+    }
+
+    private func exchangePortfolios(userId: UUID, marketData: MarketData) async throws {
+        try requirePortfolioOwner(userId)
+        let account = portfolios.cached(owner: userId)
+        let pending = persist.loadPortfolioLedgerQueue()[userId.uuidString] ?? []
+        // Publish metadata before a holding references it.
+        for change in account.pendingGroups where change.action != .delete {
+            try requirePortfolioOwner(userId)
+            try await SupabaseManager.client.rpc("apply_portfolio_group_change", params: change.parameters(owner: userId)).execute()
+        }
+        let groupForHolding = Dictionary(account.groups.flatMap { group in
+            (group.holdings.map(\.id) + group.closedPositions.map(\.id)).map { ($0, group.id) }
+        },
+                                         uniquingKeysWith: { first, _ in first })
+        try await flushPortfolioChanges(pending.map { item in
+            var change = item
+            change.groupID = change.groupID ?? groupForHolding[change.holding.id] ?? PortfolioGroup.defaultID
+            return change
+        }, userId: userId)
+
+        if account.needsImport {
+            let existing: [RemoteHolding] = try await portfolioRows("portfolio_holdings", userId: userId)
+            try await importPortfolioLedger(account.groups, existing: existing, userId: userId)
+        }
+
+        var deletionFailure: PostgrestError?
+        for change in account.pendingGroups where change.action == .delete {
+            try requirePortfolioOwner(userId)
+            do {
+                try await SupabaseManager.client.rpc("apply_portfolio_group_change", params: change.parameters(owner: userId)).execute()
+            } catch let error as PostgrestError where error.code == "22023" {
+                // The broker may have started tracking a position on another device.
+                // Restore the rejected portfolio from the server and report the error.
+                deletionFailure = error
+            }
+        }
+
+        let metadata: [RemoteGroup] = try await portfolioRows("portfolio_groups", userId: userId)
+        let remoteHoldings: [RemoteHolding] = try await portfolioRows("portfolio_holdings", userId: userId)
         let transactions: [RemoteTransaction] = try await portfolioRows("transactions", userId: userId)
         let byHolding = Dictionary(grouping: transactions.filter { !$0.isDeleted }, by: \.holdingId)
-        let holdingIds = Set(holdings.compactMap { UUID(uuidString: $0.id) })
-        let open = holdings.filter { !$0.isDeleted }.map { row in
-            row.toDomain(transactions: (byHolding[row.id] ?? []).map { $0.toDomain() })
+        let byGroup = Dictionary(grouping: remoteHoldings) { $0.groupID ?? PortfolioGroup.defaultID }
+        let defaultGroup = metadata.first { $0.id == PortfolioGroup.defaultID && $0.deleted_at == nil }?.domain
+            ?? PortfolioGroup(id: PortfolioGroup.defaultID, name: "Main Portfolio")
+        var groups = [defaultGroup] + metadata.filter { $0.id != PortfolioGroup.defaultID && $0.deleted_at == nil }
+            .map(\.domain).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        for index in groups.indices {
+            let id = groups[index].id
+            let remote = byGroup[id] ?? []
+            groups[index].holdings = remote.filter { !$0.isDeleted }.map { row in
+                row.toDomain(transactions: (byHolding[row.id] ?? []).map { $0.toDomain() })
+            }
+            groups[index].closedPositions = remote.compactMap { row in
+                row.toClosedPosition(transactions: (byHolding[row.id] ?? []).map { $0.toDomain() })
+            }
+            let local = account.groups.first { $0.id == id }?.history ?? []
+            let queued = account.pendingValuations[id.uuidString] ?? [:]
+            groups[index].history = try await syncHistory(groupID: id, userId: userId, local: local,
+                                                          importing: account.needsImport, queued: queued)
         }
-        var closed = holdings.compactMap { row in
-            row.toClosedPosition(transactions: (byHolding[row.id] ?? []).map { $0.toDomain() })
-        }
-        let manualListings = Set(open.filter { $0.brokerAccount?.tracking != true }.map { [$0.asset.symbol, $0.asset.kind.rawValue, $0.asset.exchange] })
-        let linkedAccounts = Set(open.compactMap { holding in
-            holding.brokerAccount.map { [$0.account_id, holding.asset.symbol, holding.asset.kind.rawValue, holding.asset.exchange] }
-        })
-        let localOnly = includeLocal && importLocal ? persist.loadPortfolio().filter {
-            guard !holdingIds.contains($0.id) else { return false }
-            let listing = [$0.asset.symbol, $0.asset.kind.rawValue, $0.asset.exchange]
-            if let account = $0.brokerAccount { return !linkedAccounts.contains([account.account_id] + listing) }
-            return !manualListings.contains(listing)
-        } : []
-        for holding in localOnly {
-            let change = PortfolioLedgerChange(revision: UUID(), holding: holding, changed: [], deleted: [],
-                                               archivedAt: nil, closedAt: nil)
-            try await SupabaseManager.client.rpc("sync_portfolio_ledger", params: change.parameters(userId: userId)).execute()
-        }
-        if includeLocal {
-            let archived = Dictionary(uniqueKeysWithValues: holdings.compactMap { row -> (UUID, String)? in
-                guard row.closedAt == nil, let deletedAt = row.deletedAt, let id = UUID(uuidString: row.id) else { return nil }
-                return (id, deletedAt)
+
+        try requirePortfolioOwner(userId)
+        let completed = Set(account.pendingGroups.map(\.id))
+        let ledger = persist.loadPortfolioLedgerQueue()[userId.uuidString] ?? []
+        let withQuotes = marketData.portfolioGroupsWithQuotes(groups)
+        guard portfolios.update(owner: userId, { stored in
+            stored.pendingGroups.removeAll { completed.contains($0.id) }
+            for (group, days) in account.pendingValuations {
+                for (day, value) in days where stored.pendingValuations[group]?[day]?.date == value.date {
+                    stored.pendingValuations[group]?.removeValue(forKey: day)
+                }
+                if stored.pendingValuations[group]?.isEmpty == true {
+                    stored.pendingValuations.removeValue(forKey: group)
+                }
+            }
+            stored.needsImport = false
+            var next = withQuotes
+            for change in stored.pendingGroups { change.apply(to: &next) }
+            for i in next.indices {
+                let group = next[i].id
+                let edits = ledger.filter {
+                    ($0.groupID ?? groupForHolding[$0.holding.id] ?? PortfolioGroup.defaultID) == group
+                }
+                if let queued = stored.pendingValuations[group.uuidString] {
+                    next[i].history = snapshotsByDay(next[i].history + Array(queued.values)).values.sorted { $0.date < $1.date }
+                }
+                let ids = Set(edits.map { $0.holding.id })
+                next[i].holdings.removeAll { ids.contains($0.id) }
+                next[i].holdings += edits.filter { $0.archivedAt == nil }.map(\.holding)
+                next[i].closedPositions.removeAll { stored.hiddenClosed.contains($0.id) || ids.contains($0.id) }
+                next[i].closedPositions += edits.compactMap { edit in
+                    guard let closed = edit.closedAt, !stored.hiddenClosed.contains(edit.holding.id) else { return nil }
+                    let holding = edit.holding
+                    return ClosedPosition(id: holding.id, asset: holding.asset, transactions: holding.transactions,
+                                          openedAt: holding.dateAdded, closedAt: closed)
+                }
+                next[i].closedPositions.sort { $0.closedAt > $1.closedAt }
+            }
+            stored.groups = next
+            if !next.contains(where: { $0.id == stored.selected }) { stored.selected = PortfolioGroup.defaultID }
+        }) else { throw CocoaError(.fileWriteUnknown) }
+        marketData.showPortfolios(portfolios.cached(owner: userId))
+        if let deletionFailure { throw deletionFailure }
+    }
+
+    private func importPortfolioLedger(_ groups: [PortfolioGroup], existing: [RemoteHolding], userId: UUID) async throws {
+        let byID = Dictionary(uniqueKeysWithValues: existing.compactMap { row in UUID(uuidString: row.id).map { ($0, row) } })
+        let byGroup = Dictionary(grouping: existing.filter { !$0.isDeleted }) { $0.groupID ?? PortfolioGroup.defaultID }
+        for group in groups {
+            let signatures = Set((byGroup[group.id] ?? []).map { row in
+                [row.assetSymbol, row.assetKind, row.assetExchange ?? "", row.brokerAccount?.account_id ?? ""]
             })
-            let groups = persist.loadPortfolioGroups().groups
-            for position in groups.flatMap(\.closedPositions) {
-                guard let archive = archived[position.id],
-                      position.transactions.contains(where: { $0.type == .sell }) else { continue }
+            let rows = group.holdings.filter { holding in
+                byID[holding.id] == nil && !signatures.contains([holding.asset.symbol, holding.asset.kind.rawValue,
+                                                                holding.asset.exchange, holding.brokerAccount?.account_id ?? ""])
+            }
+            for holding in rows {
+                try requirePortfolioOwner(userId)
+                let change = PortfolioLedgerChange(revision: UUID(), holding: holding, changed: [], deleted: [],
+                                                   archivedAt: nil, closedAt: nil, groupID: group.id)
+                try await SupabaseManager.client.rpc("sync_portfolio_ledger", params: change.parameters(userId: userId)).execute()
+            }
+            for position in group.closedPositions where position.transactions.contains(where: { $0.type == .sell }) {
+                let row = byID[position.id]
+                guard row == nil || ((row?.groupID ?? PortfolioGroup.defaultID) == group.id &&
+                                     row?.deletedAt != nil && row?.closedAt == nil) else { continue }
+                try requirePortfolioOwner(userId)
                 let holding = PortfolioHolding(id: position.id, asset: position.asset, shares: 0, avgCost: 0,
                                                dateAdded: position.openedAt, transactions: position.transactions)
                 let change = PortfolioLedgerChange(revision: UUID(), holding: holding, changed: [], deleted: [],
-                                                   archivedAt: nil, closedAt: position.closedAt)
+                                                   archivedAt: position.closedAt, closedAt: position.closedAt, groupID: group.id)
                 try await SupabaseManager.client.rpc("sync_portfolio_ledger",
-                                                     params: change.parameters(userId: userId, existingArchive: archive)).execute()
-                closed.append(position)
+                    params: change.parameters(userId: userId, existingArchive: row?.deletedAt)).execute()
             }
         }
-        return PortfolioRead(open: open + localOnly, closed: closed)
     }
 
     private func portfolioRows<Row: Decodable>(_ table: String, userId: UUID) async throws -> [Row] {
@@ -426,6 +486,7 @@ final class SyncManager: ObservableObject {
         var rows: [Row] = []
         var lastId: String?
         while true {
+            try requirePortfolioOwner(userId)
             let query = SupabaseManager.client.from(table).select().eq("user_id", value: userId.uuidString)
             if let lastId { _ = query.gt("id", value: lastId) }
             let response = try await query.order("id").limit(pageSize).execute()
@@ -439,13 +500,7 @@ final class SyncManager: ObservableObject {
 
     private struct RowID: Decodable { let id: String }
 
-    private func preservingPending(_ remote: PortfolioRead, userId: UUID) -> [PortfolioHolding] {
-        let pending = persist.loadPortfolioLedgerQueue()[userId.uuidString] ?? []
-        let ids = Set(pending.map { $0.holding.id })
-        return remote.open.filter { !ids.contains($0.id) } + pending.filter { $0.archivedAt == nil }.map(\.holding)
-    }
-
-    private func mergeAlerts(userId: UUID) async throws -> [PriceAlert] {
+    private func mergeAlerts(userId: UUID, local: [PriceAlert]) async throws -> [PriceAlert] {
         let response = try await SupabaseManager.client
             .from("price_alerts")
             .select()
@@ -460,45 +515,82 @@ final class SyncManager: ObservableObject {
         }
 
         let remote     = all.filter { !$0.isDeleted }
-        let remoteById = Dictionary(uniqueKeysWithValues: remote.map { ($0.id.lowercased(), $0) })
-        let local      = persist.loadPriceAlerts()
+        let knownIDs = Set(all.map { $0.id.lowercased() })
 
         var merged: [PriceAlert] = remote.map { $0.toDomain() }
-        let localOnly = local.filter { remoteById[$0.id.uuidString.lowercased()] == nil }
+        let localOnly = local.filter { !knownIDs.contains($0.id.uuidString.lowercased()) }
         merged.append(contentsOf: localOnly)
-        if !localOnly.isEmpty { try await upsertAlerts(localOnly, userId: userId) }
+        if !localOnly.isEmpty {
+            try requirePortfolioOwner(userId)
+            try await upsertAlerts(localOnly, userId: userId)
+        }
         return merged
     }
 
-    private func mergeSnapshots(userId: UUID) async throws -> [PortfolioSnapshot] {
-        let response = try await SupabaseManager.client
-            .from("portfolio_snapshots")
-            .select()
-            .eq("user_id", value: userId.uuidString)
-            .order("snapshot_date", ascending: false)
-            .limit(Constants.Sync.maxSnapshotSyncDays)
-            .execute()
-        let all: [RemotePortfolioSnapshot]
-        do {
-            all = try JSONDecoder.supabaseDecoder.decode([RemotePortfolioSnapshot].self, from: response.data)
-        } catch {
-            AppLogger.sync.error("mergeSnapshots decode failed: \(error)")
-            all = []
+    private struct HistoryRow: Decodable {
+        let snapshot_date: String
+        let total_value: Double
+        let observed_at: String?
+
+        func domain() -> PortfolioSnapshot? {
+            let midnight = "\(snapshot_date)T00:00:00Z"
+            guard let date = try? Date.ISO8601FormatStyle().parse(midnight) else { return nil }
+            return PortfolioSnapshot(date: observed_at.flatMap {
+                (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse($0))
+                    ?? (try? Date.ISO8601FormatStyle().parse($0))
+            } ?? date, totalValue: total_value)
+        }
+    }
+
+    private func snapshotsByDay(_ snapshots: [PortfolioSnapshot]) -> [String: PortfolioSnapshot] {
+        Dictionary(snapshots.map { ($0.utcDay, $0) }, uniquingKeysWith: { first, second in
+            first.date > second.date ? first : second
+        })
+    }
+
+    private func syncHistory(groupID: UUID, userId: UUID, local: [PortfolioSnapshot],
+                             importing: Bool, queued: [String: PortfolioSnapshot]) async throws -> [PortfolioSnapshot] {
+        let isDefault = groupID == PortfolioGroup.defaultID
+        func cloudValues() async throws -> [String: PortfolioSnapshot] {
+            try requirePortfolioOwner(userId)
+            let query = SupabaseManager.client.from(isDefault ? "portfolio_snapshots" : "portfolio_group_snapshots")
+                .select("snapshot_date,total_value,observed_at").eq("user_id", value: userId.uuidString)
+            if !isDefault { _ = query.eq("portfolio_group_id", value: groupID.uuidString) }
+            let result = try await query.order("snapshot_date", ascending: false)
+                .limit(Constants.Sync.maxSnapshotSyncDays).execute()
+            let rows = try JSONDecoder.supabaseDecoder.decode([HistoryRow].self, from: result.data)
+            return Dictionary(uniqueKeysWithValues: rows.compactMap { row in row.domain().map { (row.snapshot_date, $0) } })
         }
 
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
-
-        let remoteByDate = Dictionary(uniqueKeysWithValues: all.map { ($0.snapshotDate, $0) })
-        let local        = persist.loadPortfolioHistory()
-
-        var merged: [PortfolioSnapshot] = all.map { $0.toDomain() }
-        let localOnly = local.filter { remoteByDate[df.string(from: $0.date)] == nil }
-        merged.append(contentsOf: localOnly)
-        if !localOnly.isEmpty { try await upsertSnapshots(localOnly, userId: userId) }
-
-        merged.sort { $0.date < $1.date }
-        return Array(merged.suffix(Constants.Sync.maxSnapshotSyncDays))
+        var remote = try await cloudValues()
+        let localDays = snapshotsByDay(local)
+        var uploads = queued
+        if importing {
+            for day in localDays.keys.sorted().suffix(Constants.Sync.maxSnapshotSyncDays) where remote[day] == nil && uploads[day] == nil {
+                if let value = localDays[day], value.totalValue.isFinite, value.totalValue >= 0 {
+                    uploads[day] = value
+                }
+            }
+        }
+        var uploaded = false
+        for (day, snapshot) in uploads {
+            if let known = remote[day], known.date >= snapshot.date { continue }
+            try requirePortfolioOwner(userId)
+            nonisolated struct Value: Encodable, Sendable {
+                let p_user_id: UUID
+                let p_group_id: UUID
+                let p_snapshot_date: String
+                let p_total_value: Double
+                let p_observed_at: String
+            }
+            let row = Value(p_user_id: userId, p_group_id: groupID, p_snapshot_date: day,
+                            p_total_value: snapshot.totalValue,
+                            p_observed_at: snapshot.date.ISO8601Format(.iso8601.year().month().day().time(includingFractionalSeconds: true)))
+            try await SupabaseManager.client.rpc("save_portfolio_group_value", params: row).execute()
+            uploaded = true
+        }
+        if uploaded { remote = try await cloudValues() }
+        let values = localDays.merging(remote) { _, serverValue in serverValue }
+        return Array(values.values.sorted { $0.date < $1.date }.suffix(Constants.Refresh.maxPortfolioHistoryDays))
     }
 }

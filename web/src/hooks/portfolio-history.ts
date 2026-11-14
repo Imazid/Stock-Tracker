@@ -14,15 +14,19 @@ async function readHistory<T>(page: (offset: number, end: number) => PromiseLike
   }
 }
 
-export function usePortfolioHistory(userId: string, kind: HistoryKind) {
+export function usePortfolioHistory(userId: string, kind: HistoryKind, group?: string) {
   return useQuery({
-    queryKey: ["portfolio-history", userId, kind],
+    queryKey: ["portfolio-history", userId, kind, group],
     queryFn: async ({ signal }) => {
       const db = browserSupabase();
       if (!db) throw new Error("Accounts are unavailable.");
       if (kind === "values") {
-        const rows = await readHistory<Snapshot>((from, to) => db.from("portfolio_snapshots")
-          .select("snapshot_date,total_value").eq("user_id", userId).order("snapshot_date").range(from, to).abortSignal(signal));
+        const rows = await readHistory<Snapshot>((from, to) => {
+          const query = db.from(group ? "portfolio_group_snapshots" : "portfolio_snapshots")
+            .select("snapshot_date,total_value").eq("user_id", userId);
+          if (group) query.eq("portfolio_group_id", group);
+          return query.order("snapshot_date").range(from, to).abortSignal(signal);
+        });
         return { kind, rows } as const;
       }
       const rows = await readHistory<StatementPeriod>((from, to) => db.from("portfolio_performance_results")
