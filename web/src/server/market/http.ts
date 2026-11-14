@@ -2,9 +2,14 @@
 // never a URL with a key in it, never a header.
 
 export class UpstreamError extends Error {
-  constructor(message: string, readonly status?: number, readonly throttled = false) {
+  readonly status?: number;
+  readonly throttled: boolean;
+
+  constructor(message: string, status?: number, throttled = false) {
     super(message);
     this.name = "UpstreamError";
+    this.status = status;
+    this.throttled = throttled;
   }
 }
 

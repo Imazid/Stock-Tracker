@@ -9,6 +9,7 @@ import { Field, Input, Select } from "@/components/ui/Field";
 import { money, percent, signedMoney } from "@/lib/format";
 import { browserSupabase } from "@/lib/supabase/client";
 import { uuid } from "@/lib/uuid";
+import { BenchmarkComparison } from "./benchmark-comparison";
 import { BrokerActivity, conversionDetails, type HistoricalFx } from "./broker-activity";
 
 type FlowKind = "deposit" | "withdrawal";
@@ -104,6 +105,8 @@ export function PerformanceLedger({ userId }: { userId: string }) {
                 </dl>
               </div>
             )}
+            <BenchmarkComparison periods={periods.data.rows.slice(0, 100)}
+              continuous={periods.data.summary && periods.data.summary.periods > 1 ? periods.data.summary : null} />
             {periods.data.rows.length > 100 && <p role="status" className="text-xs text-warn">Showing the 100 most recent periods.</p>}
             <ol className="divide-y divide-border">
               {periods.data.rows.slice(0, 100).map((period) => (
