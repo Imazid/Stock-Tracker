@@ -13,11 +13,11 @@ import { verifyAudit } from "../_shared/trading/audit.ts";
 import { TradingEngine } from "../_shared/trading/engine.ts";
 import * as Ledgers from "../_shared/trading/ledger.ts";
 import { instrumentID } from "../_shared/trading/market.ts";
-import { fillGross } from "../_shared/trading/orders.ts";
+import { fillGross, makeRequest } from "../_shared/trading/orders.ts";
 import { reportFailures } from "../_shared/trading/risk.ts";
 import * as Rounding from "../_shared/trading/rounding.ts";
 import { firstDifference, Fx, loadVectors } from "./fixtures.ts";
-import { play, Recorder, scenarios } from "./scenarios.ts";
+import { bullish, draft, play, Recorder, scenarios } from "./scenarios.ts";
 
 const aapl = instrumentID(Fx.aapl);
 const kinds = (engine: TradingEngine) => engine.state.audit.events.map((event) => event.kind);
@@ -124,6 +124,31 @@ Deno.test("a risk-blocked trade is recorded and never becomes an order", () => {
   assertEquals(engine.ledger(engine.state.agents[0].ledgerID)!.cash, 5_000);
   assert(kinds(engine).includes("proposalBlocked") && !kinds(engine).includes("orderSubmitted"));
   assertEquals(engine.drainNotices().map((n) => n.kind), ["proposalBlocked"]);
+});
+
+Deno.test("saved account limits apply across practice portfolios while manual buys get a concentration warning", () => {
+  const engine = Fx.engine();
+  const first = engine.createAgent(draft(), Fx.now);
+  const second = engine.createAgent(draft(), Fx.now);
+  engine.runAgent(first.id, bullish(), "manual", Fx.now);
+  assertEquals(engine.state.orders.map((order) => order.status), ["filled"]);
+
+  const limits = { maxSymbolExposurePct: 8, maxTotalDailyNotional: 800 };
+  engine.updateAccountLimits(limits, Fx.now);
+  engine.runAgent(second.id, bullish(), "manual", Fx.now);
+  const blocked = engine.state.proposals[1];
+  assertEquals(blocked.status, "blocked");
+  assertEquals(reportFailures(blocked.risk).map((check) => check.id), ["concentration", "dailyNotional"]);
+  assertEquals(engine.state.orders.length, 1);
+  assertEquals(kinds(engine).filter((kind) => kind === "riskPolicyChanged").length, 1);
+  assert(verifyAudit(engine.state.audit).isIntact);
+
+  const manual = engine.createPaperPortfolio("Manual practice", 5_000, "USD", Fx.now);
+  const preview = engine.preview(makeRequest({
+    clientOrderID: "manual-after-limits", ledgerID: manual.id, instrument: Fx.aapl, side: "buy", quantity: 10,
+  }), Fx.now);
+  assertEquals(preview?.risk.checks.find((check) => check.id === "concentration")?.status, "warning");
+  assertEquals(preview?.risk.checks.find((check) => check.id === "dailyNotional")?.status, "notApplicable");
 });
 
 Deno.test("the kill switch stops every agent until it is released and each is resumed", () => {

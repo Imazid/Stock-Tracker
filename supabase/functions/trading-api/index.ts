@@ -38,7 +38,7 @@ import { LiveVenues, PaperBroker } from "../_shared/trading/broker.ts";
 import { Currencies } from "../_shared/trading/currencies.ts";
 import { decodeInstrument, type Instrument, instrumentID, VENUES } from "../_shared/trading/market.ts";
 import { ORDER_SIDES, ORDER_TYPES, type OrderRequest, TIMES_IN_FORCE } from "../_shared/trading/orders.ts";
-import { reportSummary, type RiskPolicy } from "../_shared/trading/risk.ts";
+import { accountLimitIssues, accountLimits, reportSummary, type RiskPolicy } from "../_shared/trading/risk.ts";
 import { type AgentDraft, type OrderResult, TradingError } from "../_shared/trading/state.ts";
 import { barsToFetch, decodeStrategySpec, type StrategySpec } from "../_shared/trading/strategy.ts";
 
@@ -265,6 +265,36 @@ const actions: Record<string, (ctx: Context) => Promise<Response>> = {
       if (agent && isLoosening(agent.riskPolicy, policy)) requireStepUp(ctx.caller);
       engine.updateRiskPolicy(id, policy, now);
       return { agent: engine.agent(id) };
+    });
+  },
+  accountLimits: async (ctx) => {
+    const [row] = await ctx.sql`select max_symbol_exposure_pct, max_total_daily_notional
+      from public.risk_policies where user_id = ${ctx.caller.userID}`;
+    return ok({ limits: row ? {
+      maxSymbolExposurePct: row.max_symbol_exposure_pct, maxTotalDailyNotional: row.max_total_daily_notional,
+    } : accountLimits() });
+  },
+  updateAccountLimits: (ctx) => {
+    const changes = Field.object(ctx.body.limits, "limits");
+    const requested = {
+      maxSymbolExposurePct: Field.optionalNumber(changes.maxSymbolExposurePct, "limits.maxSymbolExposurePct"),
+      maxTotalDailyNotional: Field.optionalNumber(changes.maxTotalDailyNotional, "limits.maxTotalDailyNotional"),
+    };
+    if (requested.maxSymbolExposurePct === undefined && requested.maxTotalDailyNotional === undefined) {
+      throw new HttpError(422, "invalid", "Change at least one account limit.");
+    }
+    return act(ctx, {}, ({ engine, now }) => {
+      const previous = accountLimits(engine.state.accountPolicy);
+      const limits = {
+        maxSymbolExposurePct: requested.maxSymbolExposurePct ?? previous.maxSymbolExposurePct,
+        maxTotalDailyNotional: requested.maxTotalDailyNotional ?? previous.maxTotalDailyNotional,
+      };
+      const issue = accountLimitIssues(limits)[0];
+      if (issue) throw new HttpError(422, "invalid", issue);
+      if (limits.maxSymbolExposurePct > previous.maxSymbolExposurePct ||
+          limits.maxTotalDailyNotional > previous.maxTotalDailyNotional) requireStepUp(ctx.caller);
+      engine.updateAccountLimits(limits, now);
+      return { limits };
     });
   },
   renameAgent: (ctx) => {

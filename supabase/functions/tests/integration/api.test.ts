@@ -475,6 +475,31 @@ apiTest("the kill switch stops agents at once; turning it off, loosening limits 
   const strong: string = verified.access_token;
   const weak = await signIn(person);     // password only
 
+  const originalLimits = await api(weak, { action: "accountLimits" });
+  assertEquals(originalLimits.data.limits, { maxSymbolExposurePct: 35, maxTotalDailyNotional: 250000 });
+  const tightenedAccount = await api(weak, {
+    action: "updateAccountLimits", limits: { maxSymbolExposurePct: 12, maxTotalDailyNotional: 3000 },
+  });
+  assertEquals(tightenedAccount.status, 200);
+  const blockedIncrease = await api(weak, {
+    action: "updateAccountLimits", limits: { maxSymbolExposurePct: 15, maxTotalDailyNotional: 2000 },
+  });
+  assertEquals([blockedIncrease.status, blockedIncrease.error?.code], [403, "step_up_required"]);
+  assertEquals((await api(weak, { action: "accountLimits" })).data.limits, {
+    maxSymbolExposurePct: 12, maxTotalDailyNotional: 3000,
+  });
+  const another = await signUp("isolatedlimits");
+  assertEquals((await api(another.token, { action: "accountLimits", userID: person.id })).data.limits, originalLimits.data.limits);
+  assertEquals((await api(weak, { action: "updateAccountLimits", limits: { maxSymbolExposurePct: 0 } })).status, 422);
+  const increased = await api(strong, { action: "updateAccountLimits", limits: { maxSymbolExposurePct: 15 }, includeState: true });
+  assertEquals(increased.status, 200);
+  assertEquals(increased.data.limits, { maxSymbolExposurePct: 15, maxTotalDailyNotional: 3000 });
+  assertEquals(increased.data.state.accountPolicy.killSwitchEngaged, true);
+  assertEquals(increased.data.state.accountPolicy.maxSymbolExposurePct, 15);
+  const [persisted] = await sql`select max_symbol_exposure_pct, max_total_daily_notional, live_manual_orders_enabled
+    from public.risk_policies where user_id = ${person.id}`;
+  assertEquals(persisted, { max_symbol_exposure_pct: 15, max_total_daily_notional: 3000, live_manual_orders_enabled: false });
+
   // With only the password: the three sensitive things are refused, and nothing changes.
   const release = await api(weak, { action: "releaseKillSwitch" });
   assertEquals([release.status, release.error?.code], [403, "step_up_required"]);

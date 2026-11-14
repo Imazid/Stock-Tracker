@@ -117,6 +117,10 @@ The web workspace serves Private Markets at `/private-markets`. The catalogue us
   Never remove a key while rows still reference it (`select kek_id, count(*) from
   public.broker_credentials group by 1`).
 
+### Account practice limits
+
+The signed-in onboarding guide and Settings call `trading-api` to read and save account limits. The existing risk policy and audit tables store the changes. Both limits apply when agents buy. The daily limit counts the value of filled buys and sells across practice portfolios in the same currency. Manual buys show a concentration warning. Reductions use an ordinary signed-in session. Accounts with an enrolled authenticator require a verified session to increase either value. The server records the previous and saved values in the trading audit and uses the new values during subsequent order checks. No schema migration is needed.
+
 ## 7. iOS build configuration
 
 Copy `Stock Tracker/SecretsConfig.swift.template` to `Stock Tracker/SecretsConfig.swift` and copy the plist example to `Stock Tracker/Config/Secrets.plist`. Set `SupabaseURL` and `SupabaseAnonKey` to the target project's URL and public client key. The build copies only those two values into release bundles. A clean checkout can build with no plist. Debug builds can use local keys for development with no backend.

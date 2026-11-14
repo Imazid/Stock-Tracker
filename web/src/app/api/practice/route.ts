@@ -5,7 +5,7 @@ import { jsonError } from "@/server/http/respond";
 const allowed = new Set([
   "state", "createPortfolio", "previewOrder", "placeOrder", "cancelOrder",
   "createAgent", "runAgent", "pauseAgent", "resumeAgent", "approveProposal", "rejectProposal",
-  "agentActivity", "agentActivityDetail",
+  "agentActivity", "agentActivityDetail", "accountLimits", "updateAccountLimits",
 ]);
 
 export async function POST(request: Request) {
@@ -34,6 +34,11 @@ export async function POST(request: Request) {
       (order?.mode !== undefined && order.mode !== "paper") ||
       (draft?.mode !== undefined && draft.mode !== "paper")) {
     return jsonError(400, "invalid", "This practice action is unavailable.");
+  }
+
+  const expectedOwner = request.headers.get("x-stock-tracker-account");
+  if (expectedOwner && expectedOwner !== data.session.user.id) {
+    return jsonError(409, "account_changed", "Your account changed. Open the form again.");
   }
 
   const headers: Record<string, string> = {

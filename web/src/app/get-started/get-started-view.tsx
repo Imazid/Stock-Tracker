@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountLimits } from "@/components/trading/AccountLimits";
 import Link from "next/link";
 import { useState } from "react";
 import { SourceLine } from "@/components/market/DataChips";
@@ -116,6 +117,7 @@ export function GetStartedView({ brokerageEnabled, aiEnabled }: { brokerageEnabl
       {userId && <>
         <div className="workspace onboarding-brokerage"><Connections key={userId} enabled={brokerageEnabled} userId={userId} /></div>
         {brokerageEnabled && <BrokerCash key={userId} userId={userId} />}
+        <AccountLimits key={`limits:${userId}`} owner={userId} />
       </>}
       <Card>
         <CardHeader title="Continue to your workspace" />

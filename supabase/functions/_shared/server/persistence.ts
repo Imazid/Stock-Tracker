@@ -520,10 +520,13 @@ async function save(tx: Tx, userID: string, now: number, engine: TradingEngine, 
   const state = engine.state;
   const when = new Date(now);
 
-  // 1. The kill switch. (Live flags are never written: nothing in this build can set them.)
+  // 1. The kill switch and practice limits. Live flags are never written here.
   if (JSON.stringify(state.accountPolicy) !== loaded.policy) {
     await tx`update public.risk_policies set kill_switch_engaged = ${state.accountPolicy.killSwitchEngaged},
-               kill_switch_at = ${at(state.accountPolicy.killSwitchAt)} where user_id = ${userID}`;
+               kill_switch_at = ${at(state.accountPolicy.killSwitchAt)},
+               max_symbol_exposure_pct = ${state.accountPolicy.maxSymbolExposurePct},
+               max_total_daily_notional = ${state.accountPolicy.maxTotalDailyNotional},
+               updated_at = ${when} where user_id = ${userID}`;
   }
 
   // 2. Books: new, changed, and removed (kept, but no longer shown).

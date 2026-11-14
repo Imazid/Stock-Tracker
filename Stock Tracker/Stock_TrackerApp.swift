@@ -135,6 +135,7 @@ struct StockCryptoTrackerApp: App {
                     .environmentObject(marketData)
                     .environmentObject(subscriptionManager)
                     .environmentObject(referralManager)
+                    .environmentObject(tradingStore)
                     .transition(.opacity)
 
                 } else if authManager.isAuthenticated {
