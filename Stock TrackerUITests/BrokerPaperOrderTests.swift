@@ -64,7 +64,22 @@ final class BrokerPaperOrderTests: XCTestCase {
         XCTAssertTrue(brokerID.waitForExistence(timeout: 12))
     }
 
-    private func launchFixtureAccount() throws -> XCUIApplication {
+    func testOpenPaperReceiptRefreshesFromOrderSignal() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["BROKER_PAPER_UI_REALTIME"] == "1",
+                          "Start the isolated Realtime order receipt fixture.")
+        let app = try launchFixtureAccount(returnToHome: false)
+        tap(app.buttons["brokerPaper.activity"], in: app, timeout: 25)
+        let receipt = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'brokerPaper.history.'")).firstMatch
+        tap(receipt, in: app)
+        let status = app.descendants(matching: .any)["brokerPaper.brokerStatus"].firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.label.contains("Accepted"), status.label)
+        let filled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Filled'"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [filled], timeout: 8), .completed, status.label)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '200.02 USD'")).firstMatch.exists)
+    }
+
+    private func launchFixtureAccount(returnToHome: Bool = true) throws -> XCUIApplication {
         let env = ProcessInfo.processInfo.environment
         try XCTSkipUnless(env["BROKER_PAPER_UI_ORIGIN"] != nil, "Set BROKER_PAPER_UI_ORIGIN for the isolated broker fixture.")
         let base = try XCTUnwrap(env["BROKER_PAPER_UI_ORIGIN"])
@@ -82,7 +97,7 @@ final class BrokerPaperOrderTests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 35))
         XCTAssertTrue(app.open("Activity"))
         XCTAssertTrue(app.buttons["brokerPaper.activity"].waitForExistence(timeout: 35), app.debugDescription)
-        XCTAssertTrue(app.open("Home"))
+        if returnToHome { XCTAssertTrue(app.open("Home")) }
         return app
     }
 
