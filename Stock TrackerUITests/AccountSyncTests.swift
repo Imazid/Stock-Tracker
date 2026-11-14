@@ -1051,6 +1051,57 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(exit["op"] as? String, "crossesAbove")
     }
 
+    func testHostedAgentTimelineShowsApprovedFill() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_AGENT_TIMELINE"] == "1",
+                          "Start the signed-in agent timeline relay")
+        let email = "strategy-studio-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: ["email": email, "password": password]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+
+        func call(_ input: [String: Any]) throws -> [String: Any] {
+            let response = try request("POST", "/functions/v1/trading-api", body: JSONSerialization.data(withJSONObject: input), token: token)
+            XCTAssertEqual(response.status, 200, String(decoding: response.data, as: UTF8.self))
+            let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: response.data) as? [String: Any])
+            return try XCTUnwrap(envelope["data"] as? [String: Any])
+        }
+
+        let name = "Timeline review"
+        let instrument = ["symbol": "BTC", "name": "Bitcoin", "assetClass": "crypto", "venue": "crypto", "currency": "USD"]
+        let level: [String: Any] = ["kind": "constant", "value": 1]
+        let close = ["kind": "price", "field": "close"]
+        let spec: [String: Any] = ["kind": "rules", "title": name, "summary": "Track the decision through to the practice fill",
+                                   "universe": [instrument], "timeframe": "day", "sizing": ["mode": "fixedNotional", "value": 100],
+                                   "entry": ["op": "above", "left": close, "right": level], "exit": ["op": "below", "left": close, "right": level],
+                                   "protections": [String: String](), "reentryCooldownBars": 1, "followsLedgerPositions": false]
+        let created = try call(["action": "createAgent", "draft": ["name": name, "mode": "paper", "spec": spec, "reviewEachPaperTrade": true]])
+        let agent = try XCTUnwrap(created["agent"] as? [String: Any])
+        let run = try call(["action": "runAgent", "agentID": try XCTUnwrap(agent["id"] as? String)])
+        let trace = try XCTUnwrap(run["run"] as? [String: Any])
+        let proposalID = try XCTUnwrap((trace["proposalIDs"] as? [String])?.first)
+        let approved = try call(["action": "approveProposal", "proposalID": proposalID])
+        let fill = try XCTUnwrap((approved["fills"] as? [[String: Any]])?.first)
+        let fillID = try XCTUnwrap(fill["id"] as? String).lowercased()
+
+        app.launchArguments = ["-UITestFreshInstall", "-hasCompletedOnboarding", "YES", "-SupabaseURLOverride", apiURL,
+                               "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
+        app.launch()
+        XCTAssertTrue(app.open("Agents", timeout: 25))
+        let card = app.buttons["agents.card.\(name)"]
+        XCTAssertTrue(card.waitForExistence(timeout: 25), app.debugDescription)
+        card.tap()
+        let runButton = app.buttons["agent.run.completed"].firstMatch
+        XCTAssertTrue(runButton.waitForExistence(timeout: 15), app.debugDescription)
+        for _ in 0..<10 where !runButton.isHittable { app.swipeUp(velocity: .slow) }
+        runButton.tap()
+        let verified = app.staticTexts["Fill ID \(fillID)"]
+        XCTAssertTrue(verified.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "You approved")).firstMatch.exists)
+        for _ in 0..<8 where !verified.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(verified.isHittable)
+        attach("hosted-agent-fill-evidence")
+    }
+
     func testMonthlyETFStrategyEditsBacktestsAndStartsPractice() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STRATEGY_STUDIO"] == "1",
                           "Start the signed-in strategy relay with historical market data")
