@@ -79,6 +79,29 @@ final class BrokerPaperOrderTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '200.02 USD'")).firstMatch.exists)
     }
 
+    func testBrokerReceiptShowsAndPagesExecutionDetails() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["BROKER_PAPER_UI_EXECUTIONS"] == "1",
+                          "Start the isolated broker execution receipt fixture.")
+        let app = try launchFixtureAccount(returnToHome: false)
+        tap(app.buttons["brokerPaper.activity"], in: app, timeout: 25)
+        let receipt = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'brokerPaper.history.'")).firstMatch
+        tap(receipt, in: app)
+
+        let heading = app.staticTexts["Broker executions"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        let first = app.descendants(matching: .any)["brokerPaper.execution.qa-first"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 12))
+        XCTAssertTrue(first.label.contains("0.000123456789012345"), first.label)
+        XCTAssertTrue(first.label.contains("191.123456789123456789 USD"), first.label)
+        XCTAssertTrue(first.label.contains("Fee 0 USD"), first.label)
+        XCTAssertTrue(first.label.contains("provider-fill-first"), first.label)
+        tap(app.buttons["Load older executions"], in: app)
+        let older = app.descendants(matching: .any)["brokerPaper.execution.qa-older"].firstMatch
+        XCTAssertTrue(older.waitForExistence(timeout: 10))
+        XCTAssertTrue(older.label.contains("Fee unavailable"), older.label)
+        XCTAssertTrue(first.exists)
+    }
+
     private func launchFixtureAccount(returnToHome: Bool = true) throws -> XCUIApplication {
         let env = ProcessInfo.processInfo.environment
         try XCTSkipUnless(env["BROKER_PAPER_UI_ORIGIN"] != nil, "Set BROKER_PAPER_UI_ORIGIN for the isolated broker fixture.")

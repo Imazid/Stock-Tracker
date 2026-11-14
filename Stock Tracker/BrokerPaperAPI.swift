@@ -154,6 +154,27 @@ struct BrokerPaperIntent: Decodable, Identifiable {
     }
 }
 
+struct BrokerExecutionPage: Decodable {
+    struct Cursor: Decodable {
+        // The database cursor preserves microseconds; the display Date must not round this value.
+        let executedAt: String
+        let id: String
+    }
+
+    struct Execution: Decodable, Identifiable {
+        let id: String
+        let providerFillID: String
+        let executedAt: String
+        let quantity: String
+        let price: String
+        let fee: String?
+        let feeCurrency: String?
+    }
+
+    let executions: [Execution]
+    let next: Cursor?
+}
+
 struct BrokerPaperGate: Decodable {
     let enabled: Bool
     let reason: String
@@ -207,6 +228,12 @@ struct BrokerPaperAPI {
     func order(_ id: String) async throws -> BrokerPaperIntent {
         let result: Order = try await call("broker-orders", ["action": "get", "intentID": id])
         return try paperOrder(result)
+    }
+
+    func executions(for id: String, before: BrokerExecutionPage.Cursor? = nil) async throws -> BrokerExecutionPage {
+        var request: [String: Any] = ["action": "executions", "intentID": id]
+        if let before { request["before"] = ["executedAt": before.executedAt, "id": before.id] }
+        return try await call("broker-orders", request)
     }
 
     func draft(_ input: [String: Any], key: String) async throws -> BrokerPaperIntent {

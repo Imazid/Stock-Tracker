@@ -16,7 +16,7 @@ import { type ExecutionDeps, reconcileIntent, submitIntent } from "../_shared/om
 import { syncProviderFills } from "../_shared/oms/fill_sync.ts";
 import { resolveGates } from "../_shared/oms/gates.ts";
 import { canonicalIntent, intentHash, newClientOrderID } from "../_shared/oms/intent.ts";
-import { insertIntent, intentView, loadIntent, PgOmsStore, serializeFor, type Sql } from "../_shared/oms/store_pg.ts";
+import { insertIntent, intentView, loadIntent, orderExecutions, PgOmsStore, serializeFor, type Sql } from "../_shared/oms/store_pg.ts";
 import { keyRingFromRaw, seal } from "../_shared/vault/envelope.ts";
 import { confirmAlpacaOrder, leaseAlpacaConnections, streamAlpacaOrders } from "../provider-maintenance/alpaca-stream.ts";
 import { providerMaintenance } from "../provider-maintenance/worker.ts";
@@ -371,6 +371,69 @@ Deno.test({ name: "pg: paper stream leases, confirms via REST and commits only t
   } finally {
     if (previous === undefined) Deno.env.delete(envName);
     else Deno.env.set(envName, previous);
+    await sql.end();
+  }
+});
+
+Deno.test({ name: "pg: receipt pages exact broker executions and keeps another account out", ignore: !URL, sanitizeResources: false, sanitizeOps: false }, async () => {
+  const sql = postgres(URL!, { max: 4, prepare: false, onnotice: () => {} });
+  try {
+    // Give this test its own connection because the stream suite revokes its fixture.
+    const connection = crypto.randomUUID();
+    const owner = crypto.randomUUID();
+    const other = crypto.randomUUID();
+    await sql`insert into auth.users(id) values (${owner}), (${other})`;
+    await sql`insert into public.broker_connections(id, user_id, adapter_id, name, environment, permissions)
+      values (${connection}, ${owner}, 'alpaca', 'Receipt integration', 'paper', array['read'])`;
+    const inputForOrder = { ...input, connectionID: connection };
+    const clientOrderID = newClientOrderID();
+    const intent = await insertIntent(sql, {
+      userID: owner, provider: "alpaca", environment: "paper", input: inputForOrder, clientOrderID,
+      intentHash: await intentHash(canonicalIntent({ userID: owner, provider: "alpaca", environment: "paper", clientOrderID, input: inputForOrder })),
+      estimate: { currency: "USD" }, expiresAt: Date.now() + 600_000,
+    });
+    const store = new PgOmsStore(sql, owner);
+    assert(await store.transition(intent.id, "draft", "risk_checked"));
+    assert(await store.transition(intent.id, "risk_checked", "awaiting_approval"));
+    await sql`insert into public.order_approvals (intent_id, approver_id, approved_intent_hash, aal, expires_at)
+      values (${intent.id}, ${owner}, ${intent.intentHash}, 'aal1', now() + interval '2 minutes')`;
+    assert(await store.transition(intent.id, "awaiting_approval", "approved"));
+    assert(await store.transition(intent.id, "approved", "submitting"));
+    await sql`update public.order_intents set provider_order_id = 'receipt-provider-order', status = 'submitted' where id = ${intent.id}`;
+    await sql`insert into public.broker_orders(user_id, connection_id, intent_id, provider_order_id, symbol, side, order_type, status, provider_status)
+      values (${owner}, ${connection}, ${intent.id}, 'receipt-provider-order', 'AAPL', 'buy', 'limit', 'partially_filled', 'partially_filled')`;
+    const empty = await orderExecutions(sql, owner, intent.id);
+    assertEquals(empty.executions, []);
+    const [before] = await sql`select revision from public.broker_order_updates where user_id = ${owner}`;
+    await sql`
+      insert into public.broker_fills(user_id, connection_id, provider_order_id, provider_fill_id, symbol, side, quantity, price, fee, fee_currency, executed_at)
+      select ${owner}, ${connection}, 'receipt-provider-order', 'piece-' || n, 'AAPL', 'buy', 0.000123456789012345, 191.123456789123456789,
+         case when n = 1 then null else 0 end, case when n = 1 then null else 'USD' end,
+         '2026-11-14 15:00:00.123456+00'::timestamptz + case when n = 23 then interval '1 microsecond' else interval '0' end
+      from generate_series(1, 23) as n`;
+    const [after] = await sql`select revision from public.broker_order_updates where user_id = ${owner}`;
+    assertEquals(Number(after.revision) - Number(before.revision), 23);
+    await sql`
+      insert into public.broker_fills(user_id, connection_id, provider_order_id, provider_fill_id, symbol, side, quantity, price, executed_at)
+      values (${owner}, ${connection}, 'outside-stock-tracker', 'other-fill', 'AAPL', 'buy', 1, 10, now())`;
+    const [excluded] = await sql`select revision from public.broker_order_updates where user_id = ${owner}`;
+    assertEquals(excluded.revision, after.revision);
+    const first = await orderExecutions(sql, owner, intent.id);
+    assertEquals(first.executions.length, 20);
+    assertEquals(first.executions[0].executedAt, "2026-11-14T15:00:00.123457Z");
+    assertEquals(first.executions[0].providerFillID, "piece-23");
+    assertEquals(first.executions[0].quantity, "0.000123456789012345");
+    assertEquals(first.executions[0].price, "191.123456789123456789");
+    assertEquals(first.executions[0].fee, "0");
+    assertEquals(first.next?.executedAt, "2026-11-14T15:00:00.123456Z");
+    const second = await orderExecutions(sql, owner, intent.id, first.next);
+    assertEquals(second.next, undefined);
+    assertEquals(second.executions.length, 3);
+    const all = first.executions.concat(second.executions);
+    assertEquals(new Set(all.map((fill) => fill.providerFillID)).size, 23);
+    assertEquals(all.find((fill) => fill.providerFillID === "piece-1")?.fee, undefined);
+    assertEquals((await orderExecutions(sql, other, intent.id)).executions, []);
+  } finally {
     await sql.end();
   }
 });

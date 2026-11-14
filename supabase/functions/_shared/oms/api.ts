@@ -170,9 +170,30 @@ export interface OrderIntentView extends OrderIntentInput {
   expiresAt: string;
 }
 
+export interface BrokerExecution {
+  id: string;
+  providerFillID: string;
+  executedAt: string;
+  quantity: string;
+  price: string;
+  fee?: string;
+  feeCurrency?: string;
+}
+
+export interface BrokerExecutionCursor {
+  executedAt: string;
+  id: string;
+}
+
+export interface BrokerExecutionPage {
+  executions: BrokerExecution[];
+  next?: BrokerExecutionCursor;
+}
+
 export type OrdersRequest =
   | { action: "list"; status?: "open" | "closed" | "all" }
   | { action: "get"; intentID: string }
+  | { action: "executions"; intentID: string; before?: BrokerExecutionCursor }
   | { action: "draft"; intent: OrderIntentInput }
   | { action: "riskCheck"; intentID: string }
   /** `intentHash` must equal the stored hash: the person approves what they saw, nothing else. */
@@ -182,7 +203,7 @@ export type OrdersRequest =
   | { action: "cancel"; intentID: string }
   | { action: "reconcile"; intentID: string };
 
-export type OrdersResponse = { intents: OrderIntentView[] } | { intent: OrderIntentView };
+export type OrdersResponse = { intents: OrderIntentView[] } | { intent: OrderIntentView } | BrokerExecutionPage;
 
 // MARK: - Platform gates (read-only to clients; changed only by an administrator server-side)
 

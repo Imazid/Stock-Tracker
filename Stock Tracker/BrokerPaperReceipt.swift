@@ -17,6 +17,10 @@ struct BrokerPaperReceipt: View {
     @State private var verificationCode = ""
     @State private var keys: [BrokerPaperAPI.Action: String] = [:]
     @State private var confirmCancel = false
+    @State private var executions: [BrokerExecutionPage.Execution] = []
+    @State private var nextExecutionPage: BrokerExecutionPage.Cursor?
+    @State private var executionsLoading = false
+    @State private var executionsError = false
 
     init(api: BrokerPaperAPI, id: String, initial: BrokerPaperIntent?, account: String?, gate: BrokerPaperGate) {
         self.api = api
@@ -48,7 +52,10 @@ struct BrokerPaperReceipt: View {
                             .font(.caption).foregroundStyle(theme.secondaryText)
                     }
                 }
-                if let broker = intent.brokerOrder { brokerReceipt(broker, intent: intent) }
+                if let broker = intent.brokerOrder {
+                    brokerReceipt(broker, intent: intent)
+                    if hasExecuted(broker) { executionHistory(currency: intent.estimate.currency) }
+                }
                 if let problem { BrokerPaperMessage(text: problem, symbol: "exclamationmark.circle") }
                 if let risk = intent.risk { riskReport(risk) }
                 if requiresMFA { verification }
@@ -71,9 +78,16 @@ struct BrokerPaperReceipt: View {
             await refresh()
             await api.watchOrderUpdates {
                 await refresh(automatically: true)
+                if let broker = intent?.brokerOrder, hasExecuted(broker) { await loadExecutions() }
             }
         }
-        .refreshable { await refresh() }
+        .refreshable {
+            await refresh()
+            if let broker = intent?.brokerOrder, hasExecuted(broker) { await loadExecutions() }
+        }
+        .task(id: intent?.brokerOrder?.filledQuantity) {
+            if let broker = intent?.brokerOrder, hasExecuted(broker) { await loadExecutions() }
+        }
         .confirmationDialog("Request cancellation at Alpaca?", isPresented: $confirmCancel, titleVisibility: .visible) {
             Button("Request cancellation", role: .destructive) { Task { await act(.cancel) } }
         } message: {
@@ -151,6 +165,77 @@ struct BrokerPaperReceipt: View {
                 .textSelection(.enabled)
                 .accessibilityLabel("Alpaca order ID \(broker.providerOrderID)")
                 .accessibilityIdentifier("brokerPaper.brokerID")
+        }
+    }
+
+    private func hasExecuted(_ broker: BrokerPaperIntent.BrokerOrder) -> Bool {
+        broker.filledQuantity.utf8.contains { (49...57).contains($0) }
+    }
+
+    private func executionHistory(currency: String) -> some View {
+        TradingSection(title: "Broker executions") {
+            if executions.isEmpty && !executionsError {
+                Text(executionsLoading ? "Loading broker executions…" :
+                    "Individual executions will appear after the broker fill history syncs.")
+                    .font(.caption).foregroundStyle(theme.secondaryText)
+            }
+            ForEach(executions) { fill in
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text("\(fill.quantity) units at \(fill.price) \(currency)")
+                        .font(.subheadline.weight(.semibold))
+                    if let at = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(fill.executedAt) {
+                        Text(at.formatted(date: .abbreviated, time: .standard))
+                    }
+                    if let fee = fill.fee {
+                        Text("Fee \(fee)\(fill.feeCurrency.map { " " + $0 } ?? "")")
+                    } else {
+                        Text("Fee unavailable")
+                    }
+                    Text(fill.providerFillID)
+                        .font(.caption.monospaced()).textSelection(.enabled)
+                        .accessibilityLabel("Broker execution ID \(fill.providerFillID)")
+                }
+                .font(.caption)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("brokerPaper.execution.\(fill.id)")
+            }
+            if executionsError {
+                Text("Couldn’t load broker executions.").font(.caption)
+                Button("Retry executions") { Task { await loadExecutions() } }
+            }
+            if let nextExecutionPage {
+                Button("Load older executions") { Task { await loadExecutions(before: nextExecutionPage) } }
+                    .disabled(executionsLoading)
+            }
+        }
+    }
+
+    private func loadExecutions(before: BrokerExecutionPage.Cursor? = nil) async {
+        guard !executionsLoading else { return }
+        executionsLoading = true
+        defer { executionsLoading = false }
+        do {
+            let page = try await api.executions(for: id, before: before)
+            try Task.checkCancellation()
+            if before == nil, !executions.isEmpty {
+                // Keep older pages visible when delayed executions are imported.
+                let previous = Set(executions.map(\.id))
+                if page.executions.contains(where: { previous.contains($0.id) }) {
+                    executions += page.executions.filter { !previous.contains($0.id) }
+                    executions.sort { ($0.executedAt, $0.id) > ($1.executedAt, $1.id) }
+                } else {
+                    executions = page.executions
+                    nextExecutionPage = page.next
+                }
+            } else {
+                let existing = Set(executions.map(\.id))
+                executions.append(contentsOf: page.executions.filter { !existing.contains($0.id) })
+                nextExecutionPage = page.next
+            }
+            executionsError = false
+        } catch is CancellationError {
+        } catch {
+            executionsError = true
         }
     }
 
