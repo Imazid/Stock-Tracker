@@ -88,6 +88,7 @@ struct PortfolioPerformanceLedger: View {
     @State private var error: String?
     @State private var editor: Editor?
     @State private var removing: PerformancePeriod?
+    @State private var showingBenchmark = false
 
     private struct Editor: Identifiable {
         var id = UUID()
@@ -127,6 +128,13 @@ struct PortfolioPerformanceLedger: View {
                         result("Investment change", summary.investment_change_usd.formatted(.currency(code: "USD")))
                         returnRows(summary.time_weighted_return_pct, summary.money_weighted_return_pct, summary.return_pct)
                     }
+                    Button {
+                        showingBenchmark = true
+                    } label: {
+                        Label("Compare with a benchmark", systemImage: "chart.line.uptrend.xyaxis")
+                            .frame(minHeight: 44)
+                    }
+                    .accessibilityIdentifier("portfolio.returns.benchmark.open")
                     if periods.count > 100 {
                         Text("Showing the 100 most recent periods.").font(.caption)
                     }
@@ -145,11 +153,29 @@ struct PortfolioPerformanceLedger: View {
         .sheet(item: $editor) { item in
             PerformancePeriodEditor(userId: userId, period: item.period) { await load() }
         }
+        .sheet(isPresented: $showingBenchmark) {
+            if !valueHidden {
+                PortfolioBenchmarkSheet(userId: userId, periods: benchmarkPeriods)
+            }
+        }
         .confirmationDialog("Remove this period?", isPresented: Binding(
             get: { removing != nil }, set: { if !$0 { removing = nil } }
         ), presenting: removing) { period in
             Button("Remove period", role: .destructive) { Task { await remove(period.id) } }
         }
+    }
+
+    private var benchmarkPeriods: [PortfolioBenchmarkPeriod] {
+        var result: [PortfolioBenchmarkPeriod] = []
+        if let summary, summary.periods > 1 {
+            result.append(PortfolioBenchmarkPeriod(id: "continuous", start: summary.starts_on, end: summary.ends_on,
+                                                  timeWeighted: summary.time_weighted_return_pct, continuous: true))
+        }
+        result += (periods ?? []).prefix(100).map {
+            PortfolioBenchmarkPeriod(id: $0.id.uuidString, start: $0.starts_on, end: $0.ends_on,
+                                     timeWeighted: $0.time_weighted_return_pct)
+        }
+        return result
     }
 
     private func periodRow(_ period: PerformancePeriod) -> some View {

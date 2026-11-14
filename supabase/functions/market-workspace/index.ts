@@ -4,6 +4,8 @@ import { authenticate } from "../_shared/server/auth.ts";
 import { errorResponse, Field, HttpError, ok, readJSONObject, sameSecret } from "../_shared/server/http.ts";
 import { historicalCashConversion } from "./historical_fx.ts";
 import { providerFromEnv } from "../_shared/market/index.ts";
+import { cachedPortfolioBenchmark, validBenchmarkPeriod } from "../_shared/portfolio/benchmark.ts";
+import { PORTFOLIO_BENCHMARKS, type PortfolioBenchmark } from "../_shared/portfolio/benchmark_types.ts";
 import { catalogInstruments } from "../_shared/trading/catalog.ts";
 import { decodeInstrument, instrumentID, parseYahooSymbol, venueCurrency, VENUES } from "../_shared/trading/market.ts";
 import { validate } from "../_shared/trading/strategy.ts";
@@ -51,6 +53,19 @@ Deno.serve(async (request) => {
     }
     const now = Date.now();
     if (body.action === "historicalFx") return ok(await historicalCashConversion(body, now));
+    if (body.action === "portfolioBenchmark") {
+      const id = Field.oneOf(body.benchmark, Object.keys(PORTFOLIO_BENCHMARKS) as PortfolioBenchmark[], "benchmark");
+      const start = Field.string(body.start, "start", 10);
+      const end = Field.string(body.end, "end", 10);
+      if (!validBenchmarkPeriod(start, end)) {
+        throw new HttpError(400, "invalid_benchmark", "Choose a benchmark period of up to ten years.");
+      }
+      try {
+        return ok({ result: await cachedPortfolioBenchmark(id, start, end, now) });
+      } catch {
+        throw new HttpError(503, "benchmark_unavailable", "Benchmark data is temporarily unavailable.");
+      }
+    }
     const { provider } = providerFromEnv(env);
     if (!provider) throw new HttpError(503, "unavailable", "The market data provider is unavailable.");
 

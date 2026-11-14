@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { Field, Select } from "@/components/ui/Field";
 import { getJSON } from "@/lib/api";
 import { percent } from "@/lib/format";
-import { BENCHMARK_MAX_DAYS, PORTFOLIO_BENCHMARKS, type PortfolioBenchmark, type PortfolioBenchmarkResult } from "@/lib/portfolio-benchmark";
+import { BENCHMARK_MAX_DAYS, PORTFOLIO_BENCHMARKS, type PortfolioBenchmark, type PortfolioBenchmarkResult } from "../../../../supabase/functions/_shared/portfolio/benchmark_types";
 
 type Period = { id: string; starts_on: string; ends_on: string; time_weighted_return_pct: number | null };
 

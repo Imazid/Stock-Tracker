@@ -509,6 +509,68 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(try saved().isEmpty)
     }
 
+    func testReconciledReturnsCompareWithBenchmarks() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_BENCHMARK"] == "1",
+                          "Use a test market-workspace server with benchmark data")
+        let email = "benchmark-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+        let owner = try request("GET", "/auth/v1/user", token: token)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: owner.data) as? [String: Any])
+        let userId = try XCTUnwrap(account["id"] as? String)
+        let periods: [[String: Any]] = [
+            ["starts_on": "2026-08-03", "ends_on": "2026-09-04", "opening_value_usd": 1000, "closing_value_usd": 1100,
+             "external_flows": []],
+            ["starts_on": "2026-09-04", "ends_on": "2026-10-03", "opening_value_usd": 1100, "closing_value_usd": 1600,
+             "external_flows": [["date": "2026-09-16", "kind": "deposit", "amount": 500]]],
+        ].map { $0.merging(["user_id": userId]) { old, _ in old } }
+        let saved = try request("POST", "/rest/v1/portfolio_performance_periods",
+                                body: JSONSerialization.data(withJSONObject: periods), token: token)
+        XCTAssertEqual(saved.status, 201)
+
+        func launch(hidden: Bool) {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                "-portfolioValueHidden", hidden ? "YES" : "NO", "-preferredMarket", "US",
+                "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
+            app.launch()
+            XCTAssertTrue(app.open("Portfolio"))
+        }
+
+        let open = app.buttons["portfolio.returns.benchmark.open"]
+        launch(hidden: false)
+        for _ in 0..<6 where !open.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(open.isHittable)
+        open.tap()
+        let etf = app.descendants(matching: .any)["portfolio.returns.benchmark.etf"].firstMatch
+        let portfolio = app.descendants(matching: .any)["portfolio.returns.benchmark.portfolio"].firstMatch
+        let difference = app.descendants(matching: .any)["portfolio.returns.benchmark.difference"].firstMatch
+        XCTAssertTrue(etf.waitForExistence(timeout: 25))
+        XCTAssertTrue(portfolio.label.contains("Unavailable"))
+        XCTAssertTrue(difference.label.contains("Unavailable"))
+        XCTAssertTrue(app.staticTexts["ETF closes 2026-08-03 and 2026-10-02."].exists)
+
+        app.descendants(matching: .any)["portfolio.returns.benchmark.period"].firstMatch.tap()
+        app.buttons["2026-08-03 to 2026-09-04"].tap()
+        app.descendants(matching: .any)["portfolio.returns.benchmark.fund"].firstMatch.tap()
+        app.buttons["S&P/ASX 200 ETF (STW)"].tap()
+        let rates = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "ECB AUD/USD rates observed")).firstMatch
+        XCTAssertTrue(rates.waitForExistence(timeout: 25))
+        XCTAssertTrue(portfolio.label.contains("10.00%"))
+        XCTAssertTrue(difference.label.contains("pp"))
+        XCTAssertTrue(app.buttons["ETF details"].exists || app.links["ETF details"].exists)
+        attach("statement-period-benchmark")
+
+        app.terminate()
+        launch(hidden: true)
+        let hidden = app.staticTexts["Balances are hidden."]
+        for _ in 0..<6 where !hidden.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(hidden.isHittable)
+        XCTAssertFalse(open.exists)
+    }
+
     func testInternalBrokerCashStaysOutOfPortfolioReturns() throws {
         // Run scripts/snaptrade-positions-fixture.py and set STOCK_TRACKER_UI_TEST_API to its loopback URL.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_INTERNAL_CASH"] == "1",
