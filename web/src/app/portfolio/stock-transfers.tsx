@@ -153,7 +153,7 @@ export function StockTransfers({ userId }: { userId: string }) {
       if (error) throw new Error("Couldn’t save the transfer. Check the holdings and snapshot, then try again.");
       if (!data) throw new Error("This transfer changed elsewhere. Refresh and try again.");
     },
-    onSuccess: async () => { clear(); setMessage("Transfer saved."); await cache.invalidateQueries({ queryKey: key }); },
+    onSuccess: async () => { clear(); setMessage("Transfer saved."); await Promise.all([cache.invalidateQueries({ queryKey: key }), cache.invalidateQueries({ queryKey: ["portfolio-gains", userId] })]); },
     onError: (error) => setProblem(error.message),
   });
 
@@ -164,7 +164,7 @@ export function StockTransfers({ userId }: { userId: string }) {
       if (error) throw new Error("Couldn’t remove the transfer. Try again.");
       if (!data) throw new Error("This transfer changed elsewhere. Refresh and try again.");
     },
-    onSuccess: async () => { clear(); setMessage("Transfer removed."); await cache.invalidateQueries({ queryKey: key }); },
+    onSuccess: async () => { clear(); setMessage("Transfer removed."); await Promise.all([cache.invalidateQueries({ queryKey: key }), cache.invalidateQueries({ queryKey: ["portfolio-gains", userId] })]); },
     onError: (error) => setProblem(error.message),
   });
   const busy = save.isPending || remove.isPending;

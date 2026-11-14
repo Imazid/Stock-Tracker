@@ -85,7 +85,7 @@ export function StockSplits({ userId }: { userId: string }) {
       setDraft(emptyDraft);
       setActivity(undefined);
       setFeedback("Split adjustment saved.");
-      await cache.invalidateQueries({ queryKey });
+      await Promise.all([cache.invalidateQueries({ queryKey }), cache.invalidateQueries({ queryKey: ["portfolio-gains", userId] })]);
     },
     onError: (error) => setError(error.message),
   });
@@ -104,7 +104,7 @@ export function StockSplits({ userId }: { userId: string }) {
         setDraft(emptyDraft);
       }
       setFeedback("Split adjustment removed.");
-      await cache.invalidateQueries({ queryKey });
+      await Promise.all([cache.invalidateQueries({ queryKey }), cache.invalidateQueries({ queryKey: ["portfolio-gains", userId] })]);
     },
     onError: (error) => setError(error.message),
   });

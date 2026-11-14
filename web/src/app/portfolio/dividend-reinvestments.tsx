@@ -104,7 +104,7 @@ export function DividendReinvestments({ userId }: { userId: string }) {
       setActivity(undefined);
       setShowBroker(false);
       setFeedback("Reinvestment saved.");
-      await cache.invalidateQueries({ queryKey });
+      await Promise.all([cache.invalidateQueries({ queryKey }), cache.invalidateQueries({ queryKey: ["portfolio-gains", userId] })]);
     },
     onError: (error) => setError(error.message),
   });
@@ -125,7 +125,7 @@ export function DividendReinvestments({ userId }: { userId: string }) {
         setShowBroker(false);
       }
       setFeedback("Reinvestment removed.");
-      await cache.invalidateQueries({ queryKey });
+      await Promise.all([cache.invalidateQueries({ queryKey }), cache.invalidateQueries({ queryKey: ["portfolio-gains", userId] })]);
     },
     onError: (error) => setError(error.message),
   });

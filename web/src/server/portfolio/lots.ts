@@ -1,6 +1,9 @@
 import type { TransactionRow } from "./transactions.ts";
 import type { StockSplit } from "../../lib/portfolio-splits.ts";
 import { matchesReceivingSnapshot, sameListedStock, sydneyDate, type StockTransfer } from "../../lib/portfolio-transfers.ts";
+import { lotUnits as scaled, UNIT_SCALE } from "../../lib/lot-numbers.ts";
+
+export { UNIT_DECIMALS } from "../../lib/lot-numbers.ts";
 
 type Amounts = { gross?: bigint; fee?: bigint };
 type Lot = { purchase: TransactionRow; units: bigint; usd: Amounts; aud: Amounts; transfers?: string[] };
@@ -46,19 +49,9 @@ function transactionTime(timestamp: string) {
   };
 }
 
-export const UNIT_DECIMALS = 18;
-const UNIT_SCALE = 10n ** BigInt(UNIT_DECIMALS);
-
-function scaled(value: number | string | null | undefined) {
-  if (value == null) return undefined;
-  if (typeof value === "number" && (!Number.isFinite(value) || value < 0 || value >= 1e15)) return undefined;
-  if (typeof value === "string" && !/^(?:0|[1-9]\d{0,14})(?:\.\d{1,18})?$/.test(value)) return undefined;
-  // Use the shortest decimal representation of the stored double.
-  const [significand, exponent = "0"] = String(value).split("e");
-  const [whole, fraction = ""] = significand.split(".");
-  const units = BigInt(whole + fraction);
-  const scale = UNIT_DECIMALS + Number(exponent) - fraction.length;
-  return scale >= 0 ? units * 10n ** BigInt(scale) : roundedDivide(units, 10n ** BigInt(-scale));
+export function ledgerFeeCents(fee: number) {
+  const units = scaled(fee);
+  return units === undefined ? undefined : roundedDivide(units * 100n, UNIT_SCALE);
 }
 
 function roundedDivide(numerator: bigint, denominator: bigint) {
@@ -290,8 +283,8 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     const visible = date && (!start || date >= start);
     const tradeUnits = scaled(transaction.shares);
     const price = scaled(transaction.price_per_share);
-    const fees = scaled(transaction.fees);
-    if (!date || !tradeUnits || price === undefined || fees === undefined || !["Buy", "Sell"].includes(transaction.type)) {
+    const fee = ledgerFeeCents(transaction.fees);
+    if (!date || !tradeUnits || price === undefined || fee === undefined || !["Buy", "Sell"].includes(transaction.type)) {
       holding.invalid = true;
       rows.push({
         kind: "Invalid transaction", transaction,
@@ -305,7 +298,6 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     const recordedBasis = reinvestment && scaled(reinvestment.currency === "USD" ? reinvestment.reinvested_amount : reinvestment.basis_usd);
     const gross = reinvestment ? (recordedBasis === undefined ? undefined : roundedDivide(recordedBasis * 100n, UNIT_SCALE))
       : roundedDivide(tradeUnits * price * 100n, UNIT_SCALE * UNIT_SCALE);
-    const fee = roundedDivide(fees * 100n, UNIT_SCALE);
     const rate = audRates?.get(transaction.id);
     const aud = audAmounts(transaction, tradeUnits, scaled(rate));
     if (holding.invalid) {
