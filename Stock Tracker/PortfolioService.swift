@@ -14,23 +14,15 @@ import OSLog
 @MainActor
 protocol PortfolioServiceProtocol: AnyObject {
     func save(
-        watchlist: [Asset],
         portfolio: [PortfolioHolding],
         history: [PortfolioSnapshot],
-        currency: String,
-        watchlistGroups: [WatchlistGroup],
-        activeWatchlistIndex: Int
+        currency: String
     )
     func load() -> (
-        watchlist: [Asset],
         portfolio: [PortfolioHolding],
         history: [PortfolioSnapshot],
-        currency: String,
-        watchlistGroups: [WatchlistGroup],
-        activeWatchlistIndex: Int
+        currency: String
     )
-    func loadWatchlistGroups() -> [WatchlistGroup]
-    func loadActiveWatchlistIndex() -> Int
     func appendCurrentSnapshot(to history: [PortfolioSnapshot], currentValue: Double) -> [PortfolioSnapshot]
     func starterAssets() -> (stocks: [Asset], crypto: [Asset])
 }
@@ -49,46 +41,26 @@ final class PortfolioService: PortfolioServiceProtocol {
     // MARK: - Persistence
 
     func save(
-        watchlist: [Asset],
         portfolio: [PortfolioHolding],
         history: [PortfolioSnapshot],
-        currency: String,
-        watchlistGroups: [WatchlistGroup],
-        activeWatchlistIndex: Int
+        currency: String
     ) {
-        persistence.saveWatchlist(watchlist)
         persistence.savePortfolio(portfolio)
         persistence.savePortfolioHistory(history)
         persistence.savePreferredCurrency(currency)
-        persistence.saveWatchlistGroups(watchlistGroups)
-        persistence.saveActiveWatchlistIndex(activeWatchlistIndex)
-        AppLogger.persist.debug("Saved portfolio (\(portfolio.count) holdings) and watchlist (\(watchlist.count) assets)")
+        AppLogger.persist.debug("Saved portfolio (\(portfolio.count) holdings)")
     }
 
     func load() -> (
-        watchlist: [Asset],
         portfolio: [PortfolioHolding],
         history: [PortfolioSnapshot],
-        currency: String,
-        watchlistGroups: [WatchlistGroup],
-        activeWatchlistIndex: Int
+        currency: String
     ) {
         (
-            watchlist: persistence.loadWatchlist(),
             portfolio: persistence.loadPortfolio(),
             history: persistence.loadPortfolioHistory(),
-            currency: persistence.loadPreferredCurrency(),
-            watchlistGroups: persistence.loadWatchlistGroups(),
-            activeWatchlistIndex: persistence.loadActiveWatchlistIndex()
+            currency: persistence.loadPreferredCurrency()
         )
-    }
-
-    func loadWatchlistGroups() -> [WatchlistGroup] {
-        persistence.loadWatchlistGroups()
-    }
-
-    func loadActiveWatchlistIndex() -> Int {
-        persistence.loadActiveWatchlistIndex()
     }
 
     // MARK: - Portfolio History (real snapshots)

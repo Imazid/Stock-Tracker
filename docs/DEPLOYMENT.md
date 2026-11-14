@@ -122,7 +122,7 @@ Set the SnapTrade partner credentials, AI credentials and optional market provid
 
 ### Account data export
 
-On iPhone, open Settings → Account → Export Account Data. Save the JSON file to Files. The export covers account identity, synced portfolios, watchlists, price alerts, brokerage and trading records, and Private Markets records in the account and on the current iPhone. It omits authentication credentials, provider secrets and other users’ identities. Unlinked files and records held only by an external provider are outside the export. The file contains readable personal and financial information.
+On iPhone, open Settings → Account → Export Account Data. Save the JSON file to Files. The export covers account identity, synced portfolios, watchlists with their names and members, price alerts, brokerage and trading records, and Private Markets records in the account and on the current iPhone. It omits authentication credentials, provider secrets and other users’ identities. Unlinked files and records held only by an external provider are outside the export. The file contains readable personal and financial information.
 
 The `account-export` function returns an allowlisted section manifest and reads pages for the verified account. Every page checks the signed-in identity and active session. Accounts with a verified authenticator require the verification step. Cloud sections are read while the export runs. For other personal information, corrections, or an export in another format, use the release privacy contact. [OAIC access guidance](https://www.oaic.gov.au/privacy/australian-privacy-principles/australian-privacy-principles-guidelines/chapter-12-app-12-access-to-personal-information)
 

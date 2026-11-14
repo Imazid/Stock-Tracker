@@ -48,6 +48,7 @@ final class SyncManager: ObservableObject {
     private let persist = DataPersistenceManager.shared
     private var debounceTask: Task<Void, Never>?
     private var isRunning = false
+    private weak var marketData: MarketData?
 
     /// Tracks whether the initial full sync has been performed this session.
     /// Prevents `syncOnSignIn` from re-running on every session restore.
@@ -63,6 +64,7 @@ final class SyncManager: ObservableObject {
     func resetInitialSyncFlag() {
         syncedUserId = nil
         debounceTask?.cancel()
+        debounceTask = nil
     }
 
     // MARK: - First-sign-in merge (full sync)
@@ -74,6 +76,8 @@ final class SyncManager: ObservableObject {
             while isRunning { try await Task.sleep(for: .milliseconds(250)) }
         } catch { return }
         guard SupabaseManager.auth.currentUser?.id == userId else { return }
+        self.marketData = marketData
+        marketData.useWatchlistAccount(userId)
 
         // If we already synced this session (e.g. session restore on relaunch),
         // use the lighter incremental pull instead of a full merge.
@@ -91,19 +95,16 @@ final class SyncManager: ObservableObject {
 
         do {
             try await flushPortfolioChanges(userId: userId)
-            let mergedWatchlist = try await mergeWatchlist(userId: userId)
 
             let remotePortfolio = try await readPortfolio(userId: userId, includeLocal: samePortfolioAccount)
             let mergedAlerts    = try await mergeAlerts(userId: userId)
             let mergedHistory   = try await mergeSnapshots(userId: userId)
 
             guard SupabaseManager.auth.currentUser?.id == userId else { return }
-            persist.saveWatchlist(mergedWatchlist)
             persist.savePriceAlerts(mergedAlerts)
             persist.savePortfolioHistory(mergedHistory)
 
             marketData.applyRemoteSync(
-                watchlist: mergedWatchlist,
                 portfolio: preservingPending(remotePortfolio, userId: userId),
                 history: mergedHistory
             )
@@ -114,6 +115,8 @@ final class SyncManager: ObservableObject {
             persist.rememberPortfolioAccount(userId)
             persist.saveLastSyncDate(now)
             syncedUserId = userId
+            try await WatchlistSync.shared.exchange(owner: userId, marketData: marketData)
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
             syncState = .lastSyncedAt(now)
             AppLogger.sync.info("First-sign-in sync complete")
 
@@ -141,7 +144,8 @@ final class SyncManager: ObservableObject {
             return
         }
 
-        if !force, (persist.loadPortfolioLedgerQueue()[userId.uuidString]?.isEmpty ?? true),
+        if !force, !WatchlistSync.shared.hasPending(owner: userId),
+           (persist.loadPortfolioLedgerQueue()[userId.uuidString]?.isEmpty ?? true),
            let lastSync = persist.loadLastSyncDate(),
            Date().timeIntervalSince(lastSync) < Constants.Sync.foregroundPullThrottle {
             AppLogger.sync.debug("Foreground pull skipped — within throttle window")
@@ -156,31 +160,6 @@ final class SyncManager: ObservableObject {
             try await flushPortfolioChanges(userId: userId)
             let since = persist.loadLastSyncDate() ?? .distantPast
             let sinceStr = ISO8601DateFormatter().string(from: since)
-
-            // Watchlist — available to all signed-in users
-            let remoteWatchlist: [RemoteWatchlistAsset]
-            do {
-                let response = try await SupabaseManager.client
-                    .from("watchlist_assets")
-                    .select()
-                    .eq("user_id", value: userId.uuidString)
-                    .gte("updated_at", value: sinceStr)
-                    .execute()
-                remoteWatchlist = try JSONDecoder.supabaseDecoder.decode([RemoteWatchlistAsset].self, from: response.data)
-            } catch let decodeError as DecodingError {
-                AppLogger.sync.error("Watchlist decode failed: \(decodeError)")
-                remoteWatchlist = []
-            }
-
-            var localWatchlist = persist.loadWatchlist()
-            for remote in remoteWatchlist {
-                if remote.isDeleted {
-                    localWatchlist.removeAll { $0.symbol == remote.symbol }
-                } else if !localWatchlist.contains(where: { $0.symbol == remote.symbol }) {
-                    localWatchlist.append(remote.toDomain())
-                }
-            }
-            persist.saveWatchlist(localWatchlist)
 
             var localAlerts    = persist.loadPriceAlerts()
             let localHistory   = persist.loadPortfolioHistory()
@@ -213,7 +192,6 @@ final class SyncManager: ObservableObject {
             persist.savePriceAlerts(localAlerts)
 
             marketData.applyRemoteSync(
-                watchlist: localWatchlist,
                 portfolio: preservingPending(remotePortfolio, userId: userId),
                 history: localHistory
             )
@@ -222,6 +200,8 @@ final class SyncManager: ObservableObject {
 
             let now = Date()
             persist.saveLastSyncDate(now)
+            try await WatchlistSync.shared.exchange(owner: userId, marketData: marketData)
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
             syncState = .lastSyncedAt(now)
             AppLogger.sync.info("Incremental pull complete")
 
@@ -237,8 +217,8 @@ final class SyncManager: ObservableObject {
         scheduleUpload()
     }
 
-    private func scheduleUpload() {
-        guard SupabaseManager.isConfigured, isSignedIn else { return }
+    func scheduleUpload() {
+        guard SupabaseManager.isConfigured, let owner = SupabaseManager.auth.currentUser?.id else { return }
         debounceTask?.cancel()
         debounceTask = Task {
             do {
@@ -246,6 +226,7 @@ final class SyncManager: ObservableObject {
                 while isRunning { try await Task.sleep(for: .milliseconds(250)) }
                 // A new debounce can cancel the waiting task. Let a started write
                 // finish and let the next task pick up any newer local changes.
+                guard SupabaseManager.auth.currentUser?.id == owner else { return }
                 debounceTask = nil
                 await uploadCurrentState()
             } catch { /* Task cancelled — another mutation came in */ }
@@ -259,9 +240,13 @@ final class SyncManager: ObservableObject {
         syncState = .syncing
         do {
             try await flushPortfolioChanges(userId: userId)
-            try await upsertWatchlist(persist.loadWatchlist(), userId: userId)
+            if let marketData, marketData.watchlistOwner == userId, WatchlistSync.shared.hasPending(owner: userId) {
+                try await WatchlistSync.shared.exchange(owner: userId, marketData: marketData)
+            }
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
             try await upsertAlerts(persist.loadPriceAlerts(), userId: userId)
             try await upsertSnapshots(persist.loadPortfolioHistory(), userId: userId)
+            guard SupabaseManager.auth.currentUser?.id == userId else { return }
             let now = Date()
             syncState = .lastSyncedAt(now)
             AppLogger.sync.info("Background upload complete")
@@ -355,42 +340,7 @@ final class SyncManager: ObservableObject {
         }
     }
 
-    func softDeleteWatchlistAsset(symbol: String) async {
-        guard SupabaseManager.isConfigured, isSignedIn,
-              let userId = SupabaseManager.auth.currentUser?.id else { return }
-        do {
-            let nowStr = ISO8601DateFormatter().string(from: Date())
-            try await SupabaseManager.client
-                .from("watchlist_assets")
-                .update(["deleted_at": nowStr])
-                .eq("user_id", value: userId.uuidString)
-                .eq("symbol", value: symbol)
-                .execute()
-        } catch {
-            AppLogger.sync.error("Soft-delete watchlist asset failed: \(error)")
-        }
-    }
-
-    func softDeleteWatchlistAssets(symbols: [String]) async {
-        for symbol in symbols {
-            await softDeleteWatchlistAsset(symbol: symbol)
-        }
-    }
-
     // MARK: - Upsert helpers
-
-    private func upsertWatchlist(_ assets: [Asset], userId: UUID) async throws {
-        let rows = assets.map { RemoteWatchlistAsset.from($0, userId: userId) }
-        guard !rows.isEmpty else { return }
-        // Deduplicate by (user_id, symbol) — keep last occurrence to avoid
-        // "ON CONFLICT DO UPDATE cannot affect row a second time"
-        var seen = Set<String>()
-        let unique = rows.reversed().filter { seen.insert($0.symbol).inserted }.reversed()
-        try await SupabaseManager.client
-            .from("watchlist_assets")
-            .upsert(Array(unique), onConflict: "user_id,symbol")
-            .execute()
-    }
 
     private func upsertAlerts(_ alerts: [PriceAlert], userId: UUID) async throws {
         let rows = alerts.map { RemotePriceAlert.from($0, userId: userId) }
@@ -418,31 +368,6 @@ final class SyncManager: ObservableObject {
     }
 
     // MARK: - Merge helpers (first sign-in)
-
-    private func mergeWatchlist(userId: UUID) async throws -> [Asset] {
-        let response = try await SupabaseManager.client
-            .from("watchlist_assets")
-            .select()
-            .eq("user_id", value: userId.uuidString)
-            .execute()
-        let all: [RemoteWatchlistAsset]
-        do {
-            all = try JSONDecoder.supabaseDecoder.decode([RemoteWatchlistAsset].self, from: response.data)
-        } catch {
-            AppLogger.sync.error("mergeWatchlist decode failed: \(error)")
-            all = []
-        }
-
-        let remote = all.filter { !$0.isDeleted }
-        let local  = persist.loadWatchlist()
-        let remoteBySymbol = Dictionary(uniqueKeysWithValues: remote.map { ($0.symbol, $0) })
-
-        var merged: [Asset] = remote.map { $0.toDomain() }
-        let localOnly = local.filter { remoteBySymbol[$0.symbol] == nil }
-        merged.append(contentsOf: localOnly)
-        if !localOnly.isEmpty { try await upsertWatchlist(localOnly, userId: userId) }
-        return merged
-    }
 
     private struct PortfolioRead {
         let open: [PortfolioHolding]

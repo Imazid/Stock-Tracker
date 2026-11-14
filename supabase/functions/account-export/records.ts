@@ -8,7 +8,12 @@ type TableSection = { label: string; table: string; fields: string; order?: stri
 // client-writable nested records so an unexpected field is not exported.
 const sections = {
   watchlists: { label: "Watchlists", table: "watchlist_assets",
-    fields: "id,symbol,name,kind,exchange,updated_at,deleted_at" },
+    fields: "id,symbol,name,kind,exchange,sort_position::text,updated_at,deleted_at" },
+  watchlist_groups: { label: "Watchlist names", table: "watchlist_groups",
+    fields: "id,name,created_at,deleted_at" },
+  watchlist_group_assets: { label: "Named watchlist members", table: "watchlist_group_assets",
+    fields: "id,group_id,listing_id,symbol,name,kind,exchange,added_at,sort_position::text",
+    order: "group_id,listing_id" },
   listed_holdings: { label: "Listed and crypto holdings", table: "portfolio_holdings",
     fields: "id,asset_symbol,asset_name,asset_kind,asset_exchange,shares,avg_cost,date_added,updated_at,deleted_at,closed_at,broker_account_id:broker_account->>account_id,broker_account_label:broker_account->>label,broker_institution:broker_account->>institution,broker_observed_at:broker_account->>observed_at,broker_tracking:broker_account->>tracking" },
   listed_transactions: { label: "Listed and crypto transactions", table: "transactions",
@@ -113,8 +118,9 @@ export async function accountRecords(
   }
   const spec: TableSection = sections[section as keyof typeof sections];
   const size = 50;
-  const { data, error } = await admin.from(spec.table).select(spec.fields).eq(spec.owner ?? "user_id", owner)
-    .order(spec.order ?? "id").range(offset, offset + size).returns<Record<string, unknown>[]>();
+  let query = admin.from(spec.table).select(spec.fields).eq(spec.owner ?? "user_id", owner);
+  for (const column of (spec.order ?? "id").split(",")) query = query.order(column);
+  const { data, error } = await query.range(offset, offset + size).returns<Record<string, unknown>[]>();
   if (error) throw error;
   return { records: data.slice(0, size), next_offset: data.length > size ? offset + size : null };
 }

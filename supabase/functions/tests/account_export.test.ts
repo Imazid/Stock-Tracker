@@ -6,6 +6,7 @@ Deno.test("account export accepts only named sections and valid page offsets", (
   assertEquals(new Set(accountSections.map(({ id }) => id)).size, accountSections.length);
   assertEquals(parseAccountPage("account", undefined), { id: "account", start: 0 });
   assertEquals(parseAccountPage("private_reports", 20), { id: "private_reports", start: 20 });
+  assertEquals(parseAccountPage("watchlist_group_assets", 50), { id: "watchlist_group_assets", start: 50 });
   for (const [section, offset] of [["account", 1], ["private_valuation_history", 0], ["secure_credentials", 0],
     ["__proto__", 0], ["watchlists", -1], ["watchlists", 1.25], ["watchlists", "50"], ["watchlists", 1_000_000_001]]) {
     assertEquals(parseAccountPage(section, offset), null);
@@ -35,4 +36,15 @@ Deno.test("account export scopes credentials metadata and trims lookahead rows",
     ["range", 50, 100],
   ]);
   assertEquals(page, { records: rows.slice(0, 50), next_offset: 100 });
+
+  calls.length = 0;
+  await accountRecords(admin, "verified-owner", "watchlist_group_assets", 0);
+  assertEquals(calls, [
+    ["from", "watchlist_group_assets"],
+    ["select", "id,group_id,listing_id,symbol,name,kind,exchange,added_at,sort_position::text"],
+    ["eq", "user_id", "verified-owner"],
+    ["order", "group_id"],
+    ["order", "listing_id"],
+    ["range", 0, 50],
+  ]);
 });

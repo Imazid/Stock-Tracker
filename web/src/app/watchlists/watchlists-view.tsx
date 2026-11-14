@@ -8,22 +8,25 @@ import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Input } from "@/components/ui/Field";
+import { Field, Input, Select } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Segmented } from "@/components/ui/Segmented";
 import { useSearch } from "@/hooks/market";
-import { useWatchlist, useWatchlistMutations } from "@/hooks/watchlist";
+import { defaultWatchlistId, useAccountWatchlistChange, useAccountWatchlists } from "@/hooks/watchlist";
 import { getJSON } from "@/lib/api";
-import type { QuoteResponse } from "@/lib/market-types";
+import type { InstrumentView, QuoteResponse } from "@/lib/market-types";
 import { useSession } from "@/lib/session";
 
-type SortKey = "added" | "symbol" | "change" | "venue";
+type SortKey = "manual" | "symbol" | "change" | "venue";
 
-function AddPanel({ existing }: { existing: Set<string> }) {
+function AddPanel({ existing, onAdd, pending }: {
+  existing: Set<string>;
+  onAdd: (instrument: InstrumentView) => void;
+  pending: boolean;
+}) {
   const [query, setQuery] = useState("");
   const search = useSearch(query);
-  const { add } = useWatchlistMutations();
   return (
     <Card>
       <CardHeader title="Add to watchlist" />
@@ -31,7 +34,6 @@ function AddPanel({ existing }: { existing: Set<string> }) {
         <Search aria-hidden className="pointer-events-none absolute left-7 top-1/2 h-4 w-4 -translate-y-[60%] text-text-3" />
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ticker or company" aria-label="Search to add" className="pl-9 pr-3" />
       </div>
-      {add.isError ? <div className="px-4 pb-3"><Notice tone="down">{(add.error as Error).message}</Notice></div> : null}
       {query.trim() ? (
         <ul className="max-h-80 divide-y divide-border overflow-y-auto border-t border-border">
           {search.isFetching && !search.data ? <li className="flex items-center gap-2 px-4 py-3 text-xs text-text-3"><Loader2 className="h-3.5 w-3.5 animate-spin" />Searching…</li> : null}
@@ -41,7 +43,7 @@ function AddPanel({ existing }: { existing: Set<string> }) {
             return (
               <li key={r.id} className="flex items-center justify-between gap-2 px-4 py-2">
                 <span className="min-w-0"><span className="flex items-center gap-1.5 text-sm font-medium">{r.symbol}<Badge>{r.venueShort}</Badge></span><span className="block truncate text-xs text-text-3">{r.name}</span></span>
-                <Button size="sm" variant={has ? "ghost" : "secondary"} disabled={has || add.isPending} onClick={() => add.mutate(r)} aria-label={has ? `${r.symbol} is on your watchlist` : `Add ${r.symbol}`}>
+                <Button size="sm" variant={has ? "ghost" : "secondary"} disabled={has || pending} onClick={() => onAdd(r)} aria-label={has ? `${r.symbol} (${r.venueShort}) is on this list` : `Add ${r.symbol} (${r.venueShort})`}>
                   {has ? "Added" : <><Plus className="h-3.5 w-3.5" />Add</>}
                 </Button>
               </li>
@@ -55,10 +57,27 @@ function AddPanel({ existing }: { existing: Set<string> }) {
 
 export function WatchlistsView() {
   const session = useSession();
-  const list = useWatchlist();
-  const { remove } = useWatchlistMutations();
-  const [sort, setSort] = useState<SortKey>("added");
-  const items = useMemo(() => list.data ?? [], [list.data]);
+  if (session.status === "unconfigured") {
+    return <div className="mx-auto max-w-5xl"><PageHeader title="Watchlists" /><Card><EmptyState title="Accounts aren't configured" body="Watchlists are saved to your account. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable sign-in." /></Card></div>;
+  }
+  if (session.status === "signedOut") {
+    return <div className="mx-auto max-w-5xl"><PageHeader title="Watchlists" /><Card><EmptyState icon={<ListChecks className="h-5 w-5" />} title="Sign in to see your watchlists" body="Your lists sync with the Stock Tracker iPhone app." actions={<ButtonLink href="/login" variant="primary" size="sm">Sign in</ButtonLink>} /></Card></div>;
+  }
+  if (session.status === "loading") {
+    return <div className="mx-auto max-w-6xl"><PageHeader title="Watchlists" /><Card><div className="skeleton m-4 h-40" /></Card></div>;
+  }
+  return <AccountWatchlists key={session.user.id} userId={session.user.id} />;
+}
+
+function AccountWatchlists({ userId }: { userId: string }) {
+  const lists = useAccountWatchlists(userId);
+  const change = useAccountWatchlistChange(userId);
+  const [selected, setSelected] = useState(defaultWatchlistId);
+  const [editing, setEditing] = useState<{ mode: "create" | "rename" | "delete"; groupId: string; listName: string } | null>(null);
+  const [name, setName] = useState("");
+  const [sort, setSort] = useState<SortKey>("manual");
+  const active = lists.data?.find((list) => list.id === selected) ?? lists.data?.[0];
+  const items = useMemo(() => active?.assets ?? [], [active]);
   const quotes = useQueries({
     queries: items.map((w) => ({
       queryKey: ["quote", w.instrument.id],
@@ -75,41 +94,76 @@ export function WatchlistsView() {
     return 0;
   });
 
-  if (session.status === "unconfigured") {
-    return <div className="mx-auto max-w-5xl"><PageHeader title="Watchlists" /><Card><EmptyState title="Accounts aren't configured" body="Watchlists are saved to your account. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable sign-in." /></Card></div>;
+  function edit(mode: NonNullable<typeof editing>["mode"] | null, initialName = "") {
+    change.reset();
+    setEditing(mode && active ? { mode, groupId: active.id, listName: active.name } : null);
+    setName(initialName);
   }
-  if (session.status === "signedOut") {
-    return <div className="mx-auto max-w-5xl"><PageHeader title="Watchlists" /><Card><EmptyState icon={<ListChecks className="h-5 w-5" />} title="Sign in to see your watchlist" body="It syncs with the Stock Tracker iPhone app." actions={<ButtonLink href="/login" variant="primary" size="sm">Sign in</ButtonLink>} /></Card></div>;
+
+  function saveList() {
+    if (!editing) return;
+    if (editing.mode === "delete") {
+      change.mutate({ action: "delete", groupId: editing.groupId }, {
+        onSuccess: () => { setSelected(defaultWatchlistId); setEditing(null); },
+      });
+      return;
+    }
+    const trimmed = name.trim();
+    if (!trimmed || Array.from(trimmed).length > 80) return;
+    const groupId = editing.mode === "create" ? crypto.randomUUID() : editing.groupId;
+    change.mutate({ action: editing.mode, groupId, name: trimmed }, {
+      onSuccess: () => { setSelected(groupId); setEditing(null); },
+    });
   }
 
   return (
     <div className="mx-auto max-w-6xl">
-      <PageHeader title="Watchlists" description="One list, shared with the iPhone app. Prices refresh every 30 seconds." />
-      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-        <Card className="min-w-0">
-          <CardHeader title={`My watchlist${items.length ? ` · ${items.length}` : ""}`} actions={
-            <Segmented label="Sort" value={sort} onChange={setSort} options={[{ value: "added", label: "Added" }, { value: "symbol", label: "A–Z" }, { value: "change", label: "Change" }, { value: "venue", label: "Market" }]} />
-          } />
-          {remove.isError ? <div className="px-4 pb-3"><Notice tone="down">{(remove.error as Error).message}</Notice></div> : null}
-          {session.status === "loading" || list.isLoading ? <div className="space-y-2 p-4">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-11" />)}</div>
-            : list.isError ? <EmptyState tone="down" title="Couldn't load your watchlist" body={(list.error as Error).message} actions={<Button size="sm" onClick={() => list.refetch()}>Try again</Button>} />
-              : items.length === 0 ? <EmptyState icon={<ListChecks className="h-5 w-5" />} title="Nothing here yet" body="Search on the right to add stocks, ETFs or crypto." />
-                : (
-                  <ul className="divide-y divide-border border-t border-border">
+      <PageHeader title="Watchlists" description="Your lists sync with the iPhone app." />
+      {lists.isLoading ? <Card><div className="skeleton m-4 h-40" /></Card>
+        : lists.isError || !active ? <Card><EmptyState tone="down" title="Couldn't load your watchlists" body={lists.error?.message} actions={<Button size="sm" onClick={() => lists.refetch()}>Try again</Button>} /></Card>
+          : <>
+            <Card className="mb-5 space-y-3 p-4">
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="Watchlist" htmlFor="active-watchlist" className="w-full min-w-0 sm:w-64">
+                  <Select id="active-watchlist" value={active.id} disabled={change.isPending} onChange={(e) => { setSelected(e.target.value); edit(null); }}>
+                    {lists.data?.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
+                  </Select>
+                </Field>
+                <Button disabled={change.isPending} onClick={() => edit("create")}><Plus aria-hidden className="h-4 w-4" />New list</Button>
+                <Button disabled={change.isPending} onClick={() => edit("rename", active.name)}>Rename</Button>
+                {active.id !== defaultWatchlistId ? <Button variant="ghost" disabled={change.isPending} onClick={() => edit("delete")}>Delete list</Button> : null}
+              </div>
+              {editing ? <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); saveList(); }}>
+                {editing.mode === "delete" ? <p className="w-full break-words text-sm text-text-2">Delete “{editing.listName}” and its saved symbols?</p>
+                  : <Field label={editing.mode === "create" ? "New list name" : "List name"} htmlFor="watchlist-name" error={Array.from(name.trim()).length > 80 ? "Use 80 characters or fewer." : undefined} className="w-full min-w-0 sm:w-64">
+                    <Input id="watchlist-name" value={name} onChange={(e) => setName(e.target.value)} autoFocus required disabled={change.isPending} />
+                  </Field>}
+                <Button type="submit" variant={editing.mode === "delete" ? "danger" : "primary"} disabled={change.isPending || (editing.mode !== "delete" && (!name.trim() || Array.from(name.trim()).length > 80))}>
+                  {editing.mode === "delete" ? "Confirm deletion" : editing.mode === "create" ? "Create list" : "Save name"}
+                </Button>
+                <Button variant="ghost" disabled={change.isPending} onClick={() => edit(null)}>Cancel</Button>
+              </form> : null}
+              {change.isError ? <Notice tone="down">{change.error.message}</Notice> : null}
+            </Card>
+            <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+              <Card className="min-w-0">
+                <CardHeader className="flex-wrap break-words" title={`${active.name}${items.length ? ` · ${items.length}` : ""}`} actions={
+                  <Segmented label="Sort" value={sort} onChange={setSort} options={[{ value: "manual", label: "List order" }, { value: "symbol", label: "A–Z" }, { value: "change", label: "Change" }, { value: "venue", label: "Market" }]} />
+                } />
+                {items.length === 0 ? <EmptyState icon={<ListChecks className="h-5 w-5" />} title="Nothing here yet" body="Search to add stocks, ETFs or crypto." />
+                  : <ul className="divide-y divide-border border-t border-border">
                     {sorted.map((w) => (
                       <InstrumentRow key={w.rowId} instrument={w.instrument} trailing={
-                        <Button size="sm" variant="ghost" aria-label={`Remove ${w.instrument.symbol}`} title="Remove" disabled={remove.isPending}
-                          onClick={() => remove.mutate(w.rowId)}><Trash2 className="h-4 w-4" /></Button>
+                        <Button size="sm" variant="ghost" aria-label={`Remove ${w.instrument.symbol} (${w.instrument.venueShort})`} title="Remove" disabled={change.isPending}
+                          onClick={() => change.mutate({ action: "remove", groupId: active.id, key: w.key })}><Trash2 className="h-4 w-4" /></Button>
                       } />
                     ))}
-                  </ul>
-                )}
-        </Card>
-        <div className="flex flex-col gap-4">
-          <AddPanel existing={new Set(items.map((w) => w.instrument.id))} />
-          <p className="px-1 text-[11px] leading-relaxed text-text-3">Named lists (several watchlists, grouped by theme) need a schema change the iPhone app hasn&apos;t made yet, so there&apos;s one list for now.</p>
-        </div>
-      </div>
+                  </ul>}
+              </Card>
+              <AddPanel key={active.id} existing={new Set(items.map((w) => w.instrument.id))} pending={change.isPending}
+                onAdd={(instrument) => change.mutate({ action: "add", groupId: active.id, instrument })} />
+            </div>
+          </>}
     </div>
   );
 }

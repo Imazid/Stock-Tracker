@@ -525,6 +525,8 @@ struct PortfolioGroup: Identifiable, Codable {
 // MARK: - Watchlist Group
 
 struct WatchlistGroup: Identifiable, Codable {
+    static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
     var id: UUID
     var name: String
     var assets: [Asset]

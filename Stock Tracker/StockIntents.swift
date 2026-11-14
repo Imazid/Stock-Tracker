@@ -11,7 +11,9 @@
 //
 
 import AppIntents
+import Auth
 import SwiftUI
+import Supabase
 
 // MARK: - Entity
 
@@ -50,7 +52,8 @@ struct StockEntityQuery: EntityStringQuery {
     private func followed() -> [StockEntity] {
         let persist = DataPersistenceManager.shared
         var seen = Set<String>()
-        return (persist.loadWatchlist() + persist.loadPortfolio().map(\.asset))
+        let lists = WatchlistSync.shared.cached(owner: SupabaseManager.auth.currentUser?.id)
+        return (lists.groups.flatMap(\.assets) + persist.loadPortfolio().map(\.asset))
             .filter { !$0.symbol.hasPrefix("^") && seen.insert($0.symbol).inserted }
             .map(StockEntity.init(asset:))
     }

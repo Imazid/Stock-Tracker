@@ -71,6 +71,7 @@ final class MarketData: ObservableObject {
 
     @Published var watchlistGroups: [WatchlistGroup] = []
     @Published var activeWatchlistIndex: Int = 0
+    private(set) var watchlistOwner: UUID?
 
     // MARK: - Price Direction Tracking
 
@@ -243,18 +244,8 @@ final class MarketData: ObservableObject {
         // Seed base asset lists (used for quote refreshes even when restoring from disk)
         (stocks, crypto) = portfolioService.starterAssets()
 
-        if !saved.portfolio.isEmpty || !saved.watchlist.isEmpty {
-            // Restore saved state
-            watchlist = saved.watchlist
-            portfolio = saved.portfolio
-            if !saved.history.isEmpty { portfolioHistory = saved.history }
-        } else {
-            // First launch — start empty. A finance app must never show someone
-            // holdings they don't own; onboarding fills the watchlist with their
-            // picks and the portfolio with what they add or connect.
-            portfolio = []
-            watchlist = []
-        }
+        portfolio = saved.portfolio
+        portfolioHistory = saved.history
 
         mergeTrackedAssetsIntoCanonicalCollections()
 
@@ -286,19 +277,7 @@ final class MarketData: ObservableObject {
             activePortfolioIndex = 0
         }
 
-        // Initialize watchlist groups
-        let savedWatchlistGroups = portfolioService.loadWatchlistGroups()
-        if savedWatchlistGroups.isEmpty {
-            // First launch or migration: wrap existing watchlist into default group
-            watchlistGroups = [WatchlistGroup(name: "My Watchlist", assets: watchlist)]
-            activeWatchlistIndex = 0
-            saveToDisk()
-        } else {
-            watchlistGroups = savedWatchlistGroups
-            let savedIndex = portfolioService.loadActiveWatchlistIndex()
-            activeWatchlistIndex = min(savedIndex, watchlistGroups.count - 1)
-            watchlist = watchlistGroups[activeWatchlistIndex].assets
-        }
+        showWatchlists(WatchlistSync.shared.open(owner: nil))
 
         // Refresh live prices and S&P 500 in the background immediately on launch
         Task { await fetchSP500History() }
@@ -389,47 +368,19 @@ final class MarketData: ObservableObject {
             portfolioGroups[activePortfolioIndex].holdings = portfolio
             portfolioGroups[activePortfolioIndex].history = portfolioHistory
         }
-        // Sync current watchlist into the active watchlist group
-        if watchlistGroups.indices.contains(activeWatchlistIndex) {
-            watchlistGroups[activeWatchlistIndex].assets = watchlist
-        }
         DataPersistenceManager.shared.savePortfolioGroups(portfolioGroups, activeIndex: activePortfolioIndex)
-        portfolioService.save(
-            watchlist: watchlist,
-            portfolio: portfolio,
-            history: portfolioHistory,
-            currency: preferredCurrency,
-            watchlistGroups: watchlistGroups,
-            activeWatchlistIndex: activeWatchlistIndex
-        )
+        portfolioService.save(portfolio: portfolio, history: portfolioHistory, currency: preferredCurrency)
+        saveWatchlist()
     }
 
-    /// Reloads all in-memory state from local Keychain/UserDefaults.
-    /// Called after sign-out to revert from cloud-merged data to local-only data.
+    /// Reload device data after sign-out.
     func reloadFromDisk() {
         let saved = portfolioService.load()
         preferredCurrency = saved.currency
+        if !saved.portfolio.isEmpty { portfolio = saved.portfolio }
+        if !saved.history.isEmpty { portfolioHistory = saved.history }
 
-        if !saved.portfolio.isEmpty || !saved.watchlist.isEmpty {
-            watchlist = saved.watchlist
-            portfolio = saved.portfolio
-            if !saved.history.isEmpty { portfolioHistory = saved.history }
-        }
-
-        // Reload watchlist groups
-        let savedWatchlistGroups = portfolioService.loadWatchlistGroups()
-        if savedWatchlistGroups.isEmpty {
-            watchlistGroups = [WatchlistGroup(name: "My Watchlist", assets: watchlist)]
-            activeWatchlistIndex = 0
-        } else {
-            watchlistGroups = savedWatchlistGroups
-            let savedIndex = portfolioService.loadActiveWatchlistIndex()
-            activeWatchlistIndex = min(savedIndex, watchlistGroups.count - 1)
-            watchlist = watchlistGroups[activeWatchlistIndex].assets
-        }
-
-        mergeTrackedAssetsIntoCanonicalCollections()
-        updateWidgetData()
+        useWatchlistAccount(nil)
         AppLogger.persist.info("Reloaded local data from disk after sign-out")
     }
 
@@ -578,7 +529,8 @@ final class MarketData: ObservableObject {
     }
 
     private func mergeTrackedAssetsIntoCanonicalCollections() {
-        for asset in allTrackedHoldings.filter({ $0.shares > 0 }).map(\.asset) + watchlist {
+        let heldAssets = allTrackedHoldings.filter { $0.shares > 0 }.map(\.asset)
+        for asset in heldAssets + watchlist + watchlistGroups.flatMap(\.assets) {
             upsertTrackedAsset(asset)
         }
     }
@@ -605,38 +557,73 @@ final class MarketData: ObservableObject {
 
     // MARK: - Watchlist Group Management
 
+    var activeWatchlist: WatchlistGroup { watchlistGroups[activeWatchlistIndex] }
+    var canDeleteActiveWatchlist: Bool { watchlistGroups.count > 1 && activeWatchlist.id != WatchlistGroup.defaultID }
+
+    func useWatchlistAccount(_ owner: UUID?) {
+        guard watchlistOwner != owner else { return }
+        watchlistOwner = owner
+        showWatchlists(WatchlistSync.shared.open(owner: owner))
+    }
+
+    func showWatchlists(_ lists: StoredWatchlists.Lists) {
+        watchlistGroups = lists.groups
+        activeWatchlistIndex = lists.groups.firstIndex { $0.id == lists.selected } ?? 0
+        watchlist = activeWatchlist.assets
+        mergeTrackedAssetsIntoCanonicalCollections()
+        updateWidgetData()
+    }
+
+    private func saveWatchlist() {
+        guard watchlistGroups.indices.contains(activeWatchlistIndex) else { return }
+        watchlistGroups[activeWatchlistIndex].assets = watchlist
+        if !WatchlistSync.shared.save(groups: watchlistGroups, selected: activeWatchlist.id, owner: watchlistOwner) {
+            AppLogger.persist.error("Could not save watchlists on this device")
+        }
+    }
+
+    private func changeWatchlist(_ change: WatchlistChange, select: UUID? = nil) -> Bool {
+        var groups = watchlistGroups
+        groups[activeWatchlistIndex].assets = watchlist
+        change.apply(to: &groups)
+        let preferred = select ?? activeWatchlist.id
+        let selected = groups.contains { $0.id == preferred } ? preferred : WatchlistGroup.defaultID
+        guard WatchlistSync.shared.save(groups: groups, selected: selected, owner: watchlistOwner, changes: [change]) else {
+            SyncManager.shared.syncState = .error("Couldn’t save the watchlist change on this device.")
+            return false
+        }
+        showWatchlists(.init(groups: groups, selected: selected))
+        if watchlistOwner != nil { SyncManager.shared.scheduleUpload() }
+        return true
+    }
+
     func switchToWatchlist(index: Int) {
         guard watchlistGroups.indices.contains(index) else { return }
         watchlistGroups[activeWatchlistIndex].assets = watchlist
         activeWatchlistIndex = index
         watchlist = watchlistGroups[index].assets
-        saveToDisk()
+        saveWatchlist()
+        updateWidgetData()
     }
 
     func createWatchlist(name: String) {
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.prefix(80))
+        guard !name.isEmpty else { return }
         if let limit = SubscriptionManager.shared.currentTier.watchlistLimit,
            watchlistGroups.count >= limit { return }
-        watchlistGroups[activeWatchlistIndex].assets = watchlist
-        let newGroup = WatchlistGroup(name: name)
-        watchlistGroups.append(newGroup)
-        activeWatchlistIndex = watchlistGroups.count - 1
-        watchlist = []
-        saveToDisk()
+        let id = UUID()
+        _ = changeWatchlist(WatchlistChange(.create, groupID: id, name: name), select: id)
     }
 
-    func deleteWatchlist(at index: Int) {
-        guard watchlistGroups.count > 1 else { return }
-        watchlistGroups.remove(at: index)
-        let newIndex = min(activeWatchlistIndex, watchlistGroups.count - 1)
-        activeWatchlistIndex = newIndex
-        watchlist = watchlistGroups[newIndex].assets
-        saveToDisk()
+    func deleteWatchlist(id: UUID) {
+        guard id != WatchlistGroup.defaultID, watchlistGroups.contains(where: { $0.id == id }) else { return }
+        _ = changeWatchlist(WatchlistChange(.delete, groupID: id))
     }
 
-    func renameWatchlist(at index: Int, to name: String) {
-        guard watchlistGroups.indices.contains(index) else { return }
-        watchlistGroups[index].name = name
-        saveToDisk()
+    func renameWatchlist(id: UUID, to name: String) {
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.prefix(80))
+        guard !name.isEmpty, watchlistGroups.contains(where: { $0.id == id }) else { return }
+        _ = changeWatchlist(WatchlistChange(.rename, groupID: id, name: name))
     }
 
     // MARK: - Exchange Rates
@@ -1275,43 +1262,41 @@ final class MarketData: ObservableObject {
 
     // MARK: - Watchlist Mutations
 
+    func isOnWatchlist(_ asset: Asset) -> Bool {
+        let group = activeWatchlist.id
+        let key = WatchlistChange.key(for: asset, in: group)
+        return watchlist.contains { WatchlistChange.key(for: $0, in: group) == key }
+    }
+
     func addToWatchlist(_ asset: Asset) {
-        guard !watchlist.contains(where: { $0.symbol == asset.symbol }) else { return }
-        upsertTrackedAsset(asset)
-        watchlist.append(asset)
-        saveToDisk()
-        updateWidgetData()
-        if SyncManager.shared.isSignedIn { Task { await SyncManager.shared.scheduleBackgroundSync() } }
-        // Price just this one. A full refresh per add re-quoted everything and reloaded
+        guard !isOnWatchlist(asset), changeWatchlist(WatchlistChange(.add, groupID: activeWatchlist.id, assets: [asset])) else { return }
+        // Price just this one. A full refresh per add re-quotes everything and reloads
         // Home's index cards: six onboarding picks = six refreshes at once (~60 requests).
         Task { await refreshQuote(for: asset) }
     }
 
     func removeFromWatchlist(_ asset: Asset) {
-        watchlist.removeAll { $0.id == asset.id }
-        saveToDisk()
-        updateWidgetData()
-        if SyncManager.shared.isSignedIn {
-            Task { await SyncManager.shared.softDeleteWatchlistAsset(symbol: asset.symbol) }
-        }
+        guard isOnWatchlist(asset) else { return }
+        let group = activeWatchlist.id
+        _ = changeWatchlist(WatchlistChange(.remove, groupID: group, keys: [WatchlistChange.key(for: asset, in: group)]))
     }
 
     func removeMultipleFromWatchlist(_ ids: Set<UUID>) {
-        let removedSymbols = watchlist.filter { ids.contains($0.id) }.map(\.symbol)
-        watchlist.removeAll { ids.contains($0.id) }
-        saveToDisk()
-        updateWidgetData()
-        if SyncManager.shared.isSignedIn {
-            Task { await SyncManager.shared.softDeleteWatchlistAssets(symbols: removedSymbols) }
-        }
+        let group = activeWatchlist.id
+        let keys = watchlist.filter { ids.contains($0.id) }.map { WatchlistChange.key(for: $0, in: group) }
+        guard !keys.isEmpty else { return }
+        _ = changeWatchlist(WatchlistChange(.remove, groupID: group, keys: keys))
     }
 
     func moveWatchlistItem(from source: IndexSet, to destination: Int) {
-        // Manual move since we don't import SwiftUI in this file
-        let moving = source.sorted().reversed().map { watchlist.remove(at: $0) }.reversed()
-        let insertAt = min(destination, watchlist.count)
-        watchlist.insert(contentsOf: moving, at: insertAt)
-        saveToDisk()
+        guard !source.isEmpty else { return }
+        let group = activeWatchlist.id
+        var reordered = watchlist
+        let moving = source.reversed().map { reordered.remove(at: $0) }.reversed()
+        let insertAt = min(destination - source.count(in: 0..<destination), reordered.count)
+        reordered.insert(contentsOf: moving, at: insertAt)
+        _ = changeWatchlist(WatchlistChange(.reorder, groupID: group,
+                                           keys: reordered.map { WatchlistChange.key(for: $0, in: group) }))
     }
 
     // MARK: - Market Sentiment
@@ -1342,22 +1327,24 @@ final class MarketData: ObservableObject {
 
     // MARK: - Remote sync apply (called by SyncManager after pull/merge)
 
-    func applyRemoteSync(watchlist remoteWatchlist: [Asset], portfolio remotePortfolio: [PortfolioHolding], history remoteHistory: [PortfolioSnapshot]) {
-        // Preserve live market data for assets already known locally
+    func mergingWatchlistQuotes(into groups: [WatchlistGroup]) -> [WatchlistGroup] {
+        let localAssets = Dictionary((watchlistGroups.flatMap(\.assets) + stocks + crypto).map { ($0.quoteIdentity, $0) },
+                                     uniquingKeysWith: { first, _ in first })
+        return groups.map { group in
+            var merged = group
+            merged.assets = group.assets.map { asset in
+                guard let live = localAssets[asset.quoteIdentity] else { return asset }
+                return quoteService.mergedAsset(old: asset, api: live)
+            }
+            return merged
+        }
+    }
+
+    func applyRemoteSync(portfolio remotePortfolio: [PortfolioHolding], history remoteHistory: [PortfolioSnapshot]) {
         let localAssets = Dictionary((watchlist + stocks + crypto).map { ($0.quoteIdentity, $0) }, uniquingKeysWith: { first, _ in first })
         let listedTypes = Dictionary((portfolio.map(\.asset) + stocks + watchlist).compactMap { asset in
             asset.isETF.map { (asset.quoteIdentity, $0) }
         }, uniquingKeysWith: { first, _ in first })
-        watchlist = remoteWatchlist.map { asset in
-            guard let live = localAssets[asset.quoteIdentity], live.price > 0 else { return asset }
-            var a = asset
-            a.price = live.price
-            a.change = live.change
-            a.changePercent = live.changePercent
-            a.volume = live.volume
-            a.priceMove = live.priceMove
-            return a
-        }
         // Preserve live market data for portfolio assets
         portfolio = remotePortfolio.map { holding in
             var h = holding
