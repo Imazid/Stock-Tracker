@@ -64,6 +64,10 @@ function roundedDivide(numerator: bigint, denominator: bigint) {
 
 function audAmounts(transaction: TransactionRow, units: bigint, rate: bigint | undefined): Amounts {
   if (!rate) return {};
+  if (transaction.reinvestment) {
+    const basis = scaled(transaction.reinvestment.reinvested_amount);
+    return { gross: basis === undefined ? undefined : roundedDivide(basis * rate * 100n, UNIT_SCALE ** 2n), fee: 0n };
+  }
   const source = transaction.trade_provenance;
   if (source?.source === "csv_position" || source?.source === "broker_position") return {};
   const price = scaled(source?.unitPrice);
@@ -102,9 +106,11 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
   splits: readonly StockSplit[] = []): LotRow[] {
   const rows: LotRow[] = [];
   const holdings = new Map<string, Holding>();
-  const sorted = transactions.map((transaction) => ({ transaction, date: sydneyDate(transaction.transaction_date),
+  const sorted = transactions.map((transaction) => ({ transaction, date: transaction.reinvestment?.acquired_on ?? sydneyDate(transaction.transaction_date),
     time: transactionTime(transaction.transaction_date) }))
-    .sort((a, b) => a.time.milliseconds - b.time.milliseconds ||
+    .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "") ||
+      Number(Boolean(a.transaction.reinvestment)) - Number(Boolean(b.transaction.reinvestment)) ||
+      a.time.milliseconds - b.time.milliseconds ||
       a.time.subMillisecond - b.time.subMillisecond ||
       Number(b.transaction.type === "Sell") - Number(a.transaction.type === "Sell") ||
       a.transaction.id.localeCompare(b.transaction.id));
@@ -148,7 +154,10 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     }
     const factor = factors.get(transaction.holding_id) ?? 1n;
     const units = tradeUnits * factor;
-    const gross = roundedDivide(tradeUnits * price * 100n, UNIT_SCALE * UNIT_SCALE);
+    const reinvestment = transaction.reinvestment;
+    const recordedBasis = reinvestment && scaled(reinvestment.currency === "USD" ? reinvestment.reinvested_amount : reinvestment.basis_usd);
+    const gross = reinvestment ? (recordedBasis === undefined ? undefined : roundedDivide(recordedBasis * 100n, UNIT_SCALE))
+      : roundedDivide(tradeUnits * price * 100n, UNIT_SCALE * UNIT_SCALE);
     const fee = roundedDivide(fees * 100n, UNIT_SCALE);
     const rate = audRates?.get(transaction.id);
     const aud = audAmounts(transaction, tradeUnits, scaled(rate));
@@ -181,13 +190,17 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       const audSale = takeAmounts(aud, matched, remaining);
       if (visible) {
         const usdResult = result(purchase, sale);
+        const audResult = result(audPurchase, audSale);
+        const knownReinvestment = lot.purchase.reinvestment !== undefined;
         rows.push({
-          kind: usdResult === undefined ? "Unmatched sale" : "Sale match", transaction, purchase: lot.purchase,
+          kind: usdResult !== undefined || knownReinvestment ? "Sale match" : "Unmatched sale", transaction, purchase: lot.purchase,
           units: displayed,
           purchaseCost: purchase.gross, purchaseFee: purchase.fee, saleProceeds: sale.gross, saleFee: sale.fee,
-          result: usdResult, note: usdResult === undefined ? "These units need an acquisition record with the trade date and cost." : undefined,
+          result: usdResult, note: knownReinvestment && usdResult === undefined
+            ? "The statement does not have a USD basis for these reinvested shares."
+            : usdResult === undefined ? "These units need an acquisition record with the trade date and cost." : undefined,
           aud: { purchaseCost: audPurchase.gross, purchaseFee: audPurchase.fee, saleProceeds: audSale.gross,
-            saleFee: audSale.fee, result: result(audPurchase, audSale) },
+            saleFee: audSale.fee, result: audResult },
         });
       }
       remaining -= matched;
@@ -212,11 +225,13 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       const archiveDate = archived && sydneyDate(archived);
       const needsReview = archiveDate && (!end || archiveDate <= end);
       rows.push({
-        kind: lot.usd.gross === undefined ? "Position record" : needsReview ? "Archived holding lot" : "Open lot",
+        kind: lot.usd.gross === undefined && !lot.purchase.reinvestment ? "Position record" : needsReview ? "Archived holding lot" : "Open lot",
         transaction: lot.purchase, purchase: lot.purchase,
         units: roundedDivide(lot.units, factors.get(holdingId) ?? 1n), purchaseCost: lot.usd.gross, purchaseFee: lot.usd.fee,
         aud: { purchaseCost: lot.aud.gross, purchaseFee: lot.aud.fee },
-        note: lot.usd.gross === undefined ? "Use an acquisition record with the trade date and cost to establish basis for these units."
+        note: lot.usd.gross === undefined ? (lot.purchase.reinvestment
+            ? "The statement does not have a USD basis for these reinvested shares."
+            : "Use an acquisition record with the trade date and cost to establish basis for these units.")
           : needsReview ? "The holding was archived. Check your iPhone and broker records for a closing trade or removal." : undefined,
       });
     }

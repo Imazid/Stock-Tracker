@@ -4,6 +4,7 @@ import { jsonError } from "@/server/http/respond";
 import { splitFields, type StockSplit } from "@/lib/portfolio-splits";
 import { audReferences, type AudReference } from "@/server/portfolio/aud-rates";
 import { calculateLots, lotNumber, sydneyDate, UNIT_DECIMALS } from "@/server/portfolio/lots";
+import { reinvestmentAcquisition, reinvestmentPages } from "@/server/portfolio/reinvestments";
 import { tradeSource, transactionPages, type TransactionRow } from "@/server/portfolio/transactions";
 
 const disclaimer = "Preliminary USD FIFO records for review. This report does not calculate tax. Verify actual lots, transaction-date AUD values, transfers, corporate actions and missing transactions. Trades with identical timestamps use sales before purchases. Saved splits apply before trades on the Sydney effective date. Sales use units on the sale date and open lots use units at the report end. Check fractional shares and cash payments against your statement. Use the transaction CSV for source amounts and bookkeeping FX.";
@@ -15,6 +16,7 @@ const columns = [
 const noteColumn = columns.indexOf("Report note");
 const splitColumns = ["Split ID", "Split effective date (Sydney)", "Split new shares", "Split old shares", "Split statement reference"];
 const brokerSplitColumns = ["SnapTrade activity reference", "SnapTrade reported date", "SnapTrade reported activity", "SnapTrade reported symbol"];
+const reinvestmentColumns = ["Reinvestment ID", "Reinvestment acquisition date (Sydney)", "Reinvested amount", "Reinvestment currency", "Reinvestment statement reference"];
 const audColumns = [
   "Purchase cost (AUD)", "Purchase fees (AUD)", "Sale proceeds (AUD)", "Sale fees (AUD)", "Estimated FIFO result (AUD)",
   "Purchase input currency", "Purchase FX (AUD per input currency unit)", "Purchase FX observation date", "Purchase FX source",
@@ -25,7 +27,7 @@ const audDisclosure = "AUD figures use original amounts. Foreign amounts use the
 function referenceFields(references: ReadonlyMap<string, AudReference>, trade?: TransactionRow) {
   const reference = trade && references.get(trade.id);
   return [
-    csvField(trade?.trade_provenance?.currency ?? null),
+    csvField(trade?.reinvestment?.currency ?? trade?.trade_provenance?.currency ?? null),
     reference && "rate" in reference ? reference.rate : "",
     csvField(reference && "date" in reference ? reference.date : null),
     csvField(reference?.source ?? null),
@@ -56,6 +58,7 @@ export async function GET(request: Request) {
   }
 
   const transactions: TransactionRow[] = [];
+  const acquisitions: TransactionRow[] = [];
   const splits: StockSplit[] = [];
   // Sydney midnight is earlier than UTC midnight. The query uses a broad UTC
   // cutoff and the calculation applies the exact Sydney day.
@@ -64,6 +67,11 @@ export async function GET(request: Request) {
     await Promise.all([
       (async () => {
         for await (const page of transactionPages(db, user.id, request.signal, before)) transactions.push(...page);
+      })(),
+      (async () => {
+        for await (const page of reinvestmentPages(db, user.id, request.signal, { field: "acquired_on", through: end })) {
+          for (const entry of page) acquisitions.push(reinvestmentAcquisition(entry));
+        }
       })(),
       (async () => {
         const pageSize = 500;
@@ -84,6 +92,7 @@ export async function GET(request: Request) {
     return jsonError(503, "unavailable", "Couldn’t export your lot report. Try again.");
   }
 
+  for (const acquisition of acquisitions) transactions.push(acquisition);
   const includesAud = currency === "AUD";
   let rows = calculateLots(transactions, start ?? undefined, end ?? undefined, undefined, splits);
   let references: ReadonlyMap<string, AudReference> = new Map();
@@ -102,13 +111,13 @@ export async function GET(request: Request) {
     }
     rows = calculateLots(transactions, start ?? undefined, end ?? undefined, rates, splits);
   }
-  const actionColumns = [
-    ...(splits.length ? splitColumns : []),
-    ...(splits.some((split) => split.snaptrade_activity_id) ? brokerSplitColumns : []),
-  ];
-  const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...actionColumns];
+  const actionColumns = [...(splits.length ? splitColumns : []),
+    ...(splits.some((split) => split.snaptrade_activity_id) ? brokerSplitColumns : [])];
+  const hasReinvestments = acquisitions.length > 0;
+  const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...actionColumns, ...(hasReinvestments ? reinvestmentColumns : [])];
   const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
-  const information = includesAud ? `${disclaimer} ${audDisclosure} ${period}` : `${disclaimer} ${period}`;
+  const ordering = hasReinvestments ? " Date-only reinvestment acquisitions follow timestamped trades on the same Sydney day. Check same-day sales against the actual allotment records." : "";
+  const information = `${disclaimer}${ordering} ${includesAud ? audDisclosure + " " : ""}${period}`;
   const records = [
     reportColumns.map(csvField).join(","),
     reportColumns.map((_, index) => index === 0 ? csvField("Report information")
@@ -143,16 +152,17 @@ export async function GET(request: Request) {
     const holding = transaction.portfolio_holdings;
     const text = [
       row.kind, transaction.holding_id, holding?.asset_symbol ?? null, holding?.asset_exchange ?? null,
-      holding?.asset_kind ?? null, transaction.id, transaction.transaction_date, sydneyDate(transaction.transaction_date), row.purchase?.id ?? null,
-      row.purchase?.transaction_date ?? null,
+      holding?.asset_kind ?? null, transaction.id, transaction.reinvestment ? null : transaction.transaction_date,
+      transaction.reinvestment?.acquired_on ?? sydneyDate(transaction.transaction_date), row.purchase?.id ?? null,
+      row.purchase?.reinvestment ? null : row.purchase?.transaction_date ?? null,
     ].map(csvField);
     const numbers = [
       lotNumber(row.units, UNIT_DECIMALS), lotNumber(row.purchaseCost, 2), lotNumber(row.purchaseFee, 2),
       lotNumber(row.saleProceeds, 2), lotNumber(row.saleFee, 2), lotNumber(row.result, 2),
     ];
     const cells = [...text, ...numbers, csvField(row.note ?? null),
-      csvField(tradeSource(transaction.trade_provenance)),
-      csvField(row.purchase ? tradeSource(row.purchase.trade_provenance) : null),
+      csvField(transaction.reinvestment ? "Dividend reinvestment" : tradeSource(transaction.trade_provenance)),
+      csvField(row.purchase?.reinvestment ? "Dividend reinvestment" : row.purchase ? tradeSource(row.purchase.trade_provenance) : null),
     ];
     if (includesAud) {
       cells.push(...[row.aud?.purchaseCost, row.aud?.purchaseFee, row.aud?.saleProceeds, row.aud?.saleFee, row.aud?.result]
@@ -161,6 +171,11 @@ export async function GET(request: Request) {
         ...referenceFields(references, transaction.type === "Sell" ? transaction : undefined));
     }
     cells.push(...actionColumns.map(() => ""));
+    if (hasReinvestments) {
+      const reinvestment = row.purchase?.reinvestment ?? transaction.reinvestment;
+      cells.push(...[reinvestment?.id, reinvestment?.acquired_on, reinvestment?.reinvested_amount, reinvestment?.currency,
+        reinvestment?.statement_reference].map((value) => csvField(value || null)));
+    }
     records.push(cells.join(","));
   }
   return new Response(records.join("\r\n") + "\r\n", {
