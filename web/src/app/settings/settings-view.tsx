@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { applyTheme, readTheme, type ThemeChoice } from "@/components/shell/theme";
+import { AccountLimits } from "@/components/trading/AccountLimits";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
@@ -43,6 +44,7 @@ export function SettingsView() {
               ) : session.status === "signedOut" ? <ButtonLink href="/login" variant="primary" size="sm">Sign in</ButtonLink> : <div className="skeleton h-8 w-48" />}
           </div>
         </Card>
+        {session.status === "signedIn" && <AccountLimits key={session.user.id} owner={session.user.id} />}
         <Card>
           <CardHeader title="Trading environment" />
           <div className="space-y-3 border-t border-border px-4 py-4 text-[13px] text-text-2">
