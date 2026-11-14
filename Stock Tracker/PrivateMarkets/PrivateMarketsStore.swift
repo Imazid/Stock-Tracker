@@ -277,6 +277,7 @@ struct PrivateMarketAlert: Decodable, Identifiable {
     let sourceUrl: URL?
     let sourceLabel: String?
     let occurredAt: Date
+    let revisedAt: Date?
 }
 
 struct PrivateApplication: Decodable, Identifiable {
@@ -404,6 +405,7 @@ final class PrivateMarketsStore: ObservableObject {
         var monitorEligible: Bool?
         var monitorDigest: Bool?
         var seenMonitorAlerts: [UUID]?
+        var seenMonitorRevisions: [String]?
     }
 
     @Published private(set) var state = State()
@@ -899,24 +901,37 @@ final class PrivateMarketsStore: ObservableObject {
         deliveringUpdates = true
         defer { deliveringUpdates = false }
         let seen = Set(state.seenMonitorAlerts ?? [])
+        let seenRevisions = Set(state.seenMonitorRevisions ?? [])
         let now = Date.now
-        let recent = alerts.filter { !seen.contains($0.id) && !state.seenUpdates.contains($0.subjectId) &&
-            $0.kind != "capital_call" && now.timeIntervalSince($0.occurredAt) < 7 * 86_400 }
+        let recent = alerts.compactMap { alert -> (PrivateMarketAlert, String?)? in
+            if let revised = alert.revisedAt {
+                let key = "\(alert.id.uuidString).\(revised.timeIntervalSince1970)"
+                return !seenRevisions.contains(key) && now.timeIntervalSince(revised) < 7 * 86_400 ? (alert, key) : nil
+            }
+            guard !seen.contains(alert.id), !state.seenUpdates.contains(alert.subjectId), alert.kind != "capital_call",
+                  now.timeIntervalSince(alert.occurredAt) < 7 * 86_400 else { return nil }
+            return (alert, nil)
+        }
         var delivered: [UUID] = []
-        for alert in recent.prefix(10) {
+        var deliveredRevisions: [String] = []
+        for (alert, revision) in recent.prefix(10) {
             guard scope == owner, state.notify, state.monitorEnabled == true, !Task.isCancelled else { break }
             let content = UNMutableNotificationContent()
             content.title = "Private Markets update"
             content.body = "There is a new update in your Private Markets inbox."
             content.userInfo = ["privateMarkets": true]
             do {
-                try await UNUserNotificationCenter.current().add(.init(identifier: "private-markets.monitor.\(alert.id)",
+                try await UNUserNotificationCenter.current().add(.init(identifier: "private-markets.monitor.\(revision ?? alert.id.uuidString)",
                                                                         content: content, trigger: nil))
                 delivered.append(alert.id)
+                if let revision { deliveredRevisions.append(revision) }
             } catch { }
         }
         if !delivered.isEmpty, scope == owner {
-            try? change { $0.seenMonitorAlerts = Array((($0.seenMonitorAlerts ?? []) + delivered).suffix(300)) }
+            try? change {
+                $0.seenMonitorAlerts = Array((($0.seenMonitorAlerts ?? []) + delivered).suffix(300))
+                $0.seenMonitorRevisions = Array((($0.seenMonitorRevisions ?? []) + deliveredRevisions).suffix(300))
+            }
         }
     }
 

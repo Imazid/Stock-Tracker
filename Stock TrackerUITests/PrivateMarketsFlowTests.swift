@@ -469,6 +469,24 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMonitoringInboxShowsDisclosureRevisionDateAndSource() throws {
+        try launchWithLocalSession("PRIVATE_DISCLOSURE_REVISION_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.companyUpdates"].tap()
+        let monitor = app.switches["private.monitor.enable"]
+        XCTAssertTrue(monitor.waitForExistence(timeout: 6))
+        if monitor.value as? String == "0" {
+            let control = monitor.switches.firstMatch
+            (control.exists ? control : monitor).tap()
+        }
+        let revision = app.descendants(matching: .any)["private.monitor.revisedAt"].firstMatch
+        for _ in 0..<4 where !revision.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(revision.isHittable, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Reported valuation was AUD 18500000."].exists)
+        XCTAssertTrue(app.buttons["Read source"].firstMatch.exists)
+    }
+
+    @MainActor
     func testSignedInMonitoringRequiresSeparateDigestConsent() async throws {
         let authHost = "http://127.0.0.1:58521"
         let host = "http://127.0.0.1:58531"

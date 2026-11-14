@@ -73,6 +73,38 @@ select case when public.private_market_push_through('f1000000-0000-4000-8000-000
     'f1000000-0000-4000-8000-000000000011', 0) is not null
   then 'ok   scoped financing updates can advance the push cursor' else 'FAIL financing push unavailable' end;
 
+create temporary table saved_disclosure_alert as
+select id, subject_id, push_sequence, occurred_at from public.private_market_alerts
+where user_id = 'f1000000-0000-4000-8000-000000000001';
+update public.funding_rounds set verified_at = now() + interval '1 minute'
+where id = 'f1000000-0000-4000-8000-000000000020';
+select public.run_private_market_monitor();
+select case when count(*) = 0 then 'ok   re-verification alone does not advance the notification cursor'
+  else 'FAIL verification-only correction' end
+from public.private_market_alerts a join saved_disclosure_alert before using (id)
+where a.push_sequence <> before.push_sequence or a.revised_at is not null;
+
+update public.funding_rounds set valuation = 18500000 where id = 'f1000000-0000-4000-8000-000000000020';
+update public.corporate_actions set significance = 'The issuer corrected its statement.'
+where id = 'f1000000-0000-4000-8000-000000000030';
+select public.run_private_market_monitor();
+select case when count(*) = 2 then 'ok   corrected financing and announcements keep stable IDs and gain new cursors'
+  else 'FAIL correction cursor' end
+from public.private_market_alerts a join saved_disclosure_alert before using (id)
+where a.push_sequence > (select max(push_sequence) from saved_disclosure_alert)
+  and a.revised_at is not null and a.occurred_at = before.occurred_at;
+select case when count(*) = 2 then 'ok   the inbox returns corrected terms and their revision times'
+  else 'FAIL corrected inbox provenance' end
+from public.private_market_alert_inbox_with_revisions('f1000000-0000-4000-8000-000000000001')
+where revised_at is not null and (significance like '%AUD 18500000.%' or significance like '%corrected%');
+select case when not exists (select 1 from public.private_market_alert_inbox_with_revisions('f1000000-0000-4000-8000-000000000002'))
+  then 'ok   corrected disclosures stay within monitored companies' else 'FAIL correction leaked' end;
+select case when public.private_market_push_through('f1000000-0000-4000-8000-000000000001',
+    'f1000000-0000-4000-8000-000000000011', (select max(push_sequence) from saved_disclosure_alert)) is not null
+  then 'ok   a correction can advance the opted-in device push cursor' else 'FAIL correction push unavailable' end;
+select case when public.run_private_market_monitor() = 0 then 'ok   corrected content can replay without another alert'
+  else 'FAIL repeated correction alert' end;
+
 update public.funding_rounds set published = false where id = 'f1000000-0000-4000-8000-000000000020';
 select case when not exists (select 1 from public.private_market_alert_inbox('f1000000-0000-4000-8000-000000000001')
     where subject_id = 'f1000000-0000-4000-8000-000000000020')
@@ -87,5 +119,7 @@ select case when public.private_market_push_through('f1000000-0000-4000-8000-000
 set role authenticated;
 select case when not has_table_privilege(current_user, 'public.published_private_company_updates', 'select')
   then 'ok   the internal view is restricted to the backend' else 'FAIL direct view access' end;
+select case when not has_function_privilege(current_user, 'public.private_market_alert_inbox_with_revisions(uuid)', 'execute')
+  then 'ok   the revised inbox RPC is restricted to the backend' else 'FAIL revised inbox RPC access' end;
 reset role;
 rollback;

@@ -470,7 +470,7 @@ Deno.serve(async (req) => {
       case "monitor_inbox": {
         const collected = await admin.rpc("collect_private_market_alerts", { p_user: userId });
         if (collected.error) throw collected.error;
-        const { data, error } = await admin.rpc("private_market_alert_inbox", { p_user: userId });
+        const { data, error } = await admin.rpc("private_market_alert_inbox_with_revisions", { p_user: userId });
         if (error) throw error;
         return jsonResponse(200, { alerts: data });
       }

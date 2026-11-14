@@ -380,6 +380,11 @@ struct PrivateUpdatesView: View {
                             Text(alert.title).font(.headline)
                             Text("\(alert.companyName) · \(alert.occurredAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.footnote).foregroundStyle(.secondary)
+                            if let revisedAt = alert.revisedAt {
+                                Label("Updated \(revisedAt.formatted(date: .abbreviated, time: .shortened))", systemImage: "clock.arrow.circlepath")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("private.monitor.revisedAt")
+                            }
                             Text(alert.significance)
                             if let url = alert.sourceUrl, url.privateSourceIsSafe { Link("Read source", destination: url) }
                             if let source = alert.sourceLabel { Text(source).font(.footnote).foregroundStyle(.secondary) }
