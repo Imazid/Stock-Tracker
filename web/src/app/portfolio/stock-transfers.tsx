@@ -4,13 +4,15 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
+import type { BrokerStockMatch } from "@/lib/broker-stock-transfers";
 import { incomeDay, incomeMinDay } from "@/lib/portfolio-income";
 import { reinvestmentShares } from "@/lib/portfolio-reinvestments";
 import {
   receivingSnapshotFields, sameListedStock, stockTransferFields, sydneyDate, transferHoldingFields,
-  type ReceivingSnapshot, type StockTransfer, type TransferHolding,
+  type BrokerStockTransferReference, type ReceivingSnapshot, type StockTransfer, type TransferHolding,
 } from "@/lib/portfolio-transfers";
 import { browserSupabase } from "@/lib/supabase/client";
+import { BrokerStockTransferReview } from "./broker-stock-transfer-review";
 
 type Draft = {
   from_holding_id: string; to_holding_id: string; sent_on: string; received_on: string; shares: string;
@@ -85,6 +87,8 @@ export function StockTransfers({ userId }: { userId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState(blank);
   const [editing, setEditing] = useState<StockTransfer>();
+  const [reference, setReference] = useState<BrokerStockTransferReference>();
+  const [confirmed, setConfirmed] = useState(false);
   const [removing, setRemoving] = useState<StockTransfer>();
   const [message, setMessage] = useState("");
   const [problem, setProblem] = useState("");
@@ -111,11 +115,14 @@ export function StockTransfers({ userId }: { userId: string }) {
       ...(field === "to_holding_id" ? { to_account: accountLabel } : {}),
       ...(["from_holding_id", "to_holding_id", "received_on", "shares"].includes(field) ? { receiving_snapshot_id: "" } : {}),
     }));
+    if (reference && ["sent_on", "received_on", "shares"].includes(field)) setConfirmed(false);
   }
 
   function clear() {
     setDraft(blank);
     setEditing(undefined);
+    setReference(undefined);
+    setConfirmed(false);
     setRemoving(undefined);
     setProblem("");
     setMessage("");
@@ -134,8 +141,10 @@ export function StockTransfers({ userId }: { userId: string }) {
       if (draft.receiving_snapshot_id && !matchingSnapshots.some((snapshot) => snapshot.id === draft.receiving_snapshot_id)) {
         throw new Error("Choose a matching receiving snapshot or clear the existing selection.");
       }
+      if (reference && !confirmed) throw new Error("Confirm the transfer details against both statements.");
       const values = { ...draft, from_account: from, to_account: to, same_day_order: order,
-        statement_reference: draft.statement_reference.trim(), receiving_snapshot_id: draft.receiving_snapshot_id || null };
+        statement_reference: draft.statement_reference.trim(), receiving_snapshot_id: draft.receiving_snapshot_id || null,
+        ...(reference ? { snaptrade_reference: reference } : {}) };
       const table = db().from("portfolio_stock_transfers");
       const write = editing ? table.update(values).eq("id", editing.id).eq("user_id", userId).eq("updated_at", editing.updated_at)
         : table.insert({ ...values, user_id: userId });
@@ -163,6 +172,8 @@ export function StockTransfers({ userId }: { userId: string }) {
   function edit(transfer: StockTransfer) {
     clear();
     setEditing(transfer);
+    setReference(transfer.snaptrade_reference ?? undefined);
+    setConfirmed(Boolean(transfer.snaptrade_reference));
     setDraft({
       from_holding_id: transfer.from_holding_id, to_holding_id: transfer.to_holding_id,
       sent_on: transfer.sent_on, received_on: transfer.received_on, shares: transfer.shares,
@@ -170,6 +181,27 @@ export function StockTransfers({ userId }: { userId: string }) {
       statement_reference: transfer.statement_reference, receiving_snapshot_id: transfer.receiving_snapshot_id ?? "",
     });
     document.getElementById("transfer-source")?.focus();
+  }
+
+  function reviewMatch(match: BrokerStockMatch) {
+    const { reference, source, destination } = match;
+    const prior = transfers.data?.find((row) => !row.snaptrade_reference && row.from_holding_id === source.id &&
+      row.to_holding_id === destination.id && row.sent_on === reference.sentOn && row.received_on === reference.receivedOn &&
+      decimalKey(row.shares) === decimalKey(reference.shares));
+    if (prior) {
+      edit(prior);
+    } else {
+      clear();
+      const usedOrders = new Set(transfers.data?.filter((row) => row.sent_on === reference.sentOn).map((row) => row.same_day_order));
+      let order = 1;
+      while (order <= 999 && usedOrders.has(order)) order++;
+      setDraft({ ...blank, from_holding_id: source.id, to_holding_id: destination.id,
+        sent_on: reference.sentOn, received_on: reference.receivedOn, shares: reference.shares, same_day_order: String(order),
+        from_account: source.broker_account?.label ?? "", to_account: destination.broker_account?.label ?? "" });
+    }
+    setReference(reference);
+    setConfirmed(false);
+    document.getElementById("transfer-sent")?.focus();
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -190,11 +222,14 @@ export function StockTransfers({ userId }: { userId: string }) {
         <Button size="sm" onClick={() => { void holdings.refetch(); void transfers.refetch(); }}>Retry</Button>
       </div>}
       {(holdings.isPending || transfers.isPending) && <p role="status" className="text-sm text-text-2">Loading stock transfers…</p>}
+      {holdings.data && transfers.data && <BrokerStockTransferReview holdings={holdings.data} transfers={transfers.data}
+        busy={busy} onReview={reviewMatch} />}
       {transfers.data?.length ? <ul className="divide-y divide-border rounded-md border border-border">
         {transfers.data.slice(0, limit).map((entry) => <li key={entry.id} className="flex flex-wrap justify-between gap-2 p-3">
           <div className="min-w-0 [overflow-wrap:anywhere]">
             <p className="text-sm font-medium">{entry.source?.asset_symbol ?? "Stock"} · {entry.shares} shares</p>
             <p className="text-xs text-text-2">{entry.from_account} → {entry.to_account} · {entry.sent_on} → {entry.received_on}</p>
+            {entry.snaptrade_reference && <p className="text-xs text-text-2">SnapTrade reference attached</p>}
           </div>
           <div className="flex flex-wrap gap-2">{removing?.id === entry.id ? <>
             <Button size="sm" disabled={busy} onClick={() => setRemoving(undefined)}>Cancel</Button>
@@ -212,13 +247,13 @@ export function StockTransfers({ userId }: { userId: string }) {
           <fieldset disabled={busy} className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Sending holding" htmlFor="transfer-source">
-                <Select id="transfer-source" required value={draft.from_holding_id} onChange={(e) => update("from_holding_id", e.target.value)}>
+                <Select id="transfer-source" required disabled={Boolean(reference)} value={draft.from_holding_id} onChange={(e) => update("from_holding_id", e.target.value)}>
                   <option value="">Choose sending holding</option>
                   {holdings.data.map((holding) => <option key={holding.id} value={holding.id}>{holdingLabel(holding)}</option>)}
                 </Select>
               </Field>
               <Field label="Receiving holding" htmlFor="transfer-destination">
-                <Select id="transfer-destination" required disabled={!source} value={draft.to_holding_id}
+                <Select id="transfer-destination" required disabled={!source || Boolean(reference)} value={draft.to_holding_id}
                   onChange={(e) => update("to_holding_id", e.target.value)}>
                   <option value="">Choose receiving holding</option>
                   {candidates.map((holding) => <option key={holding.id} value={holding.id}>{holdingLabel(holding)}</option>)}
@@ -264,9 +299,16 @@ export function StockTransfers({ userId }: { userId: string }) {
             </Field>}
             {draft.to_holding_id && snapshots.isError && <Button size="sm" onClick={() => void snapshots.refetch()}>Retry receiving snapshots</Button>}
             <p className="text-xs text-text-2">Select a receiving snapshot only when it represents exactly these shares. The lot report will use the transferred lots in its place. Date-only transfers post after the day’s trades.</p>
+            {reference && <div className="space-y-2 rounded-md border border-border p-2">
+              <p className="text-xs text-text-2">SnapTrade reported {reference.shares} shares of {reference.symbol}, sent {reference.sentOn} and received {reference.receivedOn}.</p>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" required checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+                I checked the two holdings, dates and quantity against my statements
+              </label>
+            </div>}
             <div className="flex gap-2">
               <Button type="submit" size="sm">{editing ? "Save transfer changes" : "Record transfer"}</Button>
-              {editing && <Button size="sm" onClick={clear}>Cancel edit</Button>}
+              {(editing || reference) && <Button size="sm" onClick={clear}>{editing ? "Cancel edit" : "Cancel review"}</Button>}
             </div>
           </fieldset>
         </form>)}

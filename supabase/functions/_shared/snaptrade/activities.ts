@@ -28,6 +28,7 @@ const KINDS: Record<string, string> = {
 };
 
 export const activityTypes = Object.keys(KINDS).join(",");
+export const stockTransferActivityTypes = "INTERNAL_ASSET_TRANSFER_IN,INTERNAL_ASSET_TRANSFER_OUT";
 export const activityPageSize = 50;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const internalCashLabels = new Set([KINDS.INTERNAL_CASH_TRANSFER_IN, KINDS.INTERNAL_CASH_TRANSFER_OUT]);
@@ -48,6 +49,22 @@ function boundedNumber(value: unknown): number | null {
 
 function text(value: unknown, limit: number): string | null {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, limit) : null;
+}
+
+function transferDetails(row: Record<string, unknown>, kind: string, accountId: string) {
+  if (kind !== "INTERNAL_ASSET_TRANSFER_IN" && kind !== "INTERNAL_ASSET_TRANSFER_OUT") return undefined;
+  if (row.option_symbol != null) return undefined;
+  const direction = kind === "INTERNAL_ASSET_TRANSFER_IN" ? "received" : "sent";
+  const units = boundedNumber(row.units);
+  if (units && (direction === "received") !== (units > 0)) return undefined;
+  const instrument = record(row.symbol);
+  const listing = record(instrument?.exchange);
+  const exchange = text(listing?.mic_code, 12) ?? text(listing?.code, 12);
+  const symbol = text(instrument?.symbol, 40);
+  if (!symbol || !exchange || !units) return null;
+  const shares = Math.abs(units).toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 18 });
+  if (!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,18})?$/.test(shares) || !/[1-9]/.test(shares) || Number(shares) !== Math.abs(units)) return null;
+  return { accountId: accountId.toLowerCase(), direction, symbol, exchange, shares };
 }
 
 /** Previously published snapshots can still carry a suggested flow for an internal movement. */
@@ -71,6 +88,7 @@ export async function normalizeActivityPage(
   start: string,
   end: string,
   offset: number,
+  stockTransfersOnly = false,
 ) {
   const body = record(payload);
   const page = record(body?.pagination);
@@ -85,6 +103,8 @@ export async function normalizeActivityPage(
     const kind = row?.type;
     const id = row?.id;
     const day = typeof row?.trade_date === "string" ? row.trade_date.slice(0, 10) : undefined;
+    if (stockTransfersOnly && typeof kind === "string" && kind !== "INTERNAL_ASSET_TRANSFER_IN" &&
+        kind !== "INTERNAL_ASSET_TRANSFER_OUT") return undefined;
     if (!row || typeof kind !== "string" || !Object.hasOwn(KINDS, kind) ||
         typeof id !== "string" || !id.trim() || id.length > 200 || !validActivityDay(day) || day < start || day > end) return null;
 
@@ -106,6 +126,8 @@ export async function normalizeActivityPage(
       /^(?:0|[1-9]\d{0,12})(?:\.\d{1,8})?$/.test(original)
       ? { date: day, kind: isDeposit ? "deposit" : "withdrawal", currency, amount: original }
       : null;
+    const stockTransfer = transferDetails(row, kind, accountId);
+    if (stockTransfersOnly && !stockTransfer) return stockTransfer;
     const fingerprint = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([accountId.toLowerCase(), id])));
     return {
       id: Array.from(new Uint8Array(fingerprint), (byte) => byte.toString(16).padStart(2, "0")).join(""),
@@ -118,9 +140,10 @@ export async function normalizeActivityPage(
       symbol: symbol ?? text(option?.ticker, 40),
       cashFlow,
       foreignCashFlow,
+      ...(stockTransfer ? { stockTransfer } : {}),
     };
   }));
   const activities = [...new Map(rows.flatMap((row) => row ? [[row.id, row] as const] : [])).values()];
   const next = offset + body.data.length;
-  return { activities, omitted: rows.filter((row) => !row).length, nextOffset: next < total ? next : null };
+  return { activities, omitted: rows.filter((row) => row === null).length, nextOffset: next < total ? next : null };
 }

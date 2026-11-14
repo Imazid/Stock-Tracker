@@ -13,7 +13,7 @@
 //     and connection portals default to read-only.
 
 import { canonicalJson, fromUtf8, toBase64, utf8 } from "../secure/encoding.ts";
-import { activityPageSize, activityTypes, normalizeActivityPage, protectCachedCashFlows, validActivityDay } from "./activities.ts";
+import { activityPageSize, activityTypes, normalizeActivityPage, protectCachedCashFlows, stockTransferActivityTypes, validActivityDay } from "./activities.ts";
 
 export const SNAPTRADE_DEFAULT_BASE = "https://api.snaptrade.com";
 const API_PREFIX = "/api/v1";
@@ -193,10 +193,11 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
         return fail(400, "INVALID_ACTIVITY_PAGE", "Choose a valid activity page.");
       }
       const { preferCached, snapshot = null } = params;
+      const stockTransfersOnly = params.stockTransfersOnly === true;
       if (snapshot !== null && (typeof snapshot !== "string" || !UUID.test(snapshot))) {
         return fail(400, "INVALID_ACTIVITY_SNAPSHOT", "Reload brokerage activity.");
       }
-      if (preferCached === true && (offset === 0 || snapshot !== null)) {
+      if (!stockTransfersOnly && preferCached === true && (offset === 0 || snapshot !== null)) {
         const cached = await deps.readActivityCache?.(userId, { accountId, startDate, endDate, offset, snapshot })
           .catch(() => null);
         const safePage = protectCachedCashFlows(cached);
@@ -205,10 +206,11 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
       }
       return withUser(userId, deps, async (user) => {
         const result = await call(deps, "GET", `/accounts/${accountId}/activities`, {
-          ...user, startDate, endDate, limit: String(activityPageSize), offset: String(offset), type: activityTypes,
+          ...user, startDate, endDate, limit: String(activityPageSize), offset: String(offset),
+          type: stockTransfersOnly ? stockTransferActivityTypes : activityTypes,
         }, null, "");
         if ("error" in result) return result.error;
-        const normalized = await normalizeActivityPage(result.json, accountId, startDate, endDate, offset);
+        const normalized = await normalizeActivityPage(result.json, accountId, startDate, endDate, offset, stockTransfersOnly);
         return normalized ? { status: 200, body: normalized } :
           fail(502, "INVALID_ACTIVITY_RESPONSE", "The brokerage returned an unreadable page of activity.");
       });
