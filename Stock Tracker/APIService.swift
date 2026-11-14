@@ -889,7 +889,7 @@ extension APIService {
             return Asset(id: quote.id, symbol: quote.symbol, name: name, price: quote.price, change: quote.change,
                          changePercent: quote.changePercent, volume: quote.volume, kind: quote.kind,
                          week52High: quote.week52High, week52Low: quote.week52Low, exchange: quote.exchange,
-                         isETF: quote.isETF)
+                         isETF: quote.isETF, priceMove: quote.priceMove)
         case .crypto:
             return try await fetchCryptoPrice(id: identifier)
         }
@@ -965,14 +965,15 @@ extension APIService {
         // previous close (prevDailyBar is two sessions back: NVDA showed −2.02%
         // pre-market against a real −0.4%). Otherwise (open, after hours,
         // weekend) the change is the latest session's, vs prevDailyBar.
-        let prevClose: Double = {
+        let previousClose: Double? = {
             if let daily = snapshot.dailyBar, let barDay = daily.date,
                let tradeDay = snapshot.latestTrade?.date,
                tradeDay > barDay, !TradingHours.us.sameSessionDay(barDay, tradeDay) {
                 return daily.close
             }
-            return snapshot.prevDailyBar?.close ?? price
+            return snapshot.prevDailyBar?.close
         }()
+        let prevClose = previousClose ?? price
         let change = price - prevClose
         let changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0
         let volume = snapshot.dailyBar?.volume ?? 0
@@ -987,7 +988,9 @@ extension APIService {
             volume: volume,
             kind: .stock,
             // Alpaca snapshots don't say which US exchange; don't guess "NYSE" for Nasdaq stocks.
-            exchange: "US"
+            exchange: "US",
+            priceMove: AssetPriceMove(source: .alpacaEquity, observedAt: snapshot.latestTrade?.date,
+                                      currency: "USD", last: price, reference: previousClose)
         )
     }
 
@@ -1010,7 +1013,8 @@ extension APIService {
             URLQueryItem(name: "ids", value: id),
             URLQueryItem(name: "vs_currencies", value: "usd"),
             URLQueryItem(name: "include_24hr_change", value: "true"),
-            URLQueryItem(name: "include_24hr_vol", value: "true")
+            URLQueryItem(name: "include_24hr_vol", value: "true"),
+            URLQueryItem(name: "include_last_updated_at", value: "true")
         ]
 
         guard let url = components.url else { throw APIError.invalidURL }
@@ -1033,29 +1037,13 @@ extension APIService {
         }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let coinData = json[id] as? [String: Double] else {
+              let coinData = json[id] as? [String: Any] else {
             AppLogger.api.warning("CoinGecko returned no price for \(id)")
             throw APIError.noData
         }
 
-        let price = coinData["usd"] ?? 0
-        let changePercent = coinData["usd_24h_change"] ?? 0
-        // changePercent is vs 24h ago: prev = price / (1 + pct); change = price − prev
-            let change = price - price / (1 + changePercent / 100)
-        let volume = coinData["usd_24h_vol"] ?? 0
-        let symbol = Self.cryptoSymbolMap[id] ?? id.uppercased()
-
-        return Asset(
-            id: UUID(),
-            symbol: symbol,
-            name: id.split(separator: "-").map { $0.capitalized }.joined(separator: " "),
-            price: price,
-            change: change,
-            changePercent: changePercent,
-            volume: volume,
-            kind: .crypto,
-            exchange: "CoinGecko"
-        )
+        guard let asset = Self.coinGeckoAsset(id: id, data: coinData) else { throw APIError.noData }
+        return asset
     }
 
     /// Fetch prices for multiple crypto IDs in a single CoinGecko request.
@@ -1095,15 +1083,19 @@ extension APIService {
               let snapshots = json["snapshots"] as? [String: [String: Any]] else { throw APIError.noData }
         var out: [String: Asset] = [:]
         for (id, symbol) in pairs {
-            guard let snap = snapshots["\(symbol)/USD"],
-                  let price = (snap["latestTrade"] as? [String: Any])?["p"] as? Double, price > 0 else { continue }
-            let prevClose = (snap["prevDailyBar"] as? [String: Any])?["c"] as? Double ?? price
+            guard let snap = snapshots["\(symbol)/USD"], let trade = snap["latestTrade"] as? [String: Any],
+                  let price = trade["p"] as? Double, price > 0 else { continue }
+            let previousClose = (snap["prevDailyBar"] as? [String: Any])?["c"] as? Double
+            let prevClose = previousClose ?? price
             let volume = (snap["dailyBar"] as? [String: Any])?["v"] as? Double ?? 0
             let change = price - prevClose
             out[id] = Asset(symbol: symbol, name: id.split(separator: "-").map { $0.capitalized }.joined(separator: " "),
                             price: price, change: change,
                             changePercent: prevClose > 0 ? change / prevClose * 100 : 0,
-                            volume: volume * price, kind: .crypto, exchange: "Alpaca")
+                            volume: volume * price, kind: .crypto, exchange: "Alpaca",
+                            priceMove: AssetPriceMove(source: .alpacaCrypto,
+                                                      observedAt: (trade["t"] as? String).flatMap(AlpacaLatestTrade.parseDate),
+                                                      currency: "USD", last: price, reference: previousClose))
         }
         AppLogger.api.info("Alpaca crypto snapshot fallback: \(out.count)/\(pairs.count) prices")
         return out
@@ -1116,7 +1108,8 @@ extension APIService {
             URLQueryItem(name: "ids", value: ids.joined(separator: ",")),
             URLQueryItem(name: "vs_currencies", value: "usd"),
             URLQueryItem(name: "include_24hr_change", value: "true"),
-            URLQueryItem(name: "include_24hr_vol", value: "true")
+            URLQueryItem(name: "include_24hr_vol", value: "true"),
+            URLQueryItem(name: "include_last_updated_at", value: "true")
         ]
 
         guard let url = components.url else { throw APIError.invalidURL }
@@ -1145,28 +1138,23 @@ extension APIService {
 
         var result: [String: Asset] = [:]
         for id in ids {
-            guard let coinData = json[id] as? [String: Double] else { continue }
-            let price = coinData["usd"] ?? 0
-            guard price > 0 else { continue }
-            let changePercent = coinData["usd_24h_change"] ?? 0
-            // changePercent is vs 24h ago: prev = price / (1 + pct); change = price − prev
-            let change = price - price / (1 + changePercent / 100)
-            let volume = coinData["usd_24h_vol"] ?? 0
-            let symbol = Self.cryptoSymbolMap[id] ?? id.uppercased()
-            result[id] = Asset(
-                id: UUID(),
-                symbol: symbol,
-                name: id.split(separator: "-").map { $0.capitalized }.joined(separator: " "),
-                price: price,
-                change: change,
-                changePercent: changePercent,
-                volume: volume,
-                kind: .crypto,
-                exchange: "CoinGecko"
-            )
+            guard let coinData = json[id] as? [String: Any] else { continue }
+            result[id] = Self.coinGeckoAsset(id: id, data: coinData)
         }
         AppLogger.api.debug("CoinGecko batch: \(result.count)/\(ids.count) prices fetched")
         return result
+    }
+
+    private static func coinGeckoAsset(id: String, data: [String: Any]) -> Asset? {
+        guard let price = data["usd"] as? Double, price.isFinite, price > 0 else { return nil }
+        let percent = (data["usd_24h_change"] as? Double).flatMap { $0.isFinite && $0 > -100 ? $0 : nil }
+        let reference = percent.map { price / (1 + $0 / 100) }
+        let time = (data["last_updated_at"] as? Double).flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
+        return Asset(symbol: cryptoSymbolMap[id] ?? id.uppercased(),
+                     name: id.split(separator: "-").map { $0.capitalized }.joined(separator: " "),
+                     price: price, change: reference.map { price - $0 } ?? 0, changePercent: percent ?? 0,
+                     volume: data["usd_24h_vol"] as? Double ?? 0, kind: .crypto, exchange: "CoinGecko",
+                     priceMove: AssetPriceMove(source: .coinGecko, observedAt: time, currency: "USD", last: price, reference: reference))
     }
 
     // MARK: - Alpha Vantage Quote (ASX + international stocks)
@@ -1346,9 +1334,12 @@ extension APIService {
         }
 
         // Yahoo quotes in the listing's currency (AUD for .AX). Store USD — see FXRates.
-        let fx = Self.yahooToUSD(meta["currency"] as? String, symbol: sanitized)
-        let price = (meta["regularMarketPrice"] as? Double ?? 0) * fx
-        let prevClose = (meta["chartPreviousClose"] as? Double).map { $0 * fx } ?? price
+        let currency = meta["currency"] as? String
+        let fx = Self.yahooToUSD(currency, symbol: sanitized)
+        let last = meta["regularMarketPrice"] as? Double ?? 0
+        let reference = meta["chartPreviousClose"] as? Double
+        let price = last * fx
+        let prevClose = reference.map { $0 * fx } ?? price
         let volume = meta["regularMarketVolume"] as? Int ?? 0
         let fiftyTwoWeekHigh = (meta["fiftyTwoWeekHigh"] as? Double).map { $0 * fx }
         let fiftyTwoWeekLow = (meta["fiftyTwoWeekLow"] as? Double).map { $0 * fx }
@@ -1372,6 +1363,16 @@ extension APIService {
             displayName = displaySymbol
         }
 
+        let exactSymbol = (meta["symbol"] as? String)?.uppercased() == sanitized.uppercased()
+        let priceMove = currency.flatMap { reported -> AssetPriceMove? in
+            guard exactSymbol else { return nil }
+            let (code, unit) = Self.yahooCurrency(reported)
+            let observedAt = (meta["regularMarketTime"] as? Double).flatMap {
+                $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil
+            }
+            return AssetPriceMove(source: .yahooEquity, observedAt: observedAt,
+                                  currency: code, last: last * unit, reference: reference.map { $0 * unit })
+        }
         return Asset(
             id: UUID(),
             symbol: displaySymbol,
@@ -1384,8 +1385,8 @@ extension APIService {
             week52High: fiftyTwoWeekHigh,
             week52Low: fiftyTwoWeekLow,
             exchange: exchange,
-            isETF: (meta["symbol"] as? String)?.uppercased() == sanitized.uppercased()
-                ? (meta["instrumentType"] as? String).map { $0 == "ETF" } : nil
+            isETF: exactSymbol ? (meta["instrumentType"] as? String).map { $0 == "ETF" } : nil,
+            priceMove: priceMove
         )
     }
 
@@ -1499,19 +1500,21 @@ extension APIService {
         // Index levels (^GSPC, ^AXJO) are points, not money — never convert them.
         if symbol.hasPrefix("^") { return 1.0 }
         guard let currency, !currency.isEmpty else { return 1.0 }
-        var code = currency
-        var minorUnit = 1.0
-        switch currency {
-        case "GBp", "GBX": code = "GBP"; minorUnit = 0.01
-        case "ZAc", "ZAC": code = "ZAR"; minorUnit = 0.01
-        case "ILA":        code = "ILS"; minorUnit = 0.01
-        default: break
-        }
+        let (code, minorUnit) = yahooCurrency(currency)
         guard let factor = FXRates.shared.toUSDFactor(from: code) else {
             AppLogger.api.warning("No FX rate for \(currency) (\(symbol)); showing unconverted")
             return minorUnit
         }
         return factor * minorUnit
+    }
+
+    private static func yahooCurrency(_ currency: String) -> (String, Double) {
+        switch currency {
+        case "GBp", "GBX": ("GBP", 0.01)
+        case "ZAc", "ZAC": ("ZAR", 0.01)
+        case "ILA": ("ILS", 0.01)
+        default: (currency.uppercased(), 1)
+        }
     }
 
     /// Returns (interval, range) query params for Yahoo chart API.
@@ -1858,7 +1861,10 @@ struct AlpacaLatestTrade: Codable {
     let timestamp: String?
 
     var date: Date? {
-        guard let timestamp else { return nil }
+        timestamp.flatMap(Self.parseDate)
+    }
+
+    static func parseDate(_ timestamp: String) -> Date? {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.date(from: timestamp) ?? ISO8601DateFormatter().date(from: timestamp)

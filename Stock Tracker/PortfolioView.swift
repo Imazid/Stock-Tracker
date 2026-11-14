@@ -197,6 +197,9 @@ struct PortfolioView: View {
                     summaryStrip
                         .portfolioRow(bottom: DS.Space.l)
 
+                    PortfolioIntelligenceEntry()
+                        .portfolioRow(bottom: DS.Space.l)
+
                     PortfolioAccountsCard(hidesValues: valueHidden, onManageBrokers: { sheet = .broker },
                                           onStockTransfers: cloudAuth.authState == .signedIn ? cloudAuth.userId.map { userId in
                                               { sheet = .stockTransfers(userId) }

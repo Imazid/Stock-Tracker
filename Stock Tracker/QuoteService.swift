@@ -400,7 +400,8 @@ final class QuoteService: QuoteServiceProtocol {
             dividend: old.dividend,
             beta: old.beta,
             exchange: placeholderExchange && !api.exchange.isEmpty ? api.exchange : old.exchange,
-            isETF: api.isETF ?? old.isETF
+            isETF: api.isETF ?? old.isETF,
+            priceMove: api.priceMove
         )
     }
 }

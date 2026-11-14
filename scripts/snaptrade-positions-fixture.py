@@ -1,12 +1,14 @@
-"""Relay a local Supabase stack and serve SnapTrade positions for AccountSyncTests."""
+"""Relay local Supabase and serve brokerage and equity fixtures for AccountSyncTests."""
 
 import base64
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 SOURCE = "a8cc1385-31a7-4c4d-9955-6789589cc956"
 RECEIVER = "0cc77f5f-2b5f-481a-95cb-e44b9c0ad97f"
@@ -81,6 +83,39 @@ def broker_response(user, request):
     ], "data_freshness": {"as_of": "2026-11-13T03:00:00Z"}}
 
 
+def stock_snapshot(symbol):
+    price = {"BHP": 200, "TSM": 100, "QQQ": 100, "AMZN": 100, "AAPL": 50}.get(symbol, 20)
+    now = datetime.now(ZoneInfo("America/New_York"))
+    end = now.replace(hour=15, minute=59, second=0, microsecond=0)
+    if now < now.replace(hour=9, minute=30, second=0, microsecond=0):
+        end -= timedelta(days=1)
+    while end.weekday() >= 5:
+        end -= timedelta(days=1)
+    observation = min(now, end)
+    if symbol == "QQQ":
+        observation -= timedelta(days=10)
+
+    def bar(value):
+        return {"o": value, "h": value, "l": value, "c": value, "v": 10000}
+
+    return {
+        "latestTrade": {"p": price, "t": observation.isoformat()},
+        "dailyBar": bar(price),
+        "prevDailyBar": bar(price - 1),
+    }
+
+
+def market_data_response(path):
+    query = parse_qs(urlsplit(path).query)
+    upstream = query.get("path", [""])[0]
+    if upstream == "/v2/stocks/snapshots":
+        symbols = query.get("symbols", [""])[0].split(",")
+        return 200, {symbol: stock_snapshot(symbol) for symbol in symbols}
+    if upstream.startswith("/v2/stocks/") and upstream.endswith("/snapshot"):
+        return 200, stock_snapshot(upstream.split("/")[-2])
+    return 503, {}
+
+
 class FixtureRelay(BaseHTTPRequestHandler):
     def relay(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0"))) or None
@@ -101,6 +136,11 @@ class FixtureRelay(BaseHTTPRequestHandler):
                     return
                 PHASES[user] = phase
                 self.respond(200, b"{}")
+            return
+
+        if self.path.startswith("/functions/v1/market-data-proxy?"):
+            status, payload = market_data_response(self.path)
+            self.respond(status, json.dumps(payload).encode())
             return
 
         if not self.path.startswith(("/auth/v1/", "/rest/v1/")):
