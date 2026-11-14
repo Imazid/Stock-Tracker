@@ -9,7 +9,11 @@ const listing = "us:AAPL";
 const filing = { provider: "SEC", license: "public_filing", url: "https://www.sec.gov/filing", publishedAt: "2026-11-03" };
 const report = {
   instrumentId: listing, asOf: "2026-11-14", coverage: [],
-  facts: [{ label: "Net sales", unit: "USD", end: "2026-09-26", value: 478834000000, evidence: filing }],
+  facts: [
+    { label: "Net sales", unit: "USD", end: "2026-09-26", value: 478834000000, evidence: filing },
+    { label: "Derived ratio", unit: "%", end: "2026-09-26", value: 8, evidence: filing, inputs: [filing] },
+    { label: "Operating income", unit: "USD", end: "2026-09-26", value: 147366000000, evidence: filing },
+  ],
   events: [{ title: "Licensed headline text", date: "2026-11-12", evidence: { ...filing, license: "licensed" } }],
 };
 
@@ -36,24 +40,26 @@ Deno.test("the AI gets public facts only and its citation resolves to the origin
       const payload = String(init?.body);
       assert(payload.includes("Net sales"));
       assert(!payload.includes("Licensed headline text") && !payload.includes("private context") && !payload.includes(user));
+      assert(!payload.includes("Derived ratio"));
       assert(!payload.includes(filing.url));
       return Promise.resolve(Response.json({ choices: [{ message: { content: JSON.stringify({
-        analysis: "The filing reports net sales for the fiscal year.", confidence: "high",
-        evidence: [{ source: "O1", line: 1 }], missing: [], questions: [],
+        summary: "The filing reports net sales of USD 478.834 billion.",
+        sources: ["O1", "O1"], missing: [],
       }) } }] }));
     }) as typeof fetch,
   });
   assertEquals(calls, 1);
   assertEquals(response.instrumentId, listing);
-  assertEquals(response.citations[0].url, filing.url);
-  assert(response.citations[0].excerpt.includes("478834000000 USD"));
+  const netSales = "Net sales: 478,834,000,000 USD for the period ended 2026-09-26.";
+  assertEquals(response.citations, [{ id: "O1", title: "SEC", url: filing.url, excerpt: netSales }]);
+  assertEquals(response.answer, netSales);
 });
 
-Deno.test("the company question refuses invented evidence even after a model retry", async () => {
+Deno.test("the company question refuses invented evidence", async () => {
   const deps: AiProxyDeps = {
     config: { openAIKey: "test" }, quota: { consume: () => Promise.resolve({ allowed: true, used: 1 }) },
     fetch: (() => Promise.resolve(Response.json({ choices: [{ message: { content: JSON.stringify({
-      analysis: "Unsupported.", confidence: "high", evidence: [{ source: "O77", line: 1 }], missing: [], questions: [],
+      summary: "Unsupported.", sources: ["O77"], missing: [],
     }) } }] }))) as typeof fetch,
   };
   const error = await assertRejects(
@@ -61,6 +67,19 @@ Deno.test("the company question refuses invented evidence even after a model ret
     HttpError,
   );
   assertEquals(error.code, "INVALID_RESEARCH");
+});
+
+Deno.test("the company question shows evidence gaps without presenting an unsupported model answer", async () => {
+  const response = await answerCompanyQuestion(user, listing, { consent: true, question: "What is the current employee count?" },
+    () => Promise.resolve(report), {
+      config: { openAIKey: "test" }, quota: { consume: () => Promise.resolve({ allowed: true, used: 1 }) },
+      fetch: (() => Promise.resolve(Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: "The company has a million employees.", sources: [], missing: ["A current employee count"],
+      }) } }] }))) as typeof fetch,
+    });
+  assertEquals(response.answer, "The available filings leave this question open.");
+  assertEquals(response.citations, []);
+  assertEquals(response.missing, ["A current employee count"]);
 });
 
 Deno.test("mobile report bridge can request public evidence while preserving deployment protection", async () => {
