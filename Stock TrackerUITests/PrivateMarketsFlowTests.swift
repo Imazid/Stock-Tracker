@@ -827,6 +827,46 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testReadinessChecksAgainWhenOpeningProvider() throws {
+        try launchWithLocalSession("PRIVATE_HANDOFF_TEST_SESSION")
+        openPrivateMarkets()
+        app.buttons["private.destination.magnifyingglass"].tap()
+        let fixture = app.staticTexts["Readiness fixture"].firstMatch
+        XCTAssertTrue(fixture.waitForExistence(timeout: 12), app.debugDescription)
+        fixture.tap()
+        let readiness = app.buttons["private.deal.applicationReadiness"]
+        for _ in 0..<6 where !readiness.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(readiness.isHittable, app.debugDescription)
+        readiness.tap()
+        let review = app.switches["private.handoff.reviewed"]
+        XCTAssertTrue(review.waitForExistence(timeout: 6))
+        let reviewSwitch = review.switches.firstMatch
+        (reviewSwitch.exists ? reviewSwitch : review).tap()
+        let risk = app.switches["private.handoff.risk"]
+        let riskSwitch = risk.switches.firstMatch
+        (riskSwitch.exists ? riskSwitch : risk).tap()
+        let amount = app.textFields["private.handoff.amount"]
+        for _ in 0..<3 where !amount.isHittable { app.swipeUp(velocity: .slow) }
+        amount.tap()
+        amount.typeText("500")
+        let check = app.buttons["private.handoff.check"]
+        for _ in 0..<3 where !check.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(check.isHittable)
+        check.tap()
+        let open = app.buttons["private.handoff.open"]
+        for _ in 0..<3 where !open.isHittable {
+            _ = open.waitForExistence(timeout: 4)
+            if !open.isHittable { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(open.isHittable, app.debugDescription)
+        open.tap()
+        let error = app.staticTexts["private.handoff.error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(error.label.contains("awaiting approval"))
+        XCTAssertFalse(open.exists)
+    }
+
+    @MainActor
     func testDiscoveryFiltersInvestorJurisdictionAndRaiseTarget() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
                           "Run with the hosted Private Markets catalogue.")

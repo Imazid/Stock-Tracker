@@ -358,6 +358,7 @@ enum PrivateMarketsAPI {
         let nextOffset: Int?
     }
     struct Handoff: Decodable { let commitmentId: UUID; let handoffUrl: URL }
+    struct HandoffReadiness: Decodable { let ready: Bool }
 
     static func request<Response: Decodable>(_ action: String, _ fields: [String: Any] = [:],
                                               expectedUserID: UUID? = nil) async throws -> Response {

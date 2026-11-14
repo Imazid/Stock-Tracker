@@ -638,21 +638,34 @@ Deno.serve(async (req) => {
         if (error) throw error;
         return jsonResponse(200, { applications: data });
       }
+      case "handoff_check":
       case "handoff": {
+        const checking = body.action === "handoff_check";
+        const currency = body.currency;
         if (typeof body.opportunity_id !== "string" || !uuid.test(body.opportunity_id) ||
           typeof body.amount !== "string" || !/^\d{1,16}(?:\.\d{1,4})?$/.test(body.amount) ||
-          typeof body.document_url !== "string" || body.acknowledged !== true) {
+          typeof body.document_url !== "string" || body.acknowledged !== true ||
+          ((checking || currency !== undefined) && (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)))) {
           return errorResponse(400, "INVALID_REQUEST", "Review the offer document and acknowledge the risks first.");
         }
-        const { data, error } = await admin.rpc("prepare_private_handoff", {
+        const session = sessionId(req);
+        if (!session) return errorResponse(401, "UNAUTHENTICATED", "Sign in again to check this offer.");
+        const active = await admin.rpc("account_deletion_session_active", { p_user: userId, p_session: session });
+        if (active.error) throw active.error;
+        if (!active.data) return errorResponse(401, "UNAUTHENTICATED", "Your session ended. Sign in again.");
+        const args = {
           p_user: userId, p_opportunity: body.opportunity_id, p_amount: body.amount, p_document_url: body.document_url,
-        }).single();
+        };
+        const { data, error } = checking
+          ? await admin.rpc("check_private_handoff", { ...args, p_currency: currency })
+          : currency === undefined ? await admin.rpc("prepare_private_handoff", args).single()
+          : await admin.rpc("open_private_handoff", { ...args, p_currency: currency }).single();
         if (error) {
           const status = { "42501": 403, "22023": 422, "23505": 409 }[error.code];
           if (status) return errorResponse(status, "HANDOFF_UNAVAILABLE", error.message);
           throw error;
         }
-        return jsonResponse(200, data);
+        return jsonResponse(200, checking ? { ready: data === true } : data);
       }
       case "save_document": {
         const { title, excerpt } = body;

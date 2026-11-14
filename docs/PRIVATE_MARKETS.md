@@ -38,6 +38,8 @@ This design reuses the existing AI gateway, model credentials, quota and encrypt
 
 ## Phase 2 · Provider hosted workflow
 
+**Check readiness** validates the current disclosure, amount, currency, investor evidence and provider approval without creating an application record or returning an application URL. **Open provider application** repeats those checks and creates the pending handoff before opening the provider. A revoked approval, changed document or currency, or inactive account session can stop the open after an earlier pass. The provider remains responsible for accepting the application and confirming ownership.
+
 The country and investor classification entered by a user are self-declared. The handoff RPC independently requires a current provider connection and unexpired provider verification. A dated compliance version and agreement for the same provider and jurisdiction must be enabled. The application UI collects a document review acknowledgement and amount. The provider applies its own prescribed disclosures, identity checks and eligibility rules, takes the application and handles funds and withdrawal. A tracked handoff starts with a pending provider status.
 
 Investor Profile & Applications shows provider verification separately from self-declared details. It shows the provider, jurisdiction, classification, verification and expiry dates, revoked connections and any recorded accountant-certificate review date. The profile response omits provider account identifiers and internal evidence references. It includes no certificate documents.

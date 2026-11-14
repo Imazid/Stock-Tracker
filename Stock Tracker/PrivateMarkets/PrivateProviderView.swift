@@ -263,9 +263,17 @@ struct PrivateProviderHandoff: View {
     @State private var amount = ""
     @State private var reviewed = false
     @State private var acknowledged = false
-    @State private var busy = false
+    @State private var request: Task<Void, Never>?
+    @State private var requestID = UUID()
     @State private var error: String?
-    @State private var ready: URL?
+    @State private var readyAmount: Decimal?
+
+    private var validAmount: Decimal? {
+        guard let value = PrivateInput.amount(amount), value > 0 else { return nil }
+        let parts = NSDecimalNumber(decimal: value).stringValue.split(separator: ".")
+        if parts.count == 2 && parts[1].count > 4 { return nil }
+        return value
+    }
 
     var body: some View {
         Form {
@@ -277,65 +285,104 @@ struct PrivateProviderHandoff: View {
                     Link("Read the current offer document", destination: url)
                 }
                 Toggle("I reviewed the offer document", isOn: $reviewed)
+                    .accessibilityIdentifier("private.handoff.reviewed")
                 Toggle("I understand that I could lose the full investment and may be unable to sell", isOn: $acknowledged)
+                    .accessibilityIdentifier("private.handoff.risk")
             }
+            .disabled(request != nil)
             Section("Requested amount") {
                 TextField("Amount (\(deal.round.currency))", text: $amount).keyboardType(.decimalPad)
+                    .disabled(request != nil)
+                    .accessibilityIdentifier("private.handoff.amount")
+                if !amount.isEmpty && validAmount == nil {
+                    Text("Enter a positive amount with up to four decimal places.").font(.footnote).foregroundStyle(.secondary)
+                }
                 Text("Your provider verifies eligibility, accepts applications and confirms ownership.")
                     .font(.footnote).foregroundStyle(.secondary)
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     if deal.displayedStatus(at: context.date) == "Open at verification" {
-                        Button("Check readiness", action: prepare)
-                            .disabled(busy || !reviewed || !acknowledged || (PrivateInput.amount(amount) ?? 0) <= 0)
-                        if busy { ProgressView("Checking requirements") }
-                        if let ready {
-                            Button("Open \(deal.sourceName) application") {
-                                guard deal.displayedStatus == "Open at verification" else { return }
-                                openURL(ready)
-                            }
+                        if readyAmount != nil && readyAmount == validAmount {
+                            Text("The readiness check passed. We’ll check the current terms again before opening the provider.")
+                                .font(.footnote)
+                            Button("Open \(deal.sourceName) application") { submit(opening: true) }
+                                .accessibilityIdentifier("private.handoff.open")
+                                .disabled(request != nil)
+                        } else {
+                            Button("Check readiness") { submit(opening: false) }
+                                .accessibilityIdentifier("private.handoff.check")
+                                .disabled(request != nil || !reviewed || !acknowledged || validAmount == nil)
                         }
+                        if request != nil { ProgressView("Checking requirements") }
                     } else {
                         Text("The round’s application availability needs to be verified again.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-                if let error { Text(error).foregroundStyle(Color.orange) }
+                if let error {
+                    Text(error).foregroundStyle(Color.orange).accessibilityIdentifier("private.handoff.error")
+                }
             }
         }
         .navigationTitle("Provider Application")
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: amount) { _, _ in ready = nil }
-        .onChange(of: reviewed) { _, _ in ready = nil }
-        .onChange(of: acknowledged) { _, _ in ready = nil }
-        .onChange(of: auth.userId) { _, _ in
-            ready = nil
-            error = nil
-        }
+        .onChange(of: amount) { _, _ in clearReadiness() }
+        .onChange(of: reviewed) { _, _ in clearReadiness() }
+        .onChange(of: acknowledged) { _, _ in clearReadiness() }
+        .onChange(of: auth.userId) { _, _ in cancelRequest() }
+        .onDisappear { cancelRequest() }
     }
 
-    private func prepare() {
-        guard deal.displayedStatus == "Open at verification", let owner = auth.userId,
-              let value = PrivateInput.amount(amount), let document = deal.offerDocumentUrl else { return }
-        busy = true
+    private func clearReadiness() {
+        readyAmount = nil
         error = nil
-        ready = nil
-        Task {
-            defer { busy = false }
+    }
+
+    private func cancelRequest() {
+        requestID = UUID()
+        request?.cancel()
+        request = nil
+        clearReadiness()
+    }
+
+    private func submit(opening: Bool) {
+        guard request == nil, reviewed, acknowledged, deal.displayedStatus == "Open at verification",
+              let owner = auth.userId, let value = validAmount, let document = deal.offerDocumentUrl,
+              document.privateSourceIsSafe, !opening || readyAmount == value else { return }
+        let fields: [String: Any] = [
+            "opportunity_id": deal.id.uuidString, "amount": NSDecimalNumber(decimal: value).stringValue,
+            "currency": deal.round.currency, "document_url": document.absoluteString, "acknowledged": true,
+        ]
+        let id = UUID()
+        requestID = id
+        error = nil
+        request = Task {
+            defer { if requestID == id { request = nil } }
             do {
-                let result: PrivateMarketsAPI.Handoff = try await PrivateMarketsAPI.request("handoff", [
-                    "opportunity_id": deal.id.uuidString, "amount": NSDecimalNumber(decimal: value).stringValue,
-                    "document_url": document.absoluteString, "acknowledged": reviewed && acknowledged
-                ], expectedUserID: owner)
-                guard auth.userId == owner else { return }
-                guard result.handoffUrl.privateSourceIsSafe else {
-                    error = "The provider link could not be verified."
-                    return
-                }
-                if reviewed, acknowledged, PrivateInput.amount(amount) == value {
-                    ready = result.handoffUrl
+                if opening {
+                    let result: PrivateMarketsAPI.Handoff = try await PrivateMarketsAPI.request("handoff", fields, expectedUserID: owner)
+                    try Task.checkCancellation()
+                    guard requestID == id, auth.userId == owner else { return }
+                    guard result.handoffUrl.privateSourceIsSafe else {
+                        clearReadiness()
+                        error = "The provider link could not be verified."
+                        return
+                    }
+                    openURL(result.handoffUrl)
+                } else {
+                    let result: PrivateMarketsAPI.HandoffReadiness = try await PrivateMarketsAPI.request(
+                        "handoff_check", fields, expectedUserID: owner)
+                    try Task.checkCancellation()
+                    guard requestID == id, auth.userId == owner else { return }
+                    if result.ready { readyAmount = value }
+                    else { error = "Readiness could not be verified. Try again." }
                 }
             } catch is CancellationError {
-            } catch { if auth.userId == owner { self.error = error.localizedDescription } }
+            } catch {
+                if requestID == id, auth.userId == owner {
+                    clearReadiness()
+                    self.error = error.localizedDescription
+                }
+            }
         }
     }
 }

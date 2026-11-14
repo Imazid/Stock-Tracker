@@ -52,6 +52,10 @@ select pg_temp.expect_error('update public.investor_eligibility set expires_at =
 select pg_temp.expect_error('update public.investment_commitments set status = ''confirmed''','42501','investors cannot confirm applications');
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer')$q$,
   '42501','investors cannot bypass the edge authentication path');
+select pg_temp.expect_error($q$select public.check_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer','AUD')$q$,
+  '42501','investors cannot call the readiness check directly');
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer','AUD')$q$,
+  '42501','investors cannot call the open function directly');
 reset role;
 
 set role service_role;
@@ -75,8 +79,24 @@ select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a00
   '22023','offer document version is enforced');
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',10001,'https://example.test/offer')$q$,
   '22023','retail crowd-funding cap is enforced');
-select case when count(*) = 1 then 'ok   eligible handoff created' else 'FAIL handoff missing' end
-  from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer');
+select case when public.check_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD')
+  then 'ok   eligible investor passes readiness' else 'FAIL readiness denied' end;
+select case when
+  not exists (select 1 from public.investment_commitments where opportunity_id = 'a0000000-0000-0000-0000-000000000030') and
+  not exists (select 1 from public.investment_audit_logs where action = 'provider_handoff')
+  then 'ok   readiness leaves commitments and audit records untouched' else 'FAIL readiness created a handoff' end;
+update public.private_provider_approvals set enabled = false where provider = 'birchal' and jurisdiction = 'AU';
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD')$q$,
+  '42501','opening rechecks revoked provider approval after readiness');
+update public.private_provider_approvals set enabled = true where provider = 'birchal' and jurisdiction = 'AU';
+update public.provider_connections set revoked_at = now() where id = 'a0000000-0000-0000-0000-000000000050';
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD')$q$,
+  '42501','opening rechecks revoked investor verification after readiness');
+update public.provider_connections set revoked_at = null where id = 'a0000000-0000-0000-0000-000000000050';
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','USD')$q$,
+  '22023','opening refuses a currency different from the reviewed round');
+select case when count(*) = 1 then 'ok   opening creates one eligible handoff' else 'FAIL handoff missing' end
+  from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD');
 select case when h.commitment_id = c.id and c.status = 'handoff' and c.confirmed_at is null
   then 'ok   retries are idempotent and do not confirm ownership' else 'FAIL retry changed state' end
   from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer') h
