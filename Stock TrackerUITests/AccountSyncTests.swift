@@ -54,7 +54,10 @@ final class AccountSyncTests: XCTestCase {
         app.buttons["onboarding.pick.AAPL"].tap()
         tapContinue()
         waitForStep("Add what you already own")
-        app.buttons["onboarding.portfolio.broker"].tap()
+        let connectBroker = app.buttons["onboarding.portfolio.broker"]
+        for _ in 0..<3 where !connectBroker.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(connectBroker.isHittable, app.debugDescription)
+        connectBroker.tap()
         XCTAssertTrue(app.navigationBars["Brokers & exchanges"].waitForExistence(timeout: 10))
         app.buttons["broker.seeAll"].tap()
         let picker = app.searchFields.firstMatch
