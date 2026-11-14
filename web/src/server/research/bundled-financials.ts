@@ -14,7 +14,9 @@ const annual = {
     values: [["Revenue", "Revenue", 58_760], ["OperatingIncome", "Profit from operations", 23_869], ["NetIncome", "Profit attributable to BHP shareholders", 9_833]],
   },
 } as const;
-const listing = new Map([["us:AAPL", annual.apple], ["asx:BHP", annual.bhp], ["us:BHP", annual.bhp]]);
+const listing = new Map<string, (typeof annual)[keyof typeof annual]>([
+  ["us:AAPL", annual.apple], ["asx:BHP", annual.bhp], ["us:BHP", annual.bhp],
+]);
 
 export function bundledAnnualFacts(instrumentId: string, asOf: string): FinancialFact[] {
   const report = listing.get(instrumentId);
