@@ -90,6 +90,50 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["private.allocation"].firstMatch.waitForExistence(timeout: 6))
     }
 
+    @MainActor
+    func testCopilotSummarisesPublishedUpdatesForOwnedCompanies() throws {
+        try launchWithLocalSession("PRIVATE_COPILOT_UPDATES_TEST_SESSION")
+        openPrivateMarkets()
+        let explorer = app.buttons["private.destination.building.2"]
+        explorer.tap()
+        let heidi = app.buttons["private.explorer.company.D72C4060-1AE7-4A2F-8F2E-9F4BF1577E01"]
+        XCTAssertTrue(heidi.waitForExistence(timeout: 12), app.debugDescription)
+        heidi.tap()
+        let round = app.buttons["private.funding.round.Series C"]
+        XCTAssertTrue(round.waitForExistence(timeout: 8))
+        round.tap()
+        let follow = app.buttons["Follow company"]
+        for _ in 0..<3 where !follow.isHittable { app.swipeUp() }
+        XCTAssertTrue(follow.isHittable, app.debugDescription)
+        follow.tap()
+
+        let copilot = app.buttons["trading.copilot"].firstMatch
+        for _ in 0..<4 where !copilot.isHittable {
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            if back.isHittable { back.tap() }
+        }
+        XCTAssertTrue(copilot.isHittable)
+        copilot.tap()
+        let suggestion = app.buttons["copilot.suggestion.Summarise recent u"]
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 5))
+        suggestion.tap()
+
+        let summary = app.descendants(matching: .any)["copilot.privateUpdates.ai"].firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout: 25), app.debugDescription)
+        let source = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Capability X began trading on ASX")).firstMatch
+        for _ in 0..<2 where !source.exists { app.swipeUp() }
+        XCTAssertTrue(source.exists, app.debugDescription)
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Company restructuring")).firstMatch.exists)
+        let report = app.buttons["copilot.privateUpdates.report"]
+        for _ in 0..<2 where !report.isHittable { app.swipeDown() }
+        XCTAssertTrue(report.isHittable, app.debugDescription)
+        report.tap()
+        XCTAssertTrue(app.navigationBars["Research Answer"].waitForExistence(timeout: 8))
+        let sourceLink = app.buttons["Capability X Limited: Capability X began trading on ASX"]
+        for _ in 0..<3 where !sourceLink.isHittable { app.swipeUp() }
+        XCTAssertTrue(sourceLink.isHittable, app.debugDescription)
+    }
+
     func testCopilotCalculatesDilutionAndOpensPrefilledScenario() {
         openPrivateMarkets()
         app.buttons["trading.copilot"].firstMatch.tap()

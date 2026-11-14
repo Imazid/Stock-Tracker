@@ -210,6 +210,18 @@ struct PrivateCompanyUpdate: Decodable, Identifiable {
     var isResearchSource: Bool { kind == "announcement" || kind == "closed_round" }
 }
 
+enum PrivateUpdateScope {
+    case tracked, owned, followed
+
+    var title: String {
+        switch self {
+        case .tracked: "Tracked private companies"
+        case .owned: "Private companies you own"
+        case .followed: "Private companies you follow"
+        }
+    }
+}
+
 struct PrivateMarketAlert: Decodable, Identifiable {
     let id: UUID
     let subjectId: UUID
@@ -581,12 +593,24 @@ final class PrivateMarketsStore: ObservableObject {
         }
     }
 
-    func checkUpdates(for userID: UUID) async throws -> [PrivateCompanyUpdate] {
-        guard scope == userID, storageError == nil else { return [] }
-        let companyIDs = state.follows.map(\.id) + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId)
-        var seen = Set<UUID>()
-        let ids = companyIDs.filter { seen.insert($0).inserted }.map(\.uuidString)
-        guard !ids.isEmpty else { return [] }
+    func checkUpdates(for userID: UUID, companyScope: PrivateUpdateScope = .tracked,
+                      deliverNotifications: Bool = true) async throws -> [PrivateCompanyUpdate] {
+        guard scope == userID else { throw CancellationError() }
+        if let storageError {
+            throw NSError(domain: "PrivateMarkets", code: 1, userInfo: [NSLocalizedDescriptionKey: storageError])
+        }
+        let followed = state.follows.map(\.id)
+        let companyIDs: [UUID]
+        switch companyScope {
+        case .tracked:
+            companyIDs = followed + state.holdings.compactMap(\.catalogueCompanyID) + providerHoldings.compactMap(\.companyId)
+        case .owned:
+            companyIDs = independentManualHoldings.compactMap(\.catalogueCompanyID) +
+                providerHoldings.filter { !$0.hasExited }.compactMap(\.companyId)
+        case .followed:
+            companyIDs = followed
+        }
+        let ids = Set(companyIDs).map(\.uuidString).sorted()
         var updates: [PrivateCompanyUpdate] = []
         for start in stride(from: 0, to: ids.count, by: 100) {
             let response: PrivateMarketsAPI.Updates = try await PrivateMarketsAPI.request(
@@ -594,9 +618,9 @@ final class PrivateMarketsStore: ObservableObject {
             updates.append(contentsOf: response.updates)
         }
         try Task.checkCancellation()
-        guard scope == userID else { return [] }
-        updates.sort { $0.publishedAt > $1.publishedAt }
-        if state.notify, state.monitorEnabled != true, !deliveringUpdates {
+        guard scope == userID else { throw CancellationError() }
+        updates.sort { ($0.publishedAt, $0.id.uuidString) > ($1.publishedAt, $1.id.uuidString) }
+        if deliverNotifications, state.notify, state.monitorEnabled != true, !deliveringUpdates {
             deliveringUpdates = true
             defer { deliveringUpdates = false }
             let now = Date.now

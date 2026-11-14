@@ -22,10 +22,11 @@ struct CopilotView: View {
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var insightService: AIInsightService
     @EnvironmentObject private var cloudAuth: SupabaseAuthManager
+    @EnvironmentObject private var privateMarkets: PrivateMarketsStore
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        CopilotScreen(engine: CopilotEngine(trading: trading, marketData: marketData),
+        CopilotScreen(engine: CopilotEngine(trading: trading, marketData: marketData, privateMarkets: privateMarkets, auth: cloudAuth),
                       initialPrompt: initialPrompt,
                       canUseModel: { insightService.canQuery(tier: subscriptionManager.currentTier) },
                       didUseModel: { insightService.incrementQueryCount() },
@@ -352,6 +353,38 @@ private struct CopilotScreen: View {
                 NavigationLink("Open scenario calculator") { PrivateScenarioCalculator(question: question) }
             }
             .accessibilityIdentifier("copilot.card.privateScenario")
+
+        case .privateUpdates(_, let response):
+            if cloudAuth.userId == response.owner {
+                TradingSection(title: LocalizedStringKey(response.scope.title)) {
+                    if let report = response.report, let finding = report.findings.first {
+                        Text("AI-generated summary").font(.footnote)
+                            .accessibilityIdentifier("copilot.privateUpdates.ai")
+                        Text(finding.analysis).font(.subheadline)
+                        NavigationLink("Open saved report") {
+                            PrivateSavedReportView(id: report.id, owner: response.owner, cachedReport: report)
+                        }
+                        .accessibilityIdentifier("copilot.privateUpdates.report")
+                    }
+                    ForEach(response.updates) { item in
+                        VStack(alignment: .leading, spacing: DS.Space.xs) {
+                            Text("\(item.company.name) · \(item.title)").font(.subheadline.weight(.semibold))
+                            Text((item.roundAnnouncedOn ?? item.publishedAt).formatted(date: .abbreviated, time: .omitted))
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Text(item.significance).font(.footnote)
+                            if item.sourceUrl.privateSourceIsSafe { Link("Read source", destination: item.sourceUrl) }
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("copilot.privateUpdates.source")
+                    }
+                    if let notice = response.notice { Text(notice).font(.footnote).foregroundStyle(.secondary) }
+                    if !response.updates.isEmpty {
+                        NavigationLink("Review sources in AI Investment Research") {
+                            PrivateResearchWorkspace(deals: [], announcements: response.updates, refreshOwner: response.owner)
+                        }
+                    }
+                }
+            }
 
         case .pauseAll:
             Button(trading.isKillSwitchOn ? "Review pause-all" : "Open Pause all") { showPauseAll = true }
