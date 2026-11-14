@@ -29,6 +29,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_instruments: "Searching instruments",
   get_quote: "Getting a quote",
   get_price_history: "Reading price history",
+  get_asset_risk: "Measuring historical price risk",
   get_company_research: "Collecting company evidence",
   get_company_dataset: "Reading company data",
   search_filing_text: "Searching the original filing",

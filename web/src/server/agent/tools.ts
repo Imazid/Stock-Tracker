@@ -19,6 +19,7 @@ import { CHART_RANGES, type ChartRange, type QuoteView } from "@/lib/market-type
 import { toView } from "@/lib/instrument-view";
 import { portfolioInstrument } from "@/lib/portfolio-exposure";
 import { portfolioMovement } from "@/lib/portfolio-movement";
+import { ASSET_RISK_RANGES, assetRisk, type AssetRiskRange } from "@/lib/asset-risk";
 import { accountAgentActivity } from "./activity";
 import { clean, type ToolContext, type ToolName, TOOL_NAMES, type ToolOutcome } from "./tools-schema.ts";
 
@@ -119,6 +120,22 @@ const executors: Record<ToolName, (input: Record<string, unknown>, ctx: ToolCont
         ...report.earnings, ...report.peers, ...report.multiples,
         ...(report.profile ? [{ label: report.profile.name, evidence: report.profile.evidence }] : []),
       ]),
+    };
+  },
+
+  async get_asset_risk(input, ctx) {
+    const range = str(input, "range", true, 2) as AssetRiskRange;
+    if (!ASSET_RISK_RANGES.includes(range)) throw new ToolInputError("Choose 3M, 6M or 1Y.");
+    const view = await getCandles(instrumentFrom(input), range);
+    const risk = assetRisk(view, ctx.now);
+    if (!risk) return { data: { error: "Too few completed daily closes for this listing and range." }, isError: true };
+    return {
+      data: {
+        ...risk,
+        method: "Use only completed daily closes. Drawdown is the largest percentage fall from a previous close peak. Volatility is the sample standard deviation of 20 consecutive close-to-close percentage changes.",
+      },
+      sources: [{ label: `${view.instrument.symbol} historical price risk`, source: risk.source, observedAt: risk.through,
+        status: risk.status, instrumentId: risk.instrumentId }],
     };
   },
 
