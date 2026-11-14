@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -26,6 +27,17 @@ def broker_response(user, request):
              "positions_status": "disconnected" if phase == "disconnected" and account == SOURCE else "available"}
             for account, number in [(SOURCE, "••••1234"), (RECEIVER, "••••4321")]
         ]
+    if operation == "accountActivities":
+        day = request["params"]["endDate"]
+        return 200, {"activities": [
+            {"id": "d" * 64, "date": day, "label": "Outgoing cash transfer between accounts",
+             "amount": -250, "currency": "USD", "cashFlow": {"date": day, "kind": "withdrawal", "amount": 250}},
+            {"id": "e" * 64, "date": day, "label": "Incoming cash transfer between accounts",
+             "amount": 250, "currency": "AUD",
+             "foreignCashFlow": {"date": day, "kind": "deposit", "amount": "250", "currency": "AUD"}},
+            {"id": "a" * 64, "date": day, "label": "Cash contribution", "amount": 600, "currency": "USD",
+             "cashFlow": {"date": day, "kind": "deposit", "amount": 600}},
+        ], "omitted": 0, "nextOffset": None, "snapshot": None, "syncedAt": None}
     if operation != "accountAllPositions":
         return 400, {"error": {"code": "UNEXPECTED_OPERATION"}}
     account = request["params"]["accountId"]
@@ -89,4 +101,5 @@ class FixtureRelay(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", 58346), FixtureRelay).serve_forever()
+    port = int(os.environ.get("STOCK_TRACKER_QA_PORT", "58346"))
+    ThreadingHTTPServer(("127.0.0.1", port), FixtureRelay).serve_forever()

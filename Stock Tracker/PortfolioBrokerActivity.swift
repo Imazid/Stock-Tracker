@@ -37,6 +37,10 @@ struct PortfolioBrokerActivity: View {
         let symbol: String?
         let cashFlow: PerformanceFlow?
         let foreignCashFlow: ForeignCashFlow?
+
+        var isInternalCashTransfer: Bool {
+            label == "Incoming cash transfer between accounts" || label == "Outgoing cash transfer between accounts"
+        }
     }
 
     private struct Page: Decodable {
@@ -203,8 +207,16 @@ struct PortfolioBrokerActivity: View {
             Text([activity.date, amount, units, fee].compactMap { $0 }.joined(separator: " · "))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            let converted = conversions[activity.id]
+            let internalTransfer = activity.isInternalCashTransfer
+            let converted = internalTransfer ? nil : conversions[activity.id]
             let included = imported.contains(activity.id)
+            if internalTransfer {
+                Text(included
+                    ? "Already included. Remove it from the period if both accounts were in your valuations."
+                    : "Leave this out when both accounts are in your valuations. Use a manual entry if cash crossed the portfolio boundary.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let converted {
                 Text("\(converted.usdAmount.formatted(.currency(code: "USD"))) · \(converted.fx.details)")
                     .font(.caption).foregroundStyle(.secondary)
@@ -213,14 +225,14 @@ struct PortfolioBrokerActivity: View {
                 Text("Historical exchange rate unavailable. You can enter the USD amount manually.")
                     .font(.caption).foregroundStyle(.red)
             }
-            if activity.date > start, let foreign = activity.foreignCashFlow, converted == nil, !included {
+            if !internalTransfer, activity.date > start, let foreign = activity.foreignCashFlow, converted == nil, !included {
                 Button(lookup == activity.id ? "Looking up rate…" : "Look up USD value") {
                     Task { await convert(activity.id, foreign) }
                 }
                 .buttonStyle(.borderless)
                 .disabled(busy || lookup != nil || !canInclude)
             }
-            if activity.date > start && (activity.cashFlow != nil || converted != nil || included) {
+            if !internalTransfer && activity.date > start && (activity.cashFlow != nil || converted != nil || included) {
                 Button(included ? "Included" : "Include transfer") {
                     if var flow = activity.cashFlow {
                         flow.snaptrade_id = activity.id
