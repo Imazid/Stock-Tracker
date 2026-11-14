@@ -57,7 +57,6 @@ struct PortfolioAllocationTab: View {
     }
 
     private var grouping: Grouping { Grouping(rawValue: groupingRaw) ?? .holding }
-    private var total: Double { marketData.totalPortfolioValue }
 
     private func slices(holdings: [PortfolioHolding], issuer: PortfolioIssuerExposure?) -> [Slice] {
         switch grouping {
@@ -138,9 +137,7 @@ struct PortfolioAllocationTab: View {
                     EmptyStateCard(systemImage: "chart.pie", title: "Allocation unavailable",
                                    message: "The breakdown appears when holdings have usable prices.")
                 }
-                if total > 0 {
-                    concentrationCard
-                }
+                concentrationCard(marketData.portfolioConcentration)
             }
             .task(id: marketData.portfolio.map { "\($0.asset.quoteIdentity):\($0.shares)" }.joined()) { await loadVolatility() }
         }
@@ -307,31 +304,28 @@ struct PortfolioAllocationTab: View {
 
     // MARK: Concentration
 
-    private var concentrationCard: some View {
-        let sorted = marketData.portfolio.sorted { $0.currentValue > $1.currentValue }
-        let largest = sorted.first
-        let largestShare = largest.map { share($0.currentValue, total: total) } ?? 0
-        let top3 = share(sorted.prefix(3).reduce(0) { $0 + $1.currentValue }, total: total)
-
-        return VStack(alignment: .leading, spacing: DS.Space.s) {
+    private func concentrationCard(_ concentration: PortfolioConcentration) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             Text("Concentration")
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) {
-                if let largest {
-                    LedgerLine(label: "Largest holding", value: "\(largest.asset.symbol) · \(formatPercent(largestShare))")
+                if let largest = concentration.listings.first {
+                    LedgerLine(label: "Largest listing", value: "\(concentration.label(for: largest)) · \(formatPercent(concentration.share(of: largest.value)))")
+                        .accessibilityIdentifier("portfolio.concentration.largest")
                 }
-                if sorted.count > 3 {
-                    LedgerLine(label: "Top 3 holdings", value: formatPercent(top3))
+                if concentration.listings.count > 3 {
+                    LedgerLine(label: "Top 3 listings", value: formatPercent(concentration.topThreeShare))
                 }
                 LedgerLine(label: "Volatility (past year)", value: volatilityText)
             }
-            if let largest, largestShare >= 40, sorted.count > 1 {
-                Text("\(largest.asset.symbol) is \(formatPercent(largestShare)) of this portfolio, so its price moves drive most of your returns.")
-                    .font(.footnote)
-                    .foregroundStyle(theme.secondaryText)
-            }
-            Text("Volatility is how much your current holdings' combined value swung day to day over the past year, annualised.")
+            Text(concentration.coverage)
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryText)
+            Text("Concentration uses positions with usable prices and combines the same listing across accounts.")
+                .font(.caption2)
+                .foregroundStyle(theme.secondaryText)
+            Text("Volatility is how much your current holdings’ combined value swung day to day over the past year, annualised.")
                 .font(.caption2)
                 .foregroundStyle(theme.secondaryText)
         }

@@ -85,11 +85,12 @@ final class CopilotEngine: ObservableObject {
     var didUseModel: () -> Void = {}
 
     static let portfolioMovementPrompt = "Why did my portfolio move?"
+    static let concentrationPrompt = "Analyse my portfolio concentration"
 
     static let suggestions = [
         portfolioMovementPrompt,
         "Show me all my pending trades",
-        "Analyse my portfolio concentration",
+        concentrationPrompt,
         "Show my private investment exposure alongside my listed stocks",
         "Summarise recent updates from the startups I own",
         "Compare startup valuations and explain their assumptions",
@@ -341,26 +342,26 @@ final class CopilotEngine: ObservableObject {
             }
         }
 
-        // The real, tracked portfolio.
-        if let marketData, marketData.totalPortfolioValue > 0 {
-            let total = marketData.totalPortfolioValue
-            let holdings = marketData.portfolio.sorted { $0.currentValue > $1.currentValue }
-            let facts = holdings.prefix(6).map { Evidence(label: $0.asset.symbol, value: String(format: "%.1f%%", $0.currentValue / total * 100)) }
-            cards.append(.facts(id: UUID(), title: "Your tracked portfolio", facts: Array(facts),
-                                footnote: "Share of your \(holdings.count) tracked holding\(holdings.count == 1 ? "" : "s"), at the latest prices."))
-            if let top = holdings.first {
-                let share = top.currentValue / total * 100
-                sentences.append(String(format: "In your tracked portfolio, %@ is the largest at %.0f%%%@.", top.asset.symbol, share,
-                                        share >= 25 ? ", so its moves dominate the total" : ""))
+        if let report = marketData?.portfolioConcentration, report.openPositions > 0 {
+            let facts = report.listings.prefix(6).map { listing in
+                Evidence(label: report.label(for: listing), value: formatPercent(report.share(of: listing.value)))
             }
-            let topThree = holdings.prefix(3).reduce(0.0) { $0 + $1.currentValue } / total * 100
-            if holdings.count > 3 { sentences.append(String(format: "The top three make up %.0f%%.", topThree)) }
+            cards.append(.facts(id: UUID(), title: "Your tracked portfolio", facts: Array(facts),
+                                footnote: "\(report.coverage). Percentages use priced positions and combine the same listing across accounts."))
+            if let largest = report.listings.first {
+                let weight = formatPercent(report.share(of: largest.value))
+                sentences.append("\(report.label(for: largest)) makes up the largest share of your priced holdings at \(weight).")
+                if report.listings.count > 3 {
+                    sentences.append("The three largest listings make up \(formatPercent(report.topThreeShare)).")
+                }
+            } else {
+                sentences.append("The tracked portfolio’s concentration is unavailable until prices load.")
+            }
         }
 
         if cards.isEmpty {
-            return CopilotMessage(isUser: false, text: "There's nothing to analyse yet. Add holdings to your portfolio or set up practice money first.")
+            return CopilotMessage(isUser: false, text: "Add holdings to your portfolio or set up practice money to see concentration.")
         }
-        sentences.append("These are facts about your holdings, not advice about what to change.")
         return CopilotMessage(isUser: false, text: sentences.joined(separator: " "), cards: cards)
     }
 
