@@ -240,6 +240,146 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertEqual(Set(refreshed.compactMap { $0["id"] as? String }), Set(original.compactMap { $0["id"] as? String }))
     }
 
+    func testReviewedStockTransferSyncsAcrossSignIn() throws {
+        // Run scripts/snaptrade-positions-fixture.py with STOCK_TRACKER_UI_TEST_API pointing to it.
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_STOCK_TRANSFERS"] == "1",
+                          "Start the stock transfer activity fixture relay")
+        let email = "stock-transfer-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let account = try XCTUnwrap(JSONSerialization.jsonObject(with: signup.data) as? [String: Any])
+        let user = account["user"] as? [String: Any] ?? account
+        let userId = try XCTUnwrap(user["id"] as? String)
+        let token = try signIn(email: email)
+        let sender = UUID().uuidString.lowercased()
+        let receiver = UUID().uuidString.lowercased()
+        let outgoing = "a8cc1385-31a7-4c4d-9955-6789589cc956"
+        let incoming = "0cc77f5f-2b5f-481a-95cb-e44b9c0ad97f"
+        let now = ISO8601DateFormatter().string(from: Date())
+        let holdings = [(sender, outgoing, "CommSec ••••1234"), (receiver, incoming, "CommSec ••••4321")].map { id, accountId, label in
+            ["id": id, "user_id": userId, "asset_symbol": "BHP", "asset_name": "BHP Group",
+             "asset_kind": "Stock", "asset_exchange": "ASX", "shares": 2.25, "avg_cost": 10, "date_added": now,
+             "broker_account": ["account_id": accountId, "label": label, "institution": "CommSec",
+                                "observed_at": now, "tracking": false]] as [String: Any]
+        }
+        XCTAssertEqual(try request("POST", "/rest/v1/portfolio_holdings", body: JSONSerialization.data(withJSONObject: holdings), token: token).status, 201)
+        let snapshot = UUID().uuidString.lowercased()
+        let receipt: [String: Any] = ["id": snapshot, "user_id": userId, "holding_id": receiver, "type": "Buy",
+            "transaction_date": now, "shares": 2.25, "price_per_share": 0, "fees": 0,
+            "trade_provenance": ["source": "broker_position"]]
+        XCTAssertEqual(try request("POST", "/rest/v1/transactions", body: JSONSerialization.data(withJSONObject: receipt), token: token).status, 201)
+
+        func launch() {
+            app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture", "-hasCompletedOnboarding", "YES",
+                "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey, "-UITestSignIn", "\(email):\(password)"]
+            app.launch()
+        }
+        func openLedger() {
+            XCTAssertTrue(app.open("Portfolio"))
+            let transfers = app.descendants(matching: .any)["portfolio.stockTransfers.open"].firstMatch
+            for _ in 0..<7 where !transfers.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(transfers.isHittable)
+            transfers.tap()
+        }
+        func saved() throws -> [[String: Any]] {
+            try rows("portfolio_stock_transfers",
+                     select: "id,shares::text,from_holding_id,to_holding_id,receiving_snapshot_id,statement_reference,snaptrade_reference", token: token)
+        }
+
+        launch()
+        openLedger()
+        let find = app.buttons["portfolio.stockTransfers.find"]
+        XCTAssertTrue(find.waitForExistence(timeout: 12))
+        XCTAssertTrue(find.wait(for: \.isEnabled, toEqual: true, timeout: 12))
+        find.tap()
+        let search = app.buttons["portfolio.stockTransfers.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 8))
+        search.tap()
+        let match = app.buttons["portfolio.stockTransfers.match." + String(repeating: "1", count: 64)]
+        XCTAssertTrue(match.waitForExistence(timeout: 12))
+        match.tap()
+        let save = app.buttons["portfolio.stockTransfers.save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 8))
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertTrue(try saved().isEmpty)
+
+        let position = app.buttons["portfolio.stockTransfers.snapshot"]
+        for _ in 0..<5 where !position.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(position.isHittable)
+        position.tap()
+        let snapshotChoice = app.buttons["portfolio.stockTransfers.snapshot." + snapshot]
+        XCTAssertTrue(snapshotChoice.waitForExistence(timeout: 8))
+        snapshotChoice.tap()
+
+        let confirmation = app.switches["portfolio.stockTransfers.confirm"]
+        for _ in 0..<5 where !confirmation.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(confirmation.isHittable)
+        let toggle = confirmation.switches.firstMatch
+        if toggle.exists {
+            toggle.tap()
+        } else {
+            confirmation.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(save.wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        save.tap()
+
+        var written: [[String: Any]] = []
+        for _ in 0..<12 {
+            written = try saved()
+            if !written.isEmpty { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertEqual(written.count, 1)
+        let transfer = try XCTUnwrap(written.first)
+        let transferId = try XCTUnwrap(transfer["id"] as? String)
+        XCTAssertEqual(transfer["from_holding_id"] as? String, sender)
+        XCTAssertEqual(transfer["to_holding_id"] as? String, receiver)
+        XCTAssertEqual(transfer["receiving_snapshot_id"] as? String, snapshot)
+        XCTAssertEqual(transfer["shares"] as? String, "2.25")
+        let references = try XCTUnwrap(transfer["snaptrade_reference"] as? [String: String])
+        XCTAssertEqual(references["sentId"], String(repeating: "1", count: 64))
+        XCTAssertEqual(references["receivedId"], String(repeating: "2", count: 64))
+
+        app.terminate()
+        launch()
+        openLedger()
+        let row = app.buttons["portfolio.stockTransfers.entry." + transferId]
+        XCTAssertTrue(row.waitForExistence(timeout: 12))
+        XCTAssertTrue(row.label.contains("SnapTrade reference attached"))
+        row.tap()
+        XCTAssertTrue(save.waitForExistence(timeout: 8))
+        let statement = app.textFields["portfolio.stockTransfers.statement"]
+        for _ in 0..<5 where !statement.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(statement.isHittable)
+        statement.tap()
+        statement.typeText("Transfer checked")
+        save.tap()
+        var edited = false
+        for _ in 0..<12 {
+            let records = try saved()
+            if records.first?["statement_reference"] as? String == "Transfer checked" {
+                XCTAssertEqual(records.count, 1)
+                XCTAssertEqual(records.first?["snaptrade_reference"] as? [String: String], references)
+                edited = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertTrue(edited)
+        XCTAssertTrue(row.waitForExistence(timeout: 12))
+        row.swipeLeft()
+        let remove = app.buttons["Remove"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 8))
+        remove.tap()
+        let confirmRemoval = app.buttons["Remove transfer"]
+        XCTAssertTrue(confirmRemoval.waitForExistence(timeout: 8))
+        confirmRemoval.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(try saved().isEmpty)
+    }
+
     func testInternalBrokerCashStaysOutOfPortfolioReturns() throws {
         // Run scripts/snaptrade-positions-fixture.py and set STOCK_TRACKER_UI_TEST_API to its loopback URL.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_INTERNAL_CASH"] == "1",
