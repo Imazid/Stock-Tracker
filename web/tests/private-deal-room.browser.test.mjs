@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { deflateSync } from "node:zlib";
 import { chromium } from "playwright-core";
 
 const {
@@ -10,27 +11,70 @@ const {
   PRIVATE_MARKETS_TEST_DOCUMENT_AI: testDocumentAI,
 } = process.env;
 
-function pdfWithText(first, second) {
-  const stream = (value) => {
-    const body = value ? `BT /F1 12 Tf 72 720 Td (${value}) Tj ET` : "";
-    return `<< /Length ${body.length} >>\nstream\n${body}\nendstream`;
-  };
-  const page = (content) => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents ${content} 0 R >>`;
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
-    page(5), page(6), stream(first), stream(second),
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  let pdf = "%PDF-1.4\n";
+function makePDF(objects) {
+  const parts = [Buffer.from("%PDF-1.4\n")];
+  let size = parts[0].length;
   const offsets = objects.map((object, index) => {
-    const offset = pdf.length;
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    const offset = size;
+    const body = Buffer.concat([Buffer.from(`${index + 1} 0 obj\n`), Buffer.from(object), Buffer.from("\nendobj\n")]);
+    parts.push(body);
+    size += body.length;
     return String(offset).padStart(10, "0") + " 00000 n ";
   });
-  const start = pdf.length;
-  pdf += `xref\n0 8\n0000000000 65535 f \n${offsets.join("\n")}\ntrailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${start}\n%%EOF\n`;
-  return Buffer.from(pdf, "ascii");
+  const count = objects.length + 1;
+  parts.push(Buffer.from(`xref\n0 ${count}\n0000000000 65535 f \n${offsets.join("\n")}\ntrailer\n<< /Size ${count} /Root 1 0 R >>\nstartxref\n${size}\n%%EOF\n`));
+  return Buffer.concat(parts);
+}
+
+function stream(body, properties = "") {
+  return Buffer.concat([
+    Buffer.from(`<< /Length ${body.length} ${properties} >>\nstream\n`),
+    Buffer.from(body),
+    Buffer.from("\nendstream"),
+  ]);
+}
+
+const page = (content, resources) =>
+  `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << ${resources} >> /Contents ${content} 0 R >>`;
+
+function pdfWithText(first, second) {
+  const textStream = (value) => stream(value ? `BT /F1 12 Tf 72 720 Td (${value}) Tj ET` : "");
+  return makePDF([
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    page(5, "/Font << /F1 7 0 R >>"), page(6, "/Font << /F1 7 0 R >>"),
+    textStream(first), textStream(second),
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ]);
+}
+
+async function pdfWithScan(browserPage) {
+  const width = 1000;
+  const height = 280;
+  const pixels = await browserPage.evaluate(({ width, height }) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "black";
+    ctx.font = "38px Arial";
+    ctx.fillText("The scanned statement reports a pending review.", 35, 90);
+    ctx.fillText("The sample portfolio contains three positions.", 35, 150);
+    const rgba = ctx.getImageData(0, 0, width, height).data;
+    return Array.from({ length: width * height }, (_, index) => rgba[index * 4]);
+  }, { width, height });
+  return makePDF([
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    page(5, "/Font << /F1 7 0 R >>"), page(6, "/XObject << /Scan 8 0 R >>"),
+    stream("BT /F1 12 Tf 72 720 Td (Report cover) Tj ET"),
+    stream("q 560 0 0 156.8 26 540 cm /Scan Do Q"),
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    stream(deflateSync(Buffer.from(pixels)),
+      `/Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode`),
+  ]);
 }
 
 test("Deal Room requires permission to save and keeps private excerpts account-scoped", {
@@ -60,6 +104,8 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
   }
   try {
     const owner = await signIn(email, password);
+    const browserErrors = [];
+    owner.on("pageerror", (error) => browserErrors.push(error.message));
     const save = owner.getByRole("button", { name: "Save excerpt", exact: true });
     const titleField = owner.getByLabel("Excerpt title");
     const draft = owner.getByLabel("Reviewed excerpt");
@@ -73,7 +119,7 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     const chooser = owner.waitForEvent("filechooser");
     await importButton.click();
     await (await chooser).setFiles({ name: "long.txt", mimeType: "text/plain", buffer: Buffer.from("é".repeat(4_499) + "📈more") });
-    await owner.getByText("Imported the beginning of the file.", { exact: false }).waitFor();
+    await owner.getByText("Only part of the file was imported.", { exact: false }).waitFor();
     assert.equal(await draft.inputValue(), "é".repeat(4_499));
     assert.equal(await titleField.inputValue(), "long");
     assert.ok(await save.isDisabled());
@@ -84,7 +130,7 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     assert.equal(await draft.inputValue(), "é".repeat(4_499));
 
     await upload.setInputFiles({ name: "empty.pdf", mimeType: "application/pdf", buffer: pdfWithText("", "") });
-    await owner.getByText("This PDF has no selectable text.", { exact: false }).waitFor();
+    await owner.getByText("This PDF has no readable text.", { exact: false }).waitFor();
     assert.equal(await draft.inputValue(), "é".repeat(4_499));
 
     const importPDF = {
@@ -99,6 +145,44 @@ test("Deal Room requires permission to save and keeps private excerpts account-s
     assert.ok(await save.isDisabled());
     assert.equal(submissions.length, 0);
 
+    await permission.check();
+    const scanned = { name: "Scanned fund statement.pdf", mimeType: "application/pdf", buffer: await pdfWithScan(owner) };
+    const languagePath = new URL("/api/private-markets/ocr/eng.traineddata.gz", origin).href;
+    let allowData;
+    const waitingForCancel = new Promise((resume) => { allowData = resume; });
+    const delayLanguage = async (route) => {
+      await waitingForCancel;
+      await route.continue();
+    };
+    await owner.route(languagePath, delayLanguage);
+    try {
+      await upload.setInputFiles(scanned);
+      await owner.getByText("Reading scanned pages…", { exact: true }).waitFor();
+      await owner.getByRole("button", { name: "Cancel import", exact: true }).click();
+      assert.equal(await titleField.inputValue(), title);
+      assert.match(await draft.inputValue(), /^\[Page 1\]\nThe fund statement records/);
+    } finally {
+      allowData();
+      await owner.unroute(languagePath, delayLanguage);
+    }
+
+    const scanRequests = [];
+    const trackScan = (request) => scanRequests.push([request.method(), new URL(request.url())]);
+    owner.on("request", trackScan);
+    await upload.setInputFiles(scanned);
+    await owner.getByText("Check the recognized text against the scan before saving.", { exact: true }).waitFor();
+    owner.off("request", trackScan);
+    assert.match(await draft.inputValue(), /^\[Page 1\]\nReport cover\n\n\[Page 2\]\nThe scanned statement reports a pending review\./);
+    assert.match(await draft.inputValue(), /The sample portfolio contains three positions\./);
+    assert.ok(scanRequests.some(([method, url]) => method === "GET" && url.href === languagePath));
+    assert.ok(scanRequests.some(([method, url]) => method === "GET" && url.pathname.includes("tesseract-core")));
+    assert.ok(scanRequests.every(([method, url]) => method === "GET" && url.origin === origin));
+    assert.deepEqual(browserErrors, []);
+    assert.ok(await save.isDisabled());
+    assert.equal(submissions.length, 0);
+
+    await upload.setInputFiles(importPDF);
+    await owner.getByText("Review and edit the extracted text before saving.", { exact: true }).waitFor();
     await permission.check();
     await draft.fill(excerpt + " Updated.");
     assert.ok(await save.isDisabled());

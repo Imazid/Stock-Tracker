@@ -27,7 +27,8 @@ export function DealRoom({ owner }: { owner: string }) {
   const [title, setTitle] = useState("");
   const [excerpt, setExcerpt] = useState("");
   const [authorized, setAuthorized] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [importPhase, setImportPhase] = useState<"reading" | "scanning">();
+  const importing = importPhase !== undefined;
   const [importStatus, setImportStatus] = useState<{ message: string; error?: boolean }>();
   useEffect(() => () => importRequest.current?.abort(), []);
   const [opened, setOpened] = useState<string | null>(null);
@@ -68,18 +69,19 @@ export function DealRoom({ owner }: { owner: string }) {
     if (save.isPending || importRequest.current) return;
     const controller = new AbortController();
     importRequest.current = controller;
-    setImporting(true);
+    setImportPhase("reading");
     setImportStatus(undefined);
     try {
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-      const result = await extractExcerpt(file, signal);
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+      const result = await extractExcerpt(file, signal, () => setImportPhase("scanning"));
       if (controller.signal.aborted) return;
       setTitle(result.title);
       setExcerpt(result.text);
       revise();
-      setImportStatus({ message: result.limited
-        ? "Imported the beginning of the file. Review and edit the excerpt before saving."
-        : "Review and edit the extracted text before saving." });
+      const review = result.usedOCR
+        ? "Check the recognized text against the scan before saving."
+        : "Review and edit the extracted text before saving.";
+      setImportStatus({ message: result.limited ? "Only part of the file was imported. " + review : review });
     } catch (error) {
       if (!controller.signal.aborted) setImportStatus({ error: true, message: error instanceof Error && error.name === "Error"
         ? error.message
@@ -87,9 +89,15 @@ export function DealRoom({ owner }: { owner: string }) {
     } finally {
       if (importRequest.current === controller) {
         importRequest.current = null;
-        if (!controller.signal.aborted) setImporting(false);
+        if (!controller.signal.aborted) setImportPhase(undefined);
       }
     }
+  }
+
+  function cancelImport() {
+    importRequest.current?.abort();
+    importRequest.current = null;
+    setImportPhase(undefined);
   }
 
   function revise() {
@@ -113,8 +121,13 @@ export function DealRoom({ owner }: { owner: string }) {
             }} />
           <Button size="sm" aria-controls={fileID} disabled={importing || save.isPending}
             onClick={() => fileInput.current?.click()}>Extract text from a file</Button>
-          <p className="text-xs text-text-3">PDF or UTF-8 text up to 10 MB. Extraction runs in your browser.</p>
-          {importing && <p role="status" className="text-sm text-text-2">Extracting text…</p>}
+          <p className="text-xs text-text-3">PDF or UTF-8 text up to 10 MB. Your browser can read English scans.</p>
+          {importing && <div className="flex flex-wrap items-center gap-2">
+            <p role="status" className="text-sm text-text-2">
+              {importPhase === "scanning" ? "Reading scanned pages…" : "Extracting text…"}
+            </p>
+            <Button size="sm" variant="ghost" onClick={cancelImport}>Cancel import</Button>
+          </div>}
           {importStatus && (importStatus.error
             ? <Notice tone="down">{importStatus.message}</Notice>
             : <p role="status" className="text-sm text-text-2">{importStatus.message}</p>)}
