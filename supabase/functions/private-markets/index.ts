@@ -65,10 +65,27 @@ type CatalogDeal = {
   };
 };
 
-function dealEvidence(deal: CatalogDeal): string {
+type ReportFact = { label: string; value: string };
+
+const amountFormat = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 4 });
+function reportedAmount(currency: string, amount: number) {
+  return `${currency} ${amountFormat.format(amount)}`;
+}
+
+function roundFacts(deal: CatalogDeal): ReportFact[] {
+  const round = deal.round;
+  const items: [string, number | null][] = [
+    ["Minimum investment", deal.minimum], ["Raised", round.raised], ["Raise target", round.target],
+    ["Reported valuation", round.valuation],
+  ];
+  return items.flatMap(([label, amount]) =>
+    amount === null ? [] : [{ label, value: reportedAmount(round.currency, amount) }]
+  );
+}
+
+function dealEvidence(deal: CatalogDeal, facts: ReportFact[]): string {
   const { round } = deal;
-  const { company, currency } = round;
-  const money = (label: string, value: number | null) => value === null ? undefined : `${label}: ${currency} ${value}`;
+  const { company } = round;
   return [
     `Company: ${company.name}`,
     `Sector: ${company.sector}; country: ${company.country}`,
@@ -77,8 +94,7 @@ function dealEvidence(deal: CatalogDeal): string {
     `Source verified: ${deal.verified_at}`,
     round.closes_at && `Published deadline: ${round.closes_at}`,
     `Provider: ${deal.provider}; category: ${deal.category}`,
-    money("Minimum", deal.minimum), money("Raised", round.raised), money("Target", round.target),
-    money("Valuation", round.valuation),
+    ...facts.map(({ label, value }) => `${label}: ${value}`),
     round.valuation_method && `Valuation method: ${round.valuation_method}`,
     `Eligibility: ${deal.eligibility}; jurisdictions: ${deal.jurisdictions.join(", ")}`,
     company.description, round.traction,
@@ -89,19 +105,18 @@ function dealEvidence(deal: CatalogDeal): string {
 const disclosureDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 const disclosureMonth = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
-function financialEvidence(record: CompanyFinancials): string[] {
+function financialFacts(record: CompanyFinancials): ReportFact[] {
   const period = record.period_kind === "financial_year"
     ? `year ended ${disclosureDate.format(new Date(record.period_end_on))}`
     : `snapshot for ${disclosureMonth.format(new Date(record.period_end_on))}`;
   const assurance = record.assurance === "audited" ? "Audited financial statements" : "Issuer-reported figures";
-  const format = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 4 });
   const fields: [string, number | null][] = [
     ["Revenue", record.revenue], ["Annual recurring revenue", record.annual_recurring_revenue],
     ["Net profit or loss", record.net_profit_loss], ["Net operating cash flow", record.operating_cash_flow],
     ["Cash and cash equivalents", record.cash_and_equivalents],
   ];
   return fields.flatMap(([label, amount]) => amount === null ? [] : [
-    `${assurance}, ${period}: ${label} ${record.currency} ${format.format(amount)}.`,
+    { label: `${assurance}, ${period}: ${label}`, value: reportedAmount(record.currency, amount) },
   ]);
 }
 
@@ -174,6 +189,7 @@ type PublishedUpdate = Announcement & {
 };
 
 type ReportSource = { id: string; title: string; url?: string };
+type ReportFactGroup = { source: string; title: string; entries: ReportFact[] };
 type SourceReferences = { document_ids: string[]; opportunity_ids: string[]; announcement_ids: string[]; company_ids: string[];
   revisions?: Record<string, string>; baselines?: Record<string, SourceBaseline> };
 type StoredReport = { question: string; source_refs?: SourceReferences } & Record<string, unknown>;
@@ -765,6 +781,7 @@ Deno.serve(async (req) => {
         const keyring = await keys();
         const evidence: Evidence[] = [];
         const sources: ReportSource[] = [];
+        const reportedFacts: ReportFactGroup[] = [];
         const companyIds = new Set<string>();
         const revisions: Record<string, string> = {};
         const baselines: Record<string, SourceBaseline> = {};
@@ -795,8 +812,11 @@ Deno.serve(async (req) => {
             companyIds.add(deal.round.company.id);
             const id = `O${sources.length + 1}`;
             const company = deal.round.company.name;
-            evidence.push({ id, title: company, text: dealEvidence(deal) });
-            sources.push({ id, title: company, url: deal.source_url });
+            const roundTitle = `${company} · ${deal.round.stage}`;
+            const facts = roundFacts(deal);
+            evidence.push({ id, title: roundTitle, text: dealEvidence(deal, facts) });
+            sources.push({ id, title: roundTitle, url: deal.source_url });
+            if (facts.length) reportedFacts.push({ source: id, title: roundTitle, entries: facts });
             if (deal.round.listing) {
               const { exchange, symbol, quotation_status, expected_offer_close_on, quotation_on, source_url, verified_at } = deal.round.listing;
               const id = `O${sources.length + 1}`;
@@ -820,9 +840,12 @@ Deno.serve(async (req) => {
                 const id = `O${sources.length + 1}`;
                 const title = `${company} financial disclosure`;
                 const reported = disclosureDate.format(new Date(records[0].published_on));
-                const text = [`Company: ${company}`, `Disclosure published: ${reported}`, ...records.flatMap(financialEvidence)].join("\n");
+                const facts = records.flatMap(financialFacts);
+                const text = [`Company: ${company}`, `Disclosure published: ${reported}`,
+                  ...facts.map(({ label, value }) => `${label} ${value}.`)].join("\n");
                 evidence.push({ id, title, text });
                 sources.push({ id, title, url });
+                if (facts.length) reportedFacts.push({ source: id, title, entries: facts });
               }
             }
           }
@@ -863,7 +886,7 @@ Deno.serve(async (req) => {
             const report = await buildResearch(userId, researchQuestion, evidence, mode, deps);
             const source_refs: SourceReferences = { document_ids: ids, opportunity_ids: dealIDs,
               announcement_ids: announcementIDs, company_ids: [...companyIds], revisions, baselines };
-            const payload = { ...report, id: runId, sources, source_refs, question,
+            const payload = { ...report, id: runId, sources, source_refs, question, reported_facts: reportedFacts,
               previous_report_id: typeof previousId === "string" ? previousId.toLowerCase() : undefined,
               created_at: new Date().toISOString() };
             const sealed = await seal(keyring, JSON.stringify(payload), context("report", userId, runId));

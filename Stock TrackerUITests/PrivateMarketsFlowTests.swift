@@ -997,6 +997,26 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSavedResearchShowsReportedRoundFigures() throws {
+        try launchWithLocalSession("PRIVATE_REPORTED_FIGURES_TEST_SESSION")
+        openPrivateMarkets()
+        let destination = app.buttons["private.destination.sparkles"]
+        let saved = app.buttons["Reported funding evidence"]
+        for _ in 0..<3 where !saved.isHittable {
+            if destination.isHittable { destination.tap() }
+            for _ in 0..<3 where !saved.isHittable { app.swipeUp() }
+        }
+        XCTAssertTrue(saved.isHittable, app.debugDescription)
+        saved.tap()
+        XCTAssertTrue(app.navigationBars["Research Answer"].waitForExistence(timeout: 8))
+        let valuation = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "USD 900,000,000")).firstMatch
+        for _ in 0..<3 where !valuation.isHittable { app.swipeUp() }
+        XCTAssertTrue(valuation.isHittable, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Reported figures"].exists)
+        XCTAssertTrue(app.buttons["Read original source"].firstMatch.exists)
+    }
+
+    @MainActor
     func testSavedResearchCanReviewNewSources() async throws {
         try launchWithLocalSession("PRIVATE_REPORT_REFRESH_TEST_SESSION")
         openPrivateMarkets()

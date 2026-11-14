@@ -204,10 +204,21 @@ struct PrivateResearchReport: Decodable {
         let base: String?
         let bear: String?
     }
+    struct ReportedFacts: Decodable, Identifiable {
+        struct Entry: Decodable {
+            let label: String
+            let value: String
+        }
+        var id: String { source }
+        let source: String
+        let title: String
+        let entries: [Entry]
+    }
     let id: UUID
     let createdAt: Date
     let question: String
     let sources: [Source]
+    let reportedFacts: [ReportedFacts]?
     let refreshAvailable: Bool?
     let previousReportId: UUID?
     let findings: [Finding]

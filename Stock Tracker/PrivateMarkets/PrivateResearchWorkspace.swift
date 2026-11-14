@@ -418,6 +418,24 @@ private struct PrivateReportView: View {
                     NavigationLink("Open previous report") { PrivateSavedReportView(id: previous, owner: owner) }
                 }
             }
+            if let facts = report.reportedFacts, !facts.isEmpty {
+                Section("Reported figures") {
+                    ForEach(facts) { group in
+                        VStack(alignment: .leading, spacing: DS.Space.s) {
+                            Text(group.title)
+                                .font(.subheadline.weight(.semibold))
+                                .accessibilityAddTraits(.isHeader)
+                            ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
+                                LabeledContent(entry.label, value: entry.value)
+                            }
+                            if let url = report.sources.first(where: { $0.id == group.source })?.url, url.privateSourceIsSafe {
+                                Link("Read original source", destination: url)
+                            }
+                        }
+                    }
+                }
+                .accessibilityIdentifier("private.research.reportedFacts")
+            }
             if let committee = report.committee {
                 section(committee)
                 Section {
