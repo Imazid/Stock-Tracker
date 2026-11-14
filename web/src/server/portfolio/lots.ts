@@ -1,18 +1,21 @@
 import type { TransactionRow } from "./transactions.ts";
 import { fractionalShareCash, type StockSplit } from "../../lib/portfolio-splits.ts";
 import { matchesReceivingSnapshot, sameListedStock, sydneyDate, type StockTransfer } from "../../lib/portfolio-transfers.ts";
+import { distinctSpinOffHoldings, matchesSpinOffSnapshot, spinOffPercent, type StockSpinOff } from "../../lib/portfolio-spin-offs.ts";
 import { lotUnits as scaled, UNIT_SCALE } from "../../lib/lot-numbers.ts";
 
 export { UNIT_DECIMALS } from "../../lib/lot-numbers.ts";
 
 type Amounts = { gross?: bigint; fee?: bigint };
-type Lot = { purchase: TransactionRow; units: bigint; usd: Amounts; aud: Amounts; transfers?: string[] };
+type Lot = { purchase: TransactionRow; units: bigint; usd: Amounts; aud: Amounts; transfers?: string[]; spinOffs?: string[]; allottedOn?: string };
 type Holding = { lots: Lot[]; next: number; invalid: boolean };
 type TradeLotRow = {
   kind: "Sale match" | "Unmatched sale" | "Open lot" | "Archived holding lot" | "Invalid transaction" | "Position record";
   transaction: TransactionRow;
   purchase?: TransactionRow;
   transfers?: string[];
+  spinOffs?: string[];
+  allottedOn?: string;
   units?: bigint;
   purchaseCost?: bigint;
   purchaseFee?: bigint;
@@ -36,7 +39,15 @@ type TransferRow = {
   aud?: Amounts;
   note: string;
 };
-export type LotRow = TradeLotRow | TransferRow | { kind: "Stock split" | "Reverse stock split"; split: StockSplit; note: string };
+type SpinOffRow = {
+  kind: "Stock spin-off" | "Unreconciled spin-off";
+  spinOff: StockSpinOff;
+  purchases?: TransactionRow[];
+  usd?: Amounts;
+  aud?: Amounts;
+  note: string;
+};
+export type LotRow = TradeLotRow | TransferRow | SpinOffRow | { kind: "Stock split" | "Reverse stock split"; split: StockSplit; note: string };
 
 export { sydneyDate } from "../../lib/portfolio-transfers.ts";
 
@@ -88,6 +99,17 @@ function takeAmounts(amounts: Amounts, taken: bigint, remaining: bigint): Amount
   return { gross, fee };
 }
 
+function allocateBasis(amounts: Amounts, percent: bigint, scale: bigint): Amounts {
+  const original = { ...amounts };
+  const allocated = takeAmounts(amounts, percent, scale);
+  if (original.gross !== undefined && original.fee !== undefined && allocated.fee !== undefined) {
+    const total = roundedDivide((original.gross + original.fee) * percent, scale);
+    allocated.gross = total - allocated.fee;
+    amounts.gross = original.gross - allocated.gross;
+  }
+  return allocated;
+}
+
 function result(purchase: Amounts, sale: Amounts) {
   if (purchase.gross === undefined || purchase.fee === undefined || sale.gross === undefined || sale.fee === undefined) return undefined;
   return sale.gross - sale.fee - purchase.gross - purchase.fee;
@@ -132,29 +154,76 @@ function commonDivisor(a: bigint, b: bigint): bigint {
 
 export function calculateLots(transactions: TransactionRow[], start?: string, end?: string, audRates?: ReadonlyMap<string, string>): TradeLotRow[];
 export function calculateLots(transactions: TransactionRow[], start: string | undefined, end: string | undefined,
-  audRates: ReadonlyMap<string, string> | undefined, splits: readonly StockSplit[]): Exclude<LotRow, TransferRow>[];
+  audRates: ReadonlyMap<string, string> | undefined, splits: readonly StockSplit[]): Exclude<LotRow, TransferRow | SpinOffRow>[];
 export function calculateLots(transactions: TransactionRow[], start: string | undefined, end: string | undefined,
-  audRates: ReadonlyMap<string, string> | undefined, splits: readonly StockSplit[], transfers: readonly StockTransfer[]): LotRow[];
+  audRates: ReadonlyMap<string, string> | undefined, splits: readonly StockSplit[], transfers: readonly StockTransfer[]): Exclude<LotRow, SpinOffRow>[];
+export function calculateLots(transactions: TransactionRow[], start: string | undefined, end: string | undefined,
+  audRates: ReadonlyMap<string, string> | undefined, splits: readonly StockSplit[], transfers: readonly StockTransfer[],
+  spinOffs: readonly StockSpinOff[]): LotRow[];
 export function calculateLots(transactions: TransactionRow[], start?: string, end?: string, audRates?: ReadonlyMap<string, string>,
-  splits: readonly StockSplit[] = [], transfers: readonly StockTransfer[] = []): LotRow[] {
+  splits: readonly StockSplit[] = [], transfers: readonly StockTransfer[] = [], spinOffs: readonly StockSpinOff[] = []): LotRow[] {
   const rows: LotRow[] = [];
   const holdings = new Map<string, Holding>();
   const datedTransfers = transfers.filter((transfer) => !end || transfer.sent_on <= end);
-  const validSnapshots = new Set<string>();
+  const datedSpinOffs = spinOffs.filter((action) => !end || action.effective_on <= end);
+  const snapshotOwners = new Map<string, string[]>();
   const unsafeTransfers = new Set<string>();
+  const unsafeSpinOffs = new Set<string>();
+  function claimSnapshot(id: string, actionId: string) {
+    const owners = snapshotOwners.get(id) ?? [];
+    owners.push(actionId);
+    snapshotOwners.set(id, owners);
+  }
   for (const transfer of datedTransfers) {
     if (!transfer.receiving_snapshot_id) continue;
     const snapshot = transfer.receiving_snapshot;
     if (snapshot?.id === transfer.receiving_snapshot_id && matchesReceivingSnapshot(transfer, sydneyDate(snapshot.transaction_date)) &&
         scaled(snapshot.shares) === scaled(transfer.shares)) {
-      validSnapshots.add(snapshot.id);
+      claimSnapshot(snapshot.id, transfer.id);
     } else {
       unsafeTransfers.add(transfer.id);
     }
   }
+  const positionSnapshots = new Map<string, TransactionRow[]>();
+  if (datedSpinOffs.length) for (const transaction of transactions) {
+    if (transaction.trade_provenance?.source !== "broker_position" && transaction.trade_provenance?.source !== "csv_position") continue;
+    const snapshots = positionSnapshots.get(transaction.holding_id) ?? [];
+    snapshots.push(transaction);
+    positionSnapshots.set(transaction.holding_id, snapshots);
+  }
+  for (const action of datedSpinOffs) {
+    if (!action.child_snapshot_id) {
+      if (positionSnapshots.get(action.child_holding_id)?.some((transaction) => {
+        const date = sydneyDate(transaction.transaction_date);
+        return date && date >= action.effective_on && (!end || date <= end) && transaction.type === "Buy" &&
+          scaled(transaction.shares) === scaled(action.child_shares);
+      })) unsafeSpinOffs.add(action.id);
+      continue;
+    }
+    const snapshot = action.child_snapshot;
+    if (snapshot?.id === action.child_snapshot_id && matchesSpinOffSnapshot(snapshot, action.child_holding_id, action.effective_on, action.child_shares)) {
+      claimSnapshot(snapshot.id, action.id);
+    } else {
+      unsafeSpinOffs.add(action.id);
+    }
+  }
+  const validSnapshots = new Set<string>();
+  for (const [id, owners] of snapshotOwners) {
+    if (owners.length === 1) validSnapshots.add(id);
+    else for (const owner of owners) {
+      unsafeSpinOffs.add(owner);
+      unsafeTransfers.add(owner);
+    }
+  }
   const sorted = transactions.filter((transaction) => !validSnapshots.has(transaction.id))
     .map(datedTransaction).sort(compareTransactions);
-  const tradeOrder = new Map(sorted.map(({ transaction }, index) => [transaction.id, index]));
+  const tradeOrder = new Map(sorted.map(({ transaction, date }, index) => [transaction.id, { index, date }]));
+  function compareLots(a: Lot, b: Lot) {
+    const aOrder = tradeOrder.get(a.purchase.id)!;
+    const bOrder = tradeOrder.get(b.purchase.id)!;
+    return (a.allottedOn ?? aOrder.date ?? "").localeCompare(b.allottedOn ?? bOrder.date ?? "") ||
+      Number(Boolean(b.allottedOn)) - Number(Boolean(a.allottedOn)) || aOrder.index - bOrder.index;
+  }
   const datedSplits = splits.filter((split) => !end || split.effective_date <= end)
     .sort((a, b) => a.effective_date.localeCompare(b.effective_date) || a.id.localeCompare(b.id));
   // A common integer unit per holding makes ratios such as 1 for 3 exact
@@ -178,13 +247,14 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       applyFractionalCash(split, postSplitFactor);
     }
   }
-  const transferDays = new Map<string, { arrivals: StockTransfer[]; departures: StockTransfer[] }>();
+  type DayActions = { arrivals: StockTransfer[]; departures: StockTransfer[]; spinOffs: StockSpinOff[] };
+  const actionDays = new Map<string, DayActions>();
   const stockHoldings = new Map<string, TransactionRow["portfolio_holdings"]>();
   const inTransit = new Map<string, { lots: Lot[]; factor: bigint }>();
 
   function eventsOn(day: string) {
-    const events = transferDays.get(day) ?? { arrivals: [], departures: [] };
-    transferDays.set(day, events);
+    const events = actionDays.get(day) ?? { arrivals: [], departures: [], spinOffs: [] };
+    actionDays.set(day, events);
     return events;
   }
 
@@ -195,6 +265,12 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     }
     stockHoldings.set(transfer.from_holding_id, transfer.source);
     stockHoldings.set(transfer.to_holding_id, transfer.destination);
+  }
+
+  for (const action of datedSpinOffs) {
+    eventsOn(action.effective_on).spinOffs.push(action);
+    stockHoldings.set(action.parent_holding_id, action.parent);
+    stockHoldings.set(action.child_holding_id, action.child);
   }
 
   function holdingFor(id: string) {
@@ -246,7 +322,7 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
         const usdResult = result(purchase, sale);
         rows.push({
           kind: usdResult !== undefined ? "Sale match" : "Unmatched sale", transaction, purchase: lot.purchase, units,
-          transfers: lot.transfers,
+          transfers: lot.transfers, spinOffs: lot.spinOffs, allottedOn: lot.allottedOn,
           purchaseCost: purchase.gross, purchaseFee: purchase.fee, saleProceeds: sale.gross, saleFee: sale.fee, result: usdResult,
           aud: { purchaseCost: audPurchase.gross, purchaseFee: audPurchase.fee, saleProceeds: audSale.gross,
             saleFee: audSale.fee, result: result(audPurchase, audSale) },
@@ -283,7 +359,7 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     }
     for (const lot of shipment.lots) lot.units *= factor / shipment.factor;
     destination.lots = destination.lots.slice(destination.next).concat(shipment.lots)
-      .sort((a, b) => tradeOrder.get(a.purchase.id)! - tradeOrder.get(b.purchase.id)!);
+      .sort(compareLots);
     destination.next = 0;
     inTransit.delete(transfer.id);
   }
@@ -301,6 +377,11 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
       flagTransfer(transfer, "A split occurred while these shares were in transit. Reconcile the quantity with both statements.");
       return;
     }
+    if (datedSpinOffs.some((action) => [transfer.from_holding_id, transfer.to_holding_id].includes(action.parent_holding_id) &&
+        action.effective_on > transfer.sent_on && action.effective_on <= transfer.received_on)) {
+      flagTransfer(transfer, "A spin-off occurred while these shares were in transit. Check which account received the allotment.");
+      return;
+    }
     const factor = factors.get(transfer.from_holding_id) ?? 1n;
     let remaining = shares * factor;
     const available = source.lots.slice(source.next).reduce((sum, lot) => sum + lot.units, 0n);
@@ -312,7 +393,7 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     while (remaining > 0n) {
       const lot = source.lots[source.next];
       const units = remaining < lot.units ? remaining : lot.units;
-      moved.push({ purchase: lot.purchase, units, usd: takeAmounts(lot.usd, units, lot.units),
+      moved.push({ ...lot, units, usd: takeAmounts(lot.usd, units, lot.units),
         aud: takeAmounts(lot.aud, units, lot.units), transfers: [...(lot.transfers ?? []), transfer.id] });
       remaining -= units;
       lot.units -= units;
@@ -329,23 +410,102 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     });
   }
 
-  const transferDates = [...transferDays.keys()].sort();
-  let nextTransferDay = 0;
-  function applyTransfersBefore(through: string) {
-    while (nextTransferDay < transferDates.length && transferDates[nextTransferDay] < through) {
-      const day = transferDates[nextTransferDay++];
-      applySplits(day);
-      const events = transferDays.get(day)!;
-      for (const transfer of events.arrivals.sort((a, b) => a.id.localeCompare(b.id))) receive(transfer);
-      for (const transfer of events.departures.sort((a, b) => a.same_day_order - b.same_day_order || a.id.localeCompare(b.id))) dispatch(transfer);
+  function applySpinOff(action: StockSpinOff, conflicts: boolean) {
+    const parent = holdingFor(action.parent_holding_id);
+    const child = holdingFor(action.child_holding_id);
+    const lots = parent.lots.slice(parent.next);
+    const total = lots.reduce((sum, lot) => sum + lot.units, 0n);
+    const parentShares = scaled(action.parent_shares);
+    const childShares = scaled(action.child_shares);
+    const usdPercent = spinOffPercent(action.child_basis_pct_usd);
+    const audPercent = spinOffPercent(action.child_basis_pct_aud);
+    const percentScale = UNIT_SCALE * 100n;
+    if (conflicts || unsafeSpinOffs.has(action.id) || !distinctSpinOffHoldings(action.parent, action.child) ||
+        parent.invalid || child.invalid || !parentShares || !childShares || (!usdPercent && !audPercent) ||
+        roundedDivide(total, factors.get(action.parent_holding_id) ?? 1n) !== parentShares) {
+      parent.invalid = true;
+      child.invalid = true;
+      rows.push({ kind: "Unreconciled spin-off", spinOff: action,
+        note: conflicts ? "More than one spin-off affects a holding on this date. Check the action order and combined basis."
+          : "Check the stock listings, parent quantity before the allotment, earlier lots and the child position snapshot." });
+      return;
     }
+    const oldChildFactor = factors.get(action.child_holding_id) ?? 1n;
+    const multiplier = total / commonDivisor(total, childShares * oldChildFactor);
+    const childFactor = oldChildFactor * multiplier;
+    factors.set(action.child_holding_id, childFactor);
+    if (multiplier > 1n) for (const lot of child.lots) lot.units *= multiplier;
+
+    const totalChildUnits = childShares * childFactor;
+    const average = action.average_aud_basis && audPercent ? sumAmounts(lots, "aud") : undefined;
+    const averageChild = average && audPercent ? allocateBasis(average, audPercent, percentScale) : undefined;
+    let previousUnits = 0n;
+    // Allocate each averaged pool cumulatively so both sides keep their full
+    // cents and a rounding remainder never becomes dependent on later sales.
+    function averagedPart(pool: Amounts, until: bigint): Amounts {
+      const part = (amount?: bigint) => amount === undefined ? undefined
+        : roundedDivide(amount * until, total) - roundedDivide(amount * previousUnits, total);
+      return { gross: part(pool.gross), fee: part(pool.fee) };
+    }
+    const allotted = lots.map((lot): Lot => {
+      const until = previousUnits + lot.units;
+      const usd = usdPercent ? allocateBasis(lot.usd, usdPercent, percentScale) : {};
+      if (!usdPercent) lot.usd = {};
+      const aud = averageChild ? averagedPart(averageChild, until) : audPercent ? allocateBasis(lot.aud, audPercent, percentScale) : {};
+      if (average) lot.aud = averagedPart(average, until);
+      else if (!audPercent) lot.aud = {};
+      previousUnits = until;
+      lot.spinOffs = [...(lot.spinOffs ?? []), action.id];
+      return { ...lot, units: totalChildUnits * lot.units / total, usd, aud, allottedOn: action.effective_on };
+    });
+    child.lots = child.lots.slice(child.next).concat(allotted).sort(compareLots);
+    child.next = 0;
+    const usd = sumAmounts(allotted, "usd");
+    const aud = sumAmounts(allotted, "aud");
+    const missingBasis = (usdPercent && (usd.gross === undefined || usd.fee === undefined)) ||
+      (audPercent && (aud.gross === undefined || aud.fee === undefined));
+    rows.push({ kind: "Stock spin-off", spinOff: action, purchases: lots.map((lot) => lot.purchase), usd, aud,
+      note: missingBasis ? "Shares were allotted. Some original acquisition amounts are missing. Review the basis before using later matches."
+        : "Original costs and fees were apportioned without a sale. Check the allocation method and dates against your source." });
   }
 
+  const actionDates = [...actionDays.keys()].sort();
+  let nextActionDay = 0;
+  let pendingTransfers: DayActions | undefined;
+  function finishTransfers() {
+    if (!pendingTransfers) return;
+    for (const transfer of pendingTransfers.arrivals.sort((a, b) => a.id.localeCompare(b.id))) receive(transfer);
+    for (const transfer of pendingTransfers.departures.sort((a, b) =>
+      a.same_day_order - b.same_day_order || a.id.localeCompare(b.id))) dispatch(transfer);
+    pendingTransfers = undefined;
+  }
+
+  function applyActions(through: string) {
+    while (nextActionDay < actionDates.length && actionDates[nextActionDay] <= through) {
+      const day = actionDates[nextActionDay++];
+      finishTransfers();
+      applySplits(day);
+      const events = actionDays.get(day)!;
+      const counts = new Map<string, number>();
+      for (const action of events.spinOffs) {
+        for (const id of [action.parent_holding_id, action.child_holding_id]) counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+      for (const action of events.spinOffs) {
+        applySpinOff(action, counts.get(action.parent_holding_id)! > 1 || counts.get(action.child_holding_id)! > 1);
+      }
+      pendingTransfers = events;
+      if (day < through) finishTransfers();
+    }
+    applySplits(through);
+  }
+
+  let processingDay: string | null = null;
   for (const { transaction, date } of sorted) {
     if (date && end && date > end) continue;
-    if (date) {
-      applyTransfersBefore(date);
-      applySplits(date);
+    if (date && date !== processingDay) {
+      finishTransfers();
+      applyActions(date);
+      processingDay = date;
     }
     const holding = holdingFor(transaction.holding_id);
     const visible = date && (!start || date >= start);
@@ -401,7 +561,7 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
         const knownReinvestment = lot.purchase.reinvestment !== undefined;
         rows.push({
           kind: usdResult !== undefined || knownReinvestment ? "Sale match" : "Unmatched sale", transaction, purchase: lot.purchase,
-          units: displayed, transfers: lot.transfers,
+          units: displayed, transfers: lot.transfers, spinOffs: lot.spinOffs, allottedOn: lot.allottedOn,
           purchaseCost: purchase.gross, purchaseFee: purchase.fee, saleProceeds: sale.gross, saleFee: sale.fee,
           result: usdResult, note: knownReinvestment && usdResult === undefined
             ? "The statement does not have a USD basis for these reinvested shares."
@@ -424,19 +584,20 @@ export function calculateLots(transactions: TransactionRow[], start?: string, en
     }
   }
 
-  applyTransfersBefore("9999-01-01");
-  applySplits(end ?? "9998-12-31");
+  finishTransfers();
+  applyActions(end ?? "9998-12-31");
+  finishTransfers();
   for (const [holdingId, { lots, next, invalid }] of holdings) {
     if (invalid) continue;
     for (const lot of lots.slice(next)) {
       const holding = stockHoldings.get(holdingId) ?? lot.purchase.portfolio_holdings;
       const archived = holding?.deleted_at;
-      const transaction = lot.transfers ? { ...lot.purchase, holding_id: holdingId, portfolio_holdings: holding } : lot.purchase;
+      const transaction = lot.transfers || lot.allottedOn ? { ...lot.purchase, holding_id: holdingId, portfolio_holdings: holding } : lot.purchase;
       const archiveDate = archived && sydneyDate(archived);
       const needsReview = archiveDate && (!end || archiveDate <= end);
       rows.push({
         kind: lot.usd.gross === undefined && !lot.purchase.reinvestment ? "Position record" : needsReview ? "Archived holding lot" : "Open lot",
-        transaction, purchase: lot.purchase, transfers: lot.transfers,
+        transaction, purchase: lot.purchase, transfers: lot.transfers, spinOffs: lot.spinOffs, allottedOn: lot.allottedOn,
         units: roundedDivide(lot.units, factors.get(holdingId) ?? 1n), purchaseCost: lot.usd.gross, purchaseFee: lot.usd.fee,
         aud: { purchaseCost: lot.aud.gross, purchaseFee: lot.aud.fee },
         note: lot.usd.gross === undefined ? (lot.purchase.reinvestment

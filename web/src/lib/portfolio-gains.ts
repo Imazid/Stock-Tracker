@@ -16,6 +16,7 @@ export type PortfolioGains = {
   feeRecords: number;
   archivedLots: number;
   pendingTransfers: number;
+  unreconciledSpinOffs?: number;
   open: Record<string, OpenCost>;
 };
 

@@ -33,6 +33,13 @@ const transferColumns = [
 const brokerTransferColumns = ["Transfer SnapTrade sending reference", "Transfer SnapTrade receiving reference",
   "Transfer SnapTrade reported sent date", "Transfer SnapTrade reported received date", "Transfer SnapTrade reported symbol",
   "Transfer SnapTrade reported exchange", "Transfer SnapTrade reported shares"];
+const spinOffColumns = [
+  "Spin-off ID", "Spin-off effective date (Sydney)", "Spin-off parent holding ID", "Spin-off child holding ID",
+  "Spin-off child ticker", "Spin-off child exchange", "Spin-off eligible parent shares", "Spin-off allotted child shares",
+  "Spin-off child basis allocation (USD %)", "Spin-off child basis allocation (AUD %)", "Spin-off AUD basis method",
+  "Spin-off statement reference", "Spin-off child snapshot ID", "Related spin-off IDs", "Spin-off lot allotment date (Sydney)",
+  "Spin-off original acquisition date (Sydney)",
+];
 const audColumns = [
   "Purchase cost (AUD)", "Purchase fees (AUD)", "Sale proceeds (AUD)", "Sale fees (AUD)", "Estimated FIFO result (AUD)",
   "Purchase input currency", "Purchase FX (AUD per input currency unit)", "Purchase FX observation date", "Purchase FX source",
@@ -79,14 +86,14 @@ export async function GET(request: Request) {
   } catch {
     return jsonError(503, "unavailable", "Couldn’t export your lot report. Try again.");
   }
-  const { transactions, acquisitions, splits, transfers } = ledger;
+  const { transactions, acquisitions, splits, transfers, spinOffs } = ledger;
   const includesAud = currency === "AUD";
-  let rows = calculateLots(transactions, start ?? undefined, end ?? undefined, undefined, splits, transfers);
+  let rows = calculateLots(transactions, start ?? undefined, end ?? undefined, undefined, splits, transfers, spinOffs);
   let references: ReadonlyMap<string, AudReference> = new Map();
   if (includesAud) {
     const trades = new Map<string, TransactionRow>();
     for (const row of rows) {
-      if ("transfer" in row) {
+      if ("transfer" in row || "spinOff" in row) {
         for (const purchase of row.purchases ?? []) trades.set(purchase.id, purchase);
         continue;
       }
@@ -100,7 +107,7 @@ export async function GET(request: Request) {
     for (const [id, reference] of references) {
       if ("rate" in reference) rates.set(id, reference.rate);
     }
-    rows = calculateLots(transactions, start ?? undefined, end ?? undefined, rates, splits, transfers);
+    rows = calculateLots(transactions, start ?? undefined, end ?? undefined, rates, splits, transfers, spinOffs);
   }
   const hasFractionalCash = splits.some(fractionalShareCash);
   const actionColumns = [...(splits.length ? splitColumns : []),
@@ -111,7 +118,7 @@ export async function GET(request: Request) {
   const hasBrokerTransfers = transfers.some((transfer) => transfer.snaptrade_reference);
   const reportColumns = [...columns, ...(includesAud ? audColumns : []), ...actionColumns,
     ...(hasReinvestments ? reinvestmentColumns : []), ...(hasBrokerReinvestments ? brokerReinvestmentColumns : []),
-    ...(transfers.length ? transferColumns : []), ...(hasBrokerTransfers ? brokerTransferColumns : [])];
+    ...(transfers.length ? transferColumns : []), ...(hasBrokerTransfers ? brokerTransferColumns : []), ...(spinOffs.length ? spinOffColumns : [])];
   const period = `Requested sale window (Sydney dates) from ${start ?? "first recorded trade"} through ${end ?? "latest recorded trade"}.`;
   const ordering = hasReinvestments ? " Date-only reinvestment acquisitions follow timestamped trades on the same Sydney day. Check same-day sales against the actual allotment records." : "";
   const transferOrdering = transfers.length
@@ -120,13 +127,48 @@ export async function GET(request: Request) {
   const fractionalOrdering = hasFractionalCash
     ? " Fractional units leave the FIFO ledger immediately after their split. The report includes their proceeds from the payment date. Original payment amounts appear on the split row. A statement net USD amount on a foreign-currency payment includes fees already."
     : "";
-  const information = `${disclaimer}${ordering}${transferOrdering}${fractionalOrdering} ${includesAud ? audDisclosure + " " : ""}${period}`;
+  const spinOffOrdering = spinOffs.length
+    ? " Spin-offs use confirmed share quantities and separate USD and AUD allocations. They apply after same-day splits and before trades on the Sydney effective date. Child lots enter FIFO on the allotment date and retain their parent purchase references. Blank allocations leave that currency’s adjusted basis unavailable. Review the issuer instructions, timing and tax treatment."
+    : "";
+  const information = `${disclaimer}${ordering}${transferOrdering}${fractionalOrdering}${spinOffOrdering} ${includesAud ? audDisclosure + " " : ""}${period}`;
   const records = [
     reportColumns.map(csvField).join(","),
     reportColumns.map((_, index) => index === 0 ? csvField("Report information")
       : index === noteColumn ? csvField(information) : "").join(","),
   ];
   for (const row of rows) {
+    if ("spinOff" in row) {
+      const { spinOff } = row;
+      const fields: Record<string, string | null> = {
+        "Record type": row.kind,
+        "Holding ID": spinOff.parent_holding_id,
+        "Ticker": spinOff.parent?.asset_symbol ?? null,
+        "Exchange": spinOff.parent?.asset_exchange ?? null,
+        "Asset type": spinOff.parent?.asset_kind ?? null,
+        "Transaction date (Sydney)": spinOff.effective_on,
+        "Purchase cost (USD)": lotNumber(row.usd?.gross, 2) || null,
+        "Purchase fees (USD)": lotNumber(row.usd?.fee, 2) || null,
+        "Purchase cost (AUD)": lotNumber(row.aud?.gross, 2) || null,
+        "Purchase fees (AUD)": lotNumber(row.aud?.fee, 2) || null,
+        "Report note": row.note,
+        "Transaction record source": "Statement entry",
+        "Spin-off ID": spinOff.id,
+        "Spin-off effective date (Sydney)": spinOff.effective_on,
+        "Spin-off parent holding ID": spinOff.parent_holding_id,
+        "Spin-off child holding ID": spinOff.child_holding_id,
+        "Spin-off child ticker": spinOff.child?.asset_symbol ?? null,
+        "Spin-off child exchange": spinOff.child?.asset_exchange ?? null,
+        "Spin-off eligible parent shares": spinOff.parent_shares,
+        "Spin-off allotted child shares": spinOff.child_shares,
+        "Spin-off child basis allocation (USD %)": spinOff.child_basis_pct_usd,
+        "Spin-off child basis allocation (AUD %)": spinOff.child_basis_pct_aud,
+        "Spin-off AUD basis method": spinOff.child_basis_pct_aud ? (spinOff.average_aud_basis ? "Average across eligible shares" : "Apportion by original lot") : null,
+        "Spin-off statement reference": spinOff.statement_reference,
+        "Spin-off child snapshot ID": spinOff.child_snapshot_id,
+      };
+      records.push(reportColumns.map((column) => csvField(fields[column] ?? null)).join(","));
+      continue;
+    }
     if ("transfer" in row) {
       const { transfer } = row;
       const broker = transfer.snaptrade_reference;
@@ -200,8 +242,9 @@ export async function GET(request: Request) {
     const holding = transaction.portfolio_holdings;
     const text = [
       transaction.fractionalCash ? (row.kind === "Sale match" ? "Fractional payment match" : "Fractional payment review") : row.kind, transaction.holding_id, holding?.asset_symbol ?? null, holding?.asset_exchange ?? null,
-      holding?.asset_kind ?? null, transaction.id, transaction.reinvestment || transaction.fractionalCash ? null : transaction.transaction_date,
-      transaction.fractionalCash?.fraction_paid_on ?? transaction.reinvestment?.acquired_on ?? sydneyDate(transaction.transaction_date), row.purchase?.id ?? null,
+      holding?.asset_kind ?? null, transaction.id, transaction.reinvestment || transaction.fractionalCash || (row.allottedOn && transaction.type === "Buy") ? null : transaction.transaction_date,
+      transaction.fractionalCash?.fraction_paid_on ?? (transaction.type === "Buy" ? row.allottedOn : undefined) ??
+        transaction.reinvestment?.acquired_on ?? sydneyDate(transaction.transaction_date), row.purchase?.id ?? null,
       row.purchase?.reinvestment ? null : row.purchase?.transaction_date ?? null,
     ].map(csvField);
     const numbers = [
@@ -209,7 +252,7 @@ export async function GET(request: Request) {
       lotNumber(row.saleProceeds, 2), lotNumber(row.saleFee, 2), lotNumber(row.result, 2),
     ];
     const cells = [...text, ...numbers, csvField(row.note ?? null),
-      csvField(transaction.fractionalCash ? "Broker statement entry" : transaction.reinvestment ? "Dividend reinvestment" : tradeSource(transaction.trade_provenance)),
+      csvField(transaction.fractionalCash ? "Broker statement entry" : row.allottedOn && transaction.type === "Buy" ? "Stock spin-off" : transaction.reinvestment ? "Dividend reinvestment" : tradeSource(transaction.trade_provenance)),
       csvField(row.purchase?.reinvestment ? "Dividend reinvestment" : row.purchase ? tradeSource(row.purchase.trade_provenance) : null),
     ];
     if (includesAud) {
@@ -239,6 +282,14 @@ export async function GET(request: Request) {
       }));
       if (hasBrokerTransfers) cells.push(...brokerTransferColumns.map(() => ""));
     }
+    if (spinOffs.length) cells.push(...spinOffColumns.map((column) => {
+      if (column === "Related spin-off IDs") return csvField(row.spinOffs?.join(" · ") ?? null);
+      if (column === "Spin-off lot allotment date (Sydney)") return csvField(row.allottedOn ?? null);
+      if (column === "Spin-off original acquisition date (Sydney)" && row.spinOffs?.length && row.purchase) {
+        return csvField(row.purchase.reinvestment?.acquired_on ?? sydneyDate(row.purchase.transaction_date));
+      }
+      return "";
+    }));
     records.push(cells.join(","));
   }
   return new Response(records.join("\r\n") + "\r\n", {

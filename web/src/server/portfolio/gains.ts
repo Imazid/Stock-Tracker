@@ -3,12 +3,12 @@ import type { OpenCost, PortfolioGains } from "../../lib/portfolio-gains.ts";
 import { calculateLots, ledgerFeeCents, lotNumber, UNIT_DECIMALS, sydneyDate } from "./lots.ts";
 import type { readLotLedger } from "./lot-ledger.ts";
 
-export function portfolioGains(owner: string, asOf: string, { transactions, splits, transfers }: Awaited<ReturnType<typeof readLotLedger>>): PortfolioGains {
+export function portfolioGains(owner: string, asOf: string, { transactions, splits, transfers, spinOffs }: Awaited<ReturnType<typeof readLotLedger>>): PortfolioGains {
   const day = sydneyDate(asOf)!;
   const through = Date.parse(asOf);
   const trades = transactions.filter((trade) => trade.reinvestment ? trade.reinvestment.acquired_on <= day
     : !Number.isFinite(Date.parse(trade.transaction_date)) || Date.parse(trade.transaction_date) <= through);
-  const rows = calculateLots(trades, undefined, day, undefined, splits, transfers);
+  const rows = calculateLots(trades, undefined, day, undefined, splits, transfers, spinOffs);
   const fractionalIds = new Set(splits.filter((split) => {
     const cash = fractionalShareCash(split);
     return cash && cash.fraction_paid_on <= day;
@@ -33,16 +33,26 @@ export function portfolioGains(owner: string, asOf: string, { transactions, spli
   }
 
   const openLots = new Map<string, { units: bigint; cost: bigint; unknown: boolean }>();
-  const splitDates = new Map<string, string>();
+  const actionDates = new Map<string, string>();
+  function recordAction(id: string, day: string) {
+    if ((actionDates.get(id) ?? "") < day) actionDates.set(id, day);
+  }
   const archived = new Set<string>();
   let pendingTransfers = 0;
+  let unreconciledSpinOffs = 0;
   for (const row of rows) {
     if ("transfer" in row) {
       if (row.kind !== "Stock transfer") pendingTransfers++;
       continue;
     }
     if ("split" in row) {
-      splitDates.set(row.split.holding_id, row.split.effective_date);
+      recordAction(row.split.holding_id, row.split.effective_date);
+      continue;
+    }
+    if ("spinOff" in row) {
+      if (row.kind === "Unreconciled spin-off") unreconciledSpinOffs++;
+      recordAction(row.spinOff.parent_holding_id, row.spinOff.effective_on);
+      recordAction(row.spinOff.child_holding_id, row.spinOff.effective_on);
       continue;
     }
     const sale = sales.get(row.transaction.id);
@@ -74,11 +84,11 @@ export function portfolioGains(owner: string, asOf: string, { transactions, spli
     if (sale.matched && sale.missing) partialSales++;
   }
   const open = Object.fromEntries([...openLots].map(([id, lot]) => [id, {
-    units: lotNumber(lot.units, UNIT_DECIMALS), costUsd: lot.unknown ? null : Number(lotNumber(lot.cost, 2)), lastSplit: splitDates.get(id),
+    units: lotNumber(lot.units, UNIT_DECIMALS), costUsd: lot.unknown ? null : Number(lotNumber(lot.cost, 2)), lastSplit: actionDates.get(id),
   } satisfies OpenCost]));
   return {
     owner, asOf, realisedUsd: matchedRows ? Number(lotNumber(realised, 2)) : null,
     sales: sales.size, matchedSales, partialSales, fractionalPayments: fractionalIds.size, feesUsd: feeRecords ? Number(lotNumber(fees, 2)) : null,
-    tradeRecords, feeRecords, archivedLots: archived.size, pendingTransfers, open,
+    tradeRecords, feeRecords, archivedLots: archived.size, pendingTransfers, unreconciledSpinOffs, open,
   };
 }
