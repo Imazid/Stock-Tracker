@@ -68,4 +68,28 @@ reset role;
 update public.broker_connections set status='revoked', revoked_at=now() where id='33333333-3333-4333-8333-333333333333';
 select 'credentials left after revoke: ' || count(*) from public.broker_credentials where connection_id='33333333-3333-4333-8333-333333333333';
 
+insert into auth.sessions(id, user_id) values
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '11111111-1111-4111-8111-111111111111');
+set local role authenticated;
+select pg_temp.expect_fail($q$select public.account_deletion_session_active(
+  '11111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')$q$, 'client access to account session checks');
+reset role;
+set local role service_role;
+select case when public.account_deletion_session_active(
+    '11111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+  and not public.account_deletion_session_active(
+    '22222222-2222-4222-8222-222222222222', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+  then 'ok  deletion checks the current session owner' else 'FAIL  session ownership' end;
+reset role;
+delete from auth.users where id = '11111111-1111-4111-8111-111111111111';
+set constraints all immediate;
+select case when not exists (select from public.broker_connections where id = '33333333-3333-4333-8333-333333333333')
+  and not exists (select from public.order_intent_transitions where intent_id = '44444444-4444-4444-8444-444444444444')
+  and not exists (select from public.oms_events where user_id = '11111111-1111-4111-8111-111111111111')
+  and not public.account_deletion_session_active(
+    '11111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+  and exists (select from public.order_intents where id = '66666666-6666-4666-8666-666666666666')
+  then 'ok  deleted account removes its session and order audit without affecting another owner'
+  else 'FAIL  incomplete or unscoped account deletion' end;
+
 rollback;

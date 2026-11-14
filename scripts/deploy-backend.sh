@@ -49,7 +49,7 @@ supabase secrets set --project-ref "$REF" CREDENTIAL_KEKS="k1:$KEK" CREDENTIAL_A
 unset KEK
 
 echo "4/5  Deploying Edge Functions…"
-supabase functions deploy snaptrade-proxy ai-proxy private-markets --project-ref "$REF"
+supabase functions deploy snaptrade-proxy ai-proxy private-markets account-deletion --project-ref "$REF"
 
 echo "5/5  Smoke test (calls without a signed-in user must be refused)…"
 ANON_KEY="$(supabase projects api-keys --project-ref "$REF" -o json | python3 -c '
@@ -57,7 +57,7 @@ import json, sys
 keys = json.load(sys.stdin)
 pick = next((k for k in keys if k.get("name") == "anon"), None) or next((k for k in keys if k.get("type") == "publishable"), None)
 print(pick["api_key"] if pick else "")')"
-for fn in snaptrade-proxy ai-proxy private-markets; do
+for fn in snaptrade-proxy ai-proxy private-markets account-deletion; do
   code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "https://$REF.supabase.co/functions/v1/$fn" \
     -H "Authorization: Bearer $ANON_KEY" -H "apikey: $ANON_KEY" -H 'Content-Type: application/json' -d '{}')"
   echo "     $fn without a user session -> HTTP $code (expected 401)"

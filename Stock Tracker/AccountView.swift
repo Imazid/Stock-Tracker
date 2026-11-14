@@ -8,8 +8,14 @@
 
 import SwiftUI
 import AuthenticationServices
+import Auth
+import UserNotifications
 
 struct AccountView: View {
+    private struct AccountToDelete: Identifiable {
+        let id: UUID
+    }
+
     @EnvironmentObject var supabaseAuthManager: SupabaseAuthManager
     @EnvironmentObject var syncManager: SyncManager
     @EnvironmentObject var mfaManager: MFAManager
@@ -31,6 +37,8 @@ struct AccountView: View {
     @State private var showSignOutConfirm = false
     @State private var showMFASheet = false
     @State private var showDisableMFAConfirm = false
+    @State private var deletingOwner: AccountToDelete?
+    @State private var deletionReceipt: String?
 
     // Palette (matches SettingsSheetView exactly)
     private var pageBg: Color {
@@ -75,6 +83,20 @@ struct AccountView: View {
         }
         .sheet(isPresented: $showMFASheet) {
             mfaSheetContent
+        }
+        .sheet(item: $deletingOwner) { account in
+            DeleteStockTrackerAccountView(owner: account.id) { message in
+                deletingOwner = nil
+                deletionReceipt = message
+            }
+        }
+        .alert("Account deleted", isPresented: Binding(
+            get: { deletionReceipt != nil },
+            set: { if !$0 { deletionReceipt = nil } }
+        )) {
+            Button("Done") { deletionReceipt = nil }
+        } message: {
+            Text(deletionReceipt ?? "")
         }
     }
 
@@ -380,6 +402,14 @@ struct AccountView: View {
                             flatRow("rectangle.portrait.and.arrow.right", "Sign Out", tintOverride: .red)
                         }
                         .buttonStyle(.plain)
+                        divider()
+                        Button(role: .destructive) {
+                            if let owner = supabaseAuthManager.userId { deletingOwner = .init(id: owner) }
+                        } label: {
+                            flatRow("trash", "Delete Account", tintOverride: .red)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("account.delete.open")
                     }
                     .background(cardBg)
                     .cornerRadius(14)
@@ -991,6 +1021,118 @@ struct MFAEnrollmentView: View {
             }
             .font(.footnote)
             .foregroundColor(.secondary)
+        }
+    }
+}
+
+private struct DeleteStockTrackerAccountView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var auth: SupabaseAuthManager
+    @EnvironmentObject private var mfa: MFAManager
+    @EnvironmentObject private var market: MarketData
+    @EnvironmentObject private var alerts: PriceAlertManager
+    let owner: UUID
+    let completed: (String) -> Void
+    @State private var password = ""
+    @State private var code = ""
+    @State private var busy = false
+    @State private var showingConfirmation = false
+    @State private var error: String?
+
+    private var requiresCode: Bool { mfa.isMFAEnabled && mfa.currentAAL?.currentLevel != "aal2" }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Permanently delete your Stock Tracker account, saved research, cloud records and portfolio data stored in this app on this iPhone.")
+                    Text("Any App Store subscription continues until you cancel it in Apple’s subscription settings.")
+                    Link("Manage Apple subscriptions", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                }
+                Section("Confirm your identity") {
+                    if let email = auth.userEmail { LabeledContent("Account", value: email) }
+                    if auth.deletionUsesApple {
+                        Text("Confirm with the Apple Account linked to Stock Tracker.")
+                    } else {
+                        SecureField("Account password", text: $password)
+                            .textContentType(.password)
+                            .accessibilityIdentifier("account.delete.password")
+                    }
+                    if requiresCode {
+                        TextField("Authenticator code", text: $code)
+                            .keyboardType(.numberPad)
+                            .textContentType(.oneTimeCode)
+                    }
+                }.disabled(busy)
+                Section {
+                    Button("Delete Account", role: .destructive) { showingConfirmation = true }
+                        .accessibilityIdentifier("account.delete.confirm")
+                        .disabled(busy || auth.userId != owner || (!auth.deletionUsesApple && password.isEmpty)
+                                  || (requiresCode && code.count != 6))
+                    if busy { ProgressView("Deleting account") }
+                    if let error {
+                        Text(error).foregroundStyle(.red).accessibilityIdentifier("account.delete.error")
+                    }
+                }
+            }
+            .navigationTitle("Delete Account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(busy)
+                }
+            }
+            .confirmationDialog("Permanently delete this account?", isPresented: $showingConfirmation, titleVisibility: .visible) {
+                Button("Permanently Delete Account", role: .destructive) { Task { await delete() } }
+                    .accessibilityIdentifier("account.delete.permanent")
+                Button("Cancel", role: .cancel) {}
+            }
+        }
+        .interactiveDismissDisabled(busy)
+        .task { await mfa.checkMFAStatus() }
+    }
+
+    private func delete() async {
+        guard !busy, auth.userId == owner else { return }
+        busy = true
+        defer { busy = false }
+        error = nil
+        do {
+            if AngelListLink.shared.isConnected(owner) {
+                do { try await AngelListLink.shared.disconnect(owner) }
+                catch {
+                    self.error = "AngelList could not be disconnected. Try again."
+                    return
+                }
+            }
+            let receipt = try await auth.deleteAccount(owner: owner, password: password,
+                                                        authenticatorCode: requiresCode ? code : nil)
+            password = ""
+            code = ""
+            var localCleanupFailed = false
+            do { try PrivateMarketsStore.shared.removeAccountRecords(owner) }
+            catch { localCleanupFailed = true }
+            if !AngelListLink.shared.forgetDeletedAccount(owner) { localCleanupFailed = true }
+            if auth.userId == owner {
+                DataPersistenceManager.shared.clearAllData()
+                market.clearAccountPortfolio()
+                alerts.applyRemoteAlerts([])
+                let notifications = UNUserNotificationCenter.current()
+                notifications.removeAllPendingNotificationRequests()
+                notifications.removeAllDeliveredNotifications()
+                SnapTradeViewModel.shared.forgetDeletedAccount()
+                await LiveActivityManager.shared.stopAll()
+                await auth.finishAccountDeletion(owner: owner)
+            }
+            var message = "Your Stock Tracker account and cloud records were deleted."
+            if receipt.brokerDeletionQueued { message += " SnapTrade accepted the request to remove its copy." }
+            if localCleanupFailed { message += " Remove Stock Tracker from this iPhone to clear remaining local records." }
+            completed(message)
+        } catch let failure as ASAuthorizationError where failure.code == .canceled {
+            return
+        } catch {
+            await mfa.checkMFAStatus()
+            self.error = error.localizedDescription
         }
     }
 }

@@ -1016,6 +1016,14 @@ final class PrivateMarketsStore: ObservableObject {
         }
     }
 
+    func removeAccountRecords(_ owner: UUID) throws {
+        if scope == owner { selectAccount(nil) }
+        let file = try Self.file(for: owner)
+        do {
+            try FileManager.default.removeItem(at: file)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {}
+    }
+
     static func clearTestRecords() {
         guard let file = try? file(for: nil) else { return }
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())

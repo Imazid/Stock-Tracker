@@ -456,6 +456,58 @@ final class AccountSyncTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["holding.avgCost"].firstMatch.label.contains("••••"))
     }
 
+    func testAccountDeletionRequiresPasswordAndClearsTheAccount() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_ACCOUNT_DELETION"] == "1",
+                          "Set up a disposable account-deletion backend")
+        let email = "account-deletion-ui-\(UUID().uuidString.lowercased())@example.com"
+        let signup = try request("POST", "/auth/v1/signup", body: JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password,
+        ]))
+        XCTAssertEqual(signup.status, 200)
+        let token = try signIn(email: email)
+
+        app.launchArguments = ["-UITestFreshInstall", "-UITestTradingFixture",
+            "-SupabaseURLOverride", apiURL, "-SupabaseAnonKeyOverride", anonKey,
+            "-UITestSignIn", "\(email):\(password)"]
+        app.launch()
+        XCTAssertTrue(app.open("Home"))
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 12))
+        settings.tap()
+        let account = app.buttons["settings.account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 15))
+        account.tap()
+        let open = app.buttons["account.delete.open"]
+        for _ in 0..<4 where !open.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(open.isHittable)
+        open.tap()
+        let currentPassword = app.secureTextFields["account.delete.password"]
+        XCTAssertTrue(currentPassword.waitForExistence(timeout: 6))
+
+        func submit(_ value: String) {
+            currentPassword.tap()
+            currentPassword.typeText(value)
+            let proceed = app.buttons["account.delete.confirm"]
+            for _ in 0..<4 where !proceed.isHittable { app.swipeUp(velocity: .slow) }
+            proceed.tap()
+            let confirm = app.buttons["Permanently Delete Account"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+            confirm.tap()
+        }
+
+        let wrong = "incorrect"
+        submit(wrong)
+        let failure = app.staticTexts["account.delete.error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertTrue(failure.label.contains("password did not match"))
+        XCTAssertEqual(try request("GET", "/auth/v1/user", token: token).status, 200)
+        currentPassword.tap()
+        currentPassword.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: wrong.count))
+        submit(password)
+        XCTAssertTrue(app.alerts["Account deleted"].waitForExistence(timeout: 25))
+        XCTAssertTrue([401, 403, 404].contains(try request("GET", "/auth/v1/user", token: token).status))
+    }
+
     func testUnifiedAllocationUsesOnlyPricedPositionsAndSeparatesETFs() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["STOCK_TRACKER_UI_TEST_UNIFIED_ALLOCATION"] == "1",
                           "Start the unified allocation quote relay")

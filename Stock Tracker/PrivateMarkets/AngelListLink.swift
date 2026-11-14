@@ -132,6 +132,10 @@ final class AngelListLink: NSObject, ASWebAuthenticationPresentationContextProvi
         guard KeychainManager.shared.delete(key: key(owner)) else { throw Failure.storage }
     }
 
+    func forgetDeletedAccount(_ owner: UUID) -> Bool {
+        KeychainManager.shared.delete(key: key(owner))
+    }
+
     func tools(_ owner: UUID) async throws -> [Tool] {
         try await withSession(owner) { headers, _ in
             var result: [Tool] = []

@@ -433,6 +433,20 @@ final class MarketData: ObservableObject {
         AppLogger.persist.info("Reloaded local data from disk after sign-out")
     }
 
+    func clearAccountPortfolio() {
+        portfolio = []
+        portfolioHistory = []
+        portfolioGroups = [PortfolioGroup(name: "Main Portfolio")]
+        activePortfolioIndex = 0
+        watchlist = []
+        watchlistGroups = [WatchlistGroup(name: "My Watchlist", assets: [])]
+        activeWatchlistIndex = 0
+        miniChartCache.removeAll()
+        widgetDaySeries = []
+        widgetWeekDaily = []
+        updateWidgetData()
+    }
+
     // MARK: - Multi-Portfolio
 
     func switchToPortfolio(index: Int) {

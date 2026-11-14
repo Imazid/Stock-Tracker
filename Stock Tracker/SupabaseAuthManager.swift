@@ -275,6 +275,75 @@ final class SupabaseAuthManager: NSObject, ObservableObject {
     var userId: UUID? { cloudUser?.id }
     var userEmail: String? { cloudUser?.email }
     var isSignedIn: Bool { cloudUser != nil }
+    var deletionUsesApple: Bool { cloudUser?.identities?.contains { $0.provider == "apple" } == true }
+
+    struct DeletionReceipt: Decodable {
+        let deleted: Bool
+        let brokerDeletionQueued: Bool
+    }
+
+    private struct DeletionError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    func deleteAccount(owner: UUID, password: String, authenticatorCode: String?) async throws -> DeletionReceipt {
+        guard userId == owner, let base = URL(string: SecretsConfig.supabaseURL) else {
+            throw DeletionError(message: "Sign in again to delete your account.")
+        }
+        if let authenticatorCode {
+            let factors = try await SupabaseManager.auth.mfa.listFactors()
+            if let factor = factors.totp.first(where: { $0.status == .verified }) {
+                try await SupabaseManager.auth.mfa.challengeAndVerify(
+                    params: MFAChallengeAndVerifyParams(factorId: factor.id, code: authenticatorCode)
+                )
+            }
+        }
+        var body: [String: Any] = ["confirm": true]
+        if deletionUsesApple {
+            guard appleSignInContinuation == nil else { throw DeletionError(message: AuthCopy.tryAgain) }
+            let authorization = try await requestAppleCredential(nonce: generateNonce())
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let data = credential.authorizationCode,
+                  let code = String(data: data, encoding: .utf8), !code.isEmpty else {
+                throw DeletionError(message: "Apple did not return an authorization code. Try again.")
+            }
+            body["appleCode"] = code
+        } else {
+            body["password"] = password
+        }
+
+        let session = try await SupabaseManager.auth.session
+        guard userId == owner, session.user.id == owner else {
+            throw DeletionError(message: "Your account changed. Open Account settings to try again.")
+        }
+        var request = URLRequest(url: base.appending(path: "functions/v1/account-deletion"), timeoutInterval: 40)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(SecretsConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer " + session.accessToken, forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let receipt = try? JSONDecoder().decode(DeletionReceipt.self, from: data), receipt.deleted else {
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let error = json?["error"] as? [String: Any]
+            throw DeletionError(message: error?["message"] as? String ?? "Account deletion could not be confirmed. Try again.")
+        }
+        return receipt
+    }
+
+    func finishAccountDeletion(owner: UUID) async {
+        guard userId == owner else { return }
+        DataPersistenceManager.shared.clearSyncCredentials()
+        try? await withAccountDeadline(seconds: 5) {
+            try await SupabaseManager.auth.signOut(scope: .local)
+        }
+        if userId == owner {
+            cloudUser = nil
+            authState = .signedOut
+        }
+    }
 
     // MARK: - Auth event listener
 
