@@ -164,7 +164,7 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
     case "listAuthorizations":
       return withUser(userId, deps, (u) => forward(deps, "GET", "/authorizations", u, null));
     case "listAccounts":
-      return withUser(userId, deps, (u) => forward(deps, "GET", "/accounts", u, null));
+      return listInvestmentAccounts(userId, deps);
     case "accountAllPositions":
     case "accountPositions":
     case "accountHoldings": {
@@ -219,6 +219,71 @@ export async function handleSnapTradeRequest(userId: string, input: unknown, dep
         return result;
       });
   }
+}
+
+/** Use the current account API and keep the array contract used by existing clients. */
+export function listInvestmentAccounts(userId: string, deps: SnapTradeProxyDeps, includeDetails = true): Promise<ProxyResponse> {
+  if (!UUID.test(userId)) return Promise.resolve(fail(401, "UNAUTHENTICATED", "no signed-in user"));
+  return withUser(userId, deps, async (u) => {
+    const accounts = await call(deps, "GET", "/accounts/all", u, null, "");
+    if ("error" in accounts) return accounts.error;
+    const rows = isRecord(accounts.json) ? accounts.json.results : null;
+    if (!Array.isArray(rows) || rows.some((row) => !isRecord(row) || typeof row.kind !== "string")) {
+      return fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable list of accounts.");
+    }
+    const investments = new Map<string, Record<string, unknown> & { id: string; connection_id: string }>();
+    for (const row of rows) {
+      if (row.kind !== "investment") continue;
+      if (typeof row.id !== "string" || !UUID.test(row.id) ||
+        typeof row.connection_id !== "string" || !UUID.test(row.connection_id)) {
+        return fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable investment account.");
+      }
+      investments.set(row.id.toLowerCase(), { ...row, id: row.id.toLowerCase(), connection_id: row.connection_id.toLowerCase() });
+    }
+    const distinct = [...investments.values()];
+    if (!includeDetails || distinct.length === 0) {
+      return { status: 200, body: distinct.map(({ id }) => ({ id })) };
+    }
+
+    const result = await call(deps, "GET", "/authorizations", u, null, "");
+    if ("error" in result) return result.error;
+    if (!Array.isArray(result.json)) {
+      return fail(502, "INVALID_ACCOUNTS_RESPONSE", "The brokerage returned an unreadable list of connections.");
+    }
+    const connections = new Map<string, Record<string, unknown>>();
+    for (const connection of result.json) {
+      if (isRecord(connection) && typeof connection.id === "string") {
+        connections.set(connection.id.toLowerCase(), connection);
+      }
+    }
+    return {
+      status: 200,
+      body: distinct.map((row) => {
+        const connection = connections.get(row.connection_id);
+        const brokerage = isRecord(connection?.brokerage) ? connection.brokerage : null;
+        const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
+        const total = isRecord(row.net_value) && typeof row.net_value.amount === "number" &&
+            Number.isFinite(row.net_value.amount) && typeof row.net_value.currency === "string" &&
+            /^[A-Z]{3}$/.test(row.net_value.currency)
+          ? { amount: row.net_value.amount, currency: row.net_value.currency }
+          : null;
+        const suffix = text(row.masked_account_number)?.match(/[a-z0-9]{1,4}$/i)?.[0];
+        const status = text(row.status);
+        const waiting = isRecord(row.sync_status) && row.sync_status.positions === null;
+        return {
+          id: row.id,
+          brokerage_authorization: row.connection_id,
+          institution_name: text(brokerage?.display_name) ?? text(brokerage?.name) ?? "Brokerage account",
+          name: text(row.display_name),
+          number: suffix ? `••••${suffix}` : "",
+          meta: { type: text(row.raw_type) },
+          balance: total ? { total } : null,
+          positions_status: status === "closed" || status === "archived" || status === "unavailable"
+            ? status : !connection ? "unavailable" : connection.disabled === true ? "disconnected" : waiting ? "pending" : "available",
+        };
+      }),
+    };
+  });
 }
 
 async function registerUser(userId: string, deps: SnapTradeProxyDeps): Promise<ProxyResponse> {

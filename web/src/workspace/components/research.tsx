@@ -16,8 +16,19 @@ type Company = {
   source: string;
 };
 type Chat = { role: "user" | "assistant"; content: string };
-type Account = { id: string; name?: string; institution_name?: string; number?: string; balance?: { total?: { amount?: number; currency?: string } } };
-type Position = { symbol?: { symbol?: { symbol?: string; description?: string } }; units?: number; price?: number; currency?: { code?: string } };
+const positionsStatusLabels = {
+  pending: "Waiting for positions",
+  disconnected: "Reconnect to refresh",
+  closed: "Closed",
+  archived: "Archived",
+  unavailable: "Positions unavailable",
+} as const;
+type Account = { id: string; name?: string | null; institution_name?: string; number?: string;
+  positions_status?: "available" | keyof typeof positionsStatusLabels };
+type Position = {
+  instrument: { id?: string; symbol?: string; description?: string; kind: string };
+  units?: string | null; price?: string | null; currency?: string | null; cash_equivalent?: boolean;
+};
 
 export function Research({ asset, journal, enabled }: { asset: Instrument; journal: Journal; enabled: boolean }) {
   const [history,setHistory] = useState<Series>();
@@ -121,6 +132,8 @@ export function Connections({ enabled }: { enabled: boolean }) {
   async function fetchAccounts() {
     const {registered} = await service<{registered:boolean}>("brokerage",{operation:"status"});
     setAccounts(registered ? await service<Account[]>("brokerage",{operation:"listAccounts"}) : []);
+    setSelected("");
+    setPositions(undefined);
   }
   async function refresh() {
     setBusy(true); setError("");
@@ -138,7 +151,10 @@ export function Connections({ enabled }: { enabled: boolean }) {
   }
   async function load(id: string) {
     setSelected(id); setPositions(undefined); setError(""); setBusy(true);
-    try { setPositions(await service<Position[]>("brokerage",{operation:"accountPositions",params:{accountId:id}})); }
+    try {
+      const response = await service<{ results: Position[] }>("brokerage", {operation:"accountAllPositions",params:{accountId:id}});
+      setPositions(response.results.filter(position => position.instrument.kind !== "cash" && !position.cash_equivalent));
+    }
     catch (error) { setError(message(error)); } finally { setBusy(false); }
   }
   return <section className="panel table-panel"><div className="panel-heading"><h2><Landmark size={18}/> Brokerage connections</h2>{enabled && <div className="inline-actions"><button className="button secondary small" disabled={busy} onClick={() => void refresh()}>Refresh accounts</button><button className="button primary small" disabled={busy} onClick={() => void connect()}>Connect brokerage</button></div>}</div>
@@ -146,8 +162,25 @@ export function Connections({ enabled }: { enabled: boolean }) {
       <>{link && <p className="notice"><a href={link} target="_blank" rel="noreferrer">Open the secure read-only connection portal <ExternalLink size={15}/></a></p>}
         {error && <p className="notice error" role="alert">{error}</p>}
         {!accounts.length && <Empty title="No accounts loaded" text="Refresh your linked accounts or connect a brokerage."/>}
-        {accounts.map(account => <div key={account.id}><div className="list-row"><span><strong>{account.name ?? account.institution_name ?? "Brokerage account"}</strong><small>{account.institution_name}</small></span><button className="button secondary small" disabled={busy} onClick={() => void load(account.id)}>View positions</button></div>
-          {selected === account.id && positions && (positions.length ? positions.map((position,index) => <div className="list-row child-row" key={index}><span><strong>{position.symbol?.symbol?.symbol ?? "Position"}</strong><small>{position.symbol?.symbol?.description}</small></span><span>{qty(position.units ?? 0)} units · {money(position.price, position.currency?.code ?? "USD")}</span></div>) : <Empty title="No reported positions"/>)}</div>)}
+        {accounts.map(account => {
+          const status = account.positions_status;
+          const restriction = status && status !== "available" ? positionsStatusLabels[status] : undefined;
+          return <div key={account.id}><div className="list-row">
+            <span><strong>{account.name ?? account.institution_name ?? "Brokerage account"}</strong>
+              <small>{[account.institution_name, account.number, restriction].filter(Boolean).join(" · ")}</small></span>
+            <button className="button secondary small" disabled={busy || Boolean(restriction)} onClick={() => void load(account.id)}>View positions</button>
+          </div>
+          {selected === account.id && positions && (positions.length ? positions.map((position, index) => {
+            const price = position.price == null ? NaN : Number(position.price);
+            const currency = position.currency;
+            return <div className="list-row child-row" key={position.instrument.id ?? index}>
+              <span><strong>{position.instrument.symbol ?? "Position"}</strong><small>{position.instrument.description}</small></span>
+              <span>{position.units != null ? `${position.units} units` : "Units unavailable"} · {
+                Number.isFinite(price) && currency && /^[A-Z]{3}$/.test(currency) ? money(price, currency) : "—"
+              }</span>
+            </div>;
+          }) : <Empty title="No reported positions"/>)}</div>;
+        })}
       </>}
   </section>;
 }

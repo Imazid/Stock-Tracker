@@ -130,7 +130,9 @@ final class SnapTradeViewModel: ObservableObject {
 
     func institutionKey(for holding: PortfolioHolding) -> String? {
         guard isImported(holding) else { return nil }
-        if let account = holding.brokerAccount { return account.institution }
+        if let account = holding.brokerAccount {
+            return accounts.first { $0.id.lowercased() == account.account_id }?.institutionName ?? account.institution
+        }
         let symbol = holding.asset.symbol
         let ids = Set(holdings.filter { normalisedSymbol($0.symbol) == symbol }.map(\.accountId))
         guard ids.count == 1, let id = ids.first else { return nil }
@@ -310,9 +312,16 @@ final class SnapTradeViewModel: ObservableObject {
             }
             let linked = try await repository.fetchAccounts()
             guard generation == accountGeneration, SupabaseManager.auth.currentUser?.id == owner else { return }
-            let fetched = try await repository.fetchAllHoldings(accountIds: linked.map(\.id))
-            guard generation == accountGeneration, SupabaseManager.auth.currentUser?.id == owner else { return }
             accounts = linked
+            let readable = linked.filter(\.canReadPositions).map(\.id)
+            let readableIDs = Set(readable.map { $0.lowercased() })
+            let hasUnreadablePositions = marketData?.portfolio.contains { holding in
+                guard let account = holding.brokerAccount else { return false }
+                return account.tracking && holding.shares > 0 && !readableIDs.contains(account.account_id)
+            } ?? false
+            guard !hasUnreadablePositions else { throw SnapTradeError.missingData }
+            let fetched = try await repository.fetchAllHoldings(accountIds: readable)
+            guard generation == accountGeneration, SupabaseManager.auth.currentUser?.id == owner else { return }
             holdings = fetched
             lastSyncedAt = requestedAt
             lastSyncFailed = false
@@ -424,7 +433,7 @@ final class SnapTradeViewModel: ObservableObject {
     func makeSyncPlan(marketData: MarketData) -> SyncPlan {
         var plan = SyncPlan()
         let current = marketData.portfolio
-        let known = Set(accounts.map { $0.id.lowercased() })
+        let known = Set(accounts.filter(\.canReadPositions).map { $0.id.lowercased() })
         let eligible = holdings.filter {
             $0.quantity.isFinite && $0.quantity > 0 && known.contains($0.accountId.lowercased())
         }

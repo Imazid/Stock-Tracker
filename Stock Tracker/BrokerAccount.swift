@@ -26,14 +26,16 @@ struct BrokerAccount: Identifiable, Codable {
     let accountType: String?
     let balance: AccountBalance?
     let createdDate: Date?
+    var positionsStatus: BrokerPositionsStatus? = nil
+
+    var canReadPositions: Bool { positionsStatus == nil || positionsStatus == .available }
     
     var displayName: String {
         name ?? "Account \(accountNumber.suffix(4))"
     }
     
     var maskedAccountNumber: String {
-        let suffix = accountNumber.suffix(4)
-        return "••••\(suffix)"
+        accountNumber.isEmpty ? "" : "••••\(accountNumber.suffix(4))"
     }
 }
 
@@ -149,7 +151,8 @@ extension BrokerAccount {
             institutionName: snapTradeAccount.institutionName,
             accountType: snapTradeAccount.meta?.type,
             balance: balance,
-            createdDate: createdDate
+            createdDate: createdDate,
+            positionsStatus: snapTradeAccount.positionsStatus
         )
     }
 }

@@ -103,6 +103,46 @@ Deno.test("a device cannot choose whose SnapTrade identity is used", async () =>
   assertEquals(calls[0].url.searchParams.get("userSecret"), "mine");
 });
 
+Deno.test("account discovery uses current routes and returns only masked investment accounts", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "directory-secret" });
+  const open = { kind: "investment", id: ACCOUNT, connection_id: OTHER, display_name: "Trading",
+    masked_account_number: "****1234", raw_type: "Individual", net_value: { amount: 250.25, currency: "AUD" } };
+  const pending = { ...open, id: USER, connection_id: USER, sync_status: { positions: null } };
+  const closed = { ...open, id: OTHER, status: "closed", connection_id: ACCOUNT };
+  const { deps, calls } = harness((request) => request.url.pathname === "/accounts/all"
+    ? json(200, { results: [open, pending, closed, open, { kind: "deposit", id: "bank" }] })
+    : json(200, [
+      { id: OTHER, disabled: true, brokerage: { name: "CommSec", display_name: "CommSec" } },
+      { id: USER, brokerage: { name: "Coinbase" } },
+    ]), store);
+  const result = await handleSnapTradeRequest(USER, { operation: "listAccounts" }, deps);
+  assertEquals(result, { status: 200, body: [
+    { id: ACCOUNT, brokerage_authorization: OTHER, institution_name: "CommSec", name: "Trading", number: "••••1234",
+      meta: { type: "Individual" }, balance: { total: { amount: 250.25, currency: "AUD" } }, positions_status: "disconnected" },
+    { id: USER, brokerage_authorization: USER, institution_name: "Coinbase", name: "Trading", number: "••••1234",
+      meta: { type: "Individual" }, balance: { total: { amount: 250.25, currency: "AUD" } }, positions_status: "pending" },
+    { id: OTHER, brokerage_authorization: ACCOUNT, institution_name: "Brokerage account", name: "Trading", number: "••••1234",
+      meta: { type: "Individual" }, balance: { total: { amount: 250.25, currency: "AUD" } }, positions_status: "closed" },
+  ] });
+  assertEquals(calls.map((request) => request.url.pathname), ["/accounts/all", "/authorizations"]);
+  assert(calls.every((request) => request.headers.has("Signature") && request.url.searchParams.get("userId") === `st-${USER}`));
+});
+
+Deno.test("account discovery rejects a damaged list rather than treating the portfolio as empty", async () => {
+  const store = new MemoryStore();
+  store.rows.set(USER, { snapTradeUserId: `st-${USER}`, userSecret: "directory-secret" });
+  for (const input of [{ results: null }, { results: [{}] }, { results: [{ kind: "investment", id: "bad" }] }]) {
+    const { deps, calls } = harness(() => json(200, input), store);
+    const result = await handleSnapTradeRequest(USER, { operation: "listAccounts" }, deps);
+    assertEquals(result.status, 502);
+    assertEquals(calls.length, 1);
+  }
+  const { deps, calls } = harness(() => json(200, { results: [] }), store);
+  assertEquals(await handleSnapTradeRequest(USER, { operation: "listAccounts" }, deps), { status: 200, body: [] });
+  assertEquals(calls.length, 1);
+});
+
 Deno.test("only allowlisted operations exist; raw paths and unknown operations are refused", async () => {
   const { deps, calls } = harness(() => json(200, {}));
   for (const body of [
@@ -362,7 +402,11 @@ Deno.test("activity worker pages only provider reads and advances the fenced dat
       data: [{ id: "fixture-deposit", trade_date: "2026-01-16", symbol: null, currency: { code: "USD" }, amount: 25, type: "CONTRIBUTION" }],
       pagination: { total: 51, offset: 50 },
     })
-    : json(200, [{ id: ACCOUNT }, { id: ACCOUNT }]), store);
+    : json(200, { results: [
+      { kind: "investment", id: ACCOUNT, connection_id: USER },
+      { kind: "investment", id: ACCOUNT, connection_id: USER },
+      { kind: "deposit", id: OTHER, connection_id: USER },
+    ] }), store);
   const first = { credential_id: "credential", lease_id: "lease", user_id: USER, pending_id: null };
   const pending = {
     ...first, pending_id: "snapshot", account_id: ACCOUNT, page_offset: 50,
@@ -386,6 +430,7 @@ Deno.test("activity worker pages only provider reads and advances the fenced dat
   assertEquals(writes[1].p_lease, "lease");
   assertEquals((writes[1].p_rows as { cashFlow: unknown }[])[0].cashFlow, { date: "2026-01-16", kind: "deposit", amount: 25 });
   assertEquals(calls.map((call) => call.method), ["GET", "GET"]);
+  assertEquals(calls[0].url.pathname, "/accounts/all");
   assertEquals(calls[1].url.searchParams.get("offset"), "50");
 });
 

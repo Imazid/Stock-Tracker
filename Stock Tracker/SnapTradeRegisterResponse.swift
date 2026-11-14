@@ -40,42 +40,89 @@ struct SnapTradeLoginResponse: Codable {
 
 // MARK: - Account Models
 
-struct SnapTradeAccount: Codable {
+enum BrokerPositionsStatus: String, Codable {
+    case available, pending, disconnected, closed, archived, unavailable
+
+    var label: String? {
+        switch self {
+        case .available: nil
+        case .pending: "Waiting for positions"
+        case .disconnected: "Reconnect to refresh"
+        case .closed: "Closed"
+        case .archived: "Archived"
+        case .unavailable: "Positions unavailable"
+        }
+    }
+}
+
+struct SnapTradeAccount: Decodable {
     let id: String
-    let brokerageAuthorization: String
-    let portfolioGroup: String?
     let name: String?
     let number: String
     let institutionName: String
     let createdDate: String?
     let meta: SnapTradeAccountMeta?
-    let cashRestrictions: [String]?
     let balance: SnapTradeBalance?
+    let positionsStatus: BrokerPositionsStatus?
     
     enum CodingKeys: String, CodingKey {
         case id
-        case brokerageAuthorization = "brokerage_authorization"
-        case portfolioGroup = "portfolio_group"
         case name
         case number
         case institutionName = "institution_name"
         case createdDate = "created_date"
         case meta
-        case cashRestrictions = "cash_restrictions"
         case balance
+        case positionsStatus = "positions_status"
     }
 }
 
 struct SnapTradeAccountMeta: Codable {
     let type: String?
-    let status: String?
-    let institutionName: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case type
-        case status
-        case institutionName = "institution_name"
+}
+
+/// Provider response used by the direct connection in Debug builds.
+struct SnapTradeAccountDirectory: Decodable {
+    struct Account: Decodable {
+        struct SyncStatus: Decodable {
+            let positionsPending: Bool
+
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                positionsPending = try values.contains(.positions) && values.decodeNil(forKey: .positions)
+            }
+
+            private enum CodingKeys: String, CodingKey { case positions }
+        }
+
+        let kind: String
+        let id: UUID
+        let connectionId: UUID
+        let displayName: String?
+        let maskedAccountNumber: String
+        let rawType: String?
+        let netValue: SnapTradeAmount?
+        let status: String?
+        let syncStatus: SyncStatus?
+
+        private enum CodingKeys: String, CodingKey {
+            case kind, id, status
+            case connectionId = "connection_id"
+            case displayName = "display_name"
+            case maskedAccountNumber = "masked_account_number"
+            case rawType = "raw_type"
+            case netValue = "net_value"
+            case syncStatus = "sync_status"
+        }
     }
+
+    struct Connection: Decodable {
+        let id: UUID
+        let brokerage: SnapTradeBrokerage?
+        let disabled: Bool?
+    }
+
+    let results: [Account]
 }
 
 struct SnapTradeBalance: Codable {
