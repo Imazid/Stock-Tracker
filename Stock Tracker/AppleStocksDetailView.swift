@@ -137,6 +137,16 @@ struct AppleStocksDetailView: View {
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("detail.companyResearch")
                     }
+                    if let instrument = AssetRiskView.listing(for: live) {
+                        Button {
+                            sheet = .priceRisk(instrument)
+                        } label: {
+                            Label("Historical price risk", systemImage: "chart.line.downtrend.xyaxis")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("detail.assetRisk")
+                    }
 
                     statistics
 
@@ -221,6 +231,8 @@ struct AppleStocksDetailView: View {
                     .environmentObject(marketData)
             case .research(let instrument):
                 CompanyResearchView(instrument: instrument)
+            case .priceRisk(let instrument):
+                AssetRiskView(instrument: instrument)
             case .paywall(let feature):
                 PaywallView(requiredTier: .pro, featureName: feature)
                     .environmentObject(SubscriptionManager.shared)
@@ -644,6 +656,7 @@ enum DetailSheet: Identifiable {
     case alert, portfolio, broker
     case paywall(String)
     case research(Instrument)
+    case priceRisk(Instrument)
 
     var id: String {
         switch self {
@@ -651,6 +664,7 @@ enum DetailSheet: Identifiable {
         case .portfolio: return "portfolio"
         case .broker: return "broker"
         case .research(let instrument): return "research-\(instrument.id)"
+        case .priceRisk(let instrument): return "risk-\(instrument.id)"
         case .paywall(let feature): return "paywall-\(feature)"
         }
     }

@@ -51,7 +51,7 @@ test("the system prompt states the rules and is a stable cache prefix", () => {
 test("company research tools and listing context are the same for either AI provider", () => {
   const context = { signedIn: false, now: 0, company: { instrumentId: "us:AAPL", section: "financials" } };
   assert.deepEqual(TOOL_NAMES.filter((name) => canUseTool(name, context)), [
-    "search_instruments", "get_quote", "get_price_history", "get_company_research", "get_company_dataset", "search_filing_text",
+    "search_instruments", "get_quote", "get_price_history", "get_asset_risk", "get_company_research", "get_company_dataset", "search_filing_text",
   ]);
   const history = [{ content: "Earlier question" }, { content: "Summarize the filings." }];
   assert.deepEqual(scopedHistory(history, context).map(({ content }) => content), [

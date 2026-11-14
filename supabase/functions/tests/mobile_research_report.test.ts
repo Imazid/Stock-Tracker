@@ -1,9 +1,25 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { HttpError } from "../_shared/server/http.ts";
-import { mobileResearchReport } from "../market-workspace/research_report.ts";
+import { mobileAssetRisk, mobileResearchReport } from "../market-workspace/research_report.ts";
 
 const origin = "https://workspace.example.com";
 const payload = { instrumentId: "asx:BHP", asOf: "2026-11-14", coverage: [], facts: [], events: [] };
+
+Deno.test("mobile asset risk resolves the requested listing and range without forwarding an account token", async () => {
+  const risk = { instrumentId: "crypto:BTC", range: "6M", maxDrawdownPct: 12 };
+  const fetchRisk = ((url: URL, options: RequestInit) => {
+    assertEquals(url.href, origin + "/api/markets/instruments/crypto%3ABTC/risk?range=6M");
+    assertEquals(options.redirect, "error");
+    assertEquals(new Headers(options.headers).get("x-vercel-protection-bypass"), "server-only");
+    assertEquals(new Headers(options.headers).has("authorization"), false);
+    return Promise.resolve(Response.json(risk));
+  }) as typeof fetch;
+  assertEquals(await mobileAssetRisk("crypto:BTC", "6M", origin, "server-only", fetchRisk), risk);
+  await assertRejects(() => mobileAssetRisk("crypto:BTC", "5D", origin, "server-only", fetchRisk), HttpError);
+  const missing = (() => Promise.resolve(new Response(null, { status: 404 }))) as typeof fetch;
+  const unavailable = await assertRejects(() => mobileAssetRisk("crypto:BTC", "6M", origin, "server-only", missing), HttpError);
+  assertEquals(unavailable.code, "insufficient_history");
+});
 
 Deno.test("mobile company reports keep exact venue and the bypass server-side", async () => {
   const fetchReport = ((url: URL, options: RequestInit) => {
