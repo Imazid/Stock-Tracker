@@ -3,6 +3,7 @@ import type { CompanyReport, ResearchEvent } from "@/lib/research-types";
 import { getCandles, getQuote } from "@/server/market/service";
 import { getResearch, parseFilters } from "./service";
 import { bundledIssuerFiling } from "../portfolio/issuer-classifications";
+import { bundledAnnualFacts } from "./bundled-financials";
 
 export async function companyReport(instrument: Instrument, publicOnly = false): Promise<CompanyReport> {
   const filters = { ...parseFilters(new URLSearchParams({ limit: "8" })), publicOnly };
@@ -29,6 +30,7 @@ export async function companyReport(instrument: Instrument, publicOnly = false):
       detail: history ? `${history.source} · ${history.adjustment}` : "The market feeds returned insufficient history for a one-year comparison.", refreshedAt: chart?.fetchedAt },
   ] as const;
   const id = instrumentID(instrument);
+  const datedFacts = valuation.facts?.length ? [] : bundledAnnualFacts(id, filters.asOf);
   const filing = bundledIssuerFiling(id);
   const selected = filing?.evidence.filedOn && filing.evidence.filedOn <= filters.asOf ? filing : undefined;
   const bundled: ResearchEvent[] = selected && selected.evidence.filedOn ? [{
@@ -44,10 +46,12 @@ export async function companyReport(instrument: Instrument, publicOnly = false):
     instrumentId: id, asOf: filters.asOf,
     profile: overview.profile ?? (selected && bundled[0] ? { name: selected.issuer, sic: selected.sic,
       sector: selected.sector, incorporation: selected.country, evidence: bundled[0].evidence } : undefined),
-    facts: valuation.facts ?? [], multiples: valuation.records ?? [], events: reportEvents, ownership: ownership.events ?? [],
+    facts: datedFacts.length ? datedFacts : valuation.facts ?? [], multiples: valuation.records ?? [], events: reportEvents, ownership: ownership.events ?? [],
     earnings: (earnings.records ?? []).slice(0, 10), peers: (peers.records ?? []).slice(0, 10),
     quote, history, links: events.links,
     coverage: [...new Map([...overview.coverage, ...valuation.coverage, ...events.coverage, ...ownership.coverage, ...earnings.coverage, ...peers.coverage, ...marketCoverage,
+      ...(datedFacts.length ? [{ dataset: "Annual filing figures", status: "historical" as const,
+        detail: "Selected consolidated figures from a dated annual filing." }] : []),
       ...(bundled.length ? [{ dataset: "Issuer filing reference", status: "historical" as const,
         detail: "Dated SEC filing from the bundled issuer catalog." }] : [])]
       .map((item) => [item.dataset, item])).values()],

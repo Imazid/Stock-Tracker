@@ -12,6 +12,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { useSearch } from "@/hooks/market";
+import { useSession } from "@/lib/session";
 import { getJSON } from "@/lib/api";
 import { money } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -328,6 +329,42 @@ function Section({ id, symbol, section, overview }: { id: string; symbol: string
   </div>;
 }
 
+function RecentCompanyHeadlines({ symbol }: { symbol: string }) {
+  const session = useSession();
+  const token = session.status === "signedIn" ? session.session.access_token : undefined;
+  const news = useQuery({
+    queryKey: ["company-headlines", symbol, session.status === "signedIn" ? session.user.id : null],
+    enabled: Boolean(token), staleTime: 5 * 60_000, retry: false,
+    queryFn: async ({ signal }) => {
+      const response = await fetch("/api/workspace-service/market", {
+        method: "POST", signal,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "company", asset: { venue: "us", assetClass: "equity", symbol } }),
+      });
+      if (!response.ok) throw new Error("The company news feed could not be loaded.");
+      const { data } = await response.json() as { data: {
+        newsAvailable?: boolean; news: { title: string; url: string; source: string; time: number }[];
+      } };
+      return data;
+    },
+  });
+  return <Card>
+    <CardHeader title="Recent headlines" subtitle="Publisher links via Finnhub" />
+    {token ? <>
+      {news.isPending ? <p role="status" className="p-4 text-sm text-text-2">Checking company news…</p> : null}
+      {news.isError || news.data?.newsAvailable === false ? <EmptyState title="Company news is unavailable"
+        actions={<Button size="sm" onClick={() => news.refetch()}>Try again</Button>} /> : null}
+      {news.data?.newsAvailable !== false && news.data?.news.length === 0 ? <EmptyState title="No headlines returned for the past 14 days" /> : null}
+      {news.data?.news.length ? <ul className="divide-y divide-border border-t border-border">
+        {news.data.news.map((item) => <li key={item.url} className="space-y-1 px-4 py-3 text-sm">
+          <a href={item.url} target="_blank" rel="noreferrer" className="font-medium text-primary-fg hover:underline">{item.title}</a>
+          <p className="text-xs text-text-2">{item.source} · <time dateTime={new Date(item.time).toISOString()}>{new Date(item.time).toLocaleString("en-AU")}</time></p>
+        </li>)}
+      </ul> : null}
+    </> : <p className="p-4 text-sm text-text-2">{session.status === "signedOut" ? "Sign in to view recent company headlines." : "Company news is unavailable."}</p>}
+  </Card>;
+}
+
 function ResearchBrief({ id }: { id: string }) {
   const report = useQuery({
     queryKey: ["research-report", id], staleTime: 60_000, retry: false,
@@ -389,6 +426,7 @@ export function CompanyResearch({ id, symbol, overview, overviewError, retryOver
         {reportOpen ? <ResearchBrief id={id} /> : null}
         {tab === "overview" && overviewError ? <Card><EmptyState title="Company profile could not be loaded" actions={<Button size="sm" onClick={retryOverview}>Try again</Button>} /></Card>
           : <Section key={tab} id={id} symbol={symbol} section={tab} overview={overview} />}
+        {tab === "events" && id.startsWith("us:") ? <RecentCompanyHeadlines symbol={symbol} /> : null}
       </div>
       <aside aria-label="Company research assistant" hidden={!assistantOpen} className="min-w-0">
         {assistantOpen ? <div className="flex items-center justify-between gap-2 px-1 pb-2"><h3 className="font-medium">{symbol} research</h3>

@@ -133,7 +133,7 @@ struct AppleStocksDetailView: View {
                         usSections
                     case .asxStock:
                         DetailNote(systemImage: "info.circle",
-                                   text: "Analyst ratings, earnings and financial statements aren't available for ASX listings yet.",
+                                   text: "Research Everything shows available filing evidence for this ASX listing.",
                                    identifier: "detail.asxNote")
                     case .crypto, .index, .otherStock:
                         EmptyView()
