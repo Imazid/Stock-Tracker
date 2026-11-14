@@ -70,6 +70,7 @@ struct Asset: Identifiable, Hashable, Codable {
     var dividend: Double?
     var beta: Double?
     let exchange: String
+    var isETF: Bool?
     
     init(
         id: UUID = UUID(),
@@ -88,7 +89,8 @@ struct Asset: Identifiable, Hashable, Codable {
         avgVolume: Double? = nil,
         dividend: Double? = nil,
         beta: Double? = nil,
-        exchange: String
+        exchange: String,
+        isETF: Bool? = nil
     ) {
         self.id = id
         self.symbol = symbol
@@ -107,6 +109,7 @@ struct Asset: Identifiable, Hashable, Codable {
         self.dividend = dividend
         self.beta = beta
         self.exchange = exchange
+        self.isETF = isETF
         
         
     }

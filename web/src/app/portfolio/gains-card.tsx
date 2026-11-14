@@ -1,13 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { getJSON } from "@/lib/api";
+import { usePortfolioGains, usePortfolioRates } from "@/hooks/portfolio-metrics";
 import { dateTime, money, signedMoney } from "@/lib/format";
 import type { InstrumentView, QuoteView } from "@/lib/market-types";
-import type { PortfolioReferenceRates } from "@/lib/portfolio-exposure";
-import { unrealisedGains, type PortfolioGains } from "@/lib/portfolio-gains";
+import { unrealisedGains } from "@/lib/portfolio-gains";
 
 export function GainsCard({ userId, holdings, quoteFor, loading, truncated }: {
   userId: string;
@@ -16,23 +14,9 @@ export function GainsCard({ userId, holdings, quoteFor, loading, truncated }: {
   loading: boolean;
   truncated: boolean;
 }) {
-  const ledger = useQuery({
-    queryKey: ["portfolio-gains", userId],
-    queryFn: async ({ signal }) => {
-      const report = await getJSON<PortfolioGains>("/api/portfolio/gains", signal);
-      if (report.owner !== userId) throw new Error("The account changed while loading gains.");
-      return report;
-    },
-    staleTime: 30_000,
-  });
+  const ledger = usePortfolioGains(userId);
   const needsRates = holdings.some(({ instrument }) => instrument && instrument.currency !== "USD");
-  const rates = useQuery({
-    queryKey: ["portfolio-reference-rates"],
-    queryFn: ({ signal }) => getJSON<PortfolioReferenceRates>("/api/portfolio/reference-rates", signal),
-    enabled: needsRates,
-    staleTime: 15 * 60_000,
-    refetchInterval: 30 * 60_000,
-  });
+  const rates = usePortfolioRates(needsRates);
   const report = ledger.data;
   const current = report && unrealisedGains(holdings, report.open, quoteFor, rates.data);
   const waiting = loading || (needsRates && rates.isPending);

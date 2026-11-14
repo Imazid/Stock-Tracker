@@ -2,6 +2,14 @@ import Foundation
 import TradingCore
 
 extension Asset {
+    private static let knownETFs = Set(UniverseCatalog.all.filter { $0.assetClass == .etf }.map(\.id))
+        .union(OnboardingCatalog.etfs.map { "\($0.exchange.lowercased()):\($0.symbol)" })
+        .union(["asx:STW", "us:IVV"])
+
+    var isListedETF: Bool {
+        kind == .stock && (isETF == true || Self.knownETFs.contains(quoteIdentity))
+    }
+
     nonisolated private static let exchanges: [String: Venue] = [
         "US": .us, "NYSE": .us, "XNYS": .us, "NASDAQ": .us, "XNAS": .us, "AMEX": .us,
         "NYSE AMERICAN": .us, "XASE": .us, "NYSE ARCA": .us, "NYSEARCA": .us, "ARCA": .us,

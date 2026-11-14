@@ -141,6 +141,7 @@ export interface YahooQuote {
   observedAt: number;
   delayMinutes?: number;
   name?: string;
+  isEtf: boolean;
 }
 
 export async function yahooQuote(instrument: Instrument): Promise<YahooQuote> {
@@ -162,6 +163,7 @@ export async function yahooQuote(instrument: Instrument): Promise<YahooQuote> {
     observedAt: m.regularMarketTime * 1000,
     delayMinutes: typeof m.exchangeDataDelayedBy === "number" ? m.exchangeDataDelayedBy : undefined,
     name: m.longName ?? m.shortName,
+    isEtf: m.symbol?.toUpperCase() === yahooTicker(instrument) && m.instrumentType === "ETF",
   };
 }
 

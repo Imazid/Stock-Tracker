@@ -1,0 +1,223 @@
+.holdings {
+  min-width: 0;
+  container-type: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  scroll-margin-top: 72px;
+}
+
+.holdings[data-workspace] {
+  --surface-2: var(--surface-raised);
+  --text-2: var(--muted);
+  --text-3: var(--muted);
+  --border-strong: var(--control-border);
+  --primary-fg: var(--accent);
+  --up: var(--green);
+  --down: var(--red);
+  --warn: #f2b448;
+}
+
+.heading, .controls, .coverage, .row, .footer {
+  padding-inline: 14px;
+}
+
+.heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 14px;
+  padding-block: 14px 10px;
+}
+
+.heading h2 {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.holdings .heading a {
+  color: var(--primary-fg);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 154px), 1fr));
+  gap: 8px 12px;
+}
+
+.controls label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.controls :is(input, select), .holdings .button {
+  min-width: 0;
+  min-height: 36px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.controls input::placeholder {
+  color: var(--text-3);
+}
+
+.controls :is(input, select):focus-visible, .holdings .button:focus-visible {
+  outline: 2px solid var(--primary-fg);
+  outline-offset: 2px;
+}
+
+.holdings .button:hover {
+  border-color: var(--primary-fg);
+}
+
+.coverage {
+  padding-block: 9px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px 12px;
+  border-top: 1px solid var(--border);
+  padding-block: 11px;
+}
+
+.asset {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 14px;
+}
+
+.logo {
+  position: relative;
+  display: grid;
+  flex: 0 0 34px;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.logoImage, .logoPending {
+  position: absolute;
+  inset: 0;
+  padding: 4px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.logoPending {
+  opacity: 0;
+}
+
+.identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.holdings .assetLink {
+  color: var(--primary-fg);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.name {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.detail {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.figure {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.figure dt {
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.figure dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.figure dd.detail {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+@container (min-width: 410px) {
+  .figures {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 750px) {
+  .row {
+    grid-template-columns: minmax(140px, 1fr) minmax(0, 4fr);
+  }
+
+  .figures {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .source {
+    grid-column: 1 / -1;
+  }
+}
+
+.source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding-block: 10px;
+}

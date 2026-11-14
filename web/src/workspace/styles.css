@@ -21,6 +21,8 @@
 * { box-sizing: border-box; }
 
 :scope { min-width: 320px; min-height: 100dvh; background: var(--bg); margin: 0; font: 14px/1.45 "Inter Variable", system-ui, sans-serif; color: var(--text); }
+:scope.portfolio-history-embed { min-width: 0; min-height: 0; background: transparent; font-family: inherit; color-scheme: inherit; --heading: var(--font-sans); }
+:scope.portfolio-history-embed .portfolio-history { --border: var(--history-border); --surface: var(--history-surface); --line: var(--history-border); --text: var(--history-text); --muted: var(--history-muted); --accent: var(--history-accent); }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
@@ -175,6 +177,62 @@ kbd { font: 11px var(--mono); }
 .row-chevron { color: var(--dim); }
 .watch-action { width: 100%; min-height: 38px; color: #b7c7b3; font-size: 10px; }
 .overview-bottom { margin-top: 13px; }
+.dashboard-actions, .dashboard-heading-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dashboard-actions { margin-bottom: 14px; }
+.portfolio-dashboard { display: grid; gap: 14px; margin-bottom: 14px; }
+.dashboard-summary .panel-heading { flex-wrap: wrap; }
+.dashboard-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 1px; margin: 0; background: var(--line); border-block: 1px solid var(--line); }
+.dashboard-metric { padding: 12px 15px; background: var(--surface); }
+.dashboard-metric dt, .dashboard-metric small, .dashboard-allocation p, .dashboard-brokerage p, .dashboard-intelligence-body p, .dashboard-status { color: var(--muted); font-size: 12px; }
+.dashboard-metric dd { margin: 2px 0 4px; font: 650 clamp(21px, 2.6vw, 31px)/1.15 var(--heading); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dashboard-metric small { display: block; margin-top: 4px; font-family: inherit; font-weight: 450; line-height: 1.45; }
+.dashboard-allocation, .dashboard-brokerage, .dashboard-intelligence-body, .dashboard-status { padding: 10px 15px; }
+.dashboard-allocation ul, .dashboard-accounts { list-style: none; margin: 6px 0; padding: 0; }
+.dashboard-allocation ul { display: flex; flex-wrap: wrap; gap: 7px; }
+.dashboard-allocation li { display: flex; gap: 8px; background: var(--surface-raised); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+.dashboard-brokerage, .dashboard-intelligence-body { border-top: 1px solid var(--line); }
+.dashboard-brokerage .dashboard-heading-row { justify-content: space-between; }
+.dashboard-brokerage .brokerage-actions { margin-bottom: 0; }
+.dashboard-brokerage h3, .dashboard-allocation h3, .dashboard-intelligence-body h3 { font-size: 13px; font-weight: 650; }
+.dashboard-net { margin: 8px 0 5px; }
+.dashboard-net .dashboard-metric { padding: 8px 0; }
+.dashboard-accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr)); gap: 8px; }
+.dashboard-accounts li { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; overflow-wrap: anywhere; }
+.dashboard-accounts dl { margin: 5px 0 0; }
+.dashboard-accounts dt { color: var(--muted); font-size: 11px; }
+.dashboard-accounts dd { margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.dashboard-intelligence-body { display: grid; gap: 7px; justify-items: start; }
+.dashboard-intelligence-body a { color: var(--accent); text-decoration: underline; }
+.dashboard-moves { display: flex; gap: 8px 22px; flex-wrap: wrap; margin: 0; }
+.dashboard-moves dt { color: var(--muted); font-size: 12px; }
+.dashboard-moves dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.main > .portfolio-history { margin-bottom: 14px; }
+.portfolio-history .portfolio-history-heading { min-height: 58px; }
+.portfolio-history .portfolio-history-heading h2, .portfolio-history-summary dd { color: var(--text); }
+.portfolio-history-controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; padding: 0 15px 8px; }
+.portfolio-history-controls button { min-height: 34px; }
+.portfolio-history-summary { padding: 5px 15px 0; }
+.portfolio-history-summary dl { display: flex; flex-wrap: wrap; gap: 8px 26px; margin: 0; }
+.portfolio-history-summary dt, .portfolio-history-summary p, .portfolio-history-footer { color: var(--muted); font-size: 12px; }
+.portfolio-history-summary dd { margin: 0; font: 650 clamp(18px, 2.7vw, 28px)/1.3 var(--heading); font-variant-numeric: tabular-nums; }
+.portfolio-history-summary p { margin-top: 5px; }
+.portfolio-history-state { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 18px 15px; color: var(--muted); }
+.portfolio-history-footer { border-top: 1px solid var(--line); padding: 10px 15px; }
+.portfolio-history .history-chart { height: clamp(200px, 27vw, 310px); }
+.chart .chart-comparison { stroke: var(--muted); stroke-width: 1.5px; stroke-dasharray: 6 4; fill: none; }
+.chart-tip-label { margin-left: 6px; }
+.portfolio-history-table { padding: 0 15px 10px; }
+.portfolio-history-table summary { min-height: 34px; cursor: pointer; color: var(--accent); font-size: 12px; padding-block: 8px; }
+.portfolio-history-table table { min-width: 0; width: 100%; font-size: 12px; }
+.portfolio-history-table th, .portfolio-history-table td { padding: 6px 3px; white-space: normal; }
+.portfolio-history-table button { margin-top: 8px; }
+:scope.portfolio-history-embed .segmented { background: var(--history-controls); border-color: var(--history-border); }
+:scope.portfolio-history-embed .segmented button[aria-pressed="true"] { background: var(--history-selected); }
+:scope.portfolio-history-embed .portfolio-history .chart-tip { background: var(--history-surface); color: var(--history-muted); border-color: var(--history-border); }
+:scope.portfolio-history-embed .portfolio-history .chart text { fill: var(--history-muted); }
+:scope.portfolio-history-embed .portfolio-history .chart .gridline { stroke: var(--history-border); }
+:scope.portfolio-history-embed .portfolio-history .button.secondary { background: var(--history-controls); border-color: var(--history-border); }
+:scope.portfolio-history-embed .portfolio-history .chart-tip strong { color: var(--history-text); }
 .overview-callout { background: linear-gradient(104deg,#192219,#151a1c 65%); border: 1px solid #303d30; border-radius: 9px; padding: 12px 14px; display: flex; align-items: center; gap: 11px; }
 .overview-callout > div { flex: 1; }
 .overview-callout h2 { font-size: 14px; }
@@ -313,6 +371,8 @@ td { font-size: 12px; white-space: nowrap; }
   .overview-callout > div { flex-basis: 70%; }
   .overview-callout > button { margin-left: 45px; }
   .chart-footer { align-items: start; }
+  .portfolio-history-controls, .portfolio-history-summary, .portfolio-history-footer { padding-inline: 10px; }
+  .portfolio-history .chart-tip { right: 5%; left: 5%; }
   .top-bell { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
