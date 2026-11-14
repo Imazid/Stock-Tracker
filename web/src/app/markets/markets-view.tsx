@@ -4,6 +4,10 @@ import { UniverseCatalog } from "@engine/catalog.ts";
 import { makeInstrument } from "@engine/market.ts";
 import { History, Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { RecentSearches } from "@/components/market/RecentSearches";
+import { SearchFilters } from "@/components/market/SearchFilters";
+import { maxSearchLength, type SearchFilters as Filters } from "@/lib/market-search";
+import { recordSearch, type RecentSearch } from "@/lib/recent-searches";
 import { InstrumentRow } from "@/components/market/InstrumentRow";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -42,15 +46,14 @@ const THEMES = {
   defi: { label: "DeFi protocols", list: UniverseCatalog.otherCrypto.filter((coin) => ["LINK", "UNI"].includes(coin.symbol)) },
 } as const;
 type ThemeKey = keyof typeof THEMES;
-type SearchScope = "all" | "stocks" | "etfs" | "crypto" | "indexes";
 
-export function MarketsView() {
-  const [query, setQuery] = useState("");
+export function MarketsView({ initialQuery, initialFilters }: { initialQuery: string; initialFilters: Filters }) {
+  const [query, setQuery] = useState(initialQuery);
   const [group, setGroup] = useState<GroupKey>("us");
   const [theme, setTheme] = useState<ThemeKey>("tech");
-  const [scope, setScope] = useState<SearchScope>("all");
+  const [filters, setFilters] = useState(initialFilters);
   const [recent, setRecent] = useState<RecentInstrument[]>([]);
-  const search = useSearch(query, { includeIndexes: true });
+  const search = useSearch(query, { includeIndexes: true, filters, useCurrentResults: true });
   useEffect(() => {
     // Browser storage is only readable after hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -58,39 +61,46 @@ export function MarketsView() {
   }, []);
   const groupItems = useMemo(() => GROUPS[group].list.map(toView), [group]);
   const searching = query.trim().length > 0;
-  const results = search.data?.results.filter((row) => {
-    const isIndex = row.symbol.startsWith("^");
-    if (scope === "all") return true;
-    if (scope === "indexes") return isIndex;
-    if (scope === "stocks") return row.assetClass === "equity" && !isIndex;
-    return row.assetClass === (scope === "etfs" ? "etf" : "crypto");
-  });
+  function focusSearch() {
+    document.getElementById("markets-search")?.focus();
+  }
+
+  function chooseRecent(entry: RecentSearch) {
+    setQuery(entry.query);
+    setFilters({ assetType: entry.assetType, market: entry.market });
+    focusSearch();
+  }
 
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader title="Markets" description="US, ASX, UK, European and Asian listings and the crypto we can price. Every price shows its source, currency and age." />
-      <div className="relative mb-5">
-        <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-3" />
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search ticker, name, exchange or identifier" aria-label="Search instruments" className="h-11 pl-9 pr-9 text-[15px]" />
-        {search.isFetching ? <Loader2 aria-label="Searching" className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-text-3" />
-          : query ? <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-3 hover:text-text"><X className="h-4 w-4" /></button> : null}
-      </div>
+      <form className="mb-5 space-y-2" onSubmit={(event) => { event.preventDefault(); recordSearch(query, filters); }}>
+        <div className="relative">
+          <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-3" />
+          <Input id="markets-search" value={query} maxLength={maxSearchLength} onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search ticker, name, exchange or identifier" aria-label="Search instruments" className="h-11 pl-9 pr-16 text-[15px]" />
+          {search.isFetching && <Loader2 aria-hidden className="absolute right-10 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-text-3" />}
+          {query && <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); focusSearch(); }}
+            className="absolute right-1 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-md text-text-3 hover:text-text"><X className="h-4 w-4" /></button>}
+        </div>
+        <SearchFilters filters={filters} onChange={setFilters} />
+      </form>
 
       {searching ? (
         <Card>
-          <CardHeader className="flex-wrap" title={`Results for “${query.trim()}”`} actions={
-            <Select aria-label="Asset type" value={scope} onChange={(event) => setScope(event.target.value as SearchScope)}>
-              <option value="all">All assets</option><option value="stocks">Stocks</option><option value="etfs">ETFs</option><option value="crypto">Crypto</option><option value="indexes">Indexes</option>
-            </Select>
-          } />
+          <CardHeader title={`Results for “${query.trim()}”`} />
           {search.data?.warning ? <div className="px-4 pb-3"><Notice tone="warn">{search.data.warning}</Notice></div> : null}
-          {search.isError ? <EmptyState tone="down" title="Search isn't available" body="Try again in a moment." />
-            : results?.length === 0 && !search.isFetching ? <EmptyState title="No matches" body="Try another asset type, ticker or company name." />
-              : !search.data ? <div className="space-y-2 p-4">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-10" />)}</div>
-                : <ul className="divide-y divide-border border-t border-border">{results?.map((r) => <InstrumentRow key={r.id} instrument={r} spark={false} />)}</ul>}
+          <p role="status" className="sr-only">{search.isFetching ? "Searching…" : search.data ? `${search.data.results.length} results` : ""}</p>
+          {search.isError ? <EmptyState tone="down" title="Search isn't available"
+            actions={<Button size="sm" onClick={() => void search.refetch()}>Retry search</Button>} />
+            : !search.data ? <div aria-hidden="true" className="space-y-2 p-4">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-10" />)}</div>
+              : search.data.results.length === 0 ? <EmptyState title="No matches" body="Try another market, asset type, ticker or company name." />
+                : <ul className="divide-y divide-border border-t border-border">{search.data.results.map((r) =>
+                  <InstrumentRow key={r.id} instrument={r} showQuote={false} onNavigate={() => recordSearch(query, filters)} />)}</ul>}
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-5">
+          <RecentSearches onChoose={chooseRecent} />
           <Card>
             <CardHeader title="Market indexes" />
             <ul className="grid grid-cols-1 divide-y divide-border border-t border-border sm:grid-cols-2 sm:divide-y-0">

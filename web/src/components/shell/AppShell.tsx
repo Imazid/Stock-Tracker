@@ -95,14 +95,14 @@ function Account() {
   if (session.status === "unconfigured") {
     return <span className="hidden text-xs text-text-3 md:inline" title="Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY">Accounts not configured</span>;
   }
-  if (session.status === "loading") return <span className="skeleton h-8 w-20" aria-hidden />;
+  if (session.status === "loading") return <span className="skeleton h-8 w-8 sm:w-20" aria-hidden />;
   if (session.status === "signedOut") {
-    return <Link href={path === "/get-started" ? "/login?next=/get-started" : "/login"} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-text hover:bg-primary-hover"><LogIn aria-hidden className="h-3.5 w-3.5" />Sign in</Link>;
+    return <Link href={path === "/get-started" ? "/login?next=/get-started" : "/login"} aria-label="Sign in" className="inline-flex h-8 w-8 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13px] font-medium text-primary-text hover:bg-primary-hover sm:w-auto sm:px-3"><LogIn aria-hidden className="h-4 w-4" /><span className="hidden sm:inline">Sign in</span></Link>;
   }
   return (
     <div className="flex items-center gap-2">
       <span className="hidden max-w-[160px] truncate text-xs text-text-2 md:inline" title={session.user.email ?? undefined}>{session.user.email}</span>
-      <Button size="sm" variant="ghost" aria-label="Sign out" title="Sign out"
+      <Button size="sm" variant="ghost" className="w-8 p-0 sm:w-auto sm:px-3" aria-label="Sign out" title="Sign out"
         onClick={async () => { await browserSupabase()?.auth.signOut(); router.refresh(); }}>
         <LogOut className="h-4 w-4" />
       </Button>
@@ -166,21 +166,21 @@ function ToolsShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Practice strip: a thin amber line along the very top, on every page. */}
         <div aria-hidden className="h-0.5 w-full bg-warn" />
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-bg/85 px-3 backdrop-blur md:px-5">
-          <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu"><Menu className="h-4 w-4" /></Button>
-          <button type="button" onClick={() => setPaletteOpen(true)}
-            className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-left text-[13px] text-text-3 hover:border-border-strong md:max-w-md">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-1.5 border-b border-border bg-bg/85 px-2 backdrop-blur sm:gap-2 sm:px-3 md:px-5">
+          <Button variant="ghost" size="sm" className="w-8 p-0 sm:w-auto sm:px-3 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu"><Menu className="h-4 w-4" /></Button>
+          <button type="button" onClick={() => setPaletteOpen(true)} aria-label="Search markets"
+            className="flex h-9 min-w-9 flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-2 text-left text-[13px] text-text-3 hover:border-border-strong sm:justify-start sm:px-3 md:max-w-md">
             <Search aria-hidden className="h-4 w-4 shrink-0" />
-            <span className="truncate">Search markets…</span>
+            <span className="hidden truncate sm:inline">Search markets…</span>
             <kbd className="ml-auto hidden rounded border border-border px-1.5 text-[10px] md:inline">⌘K</kbd>
           </button>
           <div className="ml-auto flex items-center gap-1.5 md:gap-2">
             <EnvironmentBadge />
-            <Button variant="ghost" size="sm" aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title="Theme"
+            <Button variant="ghost" size="sm" className="w-8 p-0 sm:w-auto sm:px-3" aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title="Theme"
               onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}>
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button variant={assistantOpen ? "secondary" : "ghost"} size="sm" aria-pressed={assistantOpen} aria-label="Assistant panel" title="Assistant"
+            <Button variant={assistantOpen ? "secondary" : "ghost"} size="sm" className="w-8 p-0 sm:w-auto sm:px-3" aria-pressed={assistantOpen} aria-label="Assistant panel" title="Assistant"
               onClick={() => setAssistantOpen((o) => !o)}>
               <BrainCircuit className="h-4 w-4" />
             </Button>
