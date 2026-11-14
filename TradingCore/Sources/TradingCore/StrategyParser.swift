@@ -36,7 +36,17 @@ public enum StrategyParser {
         var mode: AgentMode = .paper
         let pick = universe.isEmpty ? nil : universe
 
-        if has("rebalanc") {
+        if let rules = DescribedStrategyRules.parse(lower) {
+            templateID = "customRules"; name = "Custom Strategy"
+            let hourly = lower.range(of: #"\d+[- ]hour\b|\bhourly (?:bars|chart)\b"#, options: .regularExpression) != nil
+            spec = StrategySpec(kind: .rules, title: "Custom rules",
+                                summary: "Uses the buy and sell conditions from your description.",
+                                timeframe: hourly ? .hour : .day, universe: pick ?? UniverseCatalog.broadETFs,
+                                entry: rules.entry, exit: rules.exit)
+            assumptions += rules.notes
+            if let buy = rules.entry { understood.append("Buy when \(buy.label(spec.timeframe))") }
+            if let sell = rules.exit, !sell.leaves.isEmpty { understood.append("Sell when \(sell.label(spec.timeframe))") }
+        } else if has("rebalanc") {
             templateID = "etfRebalance"; name = "ETF Rebalancing Agent"
             spec = AgentTemplates.etfRebalancing(pick ?? UniverseCatalog.balancedETFs)
         } else if has("dollar-cost", "dollar cost", " dca", "recurring", "every week", "each week", "every month", "regularly") {
@@ -138,6 +148,10 @@ public enum StrategyParser {
                 if spec.sizing.mode == .percentOfEquity && spec.kind == .rules { spec.sizing.value = min(spec.sizing.value, value) }
                 understood.append("Position limit: \(Operand.trim(value))% each")
             }
+        }
+
+        if templateID == "customRules", spec.entry != nil, spec.exit == nil, spec.protections.isEmpty {
+            assumptions.append("Add a sell condition or a protective exit before running this strategy.")
         }
 
         // 4. Mode.

@@ -33,7 +33,7 @@ struct CreateAgentFlow: View {
     private let examples = [
         "Watch technology stocks and trade moving-average crossovers with a $5,000 paper portfolio, 10% per position",
         "Buy $100 of SPY every week with a $5,000 budget",
-        "Monitor BTC and ETH and ask me before each trade, with an 8% stop loss"
+        "Buy ETH when RSI is below 30. Sell when RSI crosses above 65, with an 8% stop loss"
     ]
 
     var body: some View {

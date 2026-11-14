@@ -76,6 +76,41 @@ final class StrategyEvaluatorTests: XCTestCase {
                      protections: Protections(stopLossPct: 8), reentryCooldownBars: 0)
     }
 
+    func testExplicitConditionsPreserveThresholdsDirectionsAndGrouping() {
+        let parsed = StrategyParser.parse("Buy ETH when RSI(7) drops below 28.5 and price is above its 20-day EMA, or RSI(7) crosses above 35. Sell when RSI rises above 65, with a $5,000 budget, 8% per position and an 18% max drawdown.")
+        XCTAssertEqual(parsed.draft.spec.universe.map(\.id), ["crypto:ETH"])
+        XCTAssertEqual(parsed.draft.spec.entry, .any([
+            .all([.below(.rsi(7), .constant(28.5)), .above(.close, .ema(20))]),
+            .crossesAbove(.rsi(7), .constant(35))
+        ]))
+        XCTAssertEqual(parsed.draft.spec.exit, .above(.rsi(14), .constant(65)))
+        XCTAssertEqual(parsed.draft.budget, 5_000)
+        XCTAssertEqual(parsed.draft.maxPositionPct, 8)
+        XCTAssertEqual(parsed.draft.riskPolicy?.maxDrawdownPct, 18)
+        XCTAssertTrue(parsed.assumptions.contains("Used 14 bars wherever the RSI period was omitted."))
+        XCTAssertTrue(StrategyValidator.isValid(parsed.draft.spec))
+
+        let directed = StrategyParser.parse("Buy BTC when its 50-day average crosses below its 20-day average, and sell on the opposite crossover")
+        XCTAssertEqual(directed.draft.spec.entry, .crossesBelow(.sma(50), .sma(20)))
+        XCTAssertEqual(directed.draft.spec.exit, .crossesAbove(.sma(50), .sma(20)))
+    }
+
+    func testExplicitIncompleteAndUnsupportedConditionsRequireReview() {
+        let missingExit = StrategyParser.parse("Buy ETH when RSI drops below 30")
+        XCTAssertEqual(missingExit.draft.spec.entry, .below(.rsi(14), .constant(30)))
+        XCTAssertNil(missingExit.draft.spec.exit)
+        XCTAssertFalse(StrategyValidator.isValid(missingExit.draft.spec))
+
+        let unsupportedExit = StrategyParser.parse("Buy ETH when RSI is below 30 and sell when RSI is above 60 and sentiment improves, with a 5% stop loss")
+        XCTAssertEqual(unsupportedExit.draft.spec.protections.stopLossPct, 5)
+        XCTAssertEqual(unsupportedExit.draft.spec.exit, .all([]))
+        XCTAssertFalse(StrategyValidator.isValid(unsupportedExit.draft.spec))
+
+        let inclusive = StrategyParser.parse("Buy ETH when RSI is below or equal to 30 and sell when RSI is above 65")
+        XCTAssertNil(inclusive.draft.spec.entry)
+        XCTAssertFalse(StrategyValidator.isValid(inclusive.draft.spec))
+    }
+
     func testCrossoverBuysOnlyOnTheBarOfTheCross() {
         let closes = [Double](repeating: 100, count: 30) + [102, 104, 106]
         let prepared = PreparedSeries(bars: Fx.dailyBars(closes: closes))

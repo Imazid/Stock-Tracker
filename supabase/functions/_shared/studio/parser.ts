@@ -9,9 +9,10 @@ import { type Instrument, instrumentID, usETF, type Venue } from "../trading/mar
 import { type RiskPolicy, standardPolicy } from "../trading/risk.ts";
 import { roundAway } from "../trading/rounding.ts";
 import { type AgentDraft, makeDraft, TradingError } from "../trading/state.ts";
-import { decodeStrategySpec, type StrategySpec, StrategyValidator } from "../trading/strategy.ts";
+import { conditionLabel, decodeStrategySpec, makeSpec, type StrategySpec, StrategyValidator } from "../trading/strategy.ts";
 import * as Templates from "../trading/templates.ts";
 import { compareStrings, trimNumber } from "../trading/text.ts";
+import { describedRules } from "./described-rules.ts";
 
 export interface ParsedAgentRequest {
   draft: AgentDraft;
@@ -69,7 +70,17 @@ export function parse(text: string): ParsedAgentRequest {
   let mode: AgentMode = "paper";
   const pick = assets.length === 0 ? undefined : assets;
 
-  if (has("rebalanc")) {
+  const explicit = describedRules(lower);
+  if (explicit) {
+    templateID = "customRules"; name = "Custom Strategy";
+    const timeframe = /\d+[- ]hour\b|\bhourly (?:bars|chart)\b/.test(lower) ? "hour" : "day";
+    spec = makeSpec({ kind: "rules", title: "Custom rules",
+      summary: "Uses the buy and sell conditions from your description.",
+      timeframe, universe: pick ?? UniverseCatalog.broadETFs, entry: explicit.entry, exit: explicit.exit });
+    assumptions.push(...explicit.notes);
+    if (spec.entry) understood.push(`Buy when ${conditionLabel(spec.entry, timeframe)}`);
+    if (spec.exit && spec.exit.conditions?.length !== 0) understood.push(`Sell when ${conditionLabel(spec.exit, timeframe)}`);
+  } else if (has("rebalanc")) {
     templateID = "etfRebalance"; name = "ETF Rebalancing Agent";
     spec = Templates.etfRebalancing(pick ?? UniverseCatalog.balancedETFs);
   } else if (has("dollar-cost", "dollar cost", " dca", "recurring", "every week", "each week", "every month", "regularly")) {
@@ -173,6 +184,10 @@ export function parse(text: string): ParsedAgentRequest {
         understood.push(`Position limit: ${trimNumber(value)}% each`);
         break;
     }
+  }
+
+  if (templateID === "customRules" && spec.entry && !spec.exit && !Object.values(spec.protections).some(value => value !== undefined)) {
+    assumptions.push("Add a sell condition or a protective exit before running this strategy.");
   }
 
   if (has("research only", "research-only")) mode = "researchOnly";
