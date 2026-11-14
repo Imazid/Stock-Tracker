@@ -1009,10 +1009,12 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(saved.isHittable, app.debugDescription)
         saved.tap()
         XCTAssertTrue(app.navigationBars["Research Answer"].waitForExistence(timeout: 8))
+        let header = app.staticTexts["private.research.reportedFacts"]
+        XCTAssertTrue(header.waitForExistence(timeout: 5))
+        XCTAssertEqual(header.label, "Reported figures")
         let valuation = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "USD 900,000,000")).firstMatch
         for _ in 0..<3 where !valuation.isHittable { app.swipeUp() }
         XCTAssertTrue(valuation.isHittable, app.debugDescription)
-        XCTAssertTrue(app.staticTexts["Reported figures"].exists)
         XCTAssertTrue(app.buttons["Read original source"].firstMatch.exists)
     }
 
