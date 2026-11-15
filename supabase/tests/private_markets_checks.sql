@@ -52,6 +52,10 @@ select pg_temp.expect_error('update public.investor_eligibility set expires_at =
 select pg_temp.expect_error('update public.investment_commitments set status = ''confirmed''','42501','investors cannot confirm applications');
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer')$q$,
   '42501','investors cannot bypass the edge authentication path');
+select pg_temp.expect_error($q$select public.check_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer','AUD')$q$,
+  '42501','investors cannot call the readiness check directly');
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',500,'https://example.test/offer','AUD')$q$,
+  '42501','investors cannot call the open function directly');
 reset role;
 
 set role service_role;
@@ -75,8 +79,24 @@ select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a00
   '22023','offer document version is enforced');
 select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',10001,'https://example.test/offer')$q$,
   '22023','retail crowd-funding cap is enforced');
-select case when count(*) = 1 then 'ok   eligible handoff created' else 'FAIL handoff missing' end
-  from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer');
+select case when public.check_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD')
+  then 'ok   eligible investor passes readiness' else 'FAIL readiness denied' end;
+select case when
+  not exists (select 1 from public.investment_commitments where opportunity_id = 'a0000000-0000-0000-0000-000000000030') and
+  not exists (select 1 from public.investment_audit_logs where action = 'provider_handoff')
+  then 'ok   readiness leaves commitments and audit records untouched' else 'FAIL readiness created a handoff' end;
+update public.private_provider_approvals set enabled = false where provider = 'birchal' and jurisdiction = 'AU';
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD')$q$,
+  '42501','opening rechecks revoked provider approval after readiness');
+update public.private_provider_approvals set enabled = true where provider = 'birchal' and jurisdiction = 'AU';
+update public.provider_connections set revoked_at = now() where id = 'a0000000-0000-0000-0000-000000000050';
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD')$q$,
+  '42501','opening rechecks revoked investor verification after readiness');
+update public.provider_connections set revoked_at = null where id = 'a0000000-0000-0000-0000-000000000050';
+select pg_temp.expect_error($q$select * from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','USD')$q$,
+  '22023','opening refuses a currency different from the reviewed round');
+select case when count(*) = 1 then 'ok   opening creates one eligible handoff' else 'FAIL handoff missing' end
+  from public.open_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer','AUD');
 select case when h.commitment_id = c.id and c.status = 'handoff' and c.confirmed_at is null
   then 'ok   retries are idempotent and do not confirm ownership' else 'FAIL retry changed state' end
   from public.prepare_private_handoff('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000030',9500,'https://example.test/offer') h
@@ -85,7 +105,7 @@ select pg_temp.expect_error($q$select * from public.prepare_private_handoff('a00
   '23505','conflicting duplicate handoff is refused');
 select public.record_private_provider_event('birchal','fixture-account',
   (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
-  'test-receipt','application_received',now()-interval '1 minute',now()+interval '5 days');
+  'test-receipt','application_received',now()-interval '1 minute',now()-interval '30 seconds');
 select pg_temp.expect_error($q$select public.record_private_provider_event('birchal','different-account',
   (select id from public.investment_commitments where opportunity_id='a0000000-0000-0000-0000-000000000030'),
   'test-receipt','confirmed',now(),null,25,9500)$q$,'42501','provider events require matching connected account');
@@ -169,5 +189,143 @@ select case when a.status = 'complete' and r.title = 'Research title'
   from public.agent_analysis_runs a join public.research_reports r on r.id = a.report_id
   where a.id = 'a0000000-0000-0000-0000-000000000060';
 select pg_temp.expect_error('update public.investment_audit_logs set action = ''altered''','42501','service cannot rewrite the audit log');
+-- Use the already confirmed provider holding and a synthetic announcement in the disposable DB.
+insert into public.corporate_actions (company_id,title,significance,published_at,source_url,published)
+values ('a0000000-0000-0000-0000-000000000010','Issuer news','A sourced issuer update.',now()-interval '1 minute',
+        'https://example.test/issuer-update',true),
+       ('a0000000-0000-0000-0000-000000000011','Private draft','Never publish.',now()-interval '1 minute',
+        'https://example.test/issuer-draft',true);
+update public.investment_opportunities set verified_at = now() where id = 'a0000000-0000-0000-0000-000000000030';
+update public.capital_calls set settled_on = null where provider_reference = 'call-1';
+select case when public.collect_private_market_alerts() = 0 then 'ok   monitor skips accounts without opt-in'
+  else 'FAIL unsolicited monitoring' end;
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010','a0000000-0000-0000-0000-000000000011']::uuid[],false,true);
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000081',
+  array['a0000000-0000-0000-0000-000000000010']::uuid[],false,true);
+select case when public.collect_private_market_alerts() = 4 then 'ok   scheduled collection captures one alert per source across devices'
+  else 'FAIL missing or duplicate alerts' end;
+select case when public.collect_private_market_alerts() = 0 then 'ok   scheduled collection is idempotent'
+  else 'FAIL monitor replay duplicated alerts' end;
+select case when count(*) = 4 and count(*) filter (where kind='announcement' and source_url like 'https://%') = 1
+  and count(*) filter (where kind='capital_call' and source_label is not null) = 1
+  and count(*) filter (where kind='distribution' and source_label = 'Distribution notice') = 1
+  then 'ok   inbox retains publication and provider evidence' else 'FAIL invalid inbox entries' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001');
+select case when count(*) = 0 then 'ok   no cross-account inbox records' else 'FAIL cross-account inbox' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000002');
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-000000000082',
+  '{}'::uuid[],true,true);
+select case when public.collect_private_market_alerts('a0000000-0000-0000-0000-000000000002') = 0
+  then 'ok   declared or missing classification does not produce eligibility alerts' else 'FAIL unverified eligibility alert' end;
+insert into public.investor_profiles values ('a0000000-0000-0000-0000-000000000002','AU','retail');
+insert into public.provider_connections (id,user_id,provider,external_subject) values
+  ('a0000000-0000-0000-0000-000000000083','a0000000-0000-0000-0000-000000000002','birchal','second-fixture-account');
+insert into public.investor_eligibility (user_id,provider,connection_id,jurisdiction,verified_class,verified_at,expires_at,evidence_reference)
+  values ('a0000000-0000-0000-0000-000000000002','birchal','a0000000-0000-0000-0000-000000000083',
+    'AU','retail',now()-interval '1 hour',now()+interval '1 day','second-fixture-evidence');
+select case when public.collect_private_market_alerts('a0000000-0000-0000-0000-000000000002') = 1
+  then 'ok   current provider classification can match an open round' else 'FAIL verified round was missed' end;
+select case when count(*) = 1 and min(kind) = 'eligible_round'
+  then 'ok   eligibility inbox includes only approved matching round' else 'FAIL unexpected eligibility inbox' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000002');
+update public.capital_calls set settled_on = current_date where provider_reference = 'call-1';
+select case when count(*) = 0 then 'ok   inbox drops settled obligations' else 'FAIL settled call still in inbox' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001') where kind = 'capital_call';
+update public.corporate_actions set published = false where source_url = 'https://example.test/issuer-update';
+select case when count(*) = 0 then 'ok   inbox hides an unpublished announcement' else 'FAIL unpublished alert visible' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001') where kind = 'announcement';
+update public.corporate_actions set published = true where source_url = 'https://example.test/issuer-update';
+update public.investment_opportunities set verified_at = now() - interval '25 hours' where id = 'a0000000-0000-0000-0000-000000000030';
+select case when count(*) = 1 and min(significance) like '%Current availability is unverified.%'
+  then 'ok   inbox labels old offer availability as unverified' else 'FAIL stale offer presented as open' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001') where kind = 'open_round';
+-- Summaries have separate device consent and never include provider data.
+select case when count(*) = 0 then 'ok   alert monitoring does not consent to AI summaries' else 'FAIL unsolicited AI job' end
+  from public.claim_private_market_digests();
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010','a0000000-0000-0000-0000-000000000011']::uuid[],false,true,true);
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010','a0000000-0000-0000-0000-000000000011']::uuid[],false,true);
+create temporary table digest_claim as select * from public.claim_private_market_digests();
+select case when count(*) = 1 and min(owner_id::text) = 'a0000000-0000-0000-0000-000000000001'
+  and min(jsonb_array_length(sources)) = 1 and min(sources->0->>'url') = 'https://example.test/issuer-update'
+  then 'ok   summary claim includes only opted-in public announcements' else 'FAIL incorrect summary evidence' end
+  from digest_claim;
+select case when count(*) = 0 then 'ok   an active claim is never leased twice' else 'FAIL duplicate digest claim' end
+  from public.claim_private_market_digests();
+select case when not public.finish_private_market_digest(job_id,gen_random_uuid(),sources,'{}')
+  then 'ok   a stale lease cannot save a digest' else 'FAIL invalid lease saved' end from digest_claim;
+update public.corporate_actions set significance = 'Issuer clarification.' where source_url = 'https://example.test/issuer-update';
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   edited evidence invalidates the running digest' else 'FAIL stale evidence saved' end from digest_claim;
+update public.corporate_actions set significance = 'A sourced issuer update.' where source_url = 'https://example.test/issuer-update';
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010']::uuid[],false,true,false);
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   revoking consent prevents an in-flight digest from being saved' else 'FAIL digest saved after opt-out' end from digest_claim;
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  array['a0000000-0000-0000-0000-000000000010']::uuid[],false,true,true);
+reset role;
+update public.private_market_digest_jobs set next_attempt_at = now() - interval '1 second';
+set role service_role;
+create temporary table digest_retry as select * from public.claim_private_market_digests();
+select case when count(*) = 1 and bool_and(r.job_id = c.job_id and r.lease <> c.lease)
+  then 'ok   retries keep the same report ID and rotate the lease' else 'FAIL invalid retry' end from digest_retry r cross join digest_claim c;
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   the superseded claim cannot commit' else 'FAIL superseded claim saved' end from digest_claim;
+select case when public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   the current claim can save' else 'FAIL valid summary was not saved' end from digest_retry;
+select case when count(*) = 1 and min(kind) = 'monitor_digest'
+  then 'ok   summary is saved as a report owned by the subscriber' else 'FAIL incorrect report ownership' end
+  from public.research_reports where id in (select job_id from digest_retry)
+    and user_id = 'a0000000-0000-0000-0000-000000000001';
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   completion is idempotent' else 'FAIL completed digest saved twice' end from digest_retry;
+reset role;
+update public.private_market_digest_jobs set digest_day = digest_day - 2
+where id in (select job_id from digest_retry);
+set role service_role;
+select case when count(*) = 0 then 'ok   a previous summary suppresses unchanged source content'
+  else 'FAIL unchanged source was claimed again' end from public.claim_private_market_digests();
+update public.corporate_actions set significance = 'The issuer corrected the public notice.'
+where source_url = 'https://example.test/issuer-update';
+create temporary table revised_digest as select * from public.claim_private_market_digests();
+select case when count(*) = 1 and min(sources->0->>'is_revision') = 'true'
+    and min(sources->0->>'summary') = 'The issuer corrected the public notice.'
+  then 'ok   a corrected disclosure can be claimed after its original summary'
+  else 'FAIL corrected disclosure was omitted' end from revised_digest;
+update public.corporate_actions set published = false where source_url = 'https://example.test/issuer-update';
+select case when not public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   withdrawing a corrected disclosure blocks its pending summary'
+  else 'FAIL withdrawn revision was saved' end from revised_digest;
+update public.corporate_actions set published = true where source_url = 'https://example.test/issuer-update';
+select case when public.finish_private_market_digest(job_id,lease,sources,'{}')
+  then 'ok   a still-published revision can be saved' else 'FAIL valid revision was not saved' end from revised_digest;
+select case when count(*) = 1 then 'ok   the saved summary identifies disclosure updates'
+  else 'FAIL revision summary title' end from public.research_reports
+  where id in (select job_id from revised_digest) and title = 'Private Markets disclosure updates';
+reset role;
+update public.private_market_digest_jobs set digest_day = digest_day - 1 where id in (select job_id from revised_digest);
+set role service_role;
+select case when count(*) = 0 then 'ok   daily selection ignores a revision after it has been summarized'
+  else 'FAIL revision was claimed twice' end from public.claim_private_market_digests();
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000080',
+  '{}'::uuid[],false,false);
+select case when count(*) = 3 then 'ok   one device may opt out without erasing another device inbox'
+  else 'FAIL other device inbox erased' end
+  from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001');
+select public.configure_private_monitor('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000081',
+  '{}'::uuid[],false,false);
+select case when count(*) = 0 then 'ok   last opt-out removes the stored inbox' else 'FAIL inbox retained after opt-out' end
+  from public.private_market_alerts where user_id = 'a0000000-0000-0000-0000-000000000001';
+reset role;
+set role authenticated;
+select pg_temp.expect_error($q$select * from public.private_market_alert_inbox('a0000000-0000-0000-0000-000000000001')$q$,
+  '42501','app clients cannot read another account inbox directly');
+select pg_temp.expect_error($q$select public.run_private_market_monitor()$q$, '42501', 'app clients cannot invoke scheduled collection');
+select pg_temp.expect_error($q$select * from public.claim_private_market_digests()$q$, '42501', 'app clients cannot claim scheduled summaries');
+select pg_temp.expect_error($q$select * from public.private_market_digest_jobs$q$, '42501', 'app clients cannot read summary jobs');
+select pg_temp.expect_error($q$select public.invoke_private_market_digest()$q$, '42501', 'app clients cannot dispatch the summary worker');
 reset role;
 rollback;

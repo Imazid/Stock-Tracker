@@ -1,5 +1,5 @@
 import {
-  Activity, Bot, BrainCircuit, Cable, ClipboardList, FlaskConical, LayoutDashboard, LineChart, ListChecks, Settings, Wallet, Workflow,
+  Activity, Bot, BrainCircuit, Building2, Cable, ClipboardList, FlaskConical, LayoutDashboard, LineChart, ListChecks, Settings, Wallet, Workflow,
   type LucideIcon,
 } from "lucide-react";
 
@@ -14,6 +14,7 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/markets", label: "Markets", icon: LineChart },
+  { href: "/private-markets", label: "Private Markets", icon: Building2 },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
   { href: "/watchlists", label: "Watchlists", icon: ListChecks },
   { href: "/ai", label: "AI Workspace", icon: BrainCircuit },

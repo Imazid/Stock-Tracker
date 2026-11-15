@@ -7,7 +7,21 @@ const services = {
   trading: "trading-api",
   research: "ai-proxy",
   brokerage: "snaptrade-proxy",
+  "private-markets": "private-markets",
+  "account-export": "account-export",
+  "account-deletion": "account-deletion",
 } as const;
+
+const privateMarketActions = new Set([
+  "company_watchlist", "save_company_watchlist",
+  "catalog", "discover", "research", "research_status", "research_runs", "reports", "report", "delete_report", "research_refresh",
+  "confirmed_holdings", "capital_activity", "valuation_history", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
+  "manual_portfolio", "remove_manual_portfolio", "account_holdings", "save_account_holding", "remove_account_holding", "save_account_valuation", "remove_account_valuation", "save_account_cash_flow", "remove_account_cash_flow",
+  "set_account_holding_company", "account_provider_options", "set_account_holding_provider",
+  "profile", "save_profile", "issue_provider_link", "disconnect_provider", "handoff_check", "handoff",
+  "handoff_review", "handoff_resume_check", "handoff_resume",
+  "documents", "document", "save_document", "delete_document", "research_capabilities",
+]);
 
 function failure(message: string, status: number) {
   return Response.json({ error: { message } }, { status, headers: { "Cache-Control": "no-store" } });
@@ -19,7 +33,8 @@ export async function POST(request: Request, context: {params: Promise<{service:
   if (service === "research" && process.env.ENABLE_AI !== "true") return failure("The AI provider is awaiting configuration.", 503);
   if (service === "brokerage" && process.env.ENABLE_SNAPTRADE !== "true") return failure("The brokerage provider is awaiting configuration.", 503);
   const authorization = request.headers.get("authorization");
-  if (!authorization?.match(/^Bearer [\w.-]+$/) || authorization.length > 8192) return failure("Sign in to continue.", 401);
+  const hasBearer = !!authorization?.match(/^Bearer [\w.-]+$/) && authorization.length <= 8192;
+  if (service !== "private-markets" && !hasBearer) return failure("Sign in to continue.", 401);
   const url = SUPABASE_URL;
   const key = SUPABASE_ANON_KEY;
   if (!url || !key) return failure("Stock Tracker is awaiting backend configuration.", 503);
@@ -28,6 +43,31 @@ export async function POST(request: Request, context: {params: Promise<{service:
   if (body.length > 60_000) return failure("Request is too large.", 413);
   const parsed: unknown = await Promise.resolve().then(() => JSON.parse(body)).catch(() => null);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return failure("Invalid request.", 400);
+  let publicCatalog = false;
+  if (service === "private-markets") {
+    const { action } = parsed as { action?: unknown };
+    if (typeof action !== "string" || !privateMarketActions.has(action)) return failure("Unsupported Private Markets action.", 403);
+    publicCatalog = action === "catalog";
+    if ((action === "discover" || action === "research") && process.env.ENABLE_AI !== "true") {
+      return failure("The AI provider is awaiting configuration.", 503);
+    }
+  }
+  if (!publicCatalog && !hasBearer) {
+    return failure("Sign in to continue.", 401);
+  }
+  if (service === "private-markets") {
+    const { action, currency, document_ids, document_provider } = parsed as {
+      action: string; currency?: unknown; document_ids?: unknown; document_provider?: unknown;
+    };
+    if ((action === "handoff" || action === "handoff_check") &&
+      (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency))) {
+      return failure("Review the current offer currency before continuing.", 400);
+    }
+    if (action === "research" && Array.isArray(document_ids) && document_ids.length > 0 &&
+      document_provider !== "openai" && document_provider !== "gemini") {
+      return failure("Review the approved provider before sharing excerpts.", 400);
+    }
+  }
   if (service === "trading") {
     const input = parsed as {action?: string; mode?: string; order?: {mode?: string}; draft?: {mode?: string}};
     if ("fixture" in input || input.mode === "live" || input.order?.mode === "live" ||
@@ -44,16 +84,18 @@ export async function POST(request: Request, context: {params: Promise<{service:
   }
   // Existing Edge Functions verify the user's access token and enforce ownership and trading permissions.
   const idempotencyKey = request.headers.get("idempotency-key");
+  const deadline = AbortSignal.timeout(55_000);
   try {
     const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/${services[service as keyof typeof services]}`, {
       method: "POST",
       headers: {
-        Authorization: authorization, apikey: key, "Content-Type": "application/json",
+        ...(!publicCatalog && authorization ? { Authorization: authorization } : {}),
+        apikey: key, "Content-Type": "application/json",
         ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
       },
       body,
       cache: "no-store",
-      signal: AbortSignal.timeout(55_000),
+      signal: service === "account-export" ? AbortSignal.any([request.signal, deadline]) : deadline,
     });
     return new Response(response.body, {
       status: response.status,

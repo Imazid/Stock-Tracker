@@ -1,0 +1,116 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { chromium } from "playwright-core";
+
+const {
+  PRIVATE_MARKETS_TEST_ORIGIN: origin, PRIVATE_MARKETS_TEST_CHROME: executablePath,
+  PRIVATE_MARKETS_TEST_EMAIL: email, PRIVATE_MARKETS_TEST_PASSWORD: password,
+  PRIVATE_MARKETS_OTHER_EMAIL: otherEmail, PRIVATE_MARKETS_OTHER_PASSWORD: otherPassword,
+  PRIVATE_MANUAL_SNAPSHOT_FIXTURE: fixture, PRIVATE_MANUAL_EXCERPT_FIXTURE: excerptFixture,
+  PRIVATE_MANUAL_EXCERPT_ID: excerptID, PRIVATE_MANUAL_CAPITAL_FIXTURE: capitalFixture, VERCEL_OIDC_TOKEN: previewToken,
+} = process.env;
+const previewHeaders = previewToken ? { "x-vercel-trusted-oidc-idp-token": previewToken } : {};
+
+test("Published iPhone holdings are dated, owner-scoped, included in allocation and removable", {
+  skip: !origin || !executablePath || !email || !password || !otherEmail || !otherPassword || !fixture,
+  timeout: 120_000,
+}, async () => {
+  const browser = await chromium.launch({ executablePath, headless: true });
+  const api = new URL("/api/workspace-service/private-markets", origin).href;
+  const portfolio = "/private-markets?view=portfolio";
+
+  async function signedIn(address, secret) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    if (previewToken) await page.route(`${origin}/**`, (route) => route.continue({
+      headers: { ...route.request().headers(), ...previewHeaders },
+    }));
+    await page.goto(new URL(`/login?next=${encodeURIComponent(portfolio)}`, origin).href);
+    await page.getByLabel("Email", { exact: true }).fill(address);
+    await page.getByLabel("Password", { exact: true }).fill(secret);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.waitForURL(new URL(portfolio, origin).href);
+    return page;
+  }
+
+  try {
+    const portfolioRequest = (request) => request.url() === api && request.postDataJSON()?.action === "manual_portfolio";
+    const page = await signedIn(email, password);
+    const response = await page.request.post(api, { headers: previewHeaders, data: { action: "manual_portfolio" } });
+    assert.equal(response.status(), 401);
+    const holding = page.getByRole("heading", { name: fixture, exact: true }).locator("xpath=ancestor::article");
+    await holding.getByText("Self-reported", { exact: true }).waitFor();
+    await holding.getByText("AUD 2,400.1234", { exact: true }).waitFor();
+    await holding.getByText("Stale valuation", { exact: true }).waitFor();
+    await holding.getByText(/Statement value · Ownership statement/).waitFor();
+
+    await page.goto(new URL("/portfolio", origin).href);
+    const allocation = page.locator("#unified-allocation");
+    await allocation.getByText("Startup equity", { exact: true }).waitFor();
+    await allocation.getByText("1 of 1 private positions valued.", { exact: false }).waitFor();
+    await page.goto(new URL(portfolio, origin).href);
+    await holding.waitFor();
+
+    const other = await signedIn(otherEmail, otherPassword);
+    await other.getByText("Publish your current snapshot from My Private Portfolio on iPhone.", { exact: true }).waitFor();
+    assert.equal(await other.getByRole("heading", { name: fixture, exact: true }).count(), 0);
+    if (excerptFixture && excerptID) {
+      const source = holding.getByRole("button", { name: "Open ownership excerpt", exact: true });
+      assert.equal(await holding.getByText(excerptFixture, { exact: true }).count(), 0);
+      await source.click();
+      await holding.getByText(excerptFixture, { exact: true }).waitFor();
+      await holding.getByText(/Reviewed by you on/).waitFor();
+      const blocked = other.waitForRequest(portfolioRequest);
+      await other.reload();
+      const { authorization: otherAuthorization } = await (await blocked).allHeaders();
+      const denied = await other.request.post(api, {
+        headers: { ...previewHeaders, authorization: otherAuthorization }, data: { action: "document", id: excerptID },
+      });
+      assert.equal(denied.status(), 404);
+
+      await page.getByRole("radio", { name: "Deal Room", exact: true }).click();
+      await page.getByRole("button", { name: /Published ownership fixture/ }).click();
+      await page.getByRole("button", { name: "Delete excerpt", exact: true }).click();
+      await page.getByRole("button", { name: "Confirm deletion", exact: true }).click();
+      await page.getByText("No excerpts saved", { exact: true }).waitFor();
+      await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
+      await source.click();
+      await holding.getByText("This excerpt is no longer available in your Deal Room.", { exact: true }).waitFor();
+      assert.equal(await holding.getByText(excerptFixture, { exact: true }).count(), 0);
+    }
+
+    if (capitalFixture) {
+      const tab = (target) => target.getByRole("radio", { name: "Capital activity", exact: true });
+      const capital = (target) => target.getByRole("region", { name: "Self-reported capital activity" });
+      await tab(page).click();
+      const records = capital(page);
+      await records.getByText("AUD 500.4321", { exact: true }).waitFor();
+      const call = records.getByRole("listitem").filter({ hasText: "Original outstanding call" });
+      await call.getByText("Overdue", { exact: true }).waitFor();
+      const cancellation = records.getByRole("listitem").filter({ hasText: "Original cancelled call" });
+      await cancellation.getByText("Cancelled", { exact: true }).waitFor();
+      await cancellation.getByText("Cancellation notice from the fund", { exact: true }).waitFor();
+      await cancellation.getByText(/Originally due/).waitFor();
+      await records.getByText("Distribution", { exact: true }).waitFor();
+      await records.getByText("Settled sale", { exact: true }).waitFor();
+      await tab(other).click();
+      await capital(other).getByText("Include capital activity when publishing your portfolio snapshot on iPhone.").waitFor();
+      assert.equal(await capital(other).getByText("Original outstanding call", { exact: true }).count(), 0);
+      await page.getByRole("radio", { name: "Portfolio & applications", exact: true }).click();
+    }
+
+    await page.getByRole("button", { name: "Remove web snapshot", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm removal", exact: true }).click();
+    await page.getByText("Web snapshot removed.", { exact: true }).waitFor();
+    await holding.waitFor({ state: "detached" });
+    await page.reload();
+    await page.getByText("Publish your current snapshot from My Private Portfolio on iPhone.", { exact: true }).waitFor();
+    if (capitalFixture) {
+      await page.getByRole("radio", { name: "Capital activity", exact: true }).click();
+      const activity = page.getByRole("region", { name: "Self-reported capital activity" });
+      await activity.getByText("Include capital activity when publishing your portfolio snapshot on iPhone.").waitFor();
+      assert.equal(await activity.getByText("Original outstanding call", { exact: true }).count(), 0);
+    }
+  } finally {
+    await browser.close();
+  }
+});

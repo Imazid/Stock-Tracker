@@ -22,7 +22,7 @@ final class QuickActionRouter: ObservableObject {
     }
 }
 
-/// SwiftUI has no quick-action hook, so the app adopts a delegate just for this.
+/// Bridges UIKit quick actions and APNs registration into the SwiftUI app.
 final class QuickActionAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
@@ -34,6 +34,14 @@ final class QuickActionAppDelegate: NSObject, UIApplicationDelegate {
         let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
         configuration.delegateClass = QuickActionSceneDelegate.self
         return configuration
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        MainActor.assumeIsolated { PrivateMarketsStore.shared.receivedPushToken(deviceToken) }
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        MainActor.assumeIsolated { PrivateMarketsStore.shared.pushRegistrationFailed() }
     }
 }
 

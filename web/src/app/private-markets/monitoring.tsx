@@ -1,0 +1,255 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Field, Input } from "@/components/ui/Field";
+import { Notice } from "@/components/ui/Notice";
+import { accountHoldingsQuery } from "./account-holdings";
+import { SourceLink } from "./catalog";
+import {
+  dateLabel, privateMarkets, type CompanyUpdate, type MonitorAlert, type MonitorPreferences, type PrivateDeal, type SavedReport,
+} from "./private-data";
+import { useWebMonitor, webMonitorKey, type WebMonitorOptions } from "./web-monitor";
+import { useCompanyWatchlist, type FollowedCompany } from "./watchlist";
+
+const groupSize = 100;
+const alertLabels: Record<string, string> = {
+  announcement: "Company announcement",
+  financial_disclosure: "Financial disclosure",
+  closed_round: "Closed funding round",
+  open_round: "Funding round",
+  eligible_round: "Matches verified eligibility",
+  interest: "Expression of interest",
+  capital_call: "Capital call",
+  distribution: "Distribution",
+  holding_exit: "Confirmed exit",
+};
+
+function WatchlistEditor({ deals, followed, saving, onChange }: {
+  deals: PrivateDeal[];
+  followed: FollowedCompany[];
+  saving: boolean;
+  onChange: (id: string, following: boolean) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const ids = new Set(followed.map(({ id }) => id));
+  const companies = new Map(deals.map(({ round }) => [round.company.id, round.company]));
+  const visible = [...companies.values()].filter(({ name }) => name.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => Number(ids.has(b.id)) - Number(ids.has(a.id)) || a.name.localeCompare(b.name));
+  const unavailable = followed.filter(({ id }) => !companies.has(id));
+
+  return <fieldset disabled={saving} className="min-w-0 space-y-3 border-t border-border p-4">
+    <Field label="Find a company to follow" htmlFor="private-monitor-company">
+      <Input id="private-monitor-company" type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
+    </Field>
+    <p className="text-xs text-text-2" role="status">{followed.length} followed</p>
+    <div className="max-h-56 space-y-1 overflow-y-auto">
+      {visible.map(({ id, name, sector }) => <label key={id} className="flex items-start gap-2 rounded-md px-1 py-1.5 text-sm text-text hover:bg-surface-3">
+        <input className="mt-0.5 shrink-0" type="checkbox" checked={ids.has(id)} onChange={(event) => onChange(id, event.target.checked)} />
+        <span className="min-w-0 break-words">{name}<span className="block text-xs text-text-3">{sector}</span></span>
+      </label>)}
+      {visible.length === 0 && <p className="p-1 text-xs text-text-2">No matching companies in the catalogue.</p>}
+    </div>
+    {unavailable.map(({ id, name }) => <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-2" key={id}>
+      <span>{name}</span>
+      <Button size="sm" variant="ghost" onClick={() => onChange(id, false)}>Unfollow</Button>
+    </div>)}
+  </fieldset>;
+}
+
+function MonitoringForm({ preferences, saving, onSave }: {
+  preferences: MonitorPreferences | null;
+  saving: boolean;
+  onSave: (options: WebMonitorOptions) => void;
+}) {
+  const [enabled, setEnabled] = useState(Boolean(preferences));
+  const [eligible, setEligible] = useState(preferences?.eligible_opportunities ?? false);
+  const [digest, setDigest] = useState(preferences?.digest_enabled ?? false);
+  const activeUntil = preferences && new Date(Date.parse(preferences.refreshed_at) + 90 * 86_400_000).toISOString();
+
+  return <form className="space-y-4 border-t border-border p-4" onSubmit={(event) => {
+    event.preventDefault();
+    if (!saving) onSave({ enabled, eligible_opportunities: eligible, digest_enabled: digest });
+  }}>
+    <fieldset disabled={saving} className="min-w-0 space-y-4 disabled:opacity-60">
+      <label className="flex items-start gap-2 text-sm font-medium text-text">
+        <input className="mt-0.5" type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        Collect alerts for this account from the web
+      </label>
+      <p className="text-[13px] text-text-2">
+        The inbox is shared with iPhone. This subscription collects published updates for the companies you follow and provider-confirmed activity.
+      </p>
+      {enabled && <>
+        <label className="flex items-start gap-2 text-[13px] text-text-2">
+          <input className="mt-0.5" type="checkbox" checked={eligible} onChange={(event) => setEligible(event.target.checked)} />
+          Include new rounds matching my current provider-verified eligibility
+        </label>
+        <label className="flex items-start gap-2 text-[13px] text-text-2">
+          <input className="mt-0.5" type="checkbox" checked={digest} onChange={(event) => setDigest(event.target.checked)} />
+          Allow Stock Tracker to send published updates for companies I follow to its AI provider for daily summaries
+        </label>
+      </>}
+      {activeUntil && <p className="text-xs text-text-3">Web monitoring expires {dateLabel(activeUntil)} unless you save preferences again.</p>}
+    </fieldset>
+    <Button type="submit" variant="primary" disabled={saving}>{saving ? "Saving…" : "Save monitoring preferences"}</Button>
+  </form>;
+}
+
+function UpdateRow({ title, company, date, revised, significance, url, label, kind, action }: {
+  title: string; company: string; date: string; revised?: string | null; significance: string;
+  url?: string | null; label?: string | null; kind?: string; action?: ReactNode;
+}) {
+  return <li className="space-y-1 border-t border-border p-4 text-[13px] text-text-2">
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <h3 className="break-words font-medium text-text">{title}</h3>
+      {kind && alertLabels[kind] && <Badge>{alertLabels[kind]}</Badge>}
+    </div>
+    <p className="text-xs text-text-3">{company} · {dateLabel(date, label === "Issuer financial disclosure" ? "day" : "time")}</p>
+    {revised && <p className="text-xs text-text-3">Revised {dateLabel(revised, "time")}</p>}
+    <p className="break-words">{significance}</p>
+    {(url || label || action) && <div className="flex flex-wrap items-center justify-between gap-2">
+      {(url || label) && <SourceLink url={url}>{label ?? "Read source"}</SourceLink>}
+      {action}
+    </div>}
+  </li>;
+}
+
+export function Monitoring({ owner, deals, catalogueLoading, catalogueError, retryCatalogue, onReport, onResearch }: {
+  owner: string; deals: PrivateDeal[]; catalogueLoading: boolean; catalogueError?: Error | null;
+  retryCatalogue: () => void; onReport: (id: string) => void;
+  onResearch?: (updates: CompanyUpdate[]) => void;
+}) {
+  const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
+  const [companyScope, setCompanyScope] = useState<"tracked" | "holdings">("tracked");
+  const scope = webMonitorKey(owner);
+  const { settings, save } = useWebMonitor(owner);
+  const { watchlist, save: saveFollow } = useCompanyWatchlist(owner);
+  const revision = settings.data?.revision ?? null;
+  const preferences = settings.data?.preferences ?? null;
+  const alerts = useQuery({
+    queryKey: [...scope, "alerts"], gcTime: 0, retry: false,
+    queryFn: ({ signal }) => privateMarkets<{ alerts: MonitorAlert[] }>("monitor_inbox", { owner, signal }),
+  });
+  const digests = useQuery({
+    queryKey: [...scope, "digests"], gcTime: 0, retry: false,
+    queryFn: ({ signal }) => privateMarkets<{ items: SavedReport[] }>("monitor_digests", { owner, signal }),
+  });
+  const account = useQuery(accountHoldingsQuery(owner));
+  const holdings = account.error ? [] : account.data?.holdings ?? [];
+  const canShowHoldingScope = holdings.some((holding) => holding.company || holding.providerMatch?.companyId);
+  const owned = holdings.flatMap((holding) => {
+    if (holding.providerMatch) {
+      if (holding.providerStatus?.kind !== "active") return [];
+      const issuer = holding.providerMatch.companyId ?? holding.company?.id;
+      return issuer ? [issuer] : [];
+    }
+    return holding.company && !holding.exitedOn ? [holding.company.id] : [];
+  });
+  const followed = watchlist.data?.companies ?? [];
+  const tracked = [...followed.map(({ id }) => id), ...owned];
+  const companyIDs = [...new Set(companyScope === "holdings" ? owned : tracked)].sort();
+  const updates = useQuery({
+    queryKey: [...scope, "updates", companyIDs], enabled: companyIDs.length > 0, gcTime: 0, retry: false,
+    queryFn: async ({ signal }) => {
+      const pages = await Promise.all(Array.from({ length: Math.ceil(companyIDs.length / groupSize) }, (_, index) =>
+        privateMarkets<{ updates: CompanyUpdate[] }>("updates", {
+          owner, signal, company_ids: companyIDs.slice(index * groupSize, (index + 1) * groupSize),
+        })));
+      return [...new Map(pages.flatMap((page) => page.updates.map((item) => [item.id, item]))).values()]
+        .sort((first, second) => Date.parse(second.revised_at ?? second.published_at) - Date.parse(first.revised_at ?? first.published_at))
+        .slice(0, 100);
+    },
+  });
+
+  const selected = updates.data?.filter(({ id }) => selectedIDs.includes(id)) ?? [];
+
+  return <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)]">
+    <div className="min-w-0 space-y-4">
+      <Card>
+        <CardHeader title="Company watchlist" />
+        {watchlist.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading watchlist…</p>}
+        {watchlist.error && <div className="border-t border-border p-4"><Notice tone="down">{watchlist.error.message} <Button size="sm" onClick={() => void watchlist.refetch()}>Retry watchlist</Button></Notice></div>}
+        {catalogueError && <div className="border-t border-border p-4"><Notice tone="down">{catalogueError.message} <Button size="sm" onClick={retryCatalogue}>Retry catalogue</Button></Notice></div>}
+        {catalogueLoading && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading published companies…</p>}
+        {watchlist.data && <WatchlistEditor deals={deals} followed={followed}
+          saving={saveFollow.isPending || watchlist.isFetching || watchlist.isError}
+          onChange={(id, following) => saveFollow.mutate({ id, following }, { onSuccess: () => setSelectedIDs([]) })} />}
+        {saveFollow.error && <div className="px-4 pb-4"><Notice tone="down">{saveFollow.error.message}</Notice></div>}
+      </Card>
+      <Card>
+        <CardHeader title="Monitoring preferences" />
+        {settings.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading preferences…</p>}
+        {settings.error && <div className="border-t border-border p-4"><Notice tone="down">{settings.error.message} <Button size="sm" onClick={() => void settings.refetch()}>Retry preferences</Button></Notice></div>}
+        {settings.data && <MonitoringForm key={`${revision}:${Boolean(preferences)}`} preferences={preferences}
+          saving={save.isPending || settings.isFetching || settings.isError}
+          onSave={(options) => save.mutate({ ...options, expected_revision: revision, expected_enabled: Boolean(preferences) },
+            { onSuccess: () => setSelectedIDs([]) })} />}
+        {save.error && <div className="px-4 pb-4"><Notice tone="down">{save.error.message}</Notice></div>}
+        {save.isSuccess && <p className="px-4 pb-4 text-sm text-text-2" role="status">Monitoring preferences saved.</p>}
+      </Card>
+      <Card>
+        <CardHeader title="Daily AI summaries" />
+        {digests.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading summaries…</p>}
+        {digests.error && <div className="border-t border-border p-4"><Notice tone="down">{digests.error.message} <Button size="sm" onClick={() => void digests.refetch()}>Retry summaries</Button></Notice></div>}
+        {digests.data && !digests.data.items.length && <EmptyState title="No saved monitoring summaries" className="border-t border-border" />}
+        <ul>{digests.data?.items.map((item) => (
+          <li key={item.id} className="border-t border-border p-4 text-sm">
+            <button className="break-words text-left font-medium text-primary-fg hover:underline" onClick={() => onReport(item.id)} type="button">{item.title}</button>
+            <p className="text-xs text-text-3">{dateLabel(item.created_at, "time")}</p>
+          </li>
+        ))}</ul>
+      </Card>
+    </div>
+    <div className="min-w-0 space-y-4">
+      <Card>
+        <CardHeader title="Monitoring inbox" actions={<Button size="sm" disabled={alerts.isFetching} onClick={() => { void alerts.refetch(); void digests.refetch(); }}>Refresh inbox</Button>} />
+        {alerts.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading alerts…</p>}
+        {alerts.error && <div className="border-t border-border p-4"><Notice tone="down">{alerts.error.message}</Notice></div>}
+        {alerts.data && !alerts.data.alerts.length && <EmptyState title="No monitoring alerts" className="border-t border-border" />}
+        <ul>{alerts.data?.alerts.map((item) => <UpdateRow key={item.id} title={item.title} company={item.company_name}
+          significance={item.significance} date={item.occurred_at} revised={item.revised_at} url={item.source_url}
+          label={item.source_label} kind={item.kind} />)}</ul>
+      </Card>
+      {(tracked.length > 0 || canShowHoldingScope || companyScope === "holdings" || account.error) && <Card>
+        <CardHeader title="Company updates" />
+        {(canShowHoldingScope || companyScope === "holdings") &&
+          <div role="group" aria-label="Company update scope" className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
+            {(["tracked", "holdings"] as const).map((scope) =>
+              <Button size="sm" key={scope} aria-pressed={companyScope === scope} onClick={() => {
+                setCompanyScope(scope);
+                setSelectedIDs([]);
+              }}>{scope === "holdings" ? "Account holdings" : "All tracked companies"}</Button>)}
+          </div>}
+        {account.error && <div className="border-t border-border p-4"><Notice tone="down">
+          Account holdings could not be refreshed. <Button size="sm" onClick={() => void account.refetch()}>Retry holdings</Button>
+        </Notice></div>}
+        {onResearch && !!updates.data?.length && <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
+          <p className="text-xs text-text-2" role="status">{selected.length} of 3 updates selected.</p>
+          <Button size="sm" variant="primary" disabled={!selected.length || updates.isError || save.isPending}
+            onClick={() => onResearch(selected)}>Research selected updates</Button>
+        </div>}
+        {companyIDs.length > 0 && updates.isPending && <p className="border-t border-border p-4 text-sm text-text-2" role="status">Loading company updates…</p>}
+        {updates.error && <div className="border-t border-border p-4"><Notice tone="down">{updates.error.message} <Button size="sm" onClick={() => void updates.refetch()}>Retry updates</Button></Notice></div>}
+        {((updates.data && !updates.data.length) || (!account.error && !companyIDs.length)) &&
+          <EmptyState title="No published updates for these companies" className="border-t border-border" />}
+        <ul>{updates.data?.map((item) => {
+          const checked = selected.some(({ id }) => id === item.id);
+          return <UpdateRow key={item.id} title={item.title} company={item.company.name}
+            significance={item.significance} date={item.published_at} revised={item.revised_at} url={item.source_url}
+            label={item.source_label} kind={item.kind} action={onResearch && <label className="flex items-center gap-2">
+              <input type="checkbox" checked={checked} aria-label={`Select ${item.title} for research`}
+                disabled={updates.isError || save.isPending || (!checked && selected.length >= 3)}
+                onChange={(event) => setSelectedIDs(event.target.checked
+                  ? [...selected.map(({ id }) => id), item.id]
+                  : selectedIDs.filter((id) => id !== item.id))} />
+              Select for research
+            </label>} />;
+        })}</ul>
+      </Card>}
+    </div>
+  </div>;
+}

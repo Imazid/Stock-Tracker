@@ -16,6 +16,9 @@ import Supabase
 import Auth
 import OSLog
 import Foundation
+#if DEBUG
+import os
+#endif
 
 enum SupabaseManager {
 
@@ -33,6 +36,13 @@ enum SupabaseManager {
                 supabaseKey: "placeholder"
             )
         }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-UITestFreshInstall"),
+           url.scheme == "http", ["localhost", "127.0.0.1"].contains(url.host ?? "") {
+            return SupabaseClient(supabaseURL: url, supabaseKey: SecretsConfig.supabaseAnonKey,
+                                  options: .init(auth: .init(storage: UITestAuthStorage())))
+        }
+        #endif
         return SupabaseClient(supabaseURL: url, supabaseKey: SecretsConfig.supabaseAnonKey)
     }()
 
@@ -48,3 +58,14 @@ enum SupabaseManager {
         SecretsConfig.supabaseURL != "https://placeholder.supabase.co"
     }
 }
+
+#if DEBUG
+/// The unsigned iPhone simulator build has no Keychain access group.
+private struct UITestAuthStorage: AuthLocalStorage {
+    private let values = OSAllocatedUnfairLock(initialState: [String: Data]())
+
+    nonisolated func store(key: String, value: Data) { values.withLock { $0[key] = value } }
+    nonisolated func retrieve(key: String) -> Data? { values.withLock { $0[key] } }
+    nonisolated func remove(key: String) { values.withLock { _ = $0.removeValue(forKey: key) } }
+}
+#endif

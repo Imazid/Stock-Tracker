@@ -135,10 +135,23 @@ struct ContentView: View {
             if tab == .search {
                 router.marketsSection = .search
                 selectedTab = .markets
+            } else if tab == .privateMarkets, let owner = cloudAuth.userId {
+                Task { await privateMarkets.refreshWatchlist(for: owner) }
             }
         }
         .tint(DS.accent)
         .onChange(of: cloudAuth.userId, initial: true) { _, id in privateMarkets.selectAccount(id) }
+        .task(id: cloudAuth.userId) {
+            if let owner = cloudAuth.userId {
+                await privateMarkets.refreshWatchlist(for: owner)
+                await privateMarkets.refreshMonitor(for: owner)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, selectedTab == .privateMarkets, let owner = cloudAuth.userId {
+                Task { await privateMarkets.refreshWatchlist(for: owner) }
+            }
+        }
         .onChange(of: visitInput, initial: true) { old, input in
             if old.scope != input.scope { showingVisitChanges = false }
             visitTracker.observe(input)

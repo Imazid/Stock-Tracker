@@ -111,11 +111,16 @@ final class QuoteService: QuoteServiceProtocol {
         // US: one batched Alpaca request instead of one per symbol (they ran one after
         // another: ten holdings = ten round trips before anything updated).
         let usIndices = updated.indices.filter { isUSQuote(updated[$0]) }
-        var batch: [String: Asset]?
+        var batch: [String: Asset] = [:]
         if usIndices.count > 1 {
-            batch = try? await api.fetchStockQuotes(symbols: usIndices.map { updated[$0].symbol })
-        }
-        if let batch {
+            let symbols = Set(usIndices.map { updated[$0].symbol }).sorted()
+            // The market-data proxy accepts at most 100 symbols per request.
+            for start in stride(from: 0, to: symbols.count, by: 100) {
+                let end = min(start + 100, symbols.count)
+                if let quotes = try? await api.fetchStockQuotes(symbols: Array(symbols[start..<end])) {
+                    batch.merge(quotes) { _, latest in latest }
+                }
+            }
             for index in usIndices {
                 if let apiAsset = batch[updated[index].symbol.uppercased()] {
                     updated[index] = mergedAsset(old: updated[index], api: apiAsset)
@@ -125,7 +130,7 @@ final class QuoteService: QuoteServiceProtocol {
 
         // ASX (Yahoo), a lone US symbol, or the batch failing: one request each, concurrently.
         let singles = updated.indices.filter {
-            !isUSQuote(updated[$0]) || batch?[updated[$0].symbol.uppercased()] == nil
+            !isUSQuote(updated[$0]) || batch[updated[$0].symbol.uppercased()] == nil
         }
         await withTaskGroup(of: (Int, Asset?).self) { group in
             for index in singles {

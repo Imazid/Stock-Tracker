@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
-export function Card({ children, className, id, as: As = "section" }: { children: ReactNode; className?: string; id?: string; as?: "section" | "div" | "article" }) {
-  return <As id={id} className={cn("rounded-xl border border-border bg-surface shadow-card", className)}>{children}</As>;
+export function Card({ children, className, id, as: As = "section", "aria-label": label }: {
+  children: ReactNode; className?: string; id?: string; as?: "section" | "div" | "article"; "aria-label"?: string;
+}) {
+  return <As id={id} aria-label={label} className={cn("rounded-xl border border-border bg-surface shadow-card", className)}>{children}</As>;
 }
 
 export function CardHeader({ title, subtitle, actions, className }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; className?: string }) {
