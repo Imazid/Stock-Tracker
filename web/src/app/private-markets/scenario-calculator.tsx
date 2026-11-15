@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { Segmented } from "@/components/ui/Segmented";
@@ -8,13 +8,13 @@ import { dilutedOwnership, exitProceeds, pricedRoundOwnership, scenarioAmount, s
 import { SourceLink } from "./catalog";
 import { amount, type PrivateDeal } from "./private-data";
 
-const outcomes = ["Bear", "Base", "Bull"] as const;
-const currencies = ["AUD", "USD", "CAD", "EUR", "GBP", "JPY", "NZD", "SGD"];
+export const scenarioOutcomes = ["Bear", "Base", "Bull"] as const;
+export const scenarioCurrencies = ["AUD", "USD", "CAD", "EUR", "GBP", "JPY", "NZD", "SGD"];
 const percent = new Intl.NumberFormat("en-AU", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const decimal = new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const formattedPercent = (value: number | null) => value === null ? "Unavailable" : percent.format(value);
 
-function DecimalField({ label, value, onChange, error }: {
+export function DecimalField({ label, value, onChange, error }: {
   label: string; value: string; onChange: (value: string) => void; error?: string;
 }) {
   const id = useId();
@@ -25,9 +25,25 @@ function DecimalField({ label, value, onChange, error }: {
   </Field>;
 }
 
-export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onClose: () => void }) {
+export function ScenarioDialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleID = useId();
+  useEffect(() => {
+    const element = dialog.current;
+    if (element && !element.open) element.showModal();
+  }, []);
+
+  return <dialog ref={dialog} onClose={onClose} aria-labelledby={titleID}
+    className="m-auto max-h-[calc(100dvh-1.5rem)] w-[min(46rem,calc(100vw-1.5rem))] rounded-xl border border-border-strong bg-surface p-0 text-text shadow-2xl backdrop:bg-black/60">
+    <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-surface px-4 py-3 sm:px-6">
+      <h2 id={titleID} className="text-base font-semibold">{title}</h2>
+      <Button size="sm" onClick={() => dialog.current?.close()}>Close</Button>
+    </header>
+    <div className="space-y-5 p-4 sm:p-6">{children}</div>
+  </dialog>;
+}
+
+export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onClose: () => void }) {
   const currencyID = useId();
   const classID = useId();
   const round = deal?.round;
@@ -50,11 +66,6 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
     Bear: { value: "", years: "" }, Base: { value: "", years: "" }, Bull: { value: "", years: "" },
   });
 
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
-
   const investment = scenarioAmount(invested);
   const recordedCost = scenarioAmount(stakeCost);
   const basis = mode === "investment" ? investment : recordedCost;
@@ -73,7 +84,7 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
   const totalPreference = scenarioAmount(liquidationPreference);
   const preference = modelPreference && preferredShare !== null && totalPreference !== null
     ? { shareClass, preferredShare: preferredShare / 100, totalPreference, participating } : undefined;
-  const scenarios = outcomes.map((label) => {
+  const scenarios = scenarioOutcomes.map((label) => {
     const value = scenarioAmount(exits[label].value);
     const years = scenarioAmount(exits[label].years);
     const proceeds = value !== null && after !== null && (!modelPreference || preference)
@@ -87,13 +98,7 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
     return currency + " " + decimal.format(value);
   }
 
-  return <dialog ref={dialog} onClose={onClose} aria-labelledby={titleID}
-    className="m-auto max-h-[calc(100dvh-1.5rem)] w-[min(46rem,calc(100vw-1.5rem))] rounded-xl border border-border-strong bg-surface p-0 text-text shadow-2xl backdrop:bg-black/60">
-    <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-surface px-4 py-3 sm:px-6">
-      <h2 id={titleID} className="text-base font-semibold">Scenario calculator</h2>
-      <Button size="sm" onClick={() => dialog.current?.close()}>Close</Button>
-    </header>
-    <div className="space-y-5 p-4 sm:p-6">
+  return <ScenarioDialog title="Scenario calculator" onClose={onClose}>
       {round ? <div className="rounded-lg border border-border bg-surface-2 p-3 text-sm text-text-2">
         <p className="font-medium text-text">{round.company.name} · {round.stage}</p>
         <p>{round.valuation === null ? `Currency ${round.currency}` : `${amount(round.valuation, round.currency)} disclosed valuation`}</p>
@@ -101,7 +106,7 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
         <SourceLink url={deal?.source_url}>Round disclosure</SourceLink>
       </div> : <Field label="Scenario currency" htmlFor={currencyID} className="max-w-36">
         <Select id={currencyID} value={currency} onChange={(event) => setCurrency(event.target.value)}>
-          {currencies.map((code) => <option key={code}>{code}</option>)}
+          {scenarioCurrencies.map((code) => <option key={code}>{code}</option>)}
         </Select>
       </Field>}
       <section className="space-y-3">
@@ -195,6 +200,5 @@ export function ScenarioCalculator({ deal, onClose }: { deal?: PrivateDeal; onCl
           </div>)}
         </div>
       </section>
-    </div>
-  </dialog>;
+  </ScenarioDialog>;
 }

@@ -492,6 +492,53 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertEqual(stake.value as? String, "2")
     }
 
+    func testFundScenariosCompareCapitalCallsDistributionsAndRemainingValue() {
+        openPrivateMarkets()
+        let research = app.buttons["private.destination.sparkles"]
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        research.tap()
+        app.buttons["Fund cash-flow scenarios"].tap()
+        XCTAssertTrue(app.navigationBars["Fund Cash-Flow Scenarios"].waitForExistence(timeout: 5))
+
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<5 where !element.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(element.isHittable)
+        }
+
+        func enter(_ label: String, _ value: String) {
+            let field = app.textFields[label]
+            reveal(field)
+            field.tap()
+            field.typeText(value)
+            let done = app.buttons["Done"].firstMatch
+            if done.isHittable { done.tap() }
+        }
+
+        enter("Capital call 1 amount", "100")
+        let addCall = app.buttons["Add capital call"]
+        reveal(addCall)
+        addCall.tap()
+        enter("Capital call 2 amount", "100")
+        let projection = app.buttons["Set projection date"]
+        reveal(projection)
+        projection.tap()
+        enter("Remaining NAV (optional)", "180")
+        let addDistribution = app.buttons["Add distribution"]
+        reveal(addDistribution)
+        addDistribution.tap()
+        enter("Distribution 1 amount", "60")
+
+        func checkMetric(_ identifier: String, _ expected: String) {
+            let metric = app.descendants(matching: .any)[identifier].firstMatch
+            reveal(metric)
+            let text = [metric.label, metric.value as? String ?? ""] + metric.staticTexts.allElementsBoundByIndex.map(\.label)
+            XCTAssertTrue(text.contains(where: { $0.contains(expected) }), text.joined(separator: ", "))
+        }
+        checkMetric("private.fund.base.tvpi", "1.20×")
+        checkMetric("private.fund.base.dpi", "0.30×")
+        checkMetric("private.fund.base.xirr", "Unavailable")
+    }
+
     func testExitScenariosModelPreferredPayoutBeforeCommonShares() {
         openPrivateMarkets()
         let research = app.buttons["private.destination.sparkles"]
@@ -1140,6 +1187,12 @@ final class PrivateMarketsFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Research this opportunity"].exists)
         XCTAssertFalse(app.buttons["private.deal.scenarios"].exists)
         XCTAssertFalse(app.buttons["private.deal.applicationReadiness"].exists)
+        let calculator = app.buttons["private.deal.fundScenarios"]
+        for _ in 0..<2 where !calculator.isHittable { app.swipeUp() }
+        XCTAssertTrue(calculator.isHittable)
+        calculator.tap()
+        XCTAssertTrue(app.navigationBars["Fund Cash-Flow Scenarios"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Published disclosure"].exists)
     }
 
     @MainActor

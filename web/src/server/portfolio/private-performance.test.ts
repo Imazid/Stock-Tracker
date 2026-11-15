@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PortfolioHolding } from "../../app/private-markets/private-data.ts";
-import { privatePositionPerformance } from "../../app/private-markets/private-performance.ts";
+import { fundScenario, privatePositionPerformance } from "../../app/private-markets/private-performance.ts";
 
 const today = "2026-01-01";
 const asOf = Date.parse("2025-12-31T15:00:00Z");
@@ -18,6 +18,24 @@ const position: PortfolioHolding = {
   cancelled_calls: [], dispositions: [],
 };
 const calculate = (holding: PortfolioHolding) => privatePositionPerformance(holding, today, asOf);
+
+test("fund scenarios separate cash distributions, residual NAV and dated investor returns", () => {
+  const calls = [{ day: "2025-01-01", amount: 100 }, { day: "2026-01-01", amount: 100 }];
+  const horizon = "2027-01-01";
+  const result = fundScenario(calls, [{ day: horizon, amount: 60 }], 180, horizon);
+  assert.ok(result);
+  assert.equal(result.paidIn, 200);
+  assert.equal(result.distributions, 60);
+  assert.equal(result.tvpi, 1.2);
+  assert.equal(result.dpi, 0.3);
+  assert.ok(typeof result.xirr === "number" && Math.abs(result.xirr - ((Math.sqrt(10.6) - 1) / 2 - 1)) < 1e-10);
+  assert.deepEqual(fundScenario(calls, [], 0, horizon), { paidIn: 200, distributions: 0, tvpi: 0, dpi: 0, xirr: null });
+  assert.deepEqual(fundScenario(calls, [{ day: "2025-02-01", amount: 120 }], 100, horizon),
+    { paidIn: 200, distributions: 120, tvpi: 1.1, dpi: 0.6, xirr: null });
+  assert.equal(fundScenario(calls, [], 0, "2025-01-01"), null);
+  assert.equal(fundScenario(calls, [], 0, "2027-02-29"), null);
+  assert.equal(fundScenario(calls, [{ day: "2024-12-31", amount: 40 }], 0, horizon), null);
+});
 
 test("fund performance uses dated settled cash flows and excludes pending calls from deployed capital", () => {
   const { metrics, mark: selected } = calculate(position);

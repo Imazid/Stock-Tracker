@@ -34,17 +34,20 @@ struct PrivateResearchWorkspace: View {
     var body: some View {
         let focusedRound = deals.count == 1 ? deals.first?.round : nil
         List {
-            if focusedRound?.financingStructure == nil {
-                Section("Scenario calculator") {
+            Section("Scenario calculator") {
+                if focusedRound?.financingStructure == nil {
                     NavigationLink("Ownership, dilution and exit scenarios") {
                         PrivateScenarioCalculator(round: focusedRound)
                     }
+                }
+                if focusedRound == nil || focusedRound?.financingStructure != nil {
+                    NavigationLink("Fund cash-flow scenarios") { PrivateFundScenarioCalculator(round: focusedRound) }
                 }
             }
             if auth.userId == nil {
                 Section("Research") {
                     Text("Sign in from Account to run and save AI research.")
-                    if focusedRound?.financingStructure == nil { Text("The scenario calculator works on this device.") }
+                    Text("Scenario calculations run on this device.")
                 }
             } else if let owner = auth.userId, workspaceOwner == owner {
                 Section("Research question") {

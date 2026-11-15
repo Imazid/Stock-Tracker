@@ -22,6 +22,7 @@ import { Positions } from "./positions";
 import { ProviderApplication } from "./provider-application";
 import { Research } from "./research";
 import { ScenarioCalculator } from "./scenario-calculator";
+import { FundScenarioCalculator } from "./fund-scenario-calculator";
 
 type PublicTab = "catalogue" | "explorer" | "rounds";
 type Tab = PublicTab | "research" | "deal-room" | "portfolio" | "updates" | "capital";
@@ -195,7 +196,7 @@ export function PrivateMarketsView({ aiEnabled, initialTab, initialCompany }: {
   const [tab, setTab] = useState(initialTab);
   const [companyID, setCompanyID] = useState(initialCompany);
   const [selected, setSelected] = useState<PrivateDeal[]>([]);
-  const [scenario, setScenario] = useState<{ deal?: PrivateDeal } | null>(null);
+  const [scenario, setScenario] = useState<{ deal?: PrivateDeal; fund?: boolean } | null>(null);
   const [researchEntry, setResearchEntry] = useState<({ owner: string } & ({ report: string } | { updates: CompanyUpdate[] })) | null>(null);
   const session = useSession();
   const owner = session.status === "signedIn" ? session.user.id : undefined;
@@ -229,13 +230,18 @@ export function PrivateMarketsView({ aiEnabled, initialTab, initialCompany }: {
   }
 
   const actions = { asOf: catalogue.dataUpdatedAt, selected, toggle, onResearch, renderApplication,
-    onScenario: (deal: PrivateDeal) => setScenario({ deal }) };
+    onScenario: (deal: PrivateDeal) => setScenario({ deal, fund: Boolean(deal.round.financing_structure) }) };
 
   return (
     <div className="mx-auto max-w-[1300px]">
       <PageHeader title="Private Markets" description="Explore published funding rounds, research private companies, and review provider-confirmed activity."
-        actions={<Button size="sm" onClick={() => setScenario({})}>Scenario calculator</Button>} />
-      {scenario && <ScenarioCalculator deal={scenario.deal} onClose={() => setScenario(null)} />}
+        actions={<>
+          <Button size="sm" onClick={() => setScenario({})}>Scenario calculator</Button>
+          <Button size="sm" onClick={() => setScenario({ fund: true })}>Fund cash-flow scenarios</Button>
+        </>} />
+      {scenario && (scenario.fund
+        ? <FundScenarioCalculator deal={scenario.deal} onClose={() => setScenario(null)} />
+        : <ScenarioCalculator deal={scenario.deal} onClose={() => setScenario(null)} />)}
       <Segmented<Tab> value={tab} onChange={(value) => { setResearchEntry(null); setTab(value); }} label="Private Markets sections"
         className="mb-4 max-w-full flex-wrap [&>button]:px-2 sm:[&>button]:px-2.5"
         options={[{ value: "catalogue", label: "Discover" }, { value: "explorer", label: "Startup Explorer" }, { value: "rounds", label: "Funding Rounds" },

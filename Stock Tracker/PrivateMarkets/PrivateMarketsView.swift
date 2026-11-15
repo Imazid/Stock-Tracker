@@ -956,6 +956,9 @@ struct PrivateDealDetail: View {
                 if deal.round.financingStructure == nil {
                     NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
                         .accessibilityIdentifier("private.deal.scenarios")
+                } else {
+                    NavigationLink("Model fund cash flows") { PrivateFundScenarioCalculator(round: deal.round) }
+                        .accessibilityIdentifier("private.deal.fundScenarios")
                 }
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     if deal.displayedStatus(at: context.date) == "Open at verification", auth.userId != nil,

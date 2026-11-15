@@ -6,6 +6,30 @@ const isFund = (kind: string) => ["Venture fund", "Private equity", "Syndicate o
 
 type CashFlow = { day: string; amount: number };
 
+function validDay(day: string) {
+  const timestamp = Date.parse(day);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === day;
+}
+
+export function fundScenario(calls: CashFlow[], distributions: CashFlow[], remainingValue: number, asOf: string) {
+  if (!calls.length || !Number.isFinite(remainingValue) || remainingValue < 0 || !validDay(asOf) ||
+    [...calls, ...distributions].some(({ day, amount }) => !validDay(day) || day > asOf || !Number.isFinite(amount) || amount <= 0)) return null;
+  const firstCall = calls.reduce((first, flow) => flow.day < first ? flow.day : first, asOf);
+  if (distributions.some(({ day }) => day < firstCall)) return null;
+  const paidIn = calls.reduce((sum, flow) => sum + flow.amount, 0);
+  const distributed = distributions.reduce((sum, flow) => sum + flow.amount, 0);
+  const tvpi = (distributed + remainingValue) / paidIn;
+  const dpi = distributed / paidIn;
+  if (![paidIn, distributed, tvpi, dpi].every(Number.isFinite)) return null;
+  return {
+    paidIn, distributions: distributed, tvpi, dpi,
+    xirr: annualizedReturn([
+      ...calls.map(({ day, amount }) => ({ day, amount: -amount })),
+      ...distributions, { day: asOf, amount: remainingValue },
+    ]),
+  };
+}
+
 // Same conventional-flow restriction and log-rate bracket as TradingCore.
 function annualizedReturn(flows: CashFlow[]) {
   const byDate = new Map<string, number>();

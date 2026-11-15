@@ -120,6 +120,35 @@ final class PrivateMarketsTests: XCTestCase {
         }
     }
 
+    func testFundScenarioReturnsUseDatedInvestorFlowsAndResidualNAV() throws {
+        let start = Date(timeIntervalSince1970: 1_735_689_600)
+        let nextYear = start.addingTimeInterval(365 * 86_400)
+        let projection = nextYear.addingTimeInterval(365 * 86_400)
+        let calls: [(Date, Decimal)] = [(start, 100), (nextYear, 100)]
+        let result = try XCTUnwrap(PrivateMath.fundScenario(
+            calls: calls, distributions: [(projection, 60)], remainingValue: 180, asOf: projection
+        ))
+        XCTAssertEqual(result.paidIn, 200)
+        XCTAssertEqual(result.distributions, 60)
+        XCTAssertEqual(result.tvpi, Decimal(string: "1.2"))
+        XCTAssertEqual(result.dpi, Decimal(string: "0.3"))
+        XCTAssertEqual(try XCTUnwrap(result.xirr), (sqrt(10.6) - 1) / 2 - 1, accuracy: 1e-10)
+
+        let loss = try XCTUnwrap(PrivateMath.fundScenario(calls: calls, distributions: [], remainingValue: 0, asOf: projection))
+        XCTAssertEqual(loss.tvpi, 0)
+        XCTAssertEqual(loss.dpi, 0)
+        XCTAssertNil(loss.xirr)
+        let recapped = try XCTUnwrap(PrivateMath.fundScenario(
+            calls: calls, distributions: [(start.addingTimeInterval(30 * 86_400), 120)], remainingValue: 100, asOf: projection
+        ))
+        XCTAssertEqual(recapped.tvpi, Decimal(string: "1.1"))
+        XCTAssertNil(recapped.xirr)
+        XCTAssertNil(PrivateMath.fundScenario(calls: calls, distributions: [], remainingValue: 0, asOf: start))
+        XCTAssertNil(PrivateMath.fundScenario(
+            calls: calls, distributions: [(start.addingTimeInterval(-86_400), 100)], remainingValue: 0, asOf: projection
+        ))
+    }
+
     func testScenarioReturnsUseInvestedCapitalAndTheHoldingPeriod() throws {
         let multipleOnly = try XCTUnwrap(PrivateMath.scenarioReturns(invested: 5_000, proceeds: 20_000, years: nil))
         XCTAssertEqual(multipleOnly.multiple, 4)

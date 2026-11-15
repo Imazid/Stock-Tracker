@@ -221,8 +221,9 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
         </div>
         <div className="flex flex-wrap gap-2">
           {onCompany && <Button size="sm" onClick={onCompany} aria-label={`Explore ${company.name}`}>Explore company</Button>}
-          {!round.financing_structure &&
-            <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>}
+          {round.financing_structure
+            ? <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} fund cash flows`}>Model fund cash flows</Button>
+            : <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>}
           <Button size="sm" aria-pressed={selected} aria-label={`Select ${company.name} ${round.stage} for research`}
             disabled={!selected && selectionFull} onClick={onSelect}>
             {selected ? "Selected" : "Select for research"}

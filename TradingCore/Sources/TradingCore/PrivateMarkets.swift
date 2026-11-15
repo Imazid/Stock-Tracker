@@ -335,6 +335,40 @@ public enum PrivateMath {
         return (multiple, rate.isFinite ? rate : nil)
     }
 
+    public struct FundScenario: Sendable {
+        public let paidIn: Decimal
+        public let distributions: Decimal
+        public let tvpi: Decimal
+        public let dpi: Decimal
+        public let xirr: Double?
+    }
+
+    /// Uses investor-level cash flows and a residual net asset value on the projection date.
+    public static func fundScenario(
+        calls: [(date: Date, amount: Decimal)], distributions: [(date: Date, amount: Decimal)],
+        remainingValue: Decimal, asOf: Date
+    ) -> FundScenario? {
+        guard !calls.isEmpty, asOf.timeIntervalSinceReferenceDate.isFinite, !remainingValue.isNaN, remainingValue >= 0,
+              (calls + distributions).allSatisfy({ $0.date.timeIntervalSinceReferenceDate.isFinite && !$0.amount.isNaN && $0.amount > 0 })
+        else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        let projectionDay = calendar.startOfDay(for: asOf)
+        let debits = calls.map { (date: calendar.startOfDay(for: $0.date), amount: $0.amount) }
+        let credits = distributions.map { (date: calendar.startOfDay(for: $0.date), amount: $0.amount) }
+        guard let firstCall = debits.map(\.date).min(),
+              debits.allSatisfy({ $0.date <= projectionDay }),
+              credits.allSatisfy({ $0.date >= firstCall && $0.date <= projectionDay }) else { return nil }
+        let paidIn = debits.reduce(Decimal.zero) { $0 + $1.amount }
+        let distributed = credits.reduce(Decimal.zero) { $0 + $1.amount }
+        let tvpi = (distributed + remainingValue) / paidIn
+        let dpi = distributed / paidIn
+        guard !paidIn.isNaN, !distributed.isNaN, !tvpi.isNaN, !dpi.isNaN else { return nil }
+        let flows = debits.map { ($0.date, -$0.amount) } + credits.map { ($0.date, $0.amount) }
+        return FundScenario(paidIn: paidIn, distributions: distributed, tvpi: tvpi, dpi: dpi,
+                            xirr: xirr(flows + [(projectionDay, remainingValue)]))
+    }
+
     /// Reports a unique, bracketed annual rate for conventional dated cash flows.
     /// A later contribution after net positive proceeds can create multiple roots.
     public static func xirr(_ cashFlows: [(Date, Decimal)]) -> Double? {

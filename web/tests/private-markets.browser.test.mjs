@@ -48,6 +48,44 @@ test("Private Markets renders sourced rounds and keeps research account-scoped",
       assert.equal(await historical.getByText("Valuation", { exact: true }).count(), 0);
       assert.equal(await historical.getByRole("button", { name: "Model scenarios" }).count(), 0);
       assert.equal(await historical.getByRole("button", { name: /provider application/i }).count(), 0);
+      if (kind === "Venture fund") {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await historical.getByRole("button", { name: /Model Blackbird.*fund cash flows/ }).click();
+        const calculator = page.getByRole("dialog", { name: "Fund cash-flow scenarios" });
+        assert.equal(await calculator.getByLabel("Capital call 1 amount (AUD)").inputValue(), "");
+        await calculator.getByRole("link", { name: "Published disclosure" }).waitFor();
+        const posted = [];
+        const track = (request) => { if (request.method() === "POST") posted.push(request.url()); };
+        page.on("request", track);
+        await calculator.getByLabel("Capital call 1 date").fill("2025-01-01");
+        await calculator.getByLabel("Capital call 1 amount (AUD)").fill("100");
+        await calculator.getByRole("button", { name: "Add capital call" }).click();
+        await calculator.getByLabel("Capital call 2 date").fill("2026-01-01");
+        await calculator.getByLabel("Capital call 2 amount (AUD)").fill("100");
+        await calculator.getByLabel("Projection date", { exact: true }).fill("2027-01-01");
+        await calculator.getByLabel("Remaining NAV (AUD, optional)").fill("180");
+        await calculator.getByRole("button", { name: "Add distribution" }).click();
+        await calculator.getByLabel("Distribution 1 date").fill("2027-01-01");
+        await calculator.getByLabel("Distribution 1 amount (AUD)").fill("60");
+        assert.equal(await calculator.getByLabel("Base Paid in").textContent(), "AUD 200");
+        assert.equal(await calculator.getByLabel("Base TVPI").textContent(), "1.20×");
+        assert.equal(await calculator.getByLabel("Base DPI").textContent(), "0.30×");
+        assert.equal(await calculator.getByLabel("Base XIRR").textContent(), "12.7882%");
+        await calculator.getByRole("radio", { name: "Bear", exact: true }).click();
+        await calculator.getByLabel("Projection date", { exact: true }).fill("2027-01-01");
+        assert.equal(await calculator.getByLabel("Bear TVPI").textContent(), "0.00×");
+        assert.equal(await calculator.getByLabel("Bear XIRR").textContent(), "Unavailable");
+        await calculator.getByRole("radio", { name: "Base", exact: true }).click();
+        await calculator.getByLabel("Projection date", { exact: true }).fill("2025-12-31");
+        await calculator.getByText(/Check the projection date/).waitFor();
+        assert.equal(await calculator.getByLabel("Base TVPI").count(), 0);
+        assert.deepEqual(posted, []);
+        page.off("request", track);
+        assert.ok(await calculator.evaluate((element) => element.scrollWidth <= element.clientWidth + 1));
+        await calculator.getByRole("button", { name: "Close", exact: true }).click();
+        await calculator.waitFor({ state: "hidden" });
+        await page.setViewportSize({ width: 1440, height: 1000 });
+      }
     }
     await category.selectOption("");
     await page.getByLabel("Availability", { exact: true }).selectOption("closed");
