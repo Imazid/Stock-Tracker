@@ -17,6 +17,7 @@ Deno.test("funding revisions detect corrected terms and ignore verification-only
   assertEquals(await fundingRoundRevision(reverified), revision);
   assertEquals(await fundingRoundRevision({ ...original, round: {
     ...original.round, financing_structure: null, capital_commitments: null,
+    secondary_purchase_amount: null, secondary_closed_on: null,
   } }), revision);
   assertNotEquals(await fundingRoundRevision(corrected), revision);
   assertEquals(await changedSourceIds([corrected], { round: revision }, fundingRoundRevision), ["round"]);

@@ -35,7 +35,7 @@ const activeSessionActions = new Set([
 ]);
 
 const publicDealFields = "id,provider,category,status,minimum,eligibility,jurisdictions,source_url,offer_document_url,verified_at," +
-  "round:funding_rounds!inner(id,stage,financing_structure,capital_commitments,raised,target,valuation,valuation_method,currency,announced_on,closes_at,source_url,verified_at,traction," +
+  "round:funding_rounds!inner(id,stage,financing_structure,capital_commitments,secondary_purchase_amount,secondary_closed_on,raised,target,valuation,valuation_method,currency,announced_on,closes_at,source_url,verified_at,traction," +
   "company:private_companies!inner(id,name,sector,country,location,description,logo_url,founders,investors,source_url,verified_at," +
   "financials:private_company_financials(id,period_end_on,period_kind,assurance,currency,revenue,annual_recurring_revenue," +
   "net_profit_loss,operating_cash_flow,cash_and_equivalents,published_on,source_url,verified_at))," +
@@ -70,6 +70,8 @@ type CatalogDeal = {
     stage: string;
     financing_structure: "fund" | "spv" | null;
     capital_commitments: number | null;
+    secondary_purchase_amount: number | null;
+    secondary_closed_on: string | null;
     announced_on: string | null;
     closes_at: string | null;
     verified_at: string;
@@ -100,10 +102,14 @@ function roundFacts(deal: CatalogDeal): ReportFact[] {
   const items: [string, number | null][] = [
     ["Minimum investment", deal.minimum], ["Raised", round.raised], ["Raise target", round.target],
     ["Reported valuation", round.valuation], ["Capital commitments", round.capital_commitments],
+    ["Secondary purchase amount", round.secondary_purchase_amount],
   ];
-  return items.flatMap(([label, amount]) =>
+  const amounts = items.flatMap(([label, amount]) =>
     amount === null ? [] : [{ label, value: reportedAmount(round.currency, amount) }]
   );
+  return round.secondary_closed_on
+    ? [...amounts, { label: "Secondary transaction closed on", value: round.secondary_closed_on }]
+    : amounts;
 }
 
 function dealEvidence(deal: CatalogDeal, facts: ReportFact[]): string {
@@ -113,13 +119,15 @@ function dealEvidence(deal: CatalogDeal, facts: ReportFact[]): string {
     ? "Structure: Fund fundraising disclosure. Capital commitments describe amounts committed by fund investors."
     : round.financing_structure === "spv"
     ? "Structure: Special-purpose vehicle disclosure. The vehicle pools investors into one position in the underlying company."
+    : deal.category === "Private secondary"
+    ? "Structure: Secondary disclosure. The purchase amount describes shares acquired from holders."
     : "";
   return [
     `Company: ${company.name}`,
     `Sector: ${company.sector}; country: ${company.country}`,
     `Round: ${round.stage}; status: ${currentStatus(deal)}`,
     structure,
-    round.announced_on && `Round announcement date: ${round.announced_on}`,
+    round.announced_on && `Disclosure date: ${round.announced_on}`,
     `Source verified: ${deal.verified_at}`,
     round.closes_at && `Published deadline: ${round.closes_at}`,
     `Provider: ${deal.provider}; category: ${deal.category}`,

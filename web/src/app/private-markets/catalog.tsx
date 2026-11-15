@@ -111,6 +111,10 @@ function roundFigures(deal: PrivateDeal): [string, number | null][] {
   const otherTerms: [string, number | null][] = [
     ["Valuation", round.valuation], ["Minimum investment", deal.minimum],
   ];
+  if (deal.category === "Private secondary") {
+    return [["Secondary purchase amount", round.secondary_purchase_amount ?? null],
+      ...otherTerms.filter(([, value]) => value !== null)];
+  }
   if (!round.financing_structure) return [target, ["Reported raised", round.raised], ...otherTerms];
   const capital: [string, number | null] = round.financing_structure === "fund"
     ? ["Capital commitments", round.capital_commitments ?? null]
@@ -118,32 +122,46 @@ function roundFigures(deal: PrivateDeal): [string, number | null][] {
   return [capital, ...[target, ...otherTerms].filter(([, value]) => value !== null)];
 }
 
+function roundDate(deal: PrivateDeal) {
+  const { round } = deal;
+  if (round.closes_at) return { label: "Published deadline", value: dateLabel(round.closes_at, "time") };
+  if (deal.category === "Private secondary") {
+    return round.secondary_closed_on
+      ? { label: "Closed on", value: dateLabel(round.secondary_closed_on) }
+      : { label: "Disclosed", value: dateLabel(round.announced_on) };
+  }
+  return { label: "Announced", value: dateLabel(round.announced_on) };
+}
+
 export function CompareRounds({ deals, asOf, onRemove }: { deals: PrivateDeal[]; asOf: number; onRemove?: (deal: PrivateDeal) => void }) {
   return <div className="grid gap-2 md:grid-cols-3">
-    {deals.map((deal) => <div key={deal.id} className="rounded-lg border border-border bg-surface-2 p-3 text-sm">
-      <p className="font-medium text-text">{deal.round.company.name}</p>
-      <p className="text-xs text-text-3">{deal.round.stage} · {availabilityLabels[availability(deal, asOf)]}</p>
-      <dl className="my-2 space-y-1">
-        {roundFigures(deal).map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-x-2">
-          <dt className="text-xs text-text-2">{label}</dt><dd className="text-xs font-medium text-text">{amount(value, deal.round.currency)}</dd>
-        </div>)}
-        <div className="flex flex-wrap justify-between gap-x-2">
-          <dt className="text-xs text-text-2">{deal.round.closes_at ? "Published deadline" : "Announced"}</dt>
-          <dd className="text-xs font-medium text-text">{dateLabel(deal.round.closes_at ?? deal.round.announced_on, deal.round.closes_at ? "time" : "day")}</dd>
+    {deals.map((deal) => {
+      const date = roundDate(deal);
+      return <div key={deal.id} className="rounded-lg border border-border bg-surface-2 p-3 text-sm">
+        <p className="font-medium text-text">{deal.round.company.name}</p>
+        <p className="text-xs text-text-3">{deal.round.stage} · {availabilityLabels[availability(deal, asOf)]}</p>
+        <dl className="my-2 space-y-1">
+          {roundFigures(deal).map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-x-2">
+            <dt className="text-xs text-text-2">{label}</dt><dd className="text-xs font-medium text-text">{amount(value, deal.round.currency)}</dd>
+          </div>)}
+          <div className="flex flex-wrap justify-between gap-x-2">
+            <dt className="text-xs text-text-2">{date.label}</dt>
+            <dd className="text-xs font-medium text-text">{date.value}</dd>
+          </div>
+        </dl>
+        {deal.round.valuation_method && <p className="mb-2 text-xs text-text-2">{deal.round.valuation_method}</p>}
+        {!!deal.round.share_classes.length && <ul className="mb-2 space-y-1 text-xs text-text-2">
+          {deal.round.share_classes.map((share) => (
+            <li key={share.name}><SourceLink url={share.source_url}>{share.name}</SourceLink> · {share.rights}</li>
+          ))}
+        </ul>}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SourceLink url={deal.round.source_url}>Round disclosure</SourceLink>
+          {onRemove && <Button size="sm" variant="ghost" aria-label={`Remove ${deal.round.company.name} ${deal.round.stage} from comparison`}
+            onClick={() => onRemove(deal)}>Remove</Button>}
         </div>
-      </dl>
-      {deal.round.valuation_method && <p className="mb-2 text-xs text-text-2">{deal.round.valuation_method}</p>}
-      {!!deal.round.share_classes.length && <ul className="mb-2 space-y-1 text-xs text-text-2">
-        {deal.round.share_classes.map((share) => (
-          <li key={share.name}><SourceLink url={share.source_url}>{share.name}</SourceLink> · {share.rights}</li>
-        ))}
-      </ul>}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SourceLink url={deal.round.source_url}>Round disclosure</SourceLink>
-        {onRemove && <Button size="sm" variant="ghost" aria-label={`Remove ${deal.round.company.name} ${deal.round.stage} from comparison`}
-          onClick={() => onRemove(deal)}>Remove</Button>}
-      </div>
-    </div>)}
+      </div>;
+    })}
   </div>;
 }
 
@@ -155,6 +173,9 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
   const { company, listing } = round;
   const status = availability(deal, asOf);
   const eligibility = eligibilityLabels[deal.eligibility] ?? deal.eligibility;
+  const secondary = deal.category === "Private secondary";
+  const historicalDisclosure = secondary || Boolean(round.financing_structure);
+  const date = roundDate(deal);
   return (
     <Card as="article" className="min-w-0">
       <div className="p-4 md:p-5">
@@ -180,11 +201,10 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
           ))}
         </dl>
         <p className="mt-3 flex flex-wrap gap-x-2 gap-y-1 text-xs text-text-2">
-          <span>{round.financing_structure && deal.eligibility === "provider review" ? "Eligibility undisclosed" : `${eligibility} eligibility`}</span>
+          <span>{historicalDisclosure && deal.eligibility === "provider review" ? "Eligibility undisclosed" : `${eligibility} eligibility`}</span>
           <span aria-hidden>·</span>
-          <span>{round.closes_at ? `Published deadline ${dateLabel(round.closes_at, "time")}` :
-            round.announced_on ? `Announced ${dateLabel(round.announced_on)}` :
-              round.financing_structure ? "Announcement date undisclosed" : "Deadline undisclosed"}</span>
+          <span>{round.closes_at || round.announced_on || round.secondary_closed_on ? `${date.label} ${date.value}` :
+            historicalDisclosure ? "Announcement date undisclosed" : "Deadline undisclosed"}</span>
           <span aria-hidden>·</span>
           <span>Verified {dateLabel(deal.verified_at, "time")}</span>
         </p>
@@ -216,14 +236,14 @@ export function DealCard({ deal, asOf, selected, selectionFull, onSelect, onScen
       {status === "open" && application}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-[13px] md:px-5">
         <div className="flex flex-wrap gap-x-4 gap-y-1">
-          <SourceLink url={deal.source_url}>{round.financing_structure ? "Published disclosure" : providerName(deal.provider)}</SourceLink>
+          <SourceLink url={deal.source_url}>{historicalDisclosure ? "Published disclosure" : providerName(deal.provider)}</SourceLink>
           {deal.offer_document_url && <SourceLink url={deal.offer_document_url}>Offer document</SourceLink>}
         </div>
         <div className="flex flex-wrap gap-2">
           {onCompany && <Button size="sm" onClick={onCompany} aria-label={`Explore ${company.name}`}>Explore company</Button>}
-          {round.financing_structure
+          {!secondary && (round.financing_structure
             ? <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} fund cash flows`}>Model fund cash flows</Button>
-            : <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>}
+            : <Button size="sm" onClick={onScenario} aria-label={`Model ${company.name} ${round.stage} scenarios`}>Model scenarios</Button>)}
           <Button size="sm" aria-pressed={selected} aria-label={`Select ${company.name} ${round.stage} for research`}
             disabled={!selected && selectionFull} onClick={onSelect}>
             {selected ? "Selected" : "Select for research"}

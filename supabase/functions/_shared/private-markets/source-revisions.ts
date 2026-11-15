@@ -21,6 +21,8 @@ export function fundingRoundRevision<T extends { round: {
   share_classes: { name: string; rights: string; source_url?: string }[];
   financing_structure?: string | null;
   capital_commitments?: number | null;
+  secondary_purchase_amount?: number | null;
+  secondary_closed_on?: string | null;
 } }>(
   deal: T,
 ): Promise<string> {
@@ -29,12 +31,13 @@ export function fundingRoundRevision<T extends { round: {
     const right = JSON.stringify([b.name, b.rights, b.source_url]);
     return left < right ? -1 : left > right ? 1 : 0;
   });
-  const { financing_structure, capital_commitments, ...round } = deal.round;
+  const { financing_structure, capital_commitments, secondary_purchase_amount, secondary_closed_on, ...round } = deal.round;
   // Keep hashes comparable with reports saved before these fields were present.
   return sourceRevision({
     ...deal,
     round: { ...round, share_classes: shareClasses, financing_structure: financing_structure ?? undefined,
-      capital_commitments: capital_commitments ?? undefined },
+      capital_commitments: capital_commitments ?? undefined,
+      secondary_purchase_amount: secondary_purchase_amount ?? undefined, secondary_closed_on: secondary_closed_on ?? undefined },
   });
 }
 
@@ -51,6 +54,7 @@ type PublishedRoundTerms = {
   stage: string; currency: string; raised: number | null; target: number | null;
   valuation: number | null; valuation_method: string | null; closes_at: string | null;
   financing_structure?: "fund" | "spv" | null; capital_commitments?: number | null;
+  secondary_purchase_amount?: number | null; secondary_closed_on?: string | null;
 };
 
 export type SourceBaseline = { title: string; fields: Record<string, string | null> };
@@ -74,6 +78,8 @@ export function fundingRoundBaseline(deal: { round: PublishedRoundTerms & { comp
       "Valuation basis": round.valuation_method,
       "Capital raised": money(round.raised),
       "Capital commitments": money(round.capital_commitments ?? null),
+      "Secondary purchase amount": money(round.secondary_purchase_amount ?? null),
+      "Secondary transaction closed on": round.secondary_closed_on ?? null,
       "Raise target": money(round.target),
       "Minimum investment": money(deal.minimum),
       "Published status": deal.status,

@@ -87,6 +87,23 @@ test("Private Markets renders sourced rounds and keeps research account-scoped",
         await page.setViewportSize({ width: 1440, height: 1000 });
       }
     }
+    await category.selectOption("Seed or angel");
+    const seed = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Adora", exact: true }) });
+    await seed.getByText("Closed", { exact: true }).waitFor();
+    await seed.getByText("Reported raised", { exact: true }).waitFor();
+    await seed.getByText("USD 7,000,000", { exact: true }).waitFor();
+    await seed.getByRole("button", { name: "Model Adora Seed scenarios", exact: true }).waitFor();
+    assert.equal(new URL(await seed.getByRole("link", { name: "Published disclosure" }).getAttribute("href")).hostname, "www.blackbird.vc");
+
+    await category.selectOption("Private secondary");
+    const secondary = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Figma", exact: true }) });
+    await secondary.getByText("Closed", { exact: true }).waitFor();
+    await secondary.getByText(/^Closed on 3 Jul(?:y)? 2024$/).waitFor();
+    await secondary.getByText("Secondary purchase amount", { exact: true }).waitFor();
+    await secondary.getByText("USD 566,700,000", { exact: true }).waitFor();
+    assert.equal(new URL(await secondary.getByRole("link", { name: "Published disclosure" }).getAttribute("href")).hostname, "www.sec.gov");
+    assert.equal(await secondary.getByText("Reported raised", { exact: true }).count(), 0);
+    assert.equal(await secondary.getByRole("button", { name: /model|provider application/i }).count(), 0);
     await category.selectOption("");
     await page.getByLabel("Availability", { exact: true }).selectOption("closed");
     assert.equal(await capability.isVisible(), true);

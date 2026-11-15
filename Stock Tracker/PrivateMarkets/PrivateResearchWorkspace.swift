@@ -32,22 +32,25 @@ struct PrivateResearchWorkspace: View {
     @State private var error: String?
 
     var body: some View {
-        let focusedRound = deals.count == 1 ? deals.first?.round : nil
+        let focusedDeal = deals.count == 1 ? deals.first : nil
+        let focusedRound = focusedDeal?.round
         List {
-            Section("Scenario calculator") {
-                if focusedRound?.financingStructure == nil {
-                    NavigationLink("Ownership, dilution and exit scenarios") {
-                        PrivateScenarioCalculator(round: focusedRound)
+            if focusedDeal?.isSecondary != true {
+                Section("Scenario calculator") {
+                    if focusedRound?.financingStructure == nil {
+                        NavigationLink("Ownership, dilution and exit scenarios") {
+                            PrivateScenarioCalculator(round: focusedRound)
+                        }
                     }
-                }
-                if focusedRound == nil || focusedRound?.financingStructure != nil {
-                    NavigationLink("Fund cash-flow scenarios") { PrivateFundScenarioCalculator(round: focusedRound) }
+                    if focusedRound == nil || focusedRound?.financingStructure != nil {
+                        NavigationLink("Fund cash-flow scenarios") { PrivateFundScenarioCalculator(round: focusedRound) }
+                    }
                 }
             }
             if auth.userId == nil {
                 Section("Research") {
                     Text("Sign in from Account to run and save AI research.")
-                    Text("Scenario calculations run on this device.")
+                    if focusedDeal?.isSecondary != true { Text("Scenario calculations run on this device.") }
                 }
             } else if let owner = auth.userId, workspaceOwner == owner {
                 Section("Research question") {

@@ -20,6 +20,7 @@ export type PrivateDeal = {
   round: {
     id: string; stage: string; raised: number | null; target: number | null; valuation: number | null;
     financing_structure?: "fund" | "spv" | null; capital_commitments?: number | null;
+    secondary_purchase_amount?: number | null; secondary_closed_on?: string | null;
     valuation_method: string | null; currency: string; announced_on: string | null; closes_at: string | null;
     source_url: string; verified_at: string; traction: string | null;
     company: PrivateCompany;
@@ -182,7 +183,7 @@ export function providerName(id: string) {
     case "onmarket": return "OnMarket";
     case "angellist": return "AngelList";
     case "syndex": return "Syndex";
-    case "issuer": return "Company announcement";
+    case "issuer": return "Published disclosure";
     default: return id;
   }
 }

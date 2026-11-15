@@ -623,12 +623,12 @@ private struct PrivateFundingRoundRow: View {
                     .foregroundStyle(.secondary)
                 if let date = listing.quotationOn { Text(PrivateDeal.Round.Listing.formattedDay(date)).font(.footnote) }
             }
-            if let date = deal.round.announcedOn {
-                LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+            if let date = deal.displayedDisclosureDate {
+                LabeledContent(deal.disclosureDateLabel, value: date)
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if let capital = deal.round.reportedCapital {
-                LabeledContent(deal.round.capitalLabel, value: PrivateInput.money(capital, currency: deal.round.currency))
+            if let capital = deal.reportedCapital {
+                LabeledContent(deal.capitalLabel, value: PrivateInput.money(capital, currency: deal.round.currency))
                     .font(.footnote.monospacedDigit())
             }
             if let valuation = deal.round.valuation {
@@ -777,12 +777,12 @@ struct PrivateRoundComparison: View {
         let round = deal.round
         return VStack(alignment: .leading, spacing: DS.Space.s) {
             Text("\(deal.company.name) · \(round.stage)").font(.headline)
-            if let date = round.announcedOn {
-                LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+            if let date = deal.displayedDisclosureDate {
+                LabeledContent(deal.disclosureDateLabel, value: date)
             }
             LabeledContent("Round status", value: deal.displayedStatus)
-            LabeledContent(round.capitalLabel, value: round.reportedCapital.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
-            if round.financingStructure == nil || round.valuation != nil {
+            LabeledContent(deal.capitalLabel, value: deal.reportedCapital.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
+            if (!deal.isSecondary && round.financingStructure == nil) || round.valuation != nil {
                 LabeledContent("Reported valuation", value: round.valuation.map { Self.amount($0, currency: round.currency) } ?? "Undisclosed")
                 LabeledContent("Valuation basis", value: round.valuationMethod ?? "Undisclosed")
             }
@@ -897,10 +897,10 @@ struct PrivateDealDetail: View {
                 .disabled(store.savingWatchlist)
                 .accessibilityIdentifier("private.deal.follow")
             }
-            Section("Funding terms") {
+            Section(deal.isSecondary ? "Transaction terms" : "Funding terms") {
                 LabeledContent("Stage", value: deal.round.stage)
-                if let date = deal.round.announcedOn {
-                    LabeledContent("Announced", value: date.formatted(date: .abbreviated, time: .omitted))
+                if let date = deal.displayedDisclosureDate {
+                    LabeledContent(deal.disclosureDateLabel, value: date)
                 }
                 if deal.provider != "issuer" {
                     LabeledContent("Eligibility", value: deal.eligibility.capitalized)
@@ -908,11 +908,11 @@ struct PrivateDealDetail: View {
                         ? "Undisclosed" : deal.jurisdictions.map { Locale.current.localizedString(forRegionCode: $0) ?? $0 }.joined(separator: ", "))
                     LabeledContent("Minimum", value: PrivateInput.money(deal.minimum, currency: deal.round.currency))
                 }
-                if deal.round.financingStructure == nil || deal.round.target != nil {
+                if !deal.isSecondary && (deal.round.financingStructure == nil || deal.round.target != nil) {
                     LabeledContent("Raise target", value: PrivateInput.money(deal.round.target, currency: deal.round.currency))
                 }
-                LabeledContent(deal.round.capitalLabel, value: PrivateInput.money(deal.round.reportedCapital, currency: deal.round.currency))
-                if deal.round.financingStructure == nil || deal.round.valuation != nil {
+                LabeledContent(deal.capitalLabel, value: PrivateInput.money(deal.reportedCapital, currency: deal.round.currency))
+                if (!deal.isSecondary && deal.round.financingStructure == nil) || deal.round.valuation != nil {
                     LabeledContent("Valuation", value: PrivateInput.money(deal.round.valuation, currency: deal.round.currency))
                 }
                 if let method = deal.round.valuationMethod { LabeledContent("Valuation basis", value: method) }
@@ -948,17 +948,19 @@ struct PrivateDealDetail: View {
                 LabeledContent("Verified", value: deal.verifiedAt.formatted(date: .abbreviated, time: .shortened))
                 if deal.sourceUrl.privateSourceIsSafe { Link("Read source", destination: deal.sourceUrl) }
                 if deal.company.sourceUrl.privateSourceIsSafe { Link("Company source", destination: deal.company.sourceUrl) }
-                if deal.round.sourceUrl.privateSourceIsSafe { Link("Funding round source", destination: deal.round.sourceUrl) }
+                if deal.round.sourceUrl.privateSourceIsSafe {
+                    Link(deal.isSecondary ? "Transaction disclosure" : "Funding round source", destination: deal.round.sourceUrl)
+                }
                 if let document = deal.offerDocumentUrl, document.privateSourceIsSafe { Link("Read offer document", destination: document) }
             }
             Section("Research & applications") {
                 NavigationLink("Research this opportunity") { PrivateResearchWorkspace(deals: [deal], selectedDealID: deal.id) }
-                if deal.round.financingStructure == nil {
-                    NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
-                        .accessibilityIdentifier("private.deal.scenarios")
-                } else {
+                if deal.round.financingStructure != nil {
                     NavigationLink("Model fund cash flows") { PrivateFundScenarioCalculator(round: deal.round) }
                         .accessibilityIdentifier("private.deal.fundScenarios")
+                } else if !deal.isSecondary {
+                    NavigationLink("Model exit scenarios") { PrivateScenarioCalculator(round: deal.round) }
+                        .accessibilityIdentifier("private.deal.scenarios")
                 }
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     if deal.displayedStatus(at: context.date) == "Open at verification", auth.userId != nil,

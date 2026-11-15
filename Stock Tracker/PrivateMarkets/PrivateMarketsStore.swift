@@ -127,6 +127,8 @@ struct PrivateDeal: Codable, Identifiable {
         let stage: String
         let financingStructure: FinancingStructure?
         let capitalCommitments: Decimal?
+        let secondaryPurchaseAmount: Decimal?
+        let secondaryClosedOn: String?
         let raised: Decimal?
         let target: Decimal?
         let valuation: Decimal?
@@ -140,16 +142,6 @@ struct PrivateDeal: Codable, Identifiable {
         let company: Company
         let shareClasses: [ShareClass]
         let listing: Listing?
-
-        var reportedCapital: Decimal? { financingStructure == .fund ? capitalCommitments : raised }
-
-        var capitalLabel: String {
-            switch financingStructure {
-            case .fund: "Capital commitments"
-            case .spv: "Capital raised through the vehicle"
-            case nil: "Capital raised"
-            }
-        }
     }
     let id: UUID
     let provider: String
@@ -164,9 +156,29 @@ struct PrivateDeal: Codable, Identifiable {
     let round: Round
 
     var company: Company { round.company }
+    var isSecondary: Bool { category == "Private secondary" }
+    var reportedCapital: Decimal? {
+        if isSecondary { return round.secondaryPurchaseAmount }
+        return round.financingStructure == .fund ? round.capitalCommitments : round.raised
+    }
+    var capitalLabel: String {
+        if isSecondary { return "Secondary purchase amount" }
+        return switch round.financingStructure {
+        case .fund: "Capital commitments"
+        case .spv: "Capital raised through the vehicle"
+        case nil: "Capital raised"
+        }
+    }
+    var disclosureDateLabel: String {
+        if isSecondary { return round.secondaryClosedOn == nil ? "Disclosed" : "Closed on" }
+        return "Announced"
+    }
+    var displayedDisclosureDate: String? {
+        if isSecondary, let day = round.secondaryClosedOn { return Round.Listing.formattedDay(day) }
+        return round.announcedOn?.formatted(date: .abbreviated, time: .omitted)
+    }
     var sourceName: String {
-        if round.financingStructure != nil { return "Published disclosure" }
-        if provider == "issuer" { return "Company announcement" }
+        if provider == "issuer" { return "Published disclosure" }
         return PrivateProvider.directory.first { $0.id == provider }?.name ?? provider
     }
 

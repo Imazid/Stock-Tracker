@@ -1196,6 +1196,38 @@ final class PrivateMarketsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPublishedSecondaryTenderShowsPurchaseAmountAndResearch() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
+                          "Requires the hosted published catalogue.")
+        openPrivateMarkets()
+        app.buttons["private.destination.building.2"].tap()
+        let figma = app.buttons["private.explorer.company.2BF9569C-DA32-4B8B-9F82-DDDB7DFD3D87"]
+        XCTAssertTrue(figma.waitForExistence(timeout: 20), app.debugDescription)
+        for _ in 0..<3 where !figma.isHittable { app.swipeUp() }
+        figma.tap()
+        let tender = app.buttons["private.funding.round.2024 pre-IPO tender offer"]
+        XCTAssertTrue(tender.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(tender.label.contains("Closed on"))
+        XCTAssertTrue(tender.label.contains("2024"))
+        XCTAssertTrue(tender.label.contains("Secondary purchase amount"))
+        XCTAssertTrue(tender.label.contains("566,700,000"))
+        XCTAssertFalse(tender.label.contains("Capital raised"))
+        tender.tap()
+        let source = app.descendants(matching: .any)["Transaction disclosure"].firstMatch
+        for _ in 0..<3 where !source.isHittable { app.swipeUp() }
+        XCTAssertTrue(source.isHittable, app.debugDescription)
+        XCTAssertFalse(app.buttons["private.deal.scenarios"].exists)
+        XCTAssertFalse(app.buttons["private.deal.fundScenarios"].exists)
+        XCTAssertFalse(app.buttons["private.deal.applicationReadiness"].exists)
+        let research = app.buttons["Research this opportunity"]
+        for _ in 0..<2 where !research.isHittable { app.swipeUp() }
+        XCTAssertTrue(research.isHittable, app.debugDescription)
+        research.tap()
+        XCTAssertTrue(app.staticTexts["Sign in from Account to run and save AI research."].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Scenario calculator"].exists)
+    }
+
+    @MainActor
     func testStartupExplorerShowsSourcedFinancialsAndSeparatesRecurringRevenue() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PRIVATE_PUBLISHED_CATALOGUE_TEST"] == "1",
                           "Run this test with the hosted Private Markets configuration.")
