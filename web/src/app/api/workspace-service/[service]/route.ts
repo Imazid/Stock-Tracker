@@ -13,6 +13,7 @@ const services = {
 } as const;
 
 const privateMarketActions = new Set([
+  "company_watchlist", "save_company_watchlist",
   "catalog", "discover", "research", "research_status", "research_runs", "reports", "report", "delete_report", "research_refresh",
   "confirmed_holdings", "capital_activity", "valuation_history", "applications", "allocation", "updates", "web_monitor_preferences", "save_web_monitor", "monitor_inbox", "monitor_digests",
   "manual_portfolio", "remove_manual_portfolio", "account_holdings", "save_account_holding", "remove_account_holding", "save_account_valuation", "remove_account_valuation", "save_account_cash_flow", "remove_account_cash_flow",
